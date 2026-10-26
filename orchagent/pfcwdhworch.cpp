@@ -5,6 +5,7 @@
 #include "switchorch.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
+#include "converter.h"
 #include <algorithm>
 #include <set>
 
@@ -327,11 +328,11 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         {
             if (field == PFC_WD_DETECTION_TIME)
             {
-                detectionTime = static_cast<uint32_t>(stoul(value));
+                detectionTime = to_uint<uint32_t>(value);
             }
             else if (field == PFC_WD_RESTORATION_TIME)
             {
-                restorationTime = static_cast<uint32_t>(stoul(value));
+                restorationTime = to_uint<uint32_t>(value);
             }
             else if (field == PFC_WD_ACTION)
             {
@@ -381,6 +382,16 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     if (restorationTime == 0)
     {
         SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);
+        return task_process_status::task_invalid_entry;
+    }
+
+    // Hardware detection and recovery are one SAI attribute, so a queue cannot
+    // be watched without also being recovered. Only drop and forward are
+    // supported here.
+    if (action == PfcWdAction::PFC_WD_ACTION_ALERT)
+    {
+        SWSS_LOG_ERROR("%s is not supported in hardware PFC watchdog mode on %s, use drop or forward",
+                       serializeAction(action).c_str(), key.c_str());
         return task_process_status::task_invalid_entry;
     }
 
@@ -443,10 +454,9 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     {
         if (isPortInStormedState(port))
         {
-            SWSS_LOG_ERROR("Cannot modify PFC watchdog configuration on port %s: port is in stormed state. "
-                          "Wait for storm to pass before making changes.",
+            SWSS_LOG_INFO("Port %s is stormed, deferring the configuration change",
                           port.m_alias.c_str());
-            return task_process_status::task_invalid_entry;
+            return task_process_status::task_need_retry;
         }
     }
 
@@ -458,7 +468,10 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     {
         SWSS_LOG_INFO("Disabling the existing hardware PFC watchdog on port %s before reconfiguring",
                       port.m_alias.c_str());
-        stopWdOnPort(port);
+        if (!stopWdOnPort(port))
+        {
+            return task_process_status::task_need_retry;
+        }
     }
 
     if (!startWdOnPort(port, detectionTime, restorationTime, action, pfcStatHistory))
@@ -497,17 +510,21 @@ task_process_status PfcWdHwOrch::deleteEntry(const string& key)
     {
         if (isPortInStormedState(port))
         {
-            SWSS_LOG_ERROR(
-                "Cannot delete PFC watchdog configuration on port %s: port is in stormed state. "
-                "Wait for storm to pass before making changes.",
+            SWSS_LOG_INFO(
+                "Port %s is stormed, deferring the delete",
                 port.m_alias.c_str());
-            return task_process_status::task_invalid_entry;
+            return task_process_status::task_need_retry;
         }
     }
 
     // Delegate to base implementation to stop watchdog on the port and
-    // update common bookkeeping.
+    // update common bookkeeping. A failed teardown is retried rather than
+    // dropped, so a queue is never left armed without a pending delete.
     task_process_status status = PfcWdBaseOrch::deleteEntry(key);
+    if (status == task_process_status::task_failed)
+    {
+        return task_process_status::task_need_retry;
+    }
 
     // A port deferred for a missing lossless TC is only removed from the pending
     // set when it starts, so a port deleted while still deferred would stay there
@@ -713,7 +730,7 @@ bool PfcWdHwOrch::configureSwitchAction(const Port& port, PfcWdAction action,
     {
         sai_action = SAI_PACKET_ACTION_DROP;
     }
-    else if (action == PfcWdAction::PFC_WD_ACTION_FORWARD || action == PfcWdAction::PFC_WD_ACTION_ALERT)
+    else if (action == PfcWdAction::PFC_WD_ACTION_FORWARD)
     {
         sai_action = SAI_PACKET_ACTION_FORWARD;
     }
@@ -838,7 +855,7 @@ bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t
     return true;
 }
 
-void PfcWdHwOrch::disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId)
+bool PfcWdHwOrch::disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
@@ -851,12 +868,12 @@ void PfcWdHwOrch::disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t
     {
         SWSS_LOG_ERROR("Failed to disable PFC DLDR on port %s queue %d (0x%" PRIx64 "): %d",
                       port.m_alias.c_str(), tc, queueId, status);
+        return false;
     }
-    else
-    {
-        SWSS_LOG_INFO("Disabled PFC DLDR on port %s TC %d queue 0x%" PRIx64,
-                     port.m_alias.c_str(), tc, queueId);
-    }
+
+    SWSS_LOG_INFO("Disabled PFC DLDR on port %s TC %d queue 0x%" PRIx64,
+                 port.m_alias.c_str(), tc, queueId);
+    return true;
 }
 
 bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
@@ -877,6 +894,8 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 
     SWSS_LOG_NOTICE("Disabling hardware watchdog on port %s", port.m_alias.c_str());
 
+    bool cleanupOk = true;
+
     // Disable PFC DLDR on each lossless queue and remove from queue→port mapping
     for (auto tc : losslessTc)
     {
@@ -889,11 +908,15 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
 
         sai_object_id_t queueId = port.m_queue_ids[tc];
 
-        disableQueueDldr(port, tc, queueId);
+        // Tracking is kept for a queue that could not be disabled, so the
+        // caller can retry instead of orphaning an armed queue.
+        if (!disableQueueDldr(port, tc, queueId))
+        {
+            cleanupOk = false;
+            continue;
+        }
 
-        // Remove from queue→port mapping
         m_queueToPortMap.erase(queueId);
-
         m_stormedQueues.erase(queueId);
     }
 
@@ -903,7 +926,12 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
     {
         if (it->second.port_alias == port.m_alias)
         {
-            disableQueueDldr(port, it->second.queue_index, it->first);
+            if (!disableQueueDldr(port, it->second.queue_index, it->first))
+            {
+                cleanupOk = false;
+                ++it;
+                continue;
+            }
 
             m_stormedQueues.erase(it->first);
             it = m_queueToPortMap.erase(it);
@@ -912,6 +940,13 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
         {
             ++it;
         }
+    }
+
+    // The port keeps its tracking and STATE_DB entry while any queue is still
+    // armed, so the operation can be retried.
+    if (!cleanupOk)
+    {
+        return false;
     }
 
     // Clear detection and restoration intervals on port level
