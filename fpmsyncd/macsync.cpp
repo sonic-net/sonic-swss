@@ -93,6 +93,7 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
     m_vxlanFdbTableRead(pipeline, APP_VXLAN_FDB_TABLE_NAME, false),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
+    m_stateFdbTableRead(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
@@ -151,6 +152,36 @@ void MacSync::setMacSyncMode(const string& mode)
     m_vxlanFdbTableRead.getKeys(keys);
     m_remoteMacs.insert(keys.begin(), keys.end());
     SWSS_LOG_NOTICE("MacSync: took over %zu remote MACs from APPL_DB", keys.size());
+
+    loadLocalMacs();
+}
+
+/*
+ * The local MACs already in STATE_DB. processStateFdb() discarded their updates
+ * while fdbsyncd owned the kernel path, so on a switch to fpm mode they would
+ * reach zebra only on their next change, and their deletes would be ignored.
+ * At startup the subscriber's initial read delivers them again once the first
+ * connection is up.
+ */
+void MacSync::loadLocalMacs()
+{
+    std::vector<string> keys;
+    size_t loaded = 0;
+
+    m_stateFdbTableRead.getKeys(keys);
+
+    for (const auto& key : keys)
+    {
+        std::vector<FieldValueTuple> values;
+        if (!m_stateFdbTableRead.get(key, values))
+        {
+            continue;
+        }
+        processStateFdbEntry(KeyOpFieldsValuesTuple{key, SET_COMMAND, values});
+        loaded++;
+    }
+
+    SWSS_LOG_NOTICE("MacSync: took over %zu local MACs from STATE_DB", loaded);
 }
 
 void MacSync::processCfgFdbSync()

@@ -65,6 +65,7 @@ private:
 
     void readCfgFdbSyncMode();
     void setMacSyncMode(const std::string& mode);
+    void loadLocalMacs();
     bool isEthernetSegmentInterface(const std::string& ifname);
     void processStateFdbEntry(const KeyOpFieldsValuesTuple& entry);
     void sendLocalMac(const std::string& vlanName, const std::string& mac,
@@ -73,6 +74,7 @@ private:
     ProducerStateTable m_vxlanFdbTable;
     Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
+    Table m_stateFdbTableRead;
     SubscriberStateTable m_cfgFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
     Table m_cfgEvpnEsTable;

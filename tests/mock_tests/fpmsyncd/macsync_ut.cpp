@@ -866,3 +866,28 @@ TEST_F(MacSyncTest, FpmModeTakesOverRemoteMacsInAppDb)
     std::vector<FieldValueTuple> values;
     EXPECT_FALSE(getEntry(TEST_KEY, values));
 }
+
+/*
+ * A MAC learnt while fdbsyncd owned the kernel path reaches zebra when fpm mode
+ * starts, and so does its ageout: MacSync discarded its STATE_DB update in
+ * kernel mode.
+ */
+TEST_F(MacSyncTest, FpmModeAdvertisesLocalMacsLearntInKernelMode)
+{
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+    m_macSync->setMacSyncMode("kernel");
+
+    /* "lo" because sendLocalMac() resolves the port with if_nametoindex(). */
+    Table stateFdb(m_stateDb.get(), STATE_FDB_TABLE_NAME);
+    stateFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"port", "lo"}, {"type", "dynamic"}});
+
+    m_macSync->setMacSyncMode("fpm");
+    ASSERT_EQ(fpm.count(), 1u);
+    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
+
+    stateFdb.del(TEST_KEY);
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    ASSERT_EQ(fpm.count(), 2u);
+    EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_DELNEIGH);
+}
