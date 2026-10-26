@@ -247,6 +247,37 @@ TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenDeleted)
     EXPECT_FALSE(failedNeighborExists("2001:db8::5"));
 }
 
+TEST_F(NeighSyncTest, QueuesFailedNeighborDeleteWithoutMaterializedEntry)
+{
+    enableDualTor();
+    auto deleted = createNeighbor(AF_INET6, "2001:db8::5", NUD_FAILED);
+    ASSERT_TRUE(deleted.get() != nullptr);
+    ASSERT_FALSE(failedNeighborExists("2001:db8::5"));
+
+    m_sync->onMsg(RTM_DELNEIGH, reinterpret_cast<struct nl_object *>(deleted.get()));
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_FAILED_TABLE_NAME), 1u);
+    EXPECT_FALSE(failedNeighborExists("2001:db8::5"));
+}
+
+TEST_F(NeighSyncTest, QueuesFailedNeighborResolutionWithoutMaterializedEntry)
+{
+    enableDualTor();
+    auto resolved = createNeighbor(AF_INET6, "2001:db8::4", NUD_STALE);
+    ASSERT_TRUE(resolved.get() != nullptr);
+    ASSERT_FALSE(failedNeighborExists("2001:db8::4"));
+
+    for (int messageType : {RTM_NEWNEIGH, RTM_GETNEIGH})
+    {
+        SCOPED_TRACE(messageType);
+        testing_db::resetOperationCounters();
+        m_sync->onMsg(messageType, reinterpret_cast<struct nl_object *>(resolved.get()));
+
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_FAILED_TABLE_NAME), 1u);
+        EXPECT_FALSE(failedNeighborExists("2001:db8::4"));
+    }
+}
+
 TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)
 {
     auto neigh = createNeighbor(AF_INET6, "2001:db8::6", NUD_FAILED);
