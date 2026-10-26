@@ -1357,7 +1357,10 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
     else if (op == DEL_COMMAND)
     {
-        (void)setIntfIp(alias, "del", ip_prefix);
+        if (!setIntfIp(alias, "del", ip_prefix))
+        {
+            return false;
+        }
 
         if (!ip_prefix.isV4() && ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
         {
@@ -1557,7 +1560,10 @@ void IntfMgr::doTask(Consumer &consumer)
                 }
                 if (!doIntfAddrTask(keys, data, op))
                 {
-                    it++;
+                    if (op == DEL_COMMAND)
+                        it = consumer.m_toSync.upper_bound(kfvKey(t));
+                    else
+                        ++it;
                     continue;
                 }
                 else

@@ -634,7 +634,7 @@ namespace intfmgr_ut
         EXPECT_TRUE(interfaceLookups.empty());
     }
 
-    TEST_F(IntfMgrTest, testConfigDeleteRemainsBestEffortBeforeFollowingSet)
+    TEST_F(IntfMgrTest, testConfigDeleteRetriesBeforeFollowingSet)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         notifyLag(intfmgr, "PortChannel1", SET_COMMAND, {{"state", "ok"}});
@@ -651,16 +651,35 @@ namespace intfmgr_ut
         testing_db::resetOperationCounters();
         mockCallArgs.clear();
         intfmgr.doTask(*consumer);
-        EXPECT_TRUE(consumer->m_toSync.empty());
-        ASSERT_EQ(mockCallArgs.size(), 3u);
+        EXPECT_EQ(consumer->m_toSync.size(), 2u);
+        ASSERT_EQ(mockCallArgs.size(), 2u);
         EXPECT_EQ(mockCallArgs[0], "/sbin/ip address \"del\" \"192.0.2.1/31\" dev \"PortChannel1\"");
         EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o address show dev \"PortChannel1\"");
-        EXPECT_EQ(mockCallArgs[2], "/sbin/ip address \"add\" \"192.0.2.1/31\" dev \"PortChannel1\"");
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 0u);
+
+        FailAddressDelete = false;
+        testing_db::resetOperationCounters();
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(mockCallArgs.size(), 2u);
+        EXPECT_EQ(mockCallArgs[0], "/sbin/ip address \"del\" \"192.0.2.1/31\" dev \"PortChannel1\"");
+        EXPECT_EQ(mockCallArgs[1], "/sbin/ip address \"add\" \"192.0.2.1/31\" dev \"PortChannel1\"");
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 1u);
         EXPECT_EQ(testing_db::getProducerSetCount(APP_INTF_TABLE_NAME), 1u);
 
         ThrowAddressDelete = true;
+        AddressQueryOutput = addressLine("192.0.2.1/31");
         consumer->addToSync(swss::KeyOpFieldsValuesTuple("PortChannel1|192.0.2.1/31", DEL_COMMAND, {}));
+        testing_db::resetOperationCounters();
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(mockCallArgs.size(), 2u);
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
+
+        AddressQueryOutput.clear();
         testing_db::resetOperationCounters();
         mockCallArgs.clear();
         intfmgr.doTask(*consumer);
