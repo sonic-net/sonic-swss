@@ -1257,10 +1257,16 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
 
-        // Don't send ipv4 link local config to AppDB and Orchagent
+        // Don't send IPv4 link-local config to AppDB and Orchagent; set scope from prefix for everything else.
         if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
         {
-            FieldValueTuple s("scope", "global");
+            string scopeStr = "global";
+            if ((ip_prefix.isV4() == false) &&
+                (ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE))
+            {
+                scopeStr = "link-local";
+            }
+            FieldValueTuple s("scope", scopeStr);
             fvVector.push_back(s);
             fvVector.push_back(f);
             m_appIntfTableProducer.set(appKey, fvVector);
