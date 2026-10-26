@@ -2267,6 +2267,34 @@ namespace intfmgr_ut
         EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
     }
 
+    TEST_F(IntfMgrTest, testParentAdminUpRequeuesConfiguredDownChild)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1.20";
+        intfmgr.m_cfgSubIntfTable.set(alias, {{"admin_status", "down"}});
+
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        intfmgr.doTask(*consumer);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "down"}, {"mtu", "9100"}});
+        EXPECT_TRUE(consumer->m_toSync.empty());
+
+        mockCallArgs.clear();
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        EXPECT_EQ(consumer->m_toSync.count(alias), 1u);
+        EXPECT_FALSE(commandWasIssued("link set \"" + alias + "\" \"down\""));
+
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"down\""));
+    }
+
     TEST_F(IntfMgrTest, testConfigAdminFailureAcceptsConfirmedKernelState)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);

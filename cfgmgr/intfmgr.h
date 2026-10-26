@@ -57,6 +57,7 @@ private:
     void doLagTableTask(const std::string& key, const std::vector<FieldValueTuple>& data, const std::string& op);
     void clearLagIntfTasks(const std::string& alias);
     void enqueueLagIntfConfig(const std::string& alias);
+    void enqueueDownSubIntfConfig(const std::string& parent);
     void withdrawLagIntf(const std::string& alias);
 
     bool isIntfStateOk(const std::string &alias);

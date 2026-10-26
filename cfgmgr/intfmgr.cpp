@@ -1032,17 +1032,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 adminStatus = "up";
             }
 
-            try
+            if (setIntfAdminStatus(alias, adminStatus))
             {
-                if (setIntfAdminStatus(alias, adminStatus))
-                {
-                    FieldValueTuple newAdminFvTuple("admin_status", adminStatus);
-                    data.push_back(newAdminFvTuple);
-                }
-            }
-            catch (const std::runtime_error &e)
-            {
-                SWSS_LOG_WARN("Lo interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                FieldValueTuple newAdminFvTuple("admin_status", adminStatus);
+                data.push_back(newAdminFvTuple);
             }
         }
         else
@@ -1075,9 +1068,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
             if (!ipv6_link_local_mode.empty())
             {
-                if (ipv6_link_local_mode == "enable" && m_ipv6LinkLocalModeList.count(alias) == 0)
+                if (ipv6_link_local_mode == "enable" && m_ipv6LinkLocalModeList.insert(alias).second)
                 {
-                    m_ipv6LinkLocalModeList.insert(alias);
                     SWSS_LOG_INFO("Inserted ipv6 link local mode list for %s", alias.c_str());
                 }
                 else if (ipv6_link_local_mode == "disable" && m_ipv6LinkLocalModeList.erase(alias))
@@ -1148,8 +1140,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                     return false;
                 FieldValueTuple fvTuple("admin_status", adminStatus);
                 std::remove(data.begin(), data.end(), fvTuple);
-                FieldValueTuple newAdminFvTuple("admin_status", adminStatus);
-                data.push_back(newAdminFvTuple);
+                data.push_back(fvTuple);
             }
             catch (const std::runtime_error &e)
             {
@@ -1682,6 +1673,27 @@ void IntfMgr::enqueueLagIntfConfig(const string &alias)
     }
 }
 
+void IntfMgr::enqueueDownSubIntfConfig(const string &parent)
+{
+    auto *consumer = getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME);
+    if (!consumer)
+        return;
+
+    for (const auto &entry : m_subIntfList)
+    {
+        const auto &alias = entry.first;
+        if (subIntf(alias).parentIntf() != parent)
+            continue;
+
+        vector<FieldValueTuple> data;
+        if (m_cfgSubIntfTable.get(alias, data) &&
+            any_of(data.begin(), data.end(), [](const auto &field) {
+                return fvField(field) == "admin_status" && fvValue(field) == "down";
+            }))
+            consumer->addToSync(KeyOpFieldsValuesTuple(alias, SET_COMMAND, data));
+    }
+}
+
 void IntfMgr::withdrawLagIntf(const string &alias)
 {
     vector<string> keys;
@@ -1757,9 +1769,11 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
             {
                 SWSS_LOG_INFO("Port %s Admin %s", key.c_str(), value.c_str());
 
-                if (replayLinkLocal && value == "up" && m_intfLLAddresses.count(key) > 0)
+                if (replayLinkLocal && value == "up")
                 {
-                    replayLLIntfAddresses(key);
+                    if (m_intfLLAddresses.count(key) > 0)
+                        replayLLIntfAddresses(key);
+                    enqueueDownSubIntfConfig(key);
                 }
             }
             else if (field == "mtu")
