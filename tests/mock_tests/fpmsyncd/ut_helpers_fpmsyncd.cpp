@@ -20,6 +20,12 @@ char *__wrap_rtnl_link_i2name(struct nl_cache *cache, int ifindex, char *dst, si
         case 10:
             strncpy(dst, "Vrf10", 6);
             return dst;
+        case 20:
+            strncpy(dst, "Brvxlan100", len > 10 ? 11 : len);
+            return dst;
+        case 21:
+            strncpy(dst, "Ethernet0", len > 9 ? 10 : len);
+            return dst;
         case 30:
             strncpy(dst, "invalidVrf", 11);
             return dst;

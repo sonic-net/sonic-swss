@@ -49,9 +49,24 @@ APP_DB_TO_PROTOBUF_MAP = {
     swsscommon.APP_DASH_TUNNEL_TABLE_NAME: Tunnel
 }
 
+APP_DB_DEL_ORDER = [
+    swsscommon.APP_DASH_ENI_ROUTE_TABLE_NAME,
+    swsscommon.APP_DASH_VNET_MAPPING_TABLE_NAME,
+    swsscommon.APP_DASH_ROUTE_TABLE_NAME,
+    swsscommon.APP_DASH_ROUTE_RULE_TABLE_NAME,
+    swsscommon.APP_DASH_ENI_TABLE_NAME,
+    swsscommon.APP_DASH_TUNNEL_TABLE_NAME,
+    swsscommon.APP_DASH_ROUTE_GROUP_TABLE_NAME,
+    swsscommon.APP_DASH_VNET_TABLE_NAME,
+    swsscommon.APP_DASH_ROUTING_TYPE_TABLE_NAME,
+    swsscommon.APP_DASH_METER_POLICY_TABLE_NAME,
+    swsscommon.APP_DASH_METER_RULE_TABLE_NAME,
+    swsscommon.APP_DASH_APPLIANCE_TABLE_NAME
+]
+
 
 def del_all_keys(dash_db):
-    for table_name in APP_DB_TO_PROTOBUF_MAP.keys():
+    for table_name in APP_DB_DEL_ORDER:
         keys = dash_db.get_app_db_keys(table_name)
         for key in keys:
             dash_db.remove_app_db_entry(table_name, key)

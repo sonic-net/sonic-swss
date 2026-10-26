@@ -50,6 +50,22 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
 
     if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
     {
+        /*
+         * EVPN Split Horizon and DF role information are both sent using traffic
+         * classifier filters for ease-of-use without needing a new magic number
+         * type to be shared between FRR and FPM.
+         */
+        if (h->nlmsg_type == RTM_NEWTFILTER || h->nlmsg_type == RTM_DELTFILTER)
+        {
+            return true;
+        }
+
+        /* RTM_FPM_* private message types for EVPN MH (SHL, DF, backup NHG) */
+        if (h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST)
+        {
+            return true;
+        }
+
         return false;
     }
 

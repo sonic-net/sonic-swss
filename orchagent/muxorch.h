@@ -132,7 +132,7 @@ public:
 class MuxCable
 {
 public:
-    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type);
+    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type, MuxNbrHandlerType nbr_handler_type, IpPrefix slice_ip6 = IpPrefix("::/0"));
 
     bool isActive() const
     {
@@ -149,9 +149,22 @@ public:
     bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
+
+    // Per-cable IPv6 slice prefix. "::/0" means no slice configured.
+    bool hasSlicePrefix() const { return !slice_ip6_.getIp().isZero(); }
+    const IpPrefix& getSlicePrefix() const { return slice_ip6_; }
+    const IpPrefix& getServerIp6() const { return srv_ip6_; }
+    const std::string& getMuxName() const { return mux_name_; }
+    bool isIpInSlice(const IpAddress& ip) const
+    {
+        return (hasSlicePrefix() && !ip.isV4() && slice_ip6_.isAddressInSubnet(ip));
+    }
     void updateNeighbor(NextHopKey nh, bool add);
     void updateRoutes();
     void updateRoutesForNextHop(NextHopKey nh);
+
+    // Slice supernet route tracking (see refreshSliceRoute in muxorch.cpp).
+    void refreshSliceRoute();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -182,6 +195,12 @@ private:
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;
 
+    // "::/0" sentinel = no slice configured.
+    IpPrefix slice_ip6_;
+
+    // Nexthop OID the slice route points at; NULL when not installed.
+    sai_object_id_t slice_route_nh_oid_ = SAI_NULL_OBJECT_ID;
+
     MuxOrch *mux_orch_;
     MuxCableOrch *mux_cb_orch_;
     MuxStateOrch *mux_state_orch_;
@@ -203,19 +222,17 @@ const request_description_t mux_cfg_request_description = {
                 { "cable_type", REQ_T_STRING },
                 { "prober_type", REQ_T_STRING },
                 { "neighbor_mode", REQ_T_STRING },
+                { "server_ipv6_subnet", REQ_T_IP_PREFIX },
             },
             { }
 };
 
-struct NHTunnel
-{
-    sai_object_id_t nh_id;
-    int             ref_count;
-};
-
 typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
-typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
+/* IPinIP tunnel next hops created/owned by MuxOrch, keyed by peer IP and
+ * caching the SAI next-hop OID. Consumer reference counting (and the decision
+ * of when teardown is safe) lives in NeighOrch's tunnel next-hop tracking. */
+typedef std::map<IpAddress, sai_object_id_t> MuxTunnelNHs;
 typedef std::map<NextHopKey, std::string> NextHopTb;
 typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 
@@ -230,6 +247,8 @@ class MuxOrch : public Orch2, public Observer, public Subject
 {
 public:
     MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
+    ~MuxOrch() override;
+    void detachObservers() override;
 
     using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
     using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
@@ -270,6 +289,10 @@ public:
     }
 
     MuxCable* findMuxCableInSubnet(IpAddress);
+
+    MuxCable* findMuxCableBySlice(IpAddress);
+    bool isSuppressedNeighbor(const IpAddress& ip, const std::string& port_name, MuxCable** out_cable = nullptr);
+    bool isSliceConfigured() const { return sliced_cable_count_ > 0; }
     bool isMuxPortPrefixNbr(const IpAddress&, const MacAddress&, string&);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
@@ -353,6 +376,9 @@ private:
     MuxCfgRequest request_;
     std::set<IpAddress> standalone_tunnel_neighbors_;
     std::map<IpAddress, std::string> skip_neighbors_;
+    // NHs disabled in SAI due to slice port-affinity; MAC kept for FDB-move lookup.
+    std::map<NeighborEntry, MacAddress> suppressed_neighbors_;
+    size_t sliced_cable_count_ = 0;
 
     bool enable_cache_neigh_updates_ = false;
     std::vector<NeighborUpdate> cached_neigh_updates_;

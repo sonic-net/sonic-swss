@@ -5,7 +5,7 @@ import itertools
 
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
-from dvslib.dvs_common import PollingConfig
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 from mux_neigh_miss_tests import *
 
@@ -194,14 +194,12 @@ class TestMuxTunnelBase():
         # gets nexthop oid
         nexthop_keys = asicdb.get_keys(self.ASIC_NEXTHOP_TABLE)
 
-        nexthop_oid = ''
         for nexthop_key in nexthop_keys:
             entry = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, nexthop_key)
-            if entry["SAI_NEXT_HOP_ATTR_IP"] == nexthop:
-                nexthop_oid = nexthop_key
-                break
+            if entry.get("SAI_NEXT_HOP_ATTR_IP") == nexthop:
+                return nexthop_key
 
-        return nexthop_oid
+        return ''
     
     def get_route_nexthop_oid(self, route_key, asicdb):
         # gets nexthop oid
@@ -262,16 +260,26 @@ class TestMuxTunnelBase():
         assert tunnel_nh_id
 
     def check_nexthop_in_asic_db(self, asicdb, key, standby=False):
+        # orchagent programs a route over a mux neighbor in several steps (a
+        # standby neighbor prefix route starts as neighbor next hop + drop and
+        # then moves to tunnel next hop + forward), so wait for the end state.
+        def _access_function():
+            fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
+            if not fvs:
+                return (False, None)
 
-        fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
-        if not fvs:
-            assert False
+            nhid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            action = fvs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_FORWARD")
+            forwarding = action != "SAI_PACKET_ACTION_DROP"
+            return (forwarding and (nhid == tunnel_nh_id) == standby, (nhid, action))
 
-        nhid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
-        if standby:
-            assert (nhid == tunnel_nh_id)
-        else:
-            assert (nhid != tunnel_nh_id)
+        status, result = wait_for_result(
+            _access_function,
+            PollingConfig(polling_interval=0.01, timeout=5.0, strict=False)
+        )
+
+        assert status, "Route {} has (next hop, packet action) {}, expected {} tunnel next hop {} and no drop".format(
+            key, result, "the" if standby else "anything but the", tunnel_nh_id)
 
     def check_nexthop_group_in_asic_db(self, asicdb, key, num_tnl_nh=0):
 
@@ -300,15 +308,47 @@ class TestMuxTunnelBase():
         """
         Checks if nexthop is a member of a given route
         """
-        route_key = dvs_route.check_asicdb_route_entries([route])
-        route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
+        def _access_function():
+            route_key = dvs_route.check_asicdb_route_entries([route])
+            route_nexthop_oid = self.get_route_nexthop_oid(route_key[0], asicdb)
 
-        if tunnel:
-            return route_nexthop_oid == nexthop
+            if tunnel:
+                if route_nexthop_oid == nexthop:
+                    return (True, None)
 
-        nexthop_oid = self.get_nexthop_oid(asicdb, nexthop)
+                nhg_members = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+                for member in nhg_members:
+                    fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", member)
+                    if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") != route_nexthop_oid:
+                        continue
+                    if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID") == nexthop:
+                        return (True, None)
 
-        return route_nexthop_oid == nexthop_oid
+                return (False, None)
+
+            nexthop_oid = self.get_nexthop_oid(asicdb, nexthop)
+            if not nexthop_oid:
+                return (False, None)
+
+            if route_nexthop_oid == nexthop_oid:
+                return (True, None)
+
+            nhg_members = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+            for member in nhg_members:
+                fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", member)
+                if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID") != route_nexthop_oid:
+                    continue
+                if fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID") == nexthop_oid:
+                    return (True, None)
+
+            return (False, None)
+
+        status, _ = wait_for_result(
+            _access_function,
+            PollingConfig(polling_interval=0.1, timeout=5.0, strict=False)
+        )
+
+        return status
 
     def add_neighbor(self, dvs, ip, mac):
         if ip_address(ip).version == 6:
@@ -1403,6 +1443,10 @@ class TestMuxTunnelBase():
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
             elif field == "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE":
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_ECN_MODE":
+                assert value == self.ecn_modes_map[self.DEFAULT_TUNNEL_PARAMS["ecn_mode"]]
+            elif field == "SAI_TUNNEL_ATTR_ENCAP_ECN_MODE":
+                assert value == "SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD"
             else:
                 assert False, "Field %s is not tested" % field
 
@@ -1908,6 +1952,92 @@ class TestMuxTunnel(TestMuxTunnelBase):
         new_mac = intf_fdb_map["Ethernet8"]
 
         self.create_and_test_multi_nexthop_routes(dvs, dvs_route, appdb, macs, new_mac, asicdb)
+
+    def test_multi_nexthop_all_standby_then_delete_route(self, dvs, dvs_route, intf_fdb_map,
+                                                          neighbor_cleanup, testlog, setup):
+        """
+        Create ECMP route while mux active, set all mux ports to standby,
+        then delete the route. Verifies the NHG and route are cleaned up
+        from ASIC DB, orchagent stays healthy, and no SAI errors are logged.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        statedb = dvs.get_state_db()
+        macs = [intf_fdb_map["Ethernet0"], intf_fdb_map["Ethernet4"]]
+
+        route = "9.9.9.0/24"
+        nexthops = [self.SERV1_IPV4, self.SERV2_IPV4]
+        mux_ports = ["Ethernet0", "Ethernet4"]
+
+        try:
+            for i, mac in enumerate(macs):
+                self.add_neighbor(dvs, nexthops[i], mac)
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "active")
+
+            # Wait for neighbors to be resolved in ASIC DB before adding the route.
+            # RouteOrch defers NHG creation if nexthops aren't resolved yet.
+            for nexthop in nexthops:
+                self.check_neigh_in_asic_db(asicdb, nexthop)
+
+            nhg_members_before = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+
+            self.add_route(dvs, route, nexthops)
+
+            def _check_new_nhg_members():
+                current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+                new = current - nhg_members_before
+                return (len(new) >= 2, new)
+
+            status, new_members = wait_for_result(
+                _check_new_nhg_members,
+                PollingConfig(polling_interval=1, timeout=20.0, strict=True),
+                failure_message="Expected at least 2 new NHG members after adding ECMP route"
+            )
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "standby")
+
+            def _check_nhg_members_removed():
+                current = set(asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE))
+                remaining = current & new_members
+                return (len(remaining) == 0, remaining)
+
+            wait_for_result(
+                _check_nhg_members_removed,
+                PollingConfig(polling_interval=1, timeout=20.0, strict=True),
+                failure_message="NHG members should be removed from ASIC DB after all mux standby"
+            )
+
+            # Place a syslog marker before route deletion
+            (_, marker) = dvs.runcmd(['sh', '-c', 'date +"%b %e %H:%M:%S"'])
+            marker = marker.strip()
+            time.sleep(1)
+
+            self.del_route(dvs, route)
+
+            dvs_route.check_asicdb_deleted_route_entries([route])
+
+            # Verify no NHG member removal failures were logged during route deletion.
+            # removeNextHopGroup() logs this ERROR for any non-SUCCESS SAI status.
+            (_, cnt) = dvs.runcmd(['sh', '-c',
+                "awk '/%s/,ENDFILE {print;}' /var/log/syslog | "
+                "grep -c 'Failed to remove next hop group member' "
+                "|| true" % marker])
+            assert cnt.strip() == "0", \
+                "No NHG member removal failures should be logged"
+
+            # Verify orchagent is still healthy (SAI_STATUS_NOT_EXECUTED from
+            # STOP_ON_ERROR bulk mode would set the persistent unhealthy flag)
+            health_entry = statedb.get_entry("PROCESS_HEALTH", "orchagent")
+            assert health_entry.get("unhealthy", "false") != "true", \
+                "Orchagent should remain healthy after NHG cleanup"
+
+        finally:
+            self.del_route(dvs, route)
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "active")
+            for nexthop in nexthops:
+                self.del_neighbor(dvs, nexthop)
 
     def test_acl(self, dvs, dvs_acl, testlog):
         """ test acl and mux state change """

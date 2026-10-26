@@ -1,7 +1,11 @@
-#include "hftelorch_is_supported_sai_wrap.h"
+#include "mock_sai_capability_wrap.h"
 #include "ut_helper.h"
-#include "mock_orchagent_main.h"
+#define private public
+#define protected public
 #include "high_frequency_telemetry/hftelorch.h"
+#undef private
+#undef protected
+#include "mock_orchagent_main.h"
 #include "schema.h"
 #include <gtest/gtest.h>
 #include <memory>
@@ -11,7 +15,7 @@ extern sai_switch_api_t *sai_switch_api;
 namespace hftelorch_test
 {
     using namespace std;
-    using hftel_is_supported_ut::SaiHookGuard;
+    using hftelorch_sai_wrap_ut::HFTelSaiHookGuard;
 
     namespace constructor_ut
     {
@@ -66,7 +70,7 @@ namespace hftelorch_test
 
         void TearDown() override
         {
-            hftel_is_supported_ut::setSaiHookNone();
+            hftelorch_sai_wrap_ut::setSaiHookNone();
 
             ASSERT_EQ(sai_switch_api->remove_switch(gSwitchId), SAI_STATUS_SUCCESS);
             gSwitchId = SAI_NULL_OBJECT_ID;
@@ -92,7 +96,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_streaming_stats_unsupported)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookStatsStFail);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookStatsStFail);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
@@ -102,7 +106,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_attribute_capability_query_failed)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookAttributeCapabilityQueryFail);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookAttributeCapabilityQueryFail);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
@@ -113,7 +117,7 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_collector_create_not_supported)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookCollectorCreateNotImplemented);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookCollectorCreateNotImplemented);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
@@ -124,8 +128,148 @@ namespace hftelorch_test
      */
     TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_negative_switch_notify_set_not_supported)
     {
-        SaiHookGuard guard(hftel_is_supported_ut::setSaiHookSwitchNotifySetNotImplemented);
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookSwitchNotifySetNotImplemented);
         EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * All checks pass — happy path through the entire function.
+     * The AllSupported hook makes attribute capability return all-supported,
+     * then real sai_query_attribute_enum_values_capability handles enum checks.
+     * Covers: the full attribute loop, enum loop, and "return true" at the end.
+     */
+    TEST_F(HFTelOrchIsSupportedTest, IsSupportedHFTel_positive_all_supported)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookAllSupported);
+        // VS SAI may or may not support all enum values, so we just exercise
+        // the code path without asserting the result.
+        bool supported = HFTelOrch::isSupportedHFTel(gSwitchId);
+        (void)supported;
+    }
+
+    /*
+     * Fixture for the SAI_TAM_TEL_TYPE_ATTR_MODE capability matrix tests.
+     * Inherits the base setUp/tearDown and additionally installs the
+     * AllSupported attribute-capability hook so isSupportedHFTel reaches the
+     * mode probe instead of bouncing on an earlier capability check. The
+     * mode hook is installed per-test via SaiHookGuard.
+     */
+    class HFTelOrchModeTest : public HFTelOrchIsSupportedTest
+    {
+    protected:
+        void SetUp() override
+        {
+            HFTelOrchIsSupportedTest::SetUp();
+            hftelorch_sai_wrap_ut::setSaiHookAllSupported();
+        }
+        // TearDown is inherited; SaiHookGuard::~SaiHookGuard() also clears the
+        // attribute-capability hook via setSaiHookNone() between tests.
+    };
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises SINGLE only.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mode_single_only)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedSingleOnly);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises MIXED only.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mode_mixed_only)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises both SINGLE and MIXED.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mode_both)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedBoth);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises neither SINGLE nor MIXED.
+     * Covers: "HFTel: neither SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE nor
+     *          SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE advertised, HFTel disabled"
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mode_neither)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedNeither);
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises MIXED only, but none of the three
+     * SWITCH_ENABLE_*_STATS attributes are implemented on TAM_TEL_TYPE. MIXED
+     * can never support any category, so it must be treated the same as "not
+     * advertised": with SINGLE also unavailable, HFTel is disabled.
+     * Covers: querySupportedTelTypeModes' mixed_supported downgrade when
+     * tel_type_supported_categories ends up empty.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mixedOnly_noCategoriesSupported_disablesHft)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * Same as above, but both modes are advertised. The SWITCH_ENABLE_*_STATS
+     * probe is not MIXED-specific - SINGLE mode needs the same attributes, one
+     * at a time, so with none implemented neither mode can bind any object
+     * type. HFTel must be disabled, not silently fall back to a SINGLE_TYPE
+     * that would fail on every category too.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_bothAdvertised_noCategoriesSupported_disablesHft)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedBoth);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises SINGLE only, but none of the three
+     * SWITCH_ENABLE_*_STATS attributes are implemented on TAM_TEL_TYPE. SINGLE
+     * can never bind any object type either, so it must be treated the same as
+     * "not advertised": with MIXED also unavailable, HFTel is disabled.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_singleOnly_noCategoriesSupported_disablesHft)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedSingleOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsAllUnsupported();
+        EXPECT_FALSE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE advertises MIXED only, and only the MMU_STATS
+     * enable attribute is unimplemented (PORT_STATS / OUTPUT_QUEUE_STATS are
+     * fine). MIXED must stay usable for the supported categories, so HFTel
+     * remains enabled.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mixedOnly_partialCategoriesSupported_staysEnabled)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedMixedOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsMmuUnsupported();
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * Same partial-support probe result, but with SINGLE_TYPE advertised
+     * instead of MIXED_TYPE: SINGLE only needs one attribute per object type,
+     * so PORT_STATS / OUTPUT_QUEUE_STATS being implemented is enough to stay
+     * enabled even with MMU_STATS unimplemented.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_singleOnly_partialCategoriesSupported_staysEnabled)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeAdvertisedSingleOnly);
+        hftelorch_sai_wrap_ut::setSaiHookMixedEnableAttrsMmuUnsupported();
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
     }
 
     class HFTelOrchConstructorTest : public ::testing::Test
@@ -231,6 +375,46 @@ namespace hftelorch_test
         };
 
         auto orch = make_unique<HFTelOrch>(m_config_db.get(), m_state_db.get(), stel_tables);
+        orch.reset();
+    }
+
+    /*
+     * SAI_TAM_TEL_TYPE_ATTR_MODE capability query returns NOT_SUPPORTED
+     * (current saivs behavior). HFT should still be enabled via the
+     * spec-default SINGLE_TYPE fallback.
+     */
+    TEST_F(HFTelOrchModeTest, IsSupportedHFTel_mode_query_not_supported)
+    {
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeQueryNotSupported);
+        EXPECT_TRUE(HFTelOrch::isSupportedHFTel(gSwitchId));
+    }
+
+    /*
+     * Same SAI_TAM_TEL_TYPE_ATTR_MODE query-unavailable condition as
+     * IsSupportedHFTel_mode_query_not_supported, but checked at the point
+     * that actually matters: a constructed HFTelOrch. Before this fix the
+     * constructor's own call to querySupportedTelTypeModes() ignored the
+     * query failure and the per-category probe never ran, leaving
+     * m_tel_type_supported_categories empty and m_tel_type_mode stuck on
+     * DEFAULT_TEL_TYPE_MODE (MIXED_TYPE) - every groupTableSet() would then
+     * reject as unsupported, even though isSupportedHFTel() (checked above)
+     * reports the feature as enabled.
+     */
+    TEST_F(HFTelOrchShutdownTest, ConstructorFallsBackToSingleTypeWhenModeQueryUnsupported)
+    {
+        hftelorch_sai_wrap_ut::setSaiHookAllSupported();
+        HFTelSaiHookGuard guard(hftelorch_sai_wrap_ut::setSaiHookModeQueryNotSupported);
+
+        const vector<string> stel_tables = {
+            CFG_HIGH_FREQUENCY_TELEMETRY_PROFILE_TABLE_NAME,
+            CFG_HIGH_FREQUENCY_TELEMETRY_GROUP_TABLE_NAME,
+        };
+
+        auto orch = make_unique<HFTelOrch>(m_config_db.get(), m_state_db.get(), stel_tables);
+
+        EXPECT_EQ(orch->m_tel_type_mode, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        EXPECT_FALSE(orch->m_tel_type_supported_categories.empty());
+
         orch.reset();
     }
 }

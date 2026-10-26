@@ -50,10 +50,16 @@ class VxlanEvpnHelper(object):
         if db.getDbId() == swsscommon.ASIC_DB and table == "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY":
             for k in entries:
                 try:
-                    if json.loads(k).get("dest") == "fe80::/10":
-                        baseline.add(k)
+                    dest = json.loads(k).get("dest")
                 except (ValueError, TypeError):
                     continue
+                # Exclude the link-local CPU routes (the fe80::/10 subnet route
+                # and the eui64 fe80::.../128 host route). The latter is added
+                # per-VRF when an EVPN L3 VNI is bound, which can coincide with
+                # the data route under test and must not be counted.
+                if dest == "fe80::/10" or \
+                        (isinstance(dest, str) and dest.lower().startswith("fe80:") and dest.endswith("/128")):
+                    baseline.add(k)
         new_entries = list(entries - baseline)
         assert len(new_entries) == count, "Wrong number of created entries."
         new_entries.sort()
@@ -441,6 +447,28 @@ class VxlanTunnel(object):
                 assert False, 'Don\'t found switch mac'
 
         return mac
+
+    def get_rif_mac(self, dvs, vlan_oid):
+        # IntfsOrch programs a router interface with the MAC of the underlying port.
+        # For a VLAN that is the VLAN's own MAC (APP_DB VLAN_TABLE|mac, which vlanmgrd
+        # defaults to the DEVICE_METADATA MAC); only a VLAN without a MAC falls back to
+        # the switch MAC.
+        if not vlan_oid:
+            return self.switch_mac
+
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        status, fvs = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN").get(vlan_oid)
+        assert status, "Failed to read VLAN %s from ASIC_DB" % vlan_oid
+
+        vlan_id = dict(fvs).get("SAI_VLAN_ATTR_VLAN_ID")
+        assert vlan_id, "VLAN %s has no SAI_VLAN_ATTR_VLAN_ID" % vlan_oid
+
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        status, fvs = swsscommon.Table(app_db, "VLAN_TABLE").get("Vlan%s" % vlan_id)
+        mac = dict(fvs).get("mac") if status else None
+
+        # ASIC_DB stores MACs upper case, APP_DB lower case
+        return mac.upper() if mac else self.switch_mac
 
     def fetch_exist_entries(self, dvs):
         self.tunnel_ids = self.helper.get_exist_entries(dvs, self.ASIC_TUNNEL_TABLE)
@@ -939,7 +967,7 @@ class VxlanTunnel(object):
 
         expected_attr = {
             "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": self.vr_map[name].get('ing'),
-            "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS": self.switch_mac,
+            "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS": self.get_rif_mac(dvs, vlan_oid),
         }
 
         if vlan_oid:

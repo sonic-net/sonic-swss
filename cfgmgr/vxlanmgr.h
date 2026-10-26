@@ -92,8 +92,8 @@ private:
     void clearAllVxlanDevices();
     void disableLearningForAllVxlanNetdevices();
 
-    ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable,m_appEvpnNvoTable;
-    Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable;
+    ProducerStateTable m_appVxlanTunnelTableProducer, m_appVxlanTunnelMapTable,m_appEvpnNvoTable;
+    Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable, m_appVxlanTunnelTable;
     Table m_stateVlanTable, m_stateNeighSuppressVlanTable, m_stateVxlanTunnelTable;
 
     /*

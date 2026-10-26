@@ -112,5 +112,89 @@ namespace counternameupdater_test
         // Restore gHFTOrch
         gHFTOrch = saved_gHFTOrch;
     }
+
+    // Test delCounterNameMap removes the entry from DB
+    TEST_F(CounterNameMapUpdaterTest, DelCounterNameMap)
+    {
+        HFTelOrch *saved_gHFTOrch = gHFTOrch;
+        gHFTOrch = nullptr;
+
+        CounterNameMapUpdater queue_updater("COUNTERS_DB", "COUNTERS_QUEUE_NAME_MAP");
+
+        // Set then delete
+        queue_updater.setCounterNameMap("Ethernet0:5", 0x1500000000005ULL);
+
+        string value;
+        ASSERT_TRUE(m_counters_queue_name_map_table->hget("", "Ethernet0:5", value));
+
+        queue_updater.delCounterNameMap("Ethernet0:5");
+
+        ASSERT_FALSE(m_counters_queue_name_map_table->hget("", "Ethernet0:5", value));
+
+        gHFTOrch = saved_gHFTOrch;
+    }
+
+    // Test batch setCounterNameMap with FieldValueTuple vector
+    TEST_F(CounterNameMapUpdaterTest, SetCounterNameMapBatch)
+    {
+        HFTelOrch *saved_gHFTOrch = gHFTOrch;
+        gHFTOrch = nullptr;
+
+        CounterNameMapUpdater pg_updater("COUNTERS_DB", "COUNTERS_PG_NAME_MAP");
+
+        vector<FieldValueTuple> batch = {
+            {"Ethernet0|3", "oid:0x1a00000000001"},
+            {"Ethernet0|4", "oid:0x1a00000000002"},
+        };
+        pg_updater.setCounterNameMap(batch);
+
+        string value;
+        ASSERT_TRUE(m_counters_pg_name_map_table->hget("", "Ethernet0|3", value));
+        ASSERT_EQ(value, "oid:0x1a00000000001");
+        ASSERT_TRUE(m_counters_pg_name_map_table->hget("", "Ethernet0|4", value));
+        ASSERT_EQ(value, "oid:0x1a00000000002");
+
+        gHFTOrch = saved_gHFTOrch;
+    }
+
+    // Test unify_counter_name replaces ':' with '|'
+    TEST_F(CounterNameMapUpdaterTest, UnifyCounterName)
+    {
+        CounterNameMapUpdater updater("COUNTERS_DB", "COUNTERS_QUEUE_NAME_MAP");
+
+        // ':' separator should be replaced with '|'
+        ASSERT_EQ(updater.unify_counter_name("Ethernet0:3"), "Ethernet0|3");
+
+        // No ':' should return unchanged
+        ASSERT_EQ(updater.unify_counter_name("Ethernet0"), "Ethernet0");
+
+        // Only last ':' should be replaced
+        ASSERT_EQ(updater.unify_counter_name("a:b:c"), "a:b|c");
+    }
+
+    // Test Message struct uses owned strings (no dangling pointers)
+    TEST_F(CounterNameMapUpdaterTest, MessageStructOwnsStrings)
+    {
+        CounterNameMapUpdater::Message msg;
+        msg.m_table_name = "COUNTERS_PORT_NAME_MAP";
+        msg.m_operation = CounterNameMapUpdater::SET;
+        msg.m_counter_name = "Ethernet0";
+        msg.m_oid = 0x1000000000001ULL;
+
+        // Verify message fields are accessible (owned, not dangling)
+        ASSERT_EQ(msg.m_table_name, "COUNTERS_PORT_NAME_MAP");
+        ASSERT_EQ(msg.m_counter_name, "Ethernet0");
+        ASSERT_EQ(msg.m_oid, 0x1000000000001ULL);
+        ASSERT_EQ(msg.m_operation, CounterNameMapUpdater::SET);
+
+        // DEL message
+        CounterNameMapUpdater::Message del_msg;
+        del_msg.m_table_name = "COUNTERS_QUEUE_NAME_MAP";
+        del_msg.m_operation = CounterNameMapUpdater::DEL;
+        del_msg.m_counter_name = "Ethernet0|0";
+
+        ASSERT_EQ(del_msg.m_operation, CounterNameMapUpdater::DEL);
+        ASSERT_EQ(del_msg.m_oid, SAI_NULL_OBJECT_ID);
+    }
 }
 

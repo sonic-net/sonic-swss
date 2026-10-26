@@ -78,6 +78,22 @@ std::shared_ptr<swss::ZmqServer> swss::create_zmq_server(std::string zmq_address
     return std::make_shared<ZmqServer>(zmq_address, vrf, true);
 }
 
+std::shared_ptr<swss::ZmqRouteServer> swss::create_zmq_route_server(std::string zmq_address, std::string vrf)
+{
+    if (!std::regex_search(zmq_address, ZMQ_NONE_IPV6_ADDRESS_WITH_PORT)
+            && !std::regex_search(zmq_address, ZMQ_IPV6_ADDRESS_WITH_PORT))
+    {
+        auto zmq_port = get_zmq_port();
+        zmq_address = zmq_address + ":" + std::to_string(zmq_port);
+    }
+
+    SWSS_LOG_NOTICE("Create ZMQ route server with address: %s, vrf: %s", zmq_address.c_str(), vrf.c_str());
+
+    // To prevent message loss between ZmqServer's bind operation and the creation of ZmqProducerStateTable,
+    // use lazy binding and call bind() only after the handler has been registered.
+    return std::make_shared<ZmqRouteServer>(zmq_address, vrf, true);
+}
+
 bool swss::get_feature_status(std::string feature, bool default_value)
 {
     std::shared_ptr<std::string> enabled = nullptr;
@@ -101,6 +117,42 @@ bool swss::get_feature_status(std::string feature, bool default_value)
 
     SWSS_LOG_NOTICE("Get feature %s status: %s", feature.c_str(), enabled->c_str());
     return *enabled == "true";
+}
+
+bool swss::get_route_perf_zmq_enabled()
+{
+    std::shared_ptr<std::string> value = nullptr;
+
+    try
+    {
+        swss::DBConnector config_db("CONFIG_DB", 0);
+        value = config_db.hget(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD);
+    }
+    catch (const std::runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Failed to read swss_zmq status: %s", e.what());
+        return false;
+    }
+
+    if (!value)
+    {
+        SWSS_LOG_NOTICE("swss_zmq status not found, default disabled.");
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("swss_zmq status: %s", value->c_str());
+    return *value == "enabled";
+}
+
+std::shared_ptr<swss::ZmqClient> swss::create_route_perf_zmq_client()
+{
+    if (get_route_perf_zmq_enabled())
+    {
+        SWSS_LOG_NOTICE("Route perf ZMQ enabled, creating local ZMQ client");
+        return create_zmq_client(ZMQ_LOCAL_ADDRESS);
+    }
+
+    return nullptr;
 }
 
 std::shared_ptr<swss::ZmqClient> swss::create_local_zmq_client(std::string feature, bool default_value)

@@ -1,6 +1,7 @@
 #include "twamporch.h"
 #include "vrforch.h"
 #include "crmorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "converter.h"
@@ -147,6 +148,10 @@ TwampOrch::TwampOrch(TableConnector confDbConnector, TableConnector stateDbConne
     /* Add TWAMP session event notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_twampNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_twampNotificationConsumer->setOpAllowList({"twamp_session_event"});
+    m_twampNotificationConsumer->setStatsLabel("TwampOrch:twamp_session_event");
+    if (gNotifConsumerStatsOrch)
+        gNotifConsumerStatsOrch->registerConsumer("TwampOrch:twamp_session_event", m_twampNotificationConsumer);
     auto twampNotifier = new Notifier(m_twampNotificationConsumer, this, "TWAMP_NOTIFICATIONS");
     Orch::addExecutor(twampNotifier);
     register_event_notif = false;

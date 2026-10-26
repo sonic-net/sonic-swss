@@ -9,6 +9,7 @@
 #include "zmqclient.h"
 #include "zmqserver.h"
 #include "zmqproducerstatetable.h"
+#include "zmqrouteserver.h"
 
 /*
  * swssconfig will only connect to local orchagent ZMQ endpoint.
@@ -21,9 +22,10 @@
 #define ORCH_NORTHBOND_DASH_ZMQ_ENABLED "orch_northbond_dash_zmq_enabled"
 
 /*
- * Feature flag to enable the fpmsyncd to send ROUTE events to orchagent via the ZMQ channel.
+ * Route performance knob in SYSTEM_DEFAULTS table.
  */
-#define ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED "orch_northbond_route_zmq_enabled"
+#define SYSTEM_DEFAULTS_SWSS_ZMQ_KEY    "SYSTEM_DEFAULTS|swss_zmq"
+#define SYSTEM_DEFAULTS_STATUS_FIELD    "status"
 
 namespace swss {
 
@@ -34,8 +36,13 @@ int get_zmq_port();
 std::shared_ptr<ZmqClient> create_zmq_client(std::string zmq_address, std::string vrf="");
 
 std::shared_ptr<ZmqServer> create_zmq_server(std::string zmq_address, std::string vrf="");
+std::shared_ptr<ZmqRouteServer> create_zmq_route_server(std::string zmq_address, std::string vrf="");
 
 bool get_feature_status(std::string feature, bool default_value);
+
+bool get_route_perf_zmq_enabled();
+
+std::shared_ptr<swss::ZmqClient> create_route_perf_zmq_client();
 
 std::shared_ptr<swss::ZmqClient> create_local_zmq_client(std::string feature, bool default_value);
 

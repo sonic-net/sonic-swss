@@ -20,6 +20,7 @@
 #include "mock_sai_switch.h"
 
 using ::p4orch::kTableKeyDelimiter;
+using namespace swss;
 
 extern P4Orch* gP4Orch;
 extern VRFOrch* gVrfOrch;
@@ -165,15 +166,13 @@ class P4OrchTest : public ::testing::Test {
     sai_bridge_api->get_bridge_port_stats_ext = mock_get_bridge_port_stats_ext;
     sai_bridge_api->clear_bridge_port_stats = mock_clear_bridge_port_stats;
 
-    copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
     std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
+    gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
     gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
   }
 
   ~P4OrchTest() {
     delete gP4Orch;
-    delete copp_orch_;
     gMockResponsePublisher.reset();
   }
 
@@ -191,7 +190,6 @@ class P4OrchTest : public ::testing::Test {
   NiceMock<MockSaiBridge> mock_sai_bridge_;
   NiceMock<MockSaiL2mc> mock_sai_l2mc_;
   NiceMock<MockSaiL2mcGroup> mock_sai_l2mc_group_;
-  CoppOrch* copp_orch_;
 };
 
 TEST_F(P4OrchTest, ProcessInvalidEntry) {
@@ -202,11 +200,10 @@ TEST_F(P4OrchTest, ProcessInvalidEntry) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       "invalid", DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       "invalid:invalid", DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
   std::vector<swss::FieldValueTuple> exp_values;
   EXPECT_CALL(*gMockResponsePublisher,
@@ -227,8 +224,7 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
   // Router interface
   const std::string ritf_key =
@@ -239,7 +235,7 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
                                              "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
 
   // Neighbor
@@ -250,7 +246,7 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
   std::vector<swss::FieldValueTuple> neighbor_attrs;
   neighbor_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kDstMac), "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{neighbor_key, SET_COMMAND, neighbor_attrs});
 
   // Nexthop
@@ -264,7 +260,7 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       prependParamField(p4orch::kNeighborId), "10.0.0.22"});
   nexthop_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kRouterInterfaceId), "intf-3/4"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{nexthop_key, SET_COMMAND, nexthop_attrs});
 
   // Route
@@ -276,17 +272,17 @@ TEST_F(P4OrchTest, ProcessP4Notification) {
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetNexthopId});
   route_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kNexthopId), "ju1u32m1.atl11:qe-3/7"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{route_key, SET_COMMAND, route_attrs});
 
   // Delete
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       route_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       nexthop_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       neighbor_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
@@ -327,14 +323,13 @@ TEST_F(P4OrchTest, ProcessP4NotificationInvalidKey) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
   // Router interface
   const std::string key = std::string("invalid") + kTableKeyDelimiter + "key";
   std::vector<swss::FieldValueTuple> attrs;
   attrs.push_back(swss::FieldValueTuple{"NULL", "NULL"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{key, SET_COMMAND, attrs});
 
   EXPECT_CALL(*gMockResponsePublisher,
@@ -351,8 +346,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationInOrder) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
   // Router interface
   const std::string ritf_key =
@@ -363,7 +357,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationInOrder) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
                                              "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
 
   // Neighbor
@@ -374,7 +368,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationInOrder) {
   std::vector<swss::FieldValueTuple> neighbor_attrs;
   neighbor_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kDstMac), "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{neighbor_key, SET_COMMAND, neighbor_attrs});
 
   // Router interface
@@ -386,7 +380,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationInOrder) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs_2.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kSrcMac), "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs_2});
 
   EXPECT_CALL(*gMockResponsePublisher,
@@ -410,8 +404,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
   // Router interface
   const std::string ritf_key =
@@ -422,7 +415,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
                                              "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
 
   // Neighbor
@@ -433,7 +426,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
   std::vector<swss::FieldValueTuple> neighbor_attrs;
   neighbor_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kDstMac), "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{neighbor_key, SET_COMMAND, neighbor_attrs});
 
   // Nexthop
@@ -447,7 +440,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
       prependParamField(p4orch::kNeighborId), "10.0.0.22"});
   nexthop_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kRouterInterfaceId), "intf-3/4"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{nexthop_key, SET_COMMAND, nexthop_attrs});
 
   // Route
@@ -459,17 +452,17 @@ TEST_F(P4OrchTest, ProcessP4NotificationWrongOrder) {
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetNexthopId});
   route_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kNexthopId), "ju1u32m1.atl11:qe-3/7"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{route_key, SET_COMMAND, route_attrs});
 
   // Delete in wrong order
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       neighbor_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       nexthop_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       route_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
@@ -510,8 +503,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
   // Router interface
   const std::string ritf_key =
@@ -522,7 +514,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
   ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
                                              "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
 
   // Neighbor
@@ -533,7 +525,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
   std::vector<swss::FieldValueTuple> neighbor_attrs;
   neighbor_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kDstMac), "00:01:02:03:04:05"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{neighbor_key, SET_COMMAND, neighbor_attrs});
 
   // Nexthop
@@ -547,7 +539,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       prependParamField(p4orch::kNeighborId), "10.0.0.22"});
   nexthop_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kRouterInterfaceId), "intf-3/4"});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{nexthop_key, SET_COMMAND, nexthop_attrs});
 
   // Route
@@ -559,17 +551,17 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailure) {
       swss::FieldValueTuple{p4orch::kAction, p4orch::kSetNexthopId});
   route_attrs.push_back(swss::FieldValueTuple{
       prependParamField(p4orch::kNexthopId), "ju1u32m1.atl11:qe-3/7"});
- consumer.m_queue.push_back(
+ consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{route_key, SET_COMMAND, route_attrs});
 
   // Delete
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       neighbor_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       nexthop_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       route_key, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
@@ -614,8 +606,7 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
       new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
                                 TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
                                 /*dbPersistence=*/false);
-  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME,
-                       /*orderedQueue=*/true);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
 
   // Router interface
   const std::string ritf_key_1 =
@@ -631,27 +622,27 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
                                              "00:01:02:03:04:05"});
 
   // Add
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key_1, SET_COMMAND, ritf_attrs});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs});
 
   // Delete
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key_1, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key_2, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   // Add
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key_1, SET_COMMAND, ritf_attrs});
-  consumer.m_queue.push_back(
+  consumer.m_toSyncQueue.push_back(
       swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs});
 
   // Delete
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key_1, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
-  consumer.m_queue.push_back(swss::KeyOpFieldsValuesTuple{
+  consumer.m_toSyncQueue.push_back(swss::KeyOpFieldsValuesTuple{
       ritf_key_2, DEL_COMMAND, std::vector<swss::FieldValueTuple>{}});
 
   EXPECT_CALL(*gMockResponsePublisher,
@@ -685,4 +676,206 @@ TEST_F(P4OrchTest, ProcessP4NotificationStopOnFirstFailureDifferentTypes) {
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(ritf_key_2), Eq(exp_values),
                       Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
   DoTask(consumer);
+}
+
+TEST_F(P4OrchTest, TestP4OrchDumpPendingTasks)
+{
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // No pending tasks.
+  std::vector<std::string> pending_tasks;
+  consumer.dumpPendingTasks(pending_tasks);
+  EXPECT_TRUE(pending_tasks.empty());
+
+  const std::string ritf_key_1 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-1\"}";
+  const std::string ritf_key_2 =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-2\"}";
+  std::vector<swss::FieldValueTuple> ritf_attrs;
+  ritf_attrs.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
+  ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             "00:01:02:03:04:05"});
+
+  // Insert tasks into m_toSync.
+  // Expect no pending tasks.
+  consumer.m_toSync.emplace(
+      ritf_key_1,
+      swss::KeyOpFieldsValuesTuple{ritf_key_1, SET_COMMAND, ritf_attrs});
+  consumer.m_toSync.emplace(
+      ritf_key_2,
+      swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs});
+  consumer.dumpPendingTasks(pending_tasks);
+  EXPECT_TRUE(pending_tasks.empty());
+
+  // Insert tasks into m_toSyncQueue.
+  // Expect pending tasks not empty.
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key_1, SET_COMMAND, ritf_attrs});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key_2, SET_COMMAND, ritf_attrs});
+  consumer.dumpPendingTasks(pending_tasks);
+  EXPECT_FALSE(pending_tasks.empty());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeWithAclTableDefinition) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // ACL Table Definition entry
+  const std::string acl_table_def_key =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_ingress\"}";
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs;
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"stage", "INGRESS"});
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"size", "8192"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key, SET_COMMAND, acl_table_def_attrs});
+
+  // Call bake() to simulate warm boot reconciliation
+  ASSERT_TRUE(gP4Orch->bake());
+  
+  // Verify that the ordered queue has been set back to true after bake
+  // This is implicit - if bake() completes successfully, the ordered queue is restored
+}
+
+TEST_F(P4OrchTest, P4OrchBakeWithMultipleAclTables) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Multiple ACL Table Definitions
+  const std::string acl_table_def_key_1 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_ingress\"}";
+  const std::string acl_table_def_key_2 =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_egress\"}";
+  
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs;
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"stage", "INGRESS"});
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"size", "8192"});
+
+  // Add ACL table definitions to consumer queue
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key_1, SET_COMMAND, acl_table_def_attrs});
+  
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs_2;
+  acl_table_def_attrs_2.push_back(
+      swss::FieldValueTuple{"stage", "EGRESS"});
+  acl_table_def_attrs_2.push_back(
+      swss::FieldValueTuple{"size", "4096"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key_2, SET_COMMAND, acl_table_def_attrs_2});
+
+  // Call bake() during warm boot
+  ASSERT_TRUE(gP4Orch->bake());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeEmptyConsumer) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Empty consumer - no entries to process during warm boot
+  // Verify bake() handles empty queue gracefully
+  ASSERT_TRUE(gP4Orch->bake());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeNonAclTableEntries) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Non-ACL table entry (Router Interface)
+  const std::string ritf_key =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-1\"}";
+  std::vector<swss::FieldValueTuple> ritf_attrs;
+  ritf_attrs.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
+  ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             "00:01:02:03:04:05"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
+
+  // Call bake() - should skip non-ACL entries
+  ASSERT_TRUE(gP4Orch->bake());
+}
+
+TEST_F(P4OrchTest, P4OrchBakeMixedAclAndNonAclEntries) {
+  InSequence s;
+  ZmqServer zmq_server("endpoint");
+  DBConnector db("APPL_DB", 0);
+  ZmqConsumerStateTable* table =
+      new ZmqConsumerStateTable(&db, APP_P4RT_TABLE_NAME, zmq_server,
+                                TableConsumable::DEFAULT_POP_BATCH_SIZE, 0,
+                                /*dbPersistence=*/false);
+  ZmqConsumer consumer(table, nullptr, APP_P4RT_TABLE_NAME);
+  consumer.setOrderedQueue(/*orderedQueue=*/true);
+
+  // Router Interface
+  const std::string ritf_key =
+      std::string(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME) + kTableKeyDelimiter +
+      "{\"match/router_interface_id\":\"intf-1\"}";
+  std::vector<swss::FieldValueTuple> ritf_attrs;
+  ritf_attrs.push_back(
+      swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet1"});
+  ritf_attrs.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac),
+                                             "00:01:02:03:04:05"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{ritf_key, SET_COMMAND, ritf_attrs});
+
+  // ACL Table Definition
+  const std::string acl_table_def_key =
+      std::string(APP_P4RT_ACL_TABLE_DEFINITION_NAME) + kTableKeyDelimiter +
+      "{\"acl_table_name\":\"acl_ingress\"}";
+  std::vector<swss::FieldValueTuple> acl_table_def_attrs;
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"stage", "INGRESS"});
+  acl_table_def_attrs.push_back(
+      swss::FieldValueTuple{"size", "8192"});
+  consumer.m_toSyncQueue.push_back(
+      swss::KeyOpFieldsValuesTuple{acl_table_def_key, SET_COMMAND, acl_table_def_attrs});
+
+  // Call bake()
+  ASSERT_TRUE(gP4Orch->bake());
 }

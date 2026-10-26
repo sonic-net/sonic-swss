@@ -22,6 +22,8 @@ extern "C" {
 #include "sai_serialize.h"
 #include "saihelper.h"
 #include "orch.h"
+#include "dbconnector.h"
+#include "table.h"
 
 using namespace std;
 using namespace swss;
@@ -109,8 +111,14 @@ extern bool gTraditionalFlexCounter;
 extern bool gSyncMode;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 extern event_handle_t g_events_handle;
-extern bool gOrchUnhealthy;
-extern string gSaiErrorString;
+
+#define STATE_PROCESS_HEALTH_TABLE_NAME "PROCESS_HEALTH"
+#define PROCESS_HEALTH_KEY "orchagent"
+
+unique_ptr<DBConnector> gHealthStateDb;
+unique_ptr<Table> gOrchHealthTable;
+bool gOrchUnhealthyCached = false;
+std::string gLastSaiError;
 
 vector<sai_object_id_t> gGearboxOids;
 
@@ -549,6 +557,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
        SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
        return SAI_STATUS_FAILURE;
     }
+    memset(hwinfo, 0, HWINFO_MAX_SIZE + 1);
     strncpy(hwinfo, phy->hwinfo.c_str(), phy->hwinfo.length());
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
@@ -831,10 +840,10 @@ void handleSaiFailure(sai_api_t api, string oper, sai_status_t status, bool abor
 
     string s_api = sai_serialize_api(api);
     string s_status = sai_serialize_status(status);
-    gOrchUnhealthy = true;
-    gSaiErrorString = "Encountered failure in " + oper +
-                      " operation, SAI API: " + s_api + ", status: " + s_status;
-    SWSS_LOG_ERROR("%s", gSaiErrorString.c_str());
+    string errorString = "Encountered failure in " + oper +
+                         " operation, SAI API: " + s_api + ", status: " + s_status;
+    setSaiFailureStatus(true, errorString);
+    SWSS_LOG_ERROR("%s", errorString.c_str());
 
     // Publish a structured syslog event
     event_params_t params = {
@@ -867,6 +876,7 @@ static inline void initSaiRedisCounterEmptyParameter(sai_s8_list_t &sai_s8_list)
 
 static inline void initSaiRedisCounterEmptyParameter(sai_redis_flex_counter_group_parameter_t &flex_counter_group_param)
 {
+    initSaiRedisCounterEmptyParameter(flex_counter_group_param.counter_group_name);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.poll_interval);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.operation);
     initSaiRedisCounterEmptyParameter(flex_counter_group_param.stats_mode);
@@ -1177,56 +1187,172 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
     return stat_list;
 }
 
-void writeResultToDB(const std::unique_ptr<swss::Table>& table, const string& key,
-                     uint32_t res, const string& version)
+void initSaiFailureTable()
 {
-    SWSS_LOG_ENTER();
-
-    if (!table)
-    {
-        SWSS_LOG_WARN("Table passed in is NULL");
-        return;
-    }
-
-    std::vector<FieldValueTuple> fvVector;
-
-    fvVector.emplace_back("result", std::to_string(res));
-
-    if (!version.empty())
-    {
-        fvVector.emplace_back("version", version);
-    }
-
-    try
-    {
-        table->set(key, fvVector);
-    }
-    catch (const exception &e)
-    {
-        SWSS_LOG_ERROR("Exception caught while writing to DB: %s", e.what());
-        return;
-    }
-    SWSS_LOG_INFO("Wrote result to DB for key %s", key.c_str());
+    gHealthStateDb = make_unique<DBConnector>("STATE_DB", 0);
+    gOrchHealthTable = make_unique<Table>(gHealthStateDb.get(), STATE_PROCESS_HEALTH_TABLE_NAME);
 }
 
-void removeResultFromDB(const std::unique_ptr<swss::Table>& table, const string& key)
+void setSaiFailureStatus(bool unhealthy, const std::string& error)
 {
-    SWSS_LOG_ENTER();
-
-    if (!table)
+    gOrchUnhealthyCached = unhealthy;
+    if (unhealthy && !error.empty())
     {
-        SWSS_LOG_WARN("Table passed in is NULL");
+        gLastSaiError = error;
+    }
+    if (!gOrchHealthTable)
+    {
         return;
     }
-
     try
     {
-        table->del(key);
+        vector<FieldValueTuple> fvs;
+        fvs.emplace_back("unhealthy", unhealthy ? "true" : "false");
+        fvs.emplace_back("error", error);
+        gOrchHealthTable->set(PROCESS_HEALTH_KEY, fvs);
     }
-    catch (const exception &e)
+    catch (const std::exception& e)
     {
-        SWSS_LOG_ERROR("Exception caught while removing from DB: %s", e.what());
-        return;
+        SWSS_LOG_WARN("Failed to write health status to STATE_DB: %s", e.what());
     }
-    SWSS_LOG_INFO("Removed result from DB for key %s", key.c_str());
 }
+
+bool getSaiFailureStatus(std::string& error)
+{
+    /* Fast path: when the local cache says healthy, skip Redis entirely.
+     * Only read STATE_DB when unhealthy, so an external reset
+     * (operator clearing the flag in Redis) is still detected. */
+    if (!gOrchUnhealthyCached)
+    {
+        return false;
+    }
+    if (!gOrchHealthTable)
+    {
+        error = gLastSaiError.empty() ? "Orchagent is unhealthy (health table not initialized)" : gLastSaiError;
+        return true;
+    }
+    /* Fetch all fields in a single Redis round-trip */
+    vector<FieldValueTuple> fvs;
+    try
+    {
+        if (!gOrchHealthTable->get(PROCESS_HEALTH_KEY, fvs))
+        {
+            /* Key missing but cache says unhealthy — keep reporting unhealthy
+             * with the last known error rather than silently clearing. */
+            error = gLastSaiError.empty() ? "Orchagent is unhealthy (STATE_DB key missing)" : gLastSaiError;
+            return true;
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to read health status from STATE_DB: %s", e.what());
+        error = gLastSaiError.empty() ? "Orchagent is unhealthy (STATE_DB read failed)" : gLastSaiError;
+        return true;
+    }
+    bool unhealthy = true;
+    error = "Orchagent is unhealthy";
+    for (const auto& fv : fvs)
+    {
+        if (fvField(fv) == "unhealthy")
+            unhealthy = (fvValue(fv) == "true");
+        else if (fvField(fv) == "error")
+            error = fvValue(fv);
+    }
+    if (!unhealthy)
+    {
+        /* External reset detected — update local cache */
+        gOrchUnhealthyCached = false;
+        error = "";
+        return false;
+    }
+    return true;
+}
+
+/*
+ * Determine the ACL table group lookup type the platform actually supports.
+ *
+ * Historically orchagent hardcodes SAI_ACL_TABLE_GROUP_TYPE_PARALLEL. The only
+ * case in which we deviate from that is when a *successful* enum-values
+ * capability query for SAI_ACL_TABLE_GROUP_ATTR_TYPE tells us PARALLEL is not
+ * supported but SEQUENTIAL is. For every other outcome we keep the historical
+ * PARALLEL default so existing platforms are never regressed:
+ *   - query SUCCESS, PARALLEL listed            -> PARALLEL (unchanged)
+ *   - query SUCCESS, only SEQUENTIAL listed     -> SEQUENTIAL
+ *   - query NOT_IMPLEMENTED / NOT_SUPPORTED     -> PARALLEL (query not available)
+ *   - any other (genuine) query failure         -> PARALLEL (preserve historical)
+ *
+ * Note: unlike a "must this field be dropped" gate, choosing PARALLEL on a
+ * non-definitive result cannot introduce a new create/retry loop here because
+ * PARALLEL is exactly what is programmed today; it is the safe, no-change path.
+ */
+sai_acl_table_group_type_t querySupportedAclTableGroupType(sai_object_id_t switch_id)
+{
+    const auto *meta = sai_metadata_get_attr_metadata(
+        SAI_OBJECT_TYPE_ACL_TABLE_GROUP, SAI_ACL_TABLE_GROUP_ATTR_TYPE);
+    if (meta == nullptr || !meta->isenum || meta->enummetadata == nullptr)
+    {
+        return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    }
+
+    std::vector<int32_t> values_list(meta->enummetadata->valuescount, 0);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(
+        switch_id, SAI_OBJECT_TYPE_ACL_TABLE_GROUP,
+        SAI_ACL_TABLE_GROUP_ATTR_TYPE, &values);
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        bool parallel_supported = false;
+        bool sequential_supported = false;
+        for (uint32_t i = 0; i < values.count; i++)
+        {
+            if (values.list[i] == SAI_ACL_TABLE_GROUP_TYPE_PARALLEL)
+            {
+                parallel_supported = true;
+            }
+            else if (values.list[i] == SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL)
+            {
+                sequential_supported = true;
+            }
+        }
+
+        if (parallel_supported)
+        {
+            return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        }
+        if (sequential_supported)
+        {
+            SWSS_LOG_NOTICE("PARALLEL ACL table group lookup not supported by the "
+                            "platform; using SEQUENTIAL");
+            return SAI_ACL_TABLE_GROUP_TYPE_SEQUENTIAL;
+        }
+
+        SWSS_LOG_WARN("ACL table group TYPE capability query returned no usable "
+                      "values; preserving historical PARALLEL default");
+        return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    }
+
+    /*
+     * The capability query did not succeed. Only treat NOT_IMPLEMENTED /
+     * NOT_SUPPORTED as the expected "query unavailable" case; log any other
+     * status as a genuine failure. In both cases keep the historical PARALLEL
+     * default so behavior is identical to before this change.
+     */
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_INFO("sai_query_attribute_enum_values_capability(ACL_TABLE_GROUP, "
+                      "TYPE) not available (status:%d); using historical PARALLEL "
+                      "default", status);
+    }
+    else
+    {
+        SWSS_LOG_WARN("sai_query_attribute_enum_values_capability(ACL_TABLE_GROUP, "
+                      "TYPE) failed (status:%d); preserving historical PARALLEL "
+                      "default", status);
+    }
+    return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+}
+
