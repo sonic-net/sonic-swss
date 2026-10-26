@@ -34,6 +34,7 @@ namespace mux_rollback_test
     using ::testing::Throw;
     using ::testing::DoAll;
     using ::testing::SetArrayArgument;
+    using ::testing::AtLeast;
 
     static const string TEST_INTERFACE = "Ethernet4";
 
@@ -68,6 +69,20 @@ namespace mux_rollback_test
         {
             NextHopKey nhKey = NextHopKey(IpAddress(SERVER_IP1), VLAN_1000);
             return gNeighOrch->isPrefixNeighborNh(nhKey);
+        }
+
+        // Add a plain (non-mux) neighbor through NeighOrch: hw_configured,
+        // prefix_route=false, and no explicit /32 route. This is what a
+        // neighbor looks like when it was programmed before its mux object
+        // was ready.
+        void AddPlainNeighbor(const string& ip, const string& mac)
+        {
+            Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+            string key = VLAN_1000 + neigh_table.getTableNameSeparator() + ip;
+            neigh_table.set(key, { { "neigh", mac }, { "family", "IPv4" } });
+            gNeighOrch->addExistingData(&neigh_table);
+            static_cast<Orch *>(gNeighOrch)->doTask();
+            neigh_table.del(key);
         }
 
         void ApplyInitialConfigs()
@@ -441,5 +456,80 @@ namespace mux_rollback_test
             // Without prefix-based neighbors, expect rollback to standby
             EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
         }
+    }
+
+    // Warm recovery replays cached neighbors straight into update(), skipping
+    // addNeighbor. If such a neighbor has no /32 route yet, update() has to
+    // convert it to a prefix neighbor first, else set_route fails with
+    // ITEM_NOT_FOUND. On standby the route points at the tunnel next hop.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborStandbyConvertsMissingPrefixRoute)
+    {
+        const string ip = "192.168.0.60";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:07");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+        ASSERT_EQ(STANDBY_STATE, m_MuxCable->getState());
+
+        // The conversion installs the /32 route; stub the create so the test
+        // does not lean on vs route modeling. The old code never got here.
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(NextHopKey(IpAddress(ip), VLAN_1000), true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // Same case with the mux active: the /32 route points at the local
+    // next hop instead of the tunnel.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborActiveConvertsMissingPrefixRoute)
+    {
+        SetAndAssertMuxState(ACTIVE_STATE);
+
+        const string ip = "192.168.0.61";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:08");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(NextHopKey(IpAddress(ip), VLAN_1000), true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // A neighbor that is already prefix-based keeps its /32 route, so update()
+    // skips the conversion and creates no new route.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborSkipsConversionForExistingPrefixNeighbor)
+    {
+        const string ip = "192.168.0.62";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:09");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = true;
+        ASSERT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry).Times(0);
+
+        m_MuxCable->updateNeighbor(NextHopKey(IpAddress(ip), VLAN_1000), true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
     }
 }

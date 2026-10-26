@@ -1203,6 +1203,15 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
         case MuxState::MUX_STATE_ACTIVE:
             neighbors_[nh.ip_address] = local_nhid;
 
+            // A neighbor learned before this mux object was ready is created
+            // without NO_HOST_ROUTE, so its explicit /32 route is missing and
+            // set_route below would fail with ITEM_NOT_FOUND. Convert it to a
+            // prefix based neighbor first, which installs the /32 route.
+            if (!gNeighOrch->isPrefixNeighbor(nh))
+            {
+                gNeighOrch->convertToPrefixBasedNbr(nh, local_nhid);
+            }
+
             // Update the prefix route with local nexthop
             status = set_route(pfx, local_nhid, true);
             if (status != SAI_STATUS_SUCCESS) {
@@ -1215,6 +1224,14 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
+
+            // See MUX_STATE_ACTIVE: ensure the explicit /32 route exists before
+            // pointing it at the tunnel nexthop. Converting with the tunnel
+            // nexthop installs the /32 route when it is missing.
+            if (!gNeighOrch->isPrefixNeighbor(nh))
+            {
+                gNeighOrch->convertToPrefixBasedNbr(nh, tunnelId);
+            }
 
             // Update the prefix route with tunnel nexthop
             status = set_route(pfx, tunnelId, true);
