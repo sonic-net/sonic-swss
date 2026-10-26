@@ -2514,6 +2514,68 @@ TEST_F(FdbSyncdEvpnMhTest, KernelModeTakesOverRemoteMacsInAppDb)
     EXPECT_FALSE(getFdbTable().get(key, values));
 }
 
+/*
+ * Warm-restart reconciliation writes through the tables fdbsyncd registered at
+ * startup, which depend on mac_sync_mode: in fpm mode there is no
+ * APP_VXLAN_FDB_TABLE producer. A switch to kernel mode waits until
+ * reconciliation is done, so a remote MAC learnt meanwhile is never cached for
+ * a table without a producer, which reconcile() would dereference.
+ */
+TEST_F(FdbSyncdEvpnMhTest, KernelModeWaitsForWarmRestartReconciliation)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:66");
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    /* Registered as FdbSync's constructor does in fpm mode; ~FdbSync deletes it. */
+    m_mockFdbSync.m_AppRestartAssist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss");
+    AppRestartAssist &assist = *m_mockFdbSync.m_AppRestartAssist;
+    assist.m_warmStartInProgress = true;
+    assist.registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_mockFdbSync.m_imetTable);
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
+
+    struct nlmsghdr *nlmsg = mac_route_msg(true, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    for (const auto &table : assist.appTableCacheMap)
+    {
+        EXPECT_EQ(assist.m_psTables.count(table.first), 1u) << table.first << " has no producer";
+    }
+
+    assist.reconcile();
+    m_mockFdbSync.applyPendingMacSyncMode();
+    EXPECT_FALSE(m_mockFdbSync.isFpmMacSync());
+}
+
+/* The other way round, fdbsyncd keeps producing the rows it will reconcile
+ * until it has reconciled them, and only then leaves them to fpmsyncd. */
+TEST_F(FdbSyncdEvpnMhTest, FpmModeWaitsForWarmRestartReconciliation)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:77");
+    const std::string key = "Vlan100:dd:ee:ff:00:11:77";
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    /* Registered as FdbSync's constructor does in kernel mode; ~FdbSync deletes it. */
+    m_mockFdbSync.m_AppRestartAssist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss");
+    AppRestartAssist &assist = *m_mockFdbSync.m_AppRestartAssist;
+    assist.m_warmStartInProgress = true;
+    assist.registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_mockFdbSync.m_fdbTable);
+    assist.registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_mockFdbSync.m_imetTable);
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    EXPECT_FALSE(m_mockFdbSync.isFpmMacSync());
+
+    struct nlmsghdr *nlmsg = mac_route_msg(true, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    EXPECT_EQ(assist.appTableCacheMap[APP_VXLAN_FDB_TABLE_NAME].count(key), 1u);
+
+    assist.reconcile();
+    m_mockFdbSync.applyPendingMacSyncMode();
+    EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
+}
+
 /* addLocalMac() is a separate entry point with its own guard, reached from the
  * STATE_DB path rather than from netlink. */
 TEST_F(FdbSyncdEvpnMhTest, AddLocalMacNotProgrammedIntoKernelInFpmMode)

@@ -160,6 +160,7 @@ int main(int argc, char **argv)
                             sync.getRestartAssist()->stopReconcileTimer(s);
                             sync.getRestartAssist()->reconcile();
                             SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete");
+                            sync.applyPendingMacSyncMode();
                         }
                     }
                 }

@@ -143,6 +143,20 @@ void FdbSync::readCfgFdbSyncMode()
 
 void FdbSync::setMacSyncMode(const string& mode)
 {
+    /*
+     * The tables fdbsyncd reconciles after a warm restart were registered at
+     * startup for the mode then, and reconcile() writes through those
+     * registrations, so a mode change waits until reconciliation is done.
+     */
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_pendingMacSyncMode = mode;
+        m_macSyncModePending = true;
+        SWSS_LOG_NOTICE("FdbSync: mac_sync_mode '%s' held until warm-restart reconciliation completes",
+                        mode.c_str());
+        return;
+    }
+
     bool fpmMacSync = m_l3EvpnMh || (mode == "fpm");
 
     if (fpmMacSync == m_fpmMacSync)
@@ -163,6 +177,17 @@ void FdbSync::setMacSyncMode(const string& mode)
         /* fpmsyncd writes APP_VXLAN_FDB_TABLE in this mode. */
         m_mac.clear();
     }
+}
+
+void FdbSync::applyPendingMacSyncMode()
+{
+    if (!m_macSyncModePending)
+    {
+        return;
+    }
+
+    m_macSyncModePending = false;
+    setMacSyncMode(m_pendingMacSyncMode);
 }
 
 /*

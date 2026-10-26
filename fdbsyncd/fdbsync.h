@@ -103,6 +103,9 @@ public:
         return m_fpmMacSync;
     }
 
+    /* Apply a mac_sync_mode change held during warm-restart reconciliation. */
+    void applyPendingMacSyncMode();
+
     bool m_reconcileDone = false;
 
     bool m_isEvpnNvoExist = false;
@@ -124,6 +127,8 @@ private:
     bool m_fpmMacSync = false;
     /* An L3EvpnMH device always syncs MACs over FPM, whatever FDB_SYNC says. */
     bool m_l3EvpnMh = false;
+    bool m_macSyncModePending = false;
+    std::string m_pendingMacSyncMode;
 
     ProducerStateTable m_fdbTable;
     Table m_fdbTableRead;
@@ -131,7 +136,7 @@ private:
     ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
     SubscriberStateTable m_mclagRemoteFdbStateTable;
-    AppRestartAssist  *m_AppRestartAssist;
+    AppRestartAssist  *m_AppRestartAssist = nullptr;
     SubscriberStateTable m_cfgEvpnNvoTable;
     SubscriberStateTable m_cfgFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
