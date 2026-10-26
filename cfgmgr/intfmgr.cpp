@@ -650,7 +650,8 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
             {
                 effectiveAdmin = "down";
             }
-            else if (!setHostSubIntfAdminStatus(intf, adminStatus))
+            else if (!setIntfAdminStatus(intf, adminStatus) &&
+                     !isIntfAdminStatusSet(intf, adminStatus))
             {
                 throw runtime_error("Failed to set admin status \"" + adminStatus + "\" for " + intf);
             }
@@ -708,15 +709,6 @@ bool IntfMgr::isIntfAdminStatusSet(const string &alias, const string &admin_stat
         SWSS_LOG_WARN("Cannot query admin status on interface %s: %s", alias.c_str(), e.what());
         return false;
     }
-}
-
-bool IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status)
-{
-    if (admin_status != "up" && admin_status != "down")
-        throw runtime_error("Invalid admin status \"" + admin_status + "\" for " + alias);
-
-    return setIntfAdminStatus(alias, admin_status) ||
-           isIntfAdminStatusSet(alias, admin_status);
 }
 
 void IntfMgr::removeHostSubIntf(const string &subIntf)
@@ -1184,10 +1176,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
             try
             {
+                if (adminStatus != "up" && adminStatus != "down")
+                    throw runtime_error("Invalid admin status \"" + adminStatus + "\" for " + alias);
                 string parentAdmin = getIntfAdminStatus(subIf.parentIntf());
                 if (parentAdmin != "up" && adminStatus == "up")
                     return false;
-                if (!setHostSubIntfAdminStatus(alias, adminStatus))
+                if (!setIntfAdminStatus(alias, adminStatus) &&
+                    !isIntfAdminStatusSet(alias, adminStatus))
                     return false;
                 m_subIntfList[alias].currAdminStatus = adminStatus;
                 FieldValueTuple fvTuple("admin_status", adminStatus);

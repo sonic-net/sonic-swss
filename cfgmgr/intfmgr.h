@@ -81,7 +81,6 @@ private:
     std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
     bool setIntfAdminStatus(const std::string &alias, const std::string &admin_status);
     bool isIntfAdminStatusSet(const std::string &alias, const std::string &admin_status);
-    bool setHostSubIntfAdminStatus(const std::string &alias, const std::string &admin_status);
     void removeHostSubIntf(const std::string &subIntf);
     void setSubIntfStateOk(const std::string &alias);
     void removeSubIntfState(const std::string &alias);
