@@ -2127,19 +2127,26 @@ namespace intfmgr_ut
         ASSERT_EQ(ip_cmd_called, 1);
     }
 
-    TEST_F(IntfMgrTest, testHostSubIntfAdminStatusReturnsOnlyUpOrDown)
+    TEST_F(IntfMgrTest, testHostSubIntfAdminStatusSeparatesEffectiveState)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         const std::string alias = "Ethernet0.10";
         mockCallArgs.clear();
-        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "up", "up"), "up");
-        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "down", "up"), "down");
-        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "down", "down"), "down");
+        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "up", "up"), "up");
+        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "down", "up"), "down");
+        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "down", "down"), "down");
+        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "up", "down"), "down");
+        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "up", "up"));
+        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "down", "up"));
+        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "down", "down"));
         ASSERT_EQ(mockCallArgs.size(), 3u);
-        EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, "up", "down"), "down");
+        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "up", "down"));
         EXPECT_EQ(mockCallArgs.size(), 3u);
         for (const std::string status : {"", "invalid"})
+        {
+            EXPECT_THROW(intfmgr.getEffectiveSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
             EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+        }
         EXPECT_EQ(mockCallArgs.size(), 3u);
     }
 
@@ -2205,18 +2212,18 @@ namespace intfmgr_ut
                 AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
                     (status == "up" ? ",UP" : "") + "> state UNKNOWN\n";
                 mockCallArgs.clear();
-                EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), status);
+                EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
                 ASSERT_EQ(mockCallArgs.size(), 2u);
                 EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set \"" + alias + "\" \"" + status + "\"");
                 EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o link show dev \"" + alias + "\"");
 
                 AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
                     (status == "down" ? ",UP" : "") + "> state UNKNOWN\n";
-                EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
                 AdminQueryOutput.clear();
-                EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
                 ThrowAdminQuery = true;
-                EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
                 ThrowAdminQuery = false;
             }
         }
@@ -2260,14 +2267,14 @@ namespace intfmgr_ut
             AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
                 (status == "up" ? ",UP" : "") + "> state UNKNOWN\n";
             mockCallArgs.clear();
-            EXPECT_EQ(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), status);
+            EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
             ASSERT_EQ(mockCallArgs.size(), 2u);
             EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set \"" + alias + "\" \"" + status + "\"");
             EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o link show dev \"" + alias + "\"");
             AdminQueryOutput.clear();
-            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+            EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
             ThrowAdminQueryInvalidArgument = true;
-            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
+            EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
             ThrowAdminQueryInvalidArgument = false;
         }
     }
@@ -2383,21 +2390,20 @@ namespace intfmgr_ut
         EXPECT_EQ(value, "up");
     }
 
-    // A programming failure throws even when the subinterface is not ready.
+    // A programming failure returns false even when the subinterface is not ready.
     TEST_F(IntfMgrTest, testSetAdminStatusFailToNotOkSubInt){
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"), std::runtime_error);
+        EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"));
     }
 
-    //This test except runtime error when the set admin status command failed
-    //and the subinterface has ok status
+    // A programming failure returns false when the subinterface has ok status.
     TEST_F(IntfMgrTest, testSetAdminStatusFailToOkSubInt){
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         /* Set portStateTable */
         std::vector<swss::FieldValueTuple> values;
         values.emplace_back("state", "ok");
         intfmgr.m_statePortTable.set("Ethernet64.10", values, "SET", "");
-        EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"), std::runtime_error);
+        EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"));
     }
 
     TEST_F(IntfMgrTest, testReplayLLIpv6AddressOnAdminUp){

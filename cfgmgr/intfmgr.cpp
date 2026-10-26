@@ -644,9 +644,12 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
                 continue;
             }
             std::vector<FieldValueTuple> fvVector;
-            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin);
-            m_subIntfList[intf].currAdminStatus = subintf_admin;
-            FieldValueTuple fvTuple("admin_status", subintf_admin);
+            const string &adminStatus = m_subIntfList[intf].adminStatus;
+            string effectiveAdmin = getEffectiveSubIntfAdminStatus(intf, adminStatus, admin);
+            if (!setHostSubIntfAdminStatus(intf, adminStatus, admin))
+                throw runtime_error("Failed to set admin status \"" + adminStatus + "\" for " + intf);
+            m_subIntfList[intf].currAdminStatus = effectiveAdmin;
+            FieldValueTuple fvTuple("admin_status", effectiveAdmin);
             fvVector.push_back(fvTuple);
             m_appIntfTableProducer.set(intf, fvVector);
         }
@@ -701,22 +704,21 @@ bool IntfMgr::isIntfAdminStatusSet(const string &alias, const string &admin_stat
     }
 }
 
-std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
+std::string IntfMgr::getEffectiveSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
 {
     if (admin_status != "up" && admin_status != "down")
         throw runtime_error("Invalid admin status \"" + admin_status + "\" for " + alias);
 
-    if (parent_admin_status == "up" || admin_status == "down")
-    {
-        if (!setIntfAdminStatus(alias, admin_status) &&
-            !isIntfAdminStatusSet(alias, admin_status))
-            throw runtime_error("Failed to set admin status \"" + admin_status + "\" for " + alias);
-        return admin_status;
-    }
-    else
-    {
-        return "down";
-    }
+    return parent_admin_status == "up" || admin_status == "down" ? admin_status : "down";
+}
+
+bool IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
+{
+    if (getEffectiveSubIntfAdminStatus(alias, admin_status, parent_admin_status) != admin_status)
+        return true;
+
+    return setIntfAdminStatus(alias, admin_status) ||
+           isIntfAdminStatusSet(alias, admin_status);
 }
 
 void IntfMgr::removeHostSubIntf(const string &subIntf)
@@ -1185,11 +1187,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             try
             {
                 string parentAdmin = getIntfAdminStatus(subIf.parentIntf());
-                string subintf_admin = setHostSubIntfAdminStatus(alias, adminStatus, parentAdmin);
-                m_subIntfList[alias].currAdminStatus = subintf_admin;
+                string effectiveAdmin = getEffectiveSubIntfAdminStatus(alias, adminStatus, parentAdmin);
+                if (!setHostSubIntfAdminStatus(alias, adminStatus, parentAdmin))
+                    return false;
+                m_subIntfList[alias].currAdminStatus = effectiveAdmin;
                 FieldValueTuple fvTuple("admin_status", adminStatus);
                 std::remove(data.begin(), data.end(), fvTuple);
-                FieldValueTuple newAdminFvTuple("admin_status", subintf_admin);
+                FieldValueTuple newAdminFvTuple("admin_status", effectiveAdmin);
                 data.push_back(newAdminFvTuple);
             }
             catch (const std::runtime_error &e)
