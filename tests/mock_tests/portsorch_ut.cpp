@@ -6645,11 +6645,79 @@ TEST_F(PfcWdHwOrchTest, StormedPortProtection)
     ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 1u);
     ASSERT_EQ(_sai_port_dld_intervals[port.m_port_id], 200u);
 
-    // Test 2: Reject delete while stormed
+    // Test 2: Defer delete while stormed
     deleteHwWdEntry("Ethernet0");
 
-    // Port must still be tracked - delete was rejected
+    // Port must still be tracked - delete was deferred, not applied
     ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
+
+    // Test 3: the deferred delete is applied once the storm clears
+    data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED;
+    gPfcWdHwOrch->onQueuePfcDeadlock(1, &data);
+    ASSERT_FALSE(gPfcWdHwOrch->isPortInStormedState(port));
+
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, AlertActionRejected)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // Hardware recovery cannot report a storm without also mitigating it.
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "alert" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
+}
+
+TEST_F(PfcWdHwOrchTest, TimerWiderThanUint32Rejected)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    // 4294967496 is 2^32 + 200: narrowing would make it a valid 200 ms.
+    auto status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" },
+          { "detection_time", "4294967496" },
+          { "restoration_time", "200" } });
+
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
+
+    status = gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" },
+          { "detection_time", "200" },
+          { "restoration_time", "4294967496" } });
+
+    ASSERT_EQ(status, task_process_status::task_invalid_entry);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
+}
+
+TEST_F(PfcWdHwOrchTest, DldrDisableFailureKeepsTracking)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    gPfcWdHwOrch->createEntry("Ethernet0",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } });
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
+
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    sai_object_id_t queueId = port.m_queue_ids[3];
+
+    // The queue cannot be disabled, so it must stay tracked and the delete
+    // must stay pending rather than leaving it armed.
+    _sai_fail_queue_dldr_enable = true;
+    ASSERT_EQ(gPfcWdHwOrch->deleteEntry("Ethernet0"), task_process_status::task_need_retry);
+
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(queueId), 1u);
+
+    resetPfcWdFailureFlags();
 }
 
 TEST_F(PfcWdHwOrchTest, QueueMapLifecycle)
