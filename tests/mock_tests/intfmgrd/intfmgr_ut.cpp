@@ -2127,27 +2127,17 @@ namespace intfmgr_ut
         ASSERT_EQ(ip_cmd_called, 1);
     }
 
-    TEST_F(IntfMgrTest, testHostSubIntfAdminStatusSeparatesEffectiveState)
+    TEST_F(IntfMgrTest, testHostSubIntfAdminStatusReturnsBoolean)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         const std::string alias = "Ethernet0.10";
         mockCallArgs.clear();
-        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "up", "up"), "up");
-        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "down", "up"), "down");
-        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "down", "down"), "down");
-        EXPECT_EQ(intfmgr.getEffectiveSubIntfAdminStatus(alias, "up", "down"), "down");
-        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "up", "up"));
-        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "down", "up"));
-        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "down", "down"));
-        ASSERT_EQ(mockCallArgs.size(), 3u);
-        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "up", "down"));
-        EXPECT_EQ(mockCallArgs.size(), 3u);
+        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "up"));
+        EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, "down"));
+        ASSERT_EQ(mockCallArgs.size(), 2u);
         for (const std::string status : {"", "invalid"})
-        {
-            EXPECT_THROW(intfmgr.getEffectiveSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
-            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"), std::runtime_error);
-        }
-        EXPECT_EQ(mockCallArgs.size(), 3u);
+            EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus(alias, status), std::runtime_error);
+        EXPECT_EQ(mockCallArgs.size(), 2u);
     }
 
     TEST_F(IntfMgrTest, testAdminStatusCheckUsesExactAdminFlag)
@@ -2212,18 +2202,18 @@ namespace intfmgr_ut
                 AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
                     (status == "up" ? ",UP" : "") + "> state UNKNOWN\n";
                 mockCallArgs.clear();
-                EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+                EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, status));
                 ASSERT_EQ(mockCallArgs.size(), 2u);
                 EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set \"" + alias + "\" \"" + status + "\"");
                 EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o link show dev \"" + alias + "\"");
 
                 AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
                     (status == "down" ? ",UP" : "") + "> state UNKNOWN\n";
-                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status));
                 AdminQueryOutput.clear();
-                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status));
                 ThrowAdminQuery = true;
-                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+                EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status));
                 ThrowAdminQuery = false;
             }
         }
@@ -2267,14 +2257,14 @@ namespace intfmgr_ut
             AdminQueryOutput = "7: " + alias + ": <BROADCAST" +
                 (status == "up" ? ",UP" : "") + "> state UNKNOWN\n";
             mockCallArgs.clear();
-            EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+            EXPECT_TRUE(intfmgr.setHostSubIntfAdminStatus(alias, status));
             ASSERT_EQ(mockCallArgs.size(), 2u);
             EXPECT_EQ(mockCallArgs[0], "/sbin/ip link set \"" + alias + "\" \"" + status + "\"");
             EXPECT_EQ(mockCallArgs[1], "/sbin/ip -o link show dev \"" + alias + "\"");
             AdminQueryOutput.clear();
-            EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+            EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status));
             ThrowAdminQueryInvalidArgument = true;
-            EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status, "up"));
+            EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus(alias, status));
             ThrowAdminQueryInvalidArgument = false;
         }
     }
@@ -2306,6 +2296,31 @@ namespace intfmgr_ut
         }
     }
 
+    TEST_F(IntfMgrTest, testConfigAdminUpWaitsForParentUp)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        const std::string alias = "PortChannel1.20";
+        intfmgr.m_cfgSubIntfTable.set(alias, {{"admin_status", "up"}});
+        auto *consumer = dynamic_cast<Consumer *>(intfmgr.getConsumerBase(CFG_VLAN_SUB_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "down"}, {"mtu", "9100"}});
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_FALSE(commandWasIssued("link set \"" + alias + "\" \"up\""));
+        EXPECT_FALSE(intfmgr.isIntfStateOk(alias));
+
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
+        EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
+    }
+
     TEST_F(IntfMgrTest, testConfigAdminFailureAcceptsConfirmedKernelState)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
@@ -2326,6 +2341,32 @@ namespace intfmgr_ut
         EXPECT_TRUE(intfmgr.isIntfStateOk(alias));
         swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
         std::string status;
+        ASSERT_TRUE(app.hget(alias, "admin_status", status));
+        EXPECT_EQ(status, "up");
+    }
+
+    TEST_F(IntfMgrTest, testParentDownPublishesEffectiveDownWithoutChildCommand)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        auto *consumer = applyChild(intfmgr);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        const std::string alias = "PortChannel1.20";
+        swss::Table app(m_app_db.get(), APP_INTF_TABLE_NAME);
+
+        mockCallArgs.clear();
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "down"}, {"mtu", "9100"}});
+        EXPECT_FALSE(commandWasIssued("link set \"" + alias + "\""));
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "down");
+        std::string status;
+        ASSERT_TRUE(app.hget(alias, "admin_status", status));
+        EXPECT_EQ(status, "down");
+
+        mockCallArgs.clear();
+        notifyLag(intfmgr, "PortChannel1", SET_COMMAND,
+                  {{"state", "ok"}, {"admin_status", "up"}, {"mtu", "9100"}});
+        EXPECT_TRUE(commandWasIssued("link set \"" + alias + "\" \"up\""));
+        EXPECT_EQ(intfmgr.m_subIntfList.at(alias).currAdminStatus, "up");
         ASSERT_TRUE(app.hget(alias, "admin_status", status));
         EXPECT_EQ(status, "up");
     }
@@ -2393,7 +2434,7 @@ namespace intfmgr_ut
     // A programming failure returns false even when the subinterface is not ready.
     TEST_F(IntfMgrTest, testSetAdminStatusFailToNotOkSubInt){
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"));
+        EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up"));
     }
 
     // A programming failure returns false when the subinterface has ok status.
@@ -2403,7 +2444,7 @@ namespace intfmgr_ut
         std::vector<swss::FieldValueTuple> values;
         values.emplace_back("state", "ok");
         intfmgr.m_statePortTable.set("Ethernet64.10", values, "SET", "");
-        EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"));
+        EXPECT_FALSE(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up"));
     }
 
     TEST_F(IntfMgrTest, testReplayLLIpv6AddressOnAdminUp){
