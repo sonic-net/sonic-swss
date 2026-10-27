@@ -202,6 +202,30 @@ namespace mux_rollback_test
         {
             m_neighbor_mode = "prefix-route";
         }
+
+    protected:
+        void SetRouteViaServer(const string &prefix, bool add)
+        {
+            auto *consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            if (add)
+            {
+                entries.push_back({ prefix, SET_COMMAND, { { "nexthop", SERVER_IP1 }, { "ifname", VLAN_1000 } } });
+            }
+            else
+            {
+                entries.push_back({ prefix, DEL_COMMAND, {} });
+            }
+            consumer->addToSync(entries);
+
+            // RouteOrch reads the global TunnelDecapOrch, which MockOrchTest does not set.
+            auto *saved_tunnel_decap_orch = gTunneldecapOrch;
+            gTunneldecapOrch = m_TunnelDecapOrch;
+            static_cast<Orch *>(gRouteOrch)->doTask();
+            gTunneldecapOrch = saved_tunnel_decap_orch;
+        }
     };
 
     TEST_F(MuxRollbackTest, StandbyToActiveNeighborAlreadyExists)
@@ -915,24 +939,6 @@ namespace mux_rollback_test
     }
 
     static const string SLB_ROUTE = "10.10.100.0/27";
-
-    static void SetRouteViaServer(const string &prefix, bool add)
-    {
-        auto *consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        if (add)
-        {
-            entries.push_back({ prefix, SET_COMMAND, { { "nexthop", SERVER_IP1 }, { "ifname", VLAN_1000 } } });
-        }
-        else
-        {
-            entries.push_back({ prefix, DEL_COMMAND, {} });
-        }
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gRouteOrch)->doTask();
-    }
 
     // A route learned while the mux is active is released by the standby
     // transition, so deleting it while standby must not release it again.
