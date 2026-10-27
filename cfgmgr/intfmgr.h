@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "orch.h"
+#include "ipprefix.h"
 
 #include <map>
 #include <string>
@@ -20,6 +21,8 @@ struct SubIntfInfo
 typedef std::map<std::string, SubIntfInfo>             SubIntfMap;
 typedef std::map<std::string, bool>                    SagIntfMap;
 
+struct nl_object;
+
 namespace swss {
 
 class IntfMgr : public Orch
@@ -27,6 +30,8 @@ class IntfMgr : public Orch
 public:
     IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
+
+    void handleNetlinkAddr(int nlmsg_type, struct nl_object *obj);
 
 private:
     ProducerStateTable m_appIntfTableProducer, m_appSagTableProducer;
@@ -42,6 +47,10 @@ private:
     std::set<std::string> m_ipv6LinkLocalModeList;
     std::map<std::string, std::set<std::string>> m_intfLLAddresses;
     std::string mySwitchType;
+
+    void setIntfAddrStateDb(const std::string &alias, const IpPrefix &ipPrefix);
+    void delIntfAddrStateDb(const std::string &alias, const IpPrefix &ipPrefix);
+    static std::string intfAddrScopeStr(const IpPrefix &ipPrefix);
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
