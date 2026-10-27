@@ -7732,9 +7732,10 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         return addVlanFloodGroups(vlan, port, end_point_ip);
     }
 
+    // The PHY and LAG callers' addBridgePort() refuses a router port first; this covers any other caller.
     if (port.m_rif_id != SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_NOTICE("Cannot add %s to VLAN %s, it is a router port", port.m_alias.c_str(), vlan.m_alias.c_str());
+        SWSS_LOG_INFO("Cannot add %s to VLAN %s, it is a router port", port.m_alias.c_str(), vlan.m_alias.c_str());
         return false;
     }
 
