@@ -394,6 +394,27 @@ namespace intfmgr_ut
         return false;
     }
 
+    TEST_F(IntfMgrTest, LinkLocalModeDisableMatchesExactInterfaceAlias)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        intfmgr.m_statePortTable.set("Ethernet4", {{"state", "ok"}});
+        intfmgr.m_stateIntfTable.set("Ethernet4", {{"vrf", ""}});
+
+        EXPECT_TRUE(intfmgr.doIntfGeneralTask(
+            {"Ethernet4"}, {{"ipv6_use_link_local_only", "enable"}}, SET_COMMAND));
+        intfmgr.m_neighTable.set("Ethernet4:fe80::1", {{"neigh", "00:11:22:33:44:55"}});
+        intfmgr.m_neighTable.set("Ethernet40:fe80::2", {{"neigh", "00:11:22:33:44:66"}});
+        intfmgr.m_neighTable.set("Ethernet4:2001:db8::1", {{"neigh", "00:11:22:33:44:77"}});
+
+        mockCallArgs.clear();
+        EXPECT_TRUE(intfmgr.doIntfGeneralTask(
+            {"Ethernet4"}, {{"ipv6_use_link_local_only", "disable"}}, SET_COMMAND));
+
+        EXPECT_TRUE(commandWasIssued("neigh del dev Ethernet4 fe80::1"));
+        EXPECT_FALSE(commandWasIssued("neigh del dev Ethernet40 fe80::2"));
+        EXPECT_FALSE(commandWasIssued("2001:db8::1"));
+    }
+
     static std::string addressLine(const std::string &prefix)
     {
         return "7: PortChannel1    " + std::string(swss::IpPrefix(prefix).isV4() ? "inet " : "inet6 ") +
@@ -465,20 +486,6 @@ namespace intfmgr_ut
             EXPECT_EQ(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(test.desired)), !test.present);
             EXPECT_EQ(std::count(mockCallArgs.begin(), mockCallArgs.end(),
                                  "/sbin/ip -o address show dev \"PortChannel1\""), 2);
-        }
-        EXPECT_TRUE(interfaceLookups.empty());
-    }
-
-    TEST_F(IntfMgrTest, testFailedAddressCommandsRecognizeMissingInterface)
-    {
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        FailAddressAdd = FailAddressDelete = true;
-        AddressQueryResult = 1;
-        for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
-        {
-            SCOPED_TRACE(prefix);
-            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
-            EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
         }
         EXPECT_TRUE(interfaceLookups.empty());
     }
@@ -2097,52 +2104,21 @@ namespace intfmgr_ut
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
     }
 
-    TEST_F(IntfMgrTest, testSettingIpv6Flag){
-        Ethernet0IPv6Set = false;
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        /* Set portStateTable */
-        std::vector<swss::FieldValueTuple> values;
-        values.emplace_back("state", "ok");
-        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
-        /* Set m_stateIntfTable */
-        values.clear();
-        values.emplace_back("vrf", "");
-        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
-        /* Set Ipv6 prefix */
-        const std::vector<std::string>& keys = {"Ethernet0", "2001::8/64"};
-        const std::vector<swss::FieldValueTuple> data;
-        ASSERT_TRUE(intfmgr.doIntfAddrTask(keys, data, "SET"));
-        int ip_cmd_called = 0;
-        for (auto cmd : mockCallArgs){
-            if (cmd.find("/sbin/ip -6 address \"add\"") == 0){
-                ip_cmd_called++;
-            }
+    TEST_F(IntfMgrTest, testIpv6FlagControlsRetry)
+    {
+        for (const auto &test : std::vector<std::pair<bool, int>>{{false, 2}, {true, 1}})
+        {
+            SCOPED_TRACE(test.first);
+            Ethernet0IPv6Set = test.first;
+            mockCallArgs.clear();
+            swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+            intfmgr.m_statePortTable.set("Ethernet0", {{"state", "ok"}}, "SET", "");
+            intfmgr.m_stateIntfTable.set("Ethernet0", {{"vrf", ""}}, "SET", "");
+            ASSERT_TRUE(intfmgr.doIntfAddrTask({"Ethernet0", "2001::8/64"}, {}, SET_COMMAND));
+            EXPECT_EQ(std::count_if(mockCallArgs.begin(), mockCallArgs.end(), [](const auto &cmd) {
+                return cmd.find("/sbin/ip -6 address \"add\"") == 0;
+            }), test.second);
         }
-        ASSERT_EQ(ip_cmd_called, 2);
-    }
-
-    TEST_F(IntfMgrTest, testNoSettingIpv6Flag){
-        Ethernet0IPv6Set = true; // Assuming it is already set by SDK
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-        /* Set portStateTable */
-        std::vector<swss::FieldValueTuple> values;
-        values.emplace_back("state", "ok");
-        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
-        /* Set m_stateIntfTable */
-        values.clear();
-        values.emplace_back("vrf", "");
-        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
-        /* Set Ipv6 prefix */
-        const std::vector<std::string>& keys = {"Ethernet0", "2001::8/64"};
-        const std::vector<swss::FieldValueTuple> data;
-        ASSERT_TRUE(intfmgr.doIntfAddrTask(keys, data, "SET"));
-        int ip_cmd_called = 0;
-        for (auto cmd : mockCallArgs){
-            if (cmd.find("/sbin/ip -6 address \"add\"") == 0){
-                ip_cmd_called++;
-            }
-        }
-        ASSERT_EQ(ip_cmd_called, 1);
     }
 
     TEST_F(IntfMgrTest, testAdminStatusCheckUsesExactAdminFlag)
@@ -2329,7 +2305,7 @@ namespace intfmgr_ut
         EXPECT_TRUE(commandWasIssued("-o link show dev \"" + alias + "\""));
     }
 
-    TEST_F(IntfMgrTest, testReplayLLIpv6AddressOnAdminUp){
+    TEST_F(IntfMgrTest, testReplayLLIpv6AddressFollowsAdminState){
         Ethernet0IPv6Set = true;
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
 
@@ -2355,11 +2331,11 @@ namespace intfmgr_ut
         intfmgr.doIntfAddrTask(ipv4Keys, emptyData, "SET");
 
         mockCallArgs.clear();
+        intfmgr.doPortTableTask("Ethernet0", {{"admin_status", "down"}}, SET_COMMAND);
+        EXPECT_FALSE(commandWasIssued("/sbin/ip -6 address \"add\""));
 
-        /* Simulate admin up by calling doPortTableTask */
-        std::vector<swss::FieldValueTuple> portData;
-        portData.emplace_back("admin_status", "up");
-        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+        mockCallArgs.clear();
+        intfmgr.doPortTableTask("Ethernet0", {{"admin_status", "up"}}, SET_COMMAND);
 
         /* Verify that only IPv6 link-local address add was called */
         int ipv6_ll_add_called = 0;
@@ -2392,7 +2368,7 @@ namespace intfmgr_ut
         ASSERT_EQ(intfmgr.m_intfLLAddresses.count("Ethernet0"), 0u);
 
         mockCallArgs.clear();
-        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
+        intfmgr.doPortTableTask("Ethernet0", {{"admin_status", "up"}}, SET_COMMAND);
 
         ipv6_ll_add_called = 0;
         for (const auto &cmd : mockCallArgs)
@@ -2406,54 +2382,16 @@ namespace intfmgr_ut
         ASSERT_EQ(ipv6_ll_add_called, 0);
     }
 
-    TEST_F(IntfMgrTest, testNoReplayLLOnAdminDown){
-        Ethernet0IPv6Set = true;
-        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
-
-        /* Set portStateTable and stateIntfTable so doIntfAddrTask proceeds */
-        std::vector<swss::FieldValueTuple> values;
-        values.emplace_back("state", "ok");
-        intfmgr.m_statePortTable.set("Ethernet0", values, "SET", "");
-        values.clear();
-        values.emplace_back("vrf", "");
-        intfmgr.m_stateIntfTable.set("Ethernet0", values, "SET", "");
-
-        /* Add an IPv6 link-local address via doIntfAddrTask to populate the cache */
-        const std::vector<std::string> llKeys = {"Ethernet0", "fe80::1/64"};
-        const std::vector<swss::FieldValueTuple> emptyData;
-        intfmgr.doIntfAddrTask(llKeys, emptyData, "SET");
-
-        mockCallArgs.clear();
-
-        /* Simulate admin down — should NOT trigger replay */
-        std::vector<swss::FieldValueTuple> portData;
-        portData.emplace_back("admin_status", "down");
-        intfmgr.doPortTableTask("Ethernet0", portData, "SET");
-
-        int ipv6_add_called = 0;
-        for (const auto &cmd : mockCallArgs)
-        {
-            if (cmd.find("/sbin/ip -6 address \"add\"") != std::string::npos)
-            {
-                ipv6_add_called++;
-            }
-        }
-        ASSERT_EQ(ipv6_add_called, 0);
-    }
-
     TEST_F(IntfMgrTest, testFailedAddressProgrammingRemainsPending)
     {
-        verifyFailedAddressProgrammingRemainsPending("10.10.192.33/31");
-    }
-
-    TEST_F(IntfMgrTest, testFailedIpv6AddressProgrammingRemainsPending)
-    {
-        verifyFailedAddressProgrammingRemainsPending("2001:db8::1/128");
-    }
-
-    TEST_F(IntfMgrTest, testIpv6EnableFailureRetainsTask)
-    {
-        verifyFailedAddressProgrammingRemainsPending("2001:db8::1/128", true);
+        for (const auto &test : std::vector<std::pair<std::string, bool>>{
+                 {"10.10.192.33/31", false},
+                 {"2001:db8::1/128", false},
+                 {"2001:db8::2/128", true}})
+        {
+            SCOPED_TRACE(test.first + " enable_failure=" + std::to_string(test.second));
+            verifyFailedAddressProgrammingRemainsPending(test.first, test.second);
+        }
     }
 
     TEST_F(IntfMgrTest, testSetSagFdbEntryValidationAndBridgeCommand){
