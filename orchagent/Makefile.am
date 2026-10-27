@@ -93,6 +93,7 @@ orchagent_SOURCES = \
             switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
+            pfcwdsworch.cpp \
             pfcactionhandler.cpp \
             crmorch.cpp \
             request_parser.cpp \
@@ -106,6 +107,7 @@ orchagent_SOURCES = \
             watermarkorch.cpp \
             notificationconsumerstatsorch.cpp \
             policerorch.cpp \
+            namelabelmapper.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
@@ -121,6 +123,7 @@ orchagent_SOURCES = \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            zmqrouteorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
             dash/dashcounter.cpp \
@@ -192,8 +195,8 @@ orchagent_restart_check_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp
-routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp
-orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp
+orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 

@@ -42,7 +42,7 @@ string gMySwitchType = "switch";
 event_handle_t g_events_handle;
 
 bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }
@@ -64,6 +64,7 @@ VRFOrch *gVrfOrch;
 RouteOrch *gRouteOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
+CoppOrch *gCoppOrch;
 Directory<Orch *> gDirectory;
 swss::DBConnector *gAppDb;
 swss::DBConnector *gStateDb;
@@ -120,6 +121,11 @@ task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void 
 bool parseHandleSaiStatusFailure(task_process_status status)
 {
     return true;
+}
+
+sai_acl_table_group_type_t querySupportedAclTableGroupType(sai_object_id_t switch_id)
+{
+    return SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
 }
 
 namespace

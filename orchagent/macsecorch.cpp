@@ -1898,7 +1898,7 @@ task_process_status MACsecOrch::updateMACsecSC(
             return task_failed;
         }
     }
-    else
+    else if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
         if (!setEncodingAN(*ctx.get_macsec_sc(), sc_attr, direction))
         {
@@ -1914,19 +1914,32 @@ bool MACsecOrch::setEncodingAN(
     const TaskArgs &sc_attr,
     sai_macsec_direction_t direction)
 {
-    if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-    {
-        if (!get_value(sc_attr, "encoding_an", sc.m_encoding_an))
-        {
-            SWSS_LOG_WARN("Wrong parameter, the encoding AN cannot be found");
-            return false;
-        }
-    }
-    else
+    SWSS_LOG_ENTER();
+
+    if (direction != SAI_MACSEC_DIRECTION_EGRESS)
     {
         SWSS_LOG_WARN("Cannot set encoding AN for the ingress SC");
         return false;
     }
+
+    macsec_an_t new_an;
+    if (!get_value(sc_attr, "encoding_an", new_an))
+    {
+        SWSS_LOG_WARN("setEncodingAN: 'encoding_an' field missing in SET on egress SC");
+        return false;
+    }
+
+    if (sc.m_encoding_an == new_an)
+    {
+        return true;
+    }
+
+    // Only the in-memory encoding AN moves. The previous AN's SA stays until
+    // wpa_supplicant retires it (CP RETIRE, 3 s after the switch); orchagent
+    // never removes an SA it was not told to remove. State left behind by a
+    // supplicant that died is cleared by macsecmgrd before a new session
+    // starts, not inferred here.
+    sc.m_encoding_an = new_an;
     return true;
 }
 

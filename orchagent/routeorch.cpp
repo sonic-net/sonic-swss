@@ -34,16 +34,17 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
 extern bool gRouteStateAsyncPublish;
+extern bool gEnableFibSuppress;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqRouteServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
-        ZmqRouteOrch(db, tableNames, zmqServer, /*dbPersistence=*/false),
+        ZmqRouteOrch(db, tableNames, zmqRouteServer),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
@@ -570,6 +571,11 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
+
+        // Mark member as removed from SAI so removeNextHopGroup() skips it.
+        // Preserves seq_id for ordered ECMP re-add via validnexthopinNextHopGroup().
+        nhopgroup->second.nhopgroup_members[nexthop].next_hop_id = SAI_NULL_OBJECT_ID;
+
         // Reduce the member install count when links down
         if (nhopgroup->second.nh_member_install_count)
         {
@@ -1117,6 +1123,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
         m_bulkNhgReducedRefCnt.clear();
+        m_bulkMplsNhReducedRefCnt.clear();
         NextHopGroupKey v4_default_nhg_key;
         NextHopGroupKey v6_default_nhg_key;
         m_bulkSrv6NhgReducedVec.clear();
@@ -1233,6 +1240,16 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             {
                 // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
                 removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
+            }
+        }
+        // Failed single-MPLS creates may share a next hop with successful
+        // routes in this bulk. Groups above may also have removed it already.
+        for (const auto& nexthop : m_bulkMplsNhReducedRefCnt)
+        {
+            if (m_neighOrch->hasNextHop(nexthop) &&
+                m_neighOrch->getNextHopRefCount(nexthop) == 0)
+            {
+                m_neighOrch->removeMplsNextHop(nexthop);
             }
         }
         /* Reduce reference for srv6 next hop group */
@@ -1720,6 +1737,14 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops, const bool i
             continue;
         }
 
+        if (nhop->second.next_hop_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_INFO("Skip NHG member %s already removed from SAI",
+                          nhop->first.to_string().c_str());
+            nhop = nhgm.erase(nhop);
+            continue;
+        }
+
         next_hop_ids.push_back(nhop->second.next_hop_id);
         nhop = nhgm.erase(nhop);
     }
@@ -2091,6 +2116,17 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                         nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
                 return false;
             }
+
+            /* Verify RIF is not mid-VRF-migration.
+             * During VRF bind, the old RIF may still exist in the previous VRF
+             * if neighbor references prevent its removal. Retry until the RIF is
+             * recreated in the correct VRF. */
+            if (m_intfsOrch->isIntfChangeInProgress(nexthop.alias))
+            {
+                SWSS_LOG_INFO("Interface %s is being removed, retry route %s later",
+                        nexthop.alias.c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
         }
         else
         {
@@ -2398,13 +2434,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         return false;
     }
 
-    // Ensure VRF exists in m_syncdRoutes
+    /* addRoute() created the VRF route table, but a removal of the last
+     * route of the VRF in the same bulk drops it again in removeRoutePost().
+     * This route was sent to SAI, so restore the table to record the result. */
     auto routeTableIter = m_syncdRoutes.find(vrf_id);
     if (routeTableIter == m_syncdRoutes.end())
     {
-        SWSS_LOG_INFO("VRF 0x%" PRIx64 " doesn't exist in syncd routes for route %s, will retry later",
-                      vrf_id, ipPrefix.to_string().c_str());
-        return false;
+        routeTableIter = m_syncdRoutes.emplace(vrf_id, RouteTable()).first;
+        m_vrfOrch->increaseVrfRefCount(vrf_id);
     }
 
     if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
@@ -2516,6 +2553,47 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     else if (it_route == routeTableIter->second.end())
     {
         sai_status_t status = *it_status++;
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            // Another orchestrator (e.g. VNetRouteOrch) owns this route.
+            // Do not account for it or cache it in m_syncdRoutes: a later
+            // DEL would otherwise remove that orchestrator's SAI entry.
+            if (ctx.nhg_index.empty())
+            {
+                // Undo provisional allocations only: no route reference was
+                // acquired. Successful siblings may share these resources, so
+                // wait until all posts have updated their reference counts.
+                if (nextHops.is_srv6_nexthop())
+                {
+                    // srv6Nexthops acquires VPN/aggregation references on
+                    // every attempt, even when the next hops already exist.
+                    // Keep one release per attempt, not one per group.
+                    m_bulkSrv6NhgReducedVec.emplace_back(nextHops);
+                }
+                if (nextHops.getSize() > 1)
+                {
+                    // Group removal also releases overlay/MPLS members.
+                    m_bulkNhgReducedRefCnt.emplace(nextHops, 0);
+                }
+                else if (nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
+                {
+                    m_bulkNhgReducedRefCnt.emplace(nextHops, vrf_id);
+                }
+                else if (nextHops.getSize() == 1)
+                {
+                    const auto& nexthop = *nextHops.getNextHops().begin();
+                    if (nexthop.isMplsNextHop())
+                    {
+                        m_bulkMplsNhReducedRefCnt.insert(nexthop);
+                    }
+                }
+            }
+            SWSS_LOG_INFO("Route %s already exists; defer creation without claiming ownership",
+                          ipPrefix.to_string().c_str());
+            // Retain the SET for retry if the existing route is withdrawn;
+            // a DEL from APP_DB will cancel the pending SET instead.
+            return false;
+        }
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
@@ -3107,7 +3185,8 @@ bool RouteOrch::removeOverlayNextHops(sai_object_id_t vrf_id, const NextHopGroup
     SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
     for (auto &tunnel_nh : ol_nextHops.getNextHops())
     {
-        if (!m_neighOrch->getNextHopRefCount(tunnel_nh))
+        if (m_neighOrch->hasNextHop(tunnel_nh) &&
+            !m_neighOrch->getNextHopRefCount(tunnel_nh))
         {
             if(!m_neighOrch->removeTunnelNextHop(tunnel_nh))
             {
@@ -3201,6 +3280,11 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index, const std::string &
 void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)
 {
     SWSS_LOG_ENTER();
+
+    if (!gEnableFibSuppress)
+    {
+        return;
+    }
 
     std::vector<FieldValueTuple> fvs;
 

@@ -19,6 +19,6 @@ portsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-portsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+portsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 

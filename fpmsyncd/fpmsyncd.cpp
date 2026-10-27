@@ -1,6 +1,7 @@
 #include <iostream>
 #include <inttypes.h>
 #include <sys/stat.h>
+#include <jemalloc/jemalloc.h>
 #include "logger.h"
 #include "routesync.h"
 #include "select.h"
@@ -8,7 +9,6 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "notificationconsumer.h"
-#include "subscriberstatetable.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
@@ -18,6 +18,8 @@
 
 using namespace std;
 using namespace swss;
+
+const char *malloc_conf = "background_thread:true";
 
 // gSelectTimeout specifies the maximum wait time in milliseconds (-1 == infinite)
 static int gSelectTimeout;
@@ -79,7 +81,6 @@ int main(int argc, char **argv)
 
     DBConnector db("APPL_DB", 0);
     DBConnector cfgDb("CONFIG_DB", 0);
-    SubscriberStateTable deviceMetadataTableSubscriber(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
     Table deviceMetadataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
     DBConnector applStateDb("APPL_STATE_DB", 0);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
@@ -118,6 +119,7 @@ int main(int argc, char **argv)
         routeResponseChannel = std::make_unique<NotificationConsumer>(&applStateDb, routeResponseChannelName);
         sync.setSuppressionEnabled(true);
     }
+    SWSS_LOG_NOTICE("FIB suppression state: %s", suppressionEnabledStr.c_str());
 
     while (true)
     {
@@ -144,8 +146,6 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
-            s.addSelectable(&deviceMetadataTableSubscriber);
-
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -155,6 +155,9 @@ int main(int argc, char **argv)
             bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
             if (warmStartEnabled)
             {
+                // Reconcile writes the route tables directly on this thread.
+                sync.retireRouteCoalescer();
+
                 /* Obtain warm-restart timer defined for routing application */
                 time_t warmRestartIval = sync.getWarmStartHelper().getRestartTimer();
                 if (!warmRestartIval)
@@ -182,6 +185,7 @@ int main(int argc, char **argv)
             }
             else
             {
+                sync.startRouteCoalescer();
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
             }
 
@@ -250,61 +254,6 @@ int main(int argc, char **argv)
                     {
                         s.removeSelectable(&eoiuCheckTimer);
                     }
-                }
-                else if (temps == &deviceMetadataTableSubscriber)
-                {
-                    std::deque<KeyOpFieldsValuesTuple> keyOpFvsQueue;
-                    deviceMetadataTableSubscriber.pops(keyOpFvsQueue);
-
-                    for (const auto& keyOpFvs: keyOpFvsQueue)
-                    {
-                        const auto& key = kfvKey(keyOpFvs);
-                        const auto& op = kfvOp(keyOpFvs);
-                        const auto& fvs = kfvFieldsValues(keyOpFvs);
-
-                        if (op != SET_COMMAND)
-                        {
-                            continue;
-                        }
-
-                        if (key != "localhost")
-                        {
-                            continue;
-                        }
-
-                        for (const auto& fv: fvs)
-                        {
-                            const auto& field = fvField(fv);
-                            const auto& value = fvValue(fv);
-
-                            if (field != "suppress-fib-pending")
-                            {
-                                continue;
-                            }
-
-                            bool shouldEnable = (value == "enabled");
-
-                            if (shouldEnable && !sync.isSuppressionEnabled())
-                            {
-                                routeResponseChannel = std::make_unique<NotificationConsumer>(&applStateDb, routeResponseChannelName);
-                                sync.setSuppressionEnabled(true);
-                                s.addSelectable(routeResponseChannel.get());
-                            }
-                            else if (!shouldEnable && sync.isSuppressionEnabled())
-                            {
-                                /* When disabling suppression we mark all existing routes offloaded in zebra
-                                 * as there could be some transient routes which are pending response from
-                                 * orchagent, thus such updates might be missing. Since we are disabling suppression
-                                 * we no longer care about real HW offload status and can mark all routes as offloaded
-                                 * to avoid routes stuck in suppressed state after transition. */
-                                sync.markRoutesOffloaded(db);
-
-                                sync.setSuppressionEnabled(false);
-                                s.removeSelectable(routeResponseChannel.get());
-                                routeResponseChannel.reset();
-                            }
-                        } // end for fvs
-                    } // end for keyOpFvsQueue
                 }
                 else if (routeResponseChannel && (temps == routeResponseChannel.get()))
                 {

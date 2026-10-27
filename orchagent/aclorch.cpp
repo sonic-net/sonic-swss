@@ -14,6 +14,7 @@
 #include "sai_serialize.h"
 #include "directory.h"
 #include "saihelper.h"
+#include "policerorch.h"
 
 using namespace std;
 using namespace swss;
@@ -32,6 +33,8 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch *gAclOrch;
+extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
 
@@ -112,7 +115,8 @@ static acl_rule_attr_lookup_t aclL3ActionLookup =
     { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
     { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
     { ACTION_DO_NOT_NAT_ACTION,                SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT },
-    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE }
+    { ACTION_DISABLE_TRIM,                     SAI_ACL_ENTRY_ATTR_ACTION_PACKET_TRIM_DISABLE },
+    { ACTION_POLICER_ACTION,                   SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER }
 };
 
 static acl_rule_attr_lookup_t aclInnerActionLookup =
@@ -762,9 +766,50 @@ AclTableTypeBuilder& AclTableTypeBuilder::withBindPointType(sai_acl_bind_point_t
     return *this;
 }
 
+/*
+ * Returns true if the platform/SAI implements the given ACL table match field.
+ *
+ * Uses sai_query_attribute_capability() for SAI_OBJECT_TYPE_ACL_TABLE. If the
+ * capability query itself is not implemented (SAI_STATUS_NOT_IMPLEMENTED /
+ * SAI_STATUS_NOT_SUPPORTED) we preserve the historical behavior and assume the
+ * field is supported, so platforms that do not implement the query are
+ * unaffected. Any other (genuine) query failure treats the field as unsupported.
+ */
+static bool isAclTableMatchFieldSupported(sai_acl_table_attr_t matchField)
+{
+    sai_attr_capability_t capability = {};
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE, matchField, &capability);
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        return capability.create_implemented;
+    }
+
+    // Preserve historical behavior only when the capability query itself is unsupported.
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_INFO("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                      "assuming match field is supported", matchField, status);
+        return true;
+    }
+
+    SWSS_LOG_WARN("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                  "treating match field as unsupported", matchField, status);
+    return false;
+}
+
 AclTableTypeBuilder& AclTableTypeBuilder::withMatch(shared_ptr<AclTableMatchInterface> match)
 {
-    m_tableType.m_matches.emplace(match->getId(), match);
+    auto matchField = match->getId();
+    if (!isAclTableMatchFieldSupported(matchField))
+    {
+        const auto *meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_TABLE, matchField);
+        SWSS_LOG_NOTICE("Skipping ACL table match field %s: not supported by the platform",
+                        meta ? meta->attridname : std::to_string(static_cast<int>(matchField)).c_str());
+        return *this;
+    }
+    m_tableType.m_matches.emplace(matchField, match);
     return *this;
 }
 
@@ -1940,6 +1985,11 @@ bool AclRule::getCreateCounter() const
     return m_createCounter;
 }
 
+uint32_t AclRule::getPriority() const
+{
+    return m_priority;
+}
+
 shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data, MetaDataMgr * m_metadataMgr)
 {
     shared_ptr<AclRule> aclRule;
@@ -2212,6 +2262,26 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    // SET_POLICER attaches a policer (by name -> OID) to the ACL entry.
+    else if (attr_name == ACTION_POLICER_ACTION)
+    {
+        if (_attr_value.empty())
+        {
+            SWSS_LOG_ERROR("Empty policer name for action %s in rule %s", attr_name.c_str(), m_id.c_str());
+            return false;
+        }
+
+        sai_object_id_t policer_oid = SAI_NULL_OBJECT_ID;
+        if (!gPolicerOrch->getPolicerOid(_attr_value, policer_oid))
+        {
+            SWSS_LOG_ERROR("Failed to add policer action to rule %s: policer %s does not exist",
+                    m_id.c_str(), _attr_value.c_str());
+            return false;
+        }
+
+        actionData.parameter.oid = policer_oid;
+        m_policerName = _attr_value;
+    }
     else
     {
         return false;
@@ -2317,7 +2387,27 @@ bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
+    if (m_rangeConfig.empty() && m_matches.empty())
+    {
+        return false;
+    }
+
+    // A packet rule must carry at least one action.
+    if (m_actions.empty())
+    {
+        return false;
+    }
+
+    size_t nonPolicerActions = 0;
+    for (const auto& action : m_actions)
+    {
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
+        {
+            nonPolicerActions++;
+        }
+    }
+
+    if (nonPolicerActions > 1)
     {
         return false;
     }
@@ -2328,6 +2418,57 @@ bool AclRulePacket::validate()
 void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
+}
+
+bool AclRulePacket::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    // When the rule binds a policer, take the policer reference BEFORE creating the
+    // SAI ACL entry (same ordering as AclRuleMirror's session policer). This way a
+    // refcount failure -- only reachable if the policer disappeared after validate()
+    // -- leaves nothing to unwind. m_policerRefHeld keeps the count balanced across
+    // recreate cycles.
+    if (!m_policerName.empty() && !m_policerRefHeld)
+    {
+        if (!gPolicerOrch->increaseRefCount(m_policerName))
+        {
+            SWSS_LOG_ERROR("Failed to increase reference count for policer %s bound by rule %s",
+                    m_policerName.c_str(), m_id.c_str());
+            return false;
+        }
+        m_policerRefHeld = true;
+    }
+
+    if (!AclRule::createRule())
+    {
+        if (m_policerRefHeld)
+        {
+            gPolicerOrch->decreaseRefCount(m_policerName);
+            m_policerRefHeld = false;
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRulePacket::removeRule()
+{
+    SWSS_LOG_ENTER();
+
+    if (!AclRule::removeRule())
+    {
+        return false;
+    }
+
+    if (m_policerRefHeld)
+    {
+        gPolicerOrch->decreaseRefCount(m_policerName);
+        m_policerRefHeld = false;
+    }
+
+    return true;
 }
 
 AclRuleInnerSrcMacRewrite::AclRuleInnerSrcMacRewrite(AclOrch *aclOrch, string rule, string table, bool createCounter) :
@@ -3643,7 +3784,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
             platform == CLX_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+            platform == VPP_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
         {
@@ -3662,7 +3804,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
     if ( platform == MRVL_PRST_PLATFORM_SUBSTRING ||
 	    platform == MRVL_TL_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+            platform == VPP_PLATFORM_SUBSTRING)
     {
 	m_L3V4V6Capability =
         {
@@ -4387,6 +4530,8 @@ AclOrch::~AclOrch()
     }
 
     deleteDTelWatchListTables();
+
+    gAclOrch = nullptr;
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -5675,17 +5820,178 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // Structure to hold rule information with priority for sorting
+    struct RuleEntry {
+        SyncMap::iterator iter;
+        string key;
+        string table_id;
+        string rule_id;
+        string op;
+        uint32_t priority;
+        const KeyOpFieldsValuesTuple* tuple;
+    };
+
+    // Collect all rules and extract their priorities
+    vector<RuleEntry> setRules;
+    vector<RuleEntry> delRules;
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
+        const KeyOpFieldsValuesTuple* data_ptr = &(it->second);
+        string key = kfvKey(*data_ptr);
         size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
-        string op = kfvOp(t);
+        string op = kfvOp(*data_ptr);
 
-        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s", op.c_str(), table_id.c_str(), rule_id.c_str());
+        RuleEntry entry;
+        entry.iter = it;
+        entry.key = key;
+        entry.table_id = table_id;
+        entry.rule_id = rule_id;
+        entry.op = op;
+        entry.tuple = data_ptr;
+        entry.priority = 0;
+
+        // Extract priority based on operation type
+        if (op == SET_COMMAND)
+        {
+            bool invalidPriority = false;
+            // For SET operations, extract priority from field values
+            for (const auto& fv : kfvFieldsValues(*data_ptr))
+            {
+                string attr_name = to_upper(fvField(fv));
+                if (attr_name == "PRIORITY")
+                {
+                    const string &prioStr = fvValue(fv);
+                    try
+                    {
+                        size_t idx = 0;
+                        unsigned long prio = stoul(prioStr, &idx, 10);
+                        if (idx != prioStr.length() || prio > UINT32_MAX)
+                        {
+                            SWSS_LOG_ERROR("Invalid ACL rule priority '%s' for rule %s in table %s",
+                                         prioStr.c_str(), rule_id.c_str(), table_id.c_str());
+                            invalidPriority = true;
+                        }
+                        else
+                        {
+                            entry.priority = static_cast<uint32_t>(prio);
+                        }
+                    }
+                    catch (const std::exception &e)
+                    {
+                        SWSS_LOG_ERROR("Invalid ACL rule priority '%s' for rule %s in table %s: %s",
+                                     prioStr.c_str(), rule_id.c_str(), table_id.c_str(), e.what());
+                        invalidPriority = true;
+                    }
+                    break;
+                }
+            }
+            if (invalidPriority)
+            {
+                // Treat invalid priority as invalid entry: skip processing this rule
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            setRules.push_back(entry);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            // Redis DEL operations do not carry field values, only the key is present.
+            // Look up priority from existing in-memory rule map
+            auto existingRule = getAclRule(table_id, rule_id);
+            if (existingRule)
+            {
+                entry.priority = existingRule->getPriority();
+            }
+            delRules.push_back(entry);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s for ACL rule %s", op.c_str(), key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        it++;
+    }
+
+    // Optimization: Sort rules by priority to minimize hardware TCAM shifting.
+    // This priority-based sorting is specifically optimized for bulk-update scenarios.
+    // In low-load scenarios with few entries, the shifting overhead is minimal, but in high-scale
+    // updates, this reduces programming time by ensuring rules are sent to SAI in priority order.
+    // Sort SET rules by priority (higher priority value = higher priority, so descending order)
+    sort(setRules.begin(), setRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
+        return a.priority > b.priority;
+    });
+
+    // Sort DEL rules by priority (lower priority values deleted first, so ascending order)
+    sort(delRules.begin(), delRules.end(), [](const RuleEntry& a, const RuleEntry& b) {
+        return a.priority < b.priority;
+    });
+
+    // Note: All DEL operations are processed before SET operations
+    // to facilitate priority-based sorting and ensure correct rule re-programming.
+    //
+    // Safety invariant: the RuleEntry objects below hold iterators (entry.iter) into
+    // consumer.m_toSync that were captured during the collection loop above. This is
+    // safe because m_toSync is a std::map: erasing one element only invalidates the
+    // iterator to that element, leaving all other captured iterators valid. m_toSync
+    // is also keyed by rule key and holds a single op per key, so no two RuleEntry
+    // objects ever reference the same map node. Erasing one entry here therefore never
+    // invalidates the iterator of any other entry we still have to process.
+    for (auto& entry : delRules)
+    {
+        it = entry.iter;
+        string key = entry.key;
+        string table_id = entry.table_id;
+        string rule_id = entry.rule_id;
+        string op = entry.op;
+
+        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s, PRIORITY: %u (processing DEL in ascending priority order)",
+                      op.c_str(), table_id.c_str(), rule_id.c_str(), entry.priority);
+
+        if (table_id.empty())
+        {
+            SWSS_LOG_WARN("ACL rule with RULE_ID: %s is not valid as TABLE_ID is empty", rule_id.c_str());
+            consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
+        if (removeAclRule(table_id, rule_id))
+        {
+            removeAclRuleStatus(table_id, rule_id);
+            consumer.m_toSync.erase(it);
+
+            /* Notify retry cache that resources may have been freed for this table,
+             * but only if the rule actually existed (i.e., ASIC resources were freed).
+             * This lets rules parked on SAI resource exhaustion be retried. */
+            if (ruleExisted)
+            {
+                notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
+            }
+        }
+        else
+        {
+            // Mark pending removal status if removeAclRule returns error
+            setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
+        }
+    }
+
+    // Process SET rules in priority order
+    for (auto& entry : setRules)
+    {
+        it = entry.iter;
+        const KeyOpFieldsValuesTuple& t = *(entry.tuple);
+        string key = entry.key;
+        string table_id = entry.table_id;
+        string rule_id = entry.rule_id;
+        string op = entry.op;
+
+        SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s, PRIORITY: %u (processing SET in descending priority order)",
+                      op.c_str(), table_id.c_str(), rule_id.c_str(), entry.priority);
 
         if (table_id.empty())
         {
@@ -5726,6 +6032,29 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 type = table_id == m_mirrorTableId[stage] ? TABLE_TYPE_MIRROR : TABLE_TYPE_MIRRORV6;
             }
 
+            /* If the rule references a policer that has not been created yet,
+             * defer it and rely on the Consumer m_toSync retry (same pattern as
+             * "Wait for ACL table" above). This covers the case where the
+             * POLICER table is synced after the ACL_RULE table. */
+            bool waitForPolicer = false;
+            for (const auto& itr : kfvFieldsValues(t))
+            {
+                if (to_upper(fvField(itr)) == ACTION_POLICER_ACTION)
+                {
+                    if (!fvValue(itr).empty() && !gPolicerOrch->policerExists(fvValue(itr)))
+                    {
+                        SWSS_LOG_INFO("Wait for policer %s to be created for ACL rule %s",
+                                fvValue(itr).c_str(), key.c_str());
+                        waitForPolicer = true;
+                    }
+                    break;
+                }
+            }
+            if (waitForPolicer)
+            {
+                it++;
+                continue;
+            }
 
             try
             {
@@ -5858,33 +6187,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            bool ruleExisted = (getAclRule(table_id, rule_id) != nullptr);
-            if (removeAclRule(table_id, rule_id))
-            {
-                removeAclRuleStatus(table_id, rule_id);
-                it = consumer.m_toSync.erase(it);
-
-                /* Notify retry cache that resources may have been freed for this table,
-                 * but only if the rule actually existed (i.e., ASIC resources were freed). */
-                if (ruleExisted)
-                {
-                    notifyRetry(this, consumer.getTableName(), make_constraint(RETRY_CST_SAI_RESOURCE, table_id));
-                }
-            }
-            else
-            {
-                // Mark pending removal status if removeAclRule returns error
-                setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
-                it++;
-            }
-        }
-        else
-        {
-            it = consumer.m_toSync.erase(it);
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
     }
 }
@@ -6028,7 +6330,7 @@ sai_object_id_t AclOrch::getTableById(string table_id)
         return SAI_NULL_OBJECT_ID;
     }
 
-    for (auto it : m_AclTables)
+    for (const auto& it : m_AclTables)
     {
         if (it.second.id == table_id)
         {

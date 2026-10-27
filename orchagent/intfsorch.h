@@ -77,6 +77,8 @@ public:
     bool isLocalSystemPortIntf(string alias);
     void voqSyncIntfState(string &alias, bool);
 
+    bool isIntfChangeInProgress(const string &alias);
+
 private:
 
     SelectableTimer* m_updateMapsTimer = nullptr;
