@@ -187,6 +187,8 @@ struct CommandState
     map<string, string> networkFallbackCknByPort;
     map<string, PeerCounts> peerCountsByPort;
     map<string, size_t> queryCountByPort;
+    map<string, map<size_t, string>> queryRepliesByPort;
+    map<string, set<size_t>> failedQueriesByPort;
     set<string> peersAppearOnSecondQueryPorts;
     set<string> primaryPeerLostOnSecondQueryPorts;
     set<string> replacementAppearsAfterRemovePorts;
@@ -283,6 +285,28 @@ int commandCallback(const string &cmd, string &output)
     if (cmd.find("macsec_mka_list") != string::npos)
     {
         const auto queryCount = ++commandState.queryCountByPort[port];
+        if (commandState.failedQueriesByPort[port].count(queryCount) != 0)
+        {
+            output = "FAIL\n";
+            return 1;
+        }
+        const auto scripted = commandState.queryRepliesByPort[port].find(queryCount);
+        if (scripted != commandState.queryRepliesByPort[port].end())
+        {
+            output = scripted->second;
+            MKASessionStatus observed;
+            string error;
+            if (parseMKAStatus(output, observed, error))
+            {
+                primaryCkn.clear();
+                fallbackCkn.clear();
+                for (const auto &entry : observed.participants)
+                {
+                    (entry.isPrimary ? primaryCkn : fallbackCkn) = entry.ckn;
+                }
+            }
+            return 0;
+        }
         if (queryCount >= 2 &&
             commandState.peersAppearOnSecondQueryPorts.count(port) != 0)
         {
@@ -423,7 +447,6 @@ int commandCallback(const string &cmd, string &output)
 struct MACsecMgrTest : public ::testing::Test
 {
     shared_ptr<DBConnector> configDb;
-    shared_ptr<DBConnector> appDb;
     shared_ptr<DBConnector> stateDb;
     unique_ptr<MACsecMgr> manager;
 
@@ -436,11 +459,9 @@ struct MACsecMgrTest : public ::testing::Test
         wpaSignal = 0;
         callback = commandCallback;
         configDb = make_shared<DBConnector>("CONFIG_DB", 0);
-        appDb = make_shared<DBConnector>("APPL_DB", 0);
         stateDb = make_shared<DBConnector>("STATE_DB", 0);
         manager.reset(new MACsecMgr(
             configDb.get(),
-            appDb.get(),
             stateDb.get(),
             {CFG_MACSEC_PROFILE_TABLE_NAME, CFG_PORT_TABLE_NAME}));
     }
@@ -575,7 +596,7 @@ TEST_F(MACsecMgrTest, LegacySaltProfilesLoadFromConfigOnManagerStartup)
         }
     }
 
-    manager.reset(new MACsecMgr(configDb.get(), appDb.get(), stateDb.get(),
+    manager.reset(new MACsecMgr(configDb.get(), stateDb.get(),
         {CFG_MACSEC_PROFILE_TABLE_NAME, CFG_PORT_TABLE_NAME}));
     manager->addExistingData(&configProfiles);
     manager->doTask();
@@ -785,7 +806,7 @@ TEST_F(MACsecMgrTest, MissingProfileConsumerFailsStartupWithLoggedError)
     testing::internal::CaptureStdout();
 
     EXPECT_THROW(
-        MACsecMgr(configDb.get(), appDb.get(), stateDb.get(), {CFG_PORT_TABLE_NAME}),
+        MACsecMgr(configDb.get(), stateDb.get(), {CFG_PORT_TABLE_NAME}),
         runtime_error);
 
     const string logs = testing::internal::GetCapturedStdout();
@@ -826,7 +847,7 @@ TEST_F(MACsecMgrTest, WpaDiagnosticsUseDecodedExitAndSignalStatuses)
     EXPECT_TRUE(wpaPipeStatuses.empty());
 }
 
-TEST_F(MACsecMgrTest, QueryFailureDoesNotBlockInitialCommandsAndTimerObservesResult)
+TEST_F(MACsecMgrTest, PreDeleteQueryFailureDefersOnlyAffectedPortUntilTimerRecovery)
 {
     auto &blocked = session("Ethernet0");
     auto &ready = session("Ethernet4");
@@ -837,9 +858,9 @@ TEST_F(MACsecMgrTest, QueryFailureDoesNotBlockInitialCommandsAndTimerObservesRes
     manager->doTask();
     ASSERT_TRUE(consumer->m_toSync.empty());
     EXPECT_EQ(NEW_PRIMARY_CKN, manager->m_profiles["profile"].primary_ckn);
-    EXPECT_TRUE(blocked.applied_profile.primary_ckn.empty());
-    EXPECT_EQ(NEW_PRIMARY_CKN, commandState.primaryCknByPort["Ethernet0"]);
-    EXPECT_EQ(PRIMARY_CKN, blocked.pending_old_ckn);
+    EXPECT_EQ(PRIMARY_CKN, blocked.applied_profile.primary_ckn);
+    EXPECT_EQ(PRIMARY_CKN, commandState.primaryCknByPort["Ethernet0"]);
+    EXPECT_TRUE(blocked.pending_old_ckn.empty());
     EXPECT_EQ(NEW_PRIMARY_CKN, ready.applied_profile.primary_ckn);
 
     const auto forks = wpaProcessCount;
@@ -864,7 +885,7 @@ TEST_F(MACsecMgrTest, QueryFailureDoesNotBlockInitialCommandsAndTimerObservesRes
     auto timer = dynamic_cast<ExecutableTimer *>(executor("MACSEC_MKA_STATUS_TIMER"));
     ASSERT_NE(nullptr, timer);
     timer->execute();
-    EXPECT_EQ(forks + 2, wpaProcessCount);
+    EXPECT_EQ(forks + 3, wpaProcessCount);
     Table sessionTable(stateDb.get(), STATE_MACSEC_MKA_SESSION_TABLE_NAME);
     vector<FieldValueTuple> values;
     EXPECT_FALSE(sessionTable.get("Ethernet0", values));
@@ -1280,7 +1301,6 @@ TEST(MACsecMgrRestart, ConstructorPurgesStaleRowsBeforeFirstPublication)
 {
     testing_db::reset();
     auto configDb = make_shared<DBConnector>("CONFIG_DB", 0);
-    auto appDb = make_shared<DBConnector>("APPL_DB", 0);
     auto stateDb = make_shared<DBConnector>("STATE_DB", 0);
     Table configPortTable(configDb.get(), CFG_PORT_TABLE_NAME);
     Table sessionTable(stateDb.get(), STATE_MACSEC_MKA_SESSION_TABLE_NAME);
@@ -1297,7 +1317,6 @@ TEST(MACsecMgrRestart, ConstructorPurgesStaleRowsBeforeFirstPublication)
 
     MACsecMgr manager(
         configDb.get(),
-        appDb.get(),
         stateDb.get(),
         {CFG_MACSEC_PROFILE_TABLE_NAME, CFG_PORT_TABLE_NAME});
 
@@ -1314,14 +1333,13 @@ TEST(MACsecMgrRestart, GracefulShutdownPurgesDaemonOwnedRows)
 {
     testing_db::reset();
     auto configDb = make_shared<DBConnector>("CONFIG_DB", 0);
-    auto appDb = make_shared<DBConnector>("APPL_DB", 0);
     auto stateDb = make_shared<DBConnector>("STATE_DB", 0);
     Table sessionTable(stateDb.get(), STATE_MACSEC_MKA_SESSION_TABLE_NAME);
     Table participantTable(stateDb.get(), STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME);
     Table unrelatedTable(stateDb.get(), STATE_PORT_TABLE_NAME);
     {
         MACsecMgr manager(
-            configDb.get(), appDb.get(), stateDb.get(),
+            configDb.get(), stateDb.get(),
             {CFG_MACSEC_PROFILE_TABLE_NAME, CFG_PORT_TABLE_NAME});
         sessionTable.set("Ethernet0", {{"query_status", "ok"}});
         participantTable.set("Ethernet0|" + PRIMARY_CKN, {{"active", "true"}});
@@ -1358,6 +1376,8 @@ TEST_F(MACsecMgrTest, PrimaryRolloverRemovesBeforeAddingWithoutRestart)
                cmd.find("interface_add") != string::npos ||
                cmd.find("enable_network") != string::npos;
     }));
+    ASSERT_NE(mockCallArgs.begin(), remove);
+    EXPECT_NE(string::npos, (remove - 1)->find("macsec_mka_list"));
 }
 
 TEST_F(MACsecMgrTest, AuthenticatedUnsecuredSessionStillRotatesInPlace)
@@ -1390,11 +1410,11 @@ TEST_F(MACsecMgrTest, QueryFailureOnOnePortDoesNotBlockOtherPorts)
         manager->loadProfile("profile", profileArgs(NEW_PRIMARY_CKN)));
 
     EXPECT_EQ(NEW_PRIMARY_CKN, manager->m_profiles["profile"].primary_ckn);
-    EXPECT_TRUE(unsafeSession.applied_profile.primary_ckn.empty());
+    EXPECT_EQ(PRIMARY_CKN, unsafeSession.applied_profile.primary_ckn);
     EXPECT_EQ(NEW_PRIMARY_CKN, safeSession.applied_profile.primary_ckn);
-    EXPECT_EQ(NEW_PRIMARY_CKN, commandState.primaryCknByPort["Ethernet0"]);
+    EXPECT_EQ(PRIMARY_CKN, commandState.primaryCknByPort["Ethernet0"]);
     EXPECT_EQ(NEW_PRIMARY_CKN, commandState.primaryCknByPort["Ethernet4"]);
-    EXPECT_TRUE(any_of(
+    EXPECT_TRUE(none_of(
         mockCallArgs.begin(),
         mockCallArgs.end(),
         [](const string &cmd) {
@@ -1435,14 +1455,14 @@ TEST_F(MACsecMgrTest, PendingPortObservesAmbiguousAddWithoutReapplyingCompletedP
 {
     auto &deferredSession = session("Ethernet0");
     auto &completedSession = session("Ethernet4");
-    commandState.failQueryPorts.insert("Ethernet0");
+    commandState.failFirstPostAddQueryPorts.insert("Ethernet0");
 
     EXPECT_EQ(task_success,
         manager->loadProfile("profile", profileArgs(NEW_PRIMARY_CKN)));
     ASSERT_EQ(2, commandState.addCalls);
     ASSERT_EQ(NEW_PRIMARY_CKN, completedSession.applied_profile.primary_ckn);
 
-    commandState.failQueryPorts.clear();
+    commandState.failFirstPostAddQueryPorts.clear();
     mockCallArgs.clear();
     EXPECT_EQ(
         task_success,
@@ -1587,7 +1607,7 @@ TEST_F(MACsecMgrTest, PotentialPeerDoesNotVetoLiveRekey)
         }));
 }
 
-TEST_F(MACsecMgrTest, QueryFailureDoesNotVetoInitialCommandsOrClaimConvergence)
+TEST_F(MACsecMgrTest, QueryFailureDefersPrimaryOnlyRemovalWithoutClaimingConvergence)
 {
     auto &mkaSession = session();
     mkaSession.applied_profile = primaryOnlyProfile();
@@ -1599,10 +1619,10 @@ TEST_F(MACsecMgrTest, QueryFailureDoesNotVetoInitialCommandsOrClaimConvergence)
     EXPECT_EQ(task_success,
         manager->loadProfile("profile", primaryOnlyProfileArgs(NEW_PRIMARY_CKN)));
 
-    EXPECT_TRUE(mkaSession.applied_profile.primary_ckn.empty());
-    EXPECT_EQ(PRIMARY_CKN, mkaSession.pending_old_ckn);
-    EXPECT_EQ(NEW_PRIMARY_CKN, commandState.primaryCknByPort["Ethernet0"]);
-    EXPECT_TRUE(any_of(
+    EXPECT_EQ(PRIMARY_CKN, mkaSession.applied_profile.primary_ckn);
+    EXPECT_TRUE(mkaSession.pending_old_ckn.empty());
+    EXPECT_EQ(PRIMARY_CKN, commandState.primaryCknByPort["Ethernet0"]);
+    EXPECT_TRUE(none_of(
         mockCallArgs.begin(),
         mockCallArgs.end(),
         [](const string &cmd) {
@@ -1632,7 +1652,7 @@ TEST_F(MACsecMgrTest, PeerAppearingDuringObservationDoesNotVetoCommands)
     EXPECT_EQ(task_success,
         manager->loadProfile("profile", primaryOnlyProfileArgs(NEW_PRIMARY_CKN)));
 
-    EXPECT_EQ(2u, commandState.queryCountByPort["Ethernet0"]);
+    EXPECT_EQ(3u, commandState.queryCountByPort["Ethernet0"]);
     EXPECT_EQ(NEW_PRIMARY_CKN, mkaSession.applied_profile.primary_ckn);
     EXPECT_TRUE(any_of(
         mockCallArgs.begin(),
@@ -1752,7 +1772,7 @@ TEST_F(MACsecMgrTest, AmbiguousRemoveWaitsForStatusThenAddsWithoutRemovingAgain)
 {
     auto &mkaSession = session();
     commandState.removeAppliedButFailed = true;
-    commandState.failQuery = true;
+    commandState.failedQueriesByPort["Ethernet0"].insert(2);
 
     EXPECT_EQ(task_success, manager->loadProfile(
         "profile", profileArgs(PRIMARY_CKN, NEW_FALLBACK_CKN)));
@@ -1763,6 +1783,7 @@ TEST_F(MACsecMgrTest, AmbiguousRemoveWaitsForStatusThenAddsWithoutRemovingAgain)
     EXPECT_FALSE(sessionTable.get("Ethernet0", values));
     EXPECT_EQ(FALLBACK_CKN, mkaSession.pending_old_ckn);
 
+    commandState.failQuery = true;
     manager->sweepMKAStatus();
     EXPECT_EQ(0, commandState.addCalls);
     commandState.failQuery = false;
@@ -2149,7 +2170,7 @@ TEST_F(MACsecMgrTest, LosingAlternatePeerDoesNotVetoFallbackUpdate)
     EXPECT_EQ(task_success, manager->loadProfile(
         "profile", profileArgs(PRIMARY_CKN, NEW_FALLBACK_CKN)));
     EXPECT_EQ(NEW_FALLBACK_CKN, mkaSession.applied_profile.fallback_ckn);
-    EXPECT_EQ(2u, commandState.queryCountByPort["Ethernet0"]);
+    EXPECT_EQ(3u, commandState.queryCountByPort["Ethernet0"]);
     EXPECT_EQ(1, commandState.addCalls);
     EXPECT_TRUE(any_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
         return cmd.find("macsec_del_mka") != string::npos;
@@ -2206,136 +2227,154 @@ TEST_F(MACsecMgrTest, ReplacementObservedAfterRemoveIsNotAddedTwice)
     EXPECT_EQ(0, commandState.addCalls);
 }
 
-    // The APPL_DB MACsec tables are owned by wpa_supplicant's macsec_sonic
-    // driver. macsecmgrd only touches them to clear what a supplicant that
-    // died without running its deinit left behind, so these tests seed the
-    // tables the way such a supplicant leaves them and check what survives.
-    class MACsecMgrStaleStateTest : public ::testing::Test
+TEST_F(MACsecMgrTest, RotationQueryFailurePreventsDeleteAndPreservesAppliedRole)
+{
+    auto &runtime = session();
+    commandState.failQuery = true;
+    EXPECT_EQ(task_success, manager->loadProfile("profile", profileArgs(NEW_PRIMARY_CKN)));
+    EXPECT_EQ(PRIMARY_CKN, runtime.applied_profile.primary_ckn);
+    EXPECT_TRUE(runtime.pending_old_ckn.empty());
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+}
+
+TEST_F(MACsecMgrTest, RotationChangedTargetRoleDefersWithoutDelete)
+{
+    auto &runtime = session();
+    commandState.queryRepliesByPort["Ethernet0"][1] =
+        statusOutput(FALLBACK_CKN, PRIMARY_CKN);
+    EXPECT_EQ(task_success, manager->loadProfile("profile", profileArgs(NEW_PRIMARY_CKN)));
+    EXPECT_EQ(PRIMARY_CKN, runtime.applied_profile.primary_ckn);
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+    EXPECT_EQ("participant role changed before removal", runtime.config_error);
+    string value;
+    ASSERT_TRUE(getField(manager->m_stateMkaSessionTable, "Ethernet0", "config_status", value));
+    EXPECT_EQ("degraded", value);
+}
+
+TEST_F(MACsecMgrTest, MalformedPreDeleteSnapshotClearsRowsWithoutMutation)
+{
+    auto &runtime = session();
+    ASSERT_TRUE(manager->collectMKAStatus("Ethernet0", runtime));
+    auto partial = statusOutput(PRIMARY_CKN);
+    const string field = "live_peers=1\n";
+    partial.erase(partial.find(field), field.size());
+    commandState.queryRepliesByPort["Ethernet0"][2] = partial;
+
+    EXPECT_EQ(task_success, manager->loadProfile("profile", profileArgs(NEW_PRIMARY_CKN)));
+    EXPECT_EQ(PRIMARY_CKN, runtime.applied_profile.primary_ckn);
+    EXPECT_TRUE(runtime.pending_old_ckn.empty());
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+    EXPECT_FALSE(manager->m_stateMkaParticipantTable.get("Ethernet0|" + PRIMARY_CKN, values));
+}
+
+TEST_F(MACsecMgrTest, RotationObservesAlreadyReplacedTargetWithoutDeleteOrAdd)
+{
+    auto &runtime = session();
+    commandState.queryRepliesByPort["Ethernet0"][1] = statusOutput(NEW_PRIMARY_CKN);
+    commandState.networkPrimaryCknByPort["Ethernet0"] = NEW_PRIMARY_CKN;
+    EXPECT_EQ(task_success, manager->loadProfile("profile", profileArgs(NEW_PRIMARY_CKN)));
+    EXPECT_EQ(NEW_PRIMARY_CKN, runtime.applied_profile.primary_ckn);
+    EXPECT_TRUE(runtime.pending_old_ckn.empty());
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+}
+
+TEST_F(MACsecMgrTest, DriftRecoveryDoesNotRemoveParticipantFromObsoleteSnapshot)
+{
+    auto &runtime = session();
+    MKASessionStatus stale;
+    string error;
+    ASSERT_TRUE(parseMKAStatus(statusOutput(NEW_PRIMARY_CKN), stale, error));
+
+    EXPECT_TRUE(manager->reconcileObservedParticipants(
+        "Ethernet0", runtime, manager->m_profiles.at("profile"), stale));
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+    EXPECT_TRUE(runtime.participants_verified);
+}
+
+TEST_F(MACsecMgrTest, DriftRecoveryRoleChangeDefersWithoutDelete)
+{
+    auto &runtime = session();
+    MKASessionStatus stale;
+    string error;
+    ASSERT_TRUE(parseMKAStatus(statusOutput(NEW_PRIMARY_CKN), stale, error));
+    commandState.queryRepliesByPort["Ethernet0"][1] =
+        statusOutput(PRIMARY_CKN, NEW_PRIMARY_CKN);
+
+    EXPECT_FALSE(manager->reconcileObservedParticipants(
+        "Ethernet0", runtime, manager->m_profiles.at("profile"), stale));
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+    EXPECT_EQ("participant role changed before removal", runtime.config_error);
+}
+
+TEST_F(MACsecMgrTest, DriftRecoveryObservesEachTargetImmediatelyBeforeDelete)
+{
+    auto &runtime = session();
+    MKASessionStatus stale;
+    string error;
+    ASSERT_TRUE(parseMKAStatus(
+        statusOutput(NEW_PRIMARY_CKN, NEW_FALLBACK_CKN), stale, error));
+    commandState.primaryCknByPort["Ethernet0"] = NEW_PRIMARY_CKN;
+    commandState.fallbackCknByPort["Ethernet0"] = NEW_FALLBACK_CKN;
+
+    EXPECT_TRUE(manager->reconcileObservedParticipants(
+        "Ethernet0", runtime, manager->m_profiles.at("profile"), stale));
+    size_t removes = 0;
+    for (size_t index = 0; index < mockCallArgs.size(); ++index)
     {
-    protected:
-        std::shared_ptr<DBConnector> m_config_db;
-        std::shared_ptr<DBConnector> m_app_db;
-        std::shared_ptr<DBConnector> m_state_db;
-        std::unique_ptr<MACsecMgr>   m_mgr;
-
-        void SetUp() override
+        if (mockCallArgs[index].find("macsec_del_mka") != string::npos)
         {
-            testing_db::reset();
-            m_config_db = std::make_shared<DBConnector>("CONFIG_DB", 0);
-            m_app_db    = std::make_shared<DBConnector>("APPL_DB", 0);
-            m_state_db  = std::make_shared<DBConnector>("STATE_DB", 0);
-            std::vector<std::string> tables = { CFG_MACSEC_PROFILE_TABLE_NAME, CFG_PORT_TABLE_NAME };
-            m_mgr.reset(new MACsecMgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), tables));
-            // The mock producer removes the key synchronously, so the wait
-            // never has to spin; keep the bound small anyway.
-            m_mgr->m_clearStaleTimeoutMs = 300;
+            ++removes;
+            ASSERT_GT(index, 0u);
+            EXPECT_NE(string::npos, mockCallArgs[index - 1].find("macsec_mka_list"));
         }
-
-        void TearDown() override
-        {
-            m_mgr.reset();
-            testing_db::reset();
-        }
-
-        void seed(const std::string &table, const std::string &key)
-        {
-            Table t(m_app_db.get(), table);
-            t.set(key, { { "left_by", "dead_supplicant" } });
-        }
-
-        bool exists(const std::string &table, const std::string &key)
-        {
-            Table t(m_app_db.get(), table);
-            std::vector<FieldValueTuple> fvs;
-            return t.get(key, fvs);
-        }
-
-        // A SET the dead supplicant wrote through its ProducerStateTable that
-        // orchagent has not popped: it sits in the staging hash, not the table.
-        void seed_staged(const std::string &table, const std::string &key)
-        {
-            Table t(m_app_db.get(), "_" + table);
-            t.set(key, { { "left_by", "dead_supplicant_unpopped" } });
-        }
-
-        bool staged(const std::string &table, const std::string &key)
-        {
-            return exists("_" + table, key);
-        }
-    };
-
-    static const std::string kSci = "922bd3147c1d0001";
-
-    TEST_F(MACsecMgrStaleStateTest, clearStale_nothingToClear)
-    {
-        EXPECT_TRUE(m_mgr->clearStaleMACsecState("Ethernet1"));
     }
+    EXPECT_EQ(2u, removes);
+    EXPECT_EQ(2, commandState.addCalls);
+    EXPECT_TRUE(runtime.participants_verified);
+}
 
-    TEST_F(MACsecMgrStaleStateTest, clearStale_removesEveryEntryOfThePortAndNothingElse)
-    {
-        seed(APP_MACSEC_PORT_TABLE_NAME,       "Ethernet1");
-        seed(APP_MACSEC_EGRESS_SC_TABLE_NAME,  "Ethernet1:" + kSci);
-        seed(APP_MACSEC_INGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci);
-        seed(APP_MACSEC_EGRESS_SA_TABLE_NAME,  "Ethernet1:" + kSci + ":0");
-        seed(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":1");
-        // Ethernet10 starts with "Ethernet1" but is a different port.
-        seed(APP_MACSEC_PORT_TABLE_NAME,       "Ethernet10");
-        seed(APP_MACSEC_EGRESS_SA_TABLE_NAME,  "Ethernet10:" + kSci + ":0");
+TEST_F(MACsecMgrTest, DriftRecoveryFailedSecondTargetObservationStopsFurtherMutation)
+{
+    auto &runtime = session();
+    MKASessionStatus stale;
+    string error;
+    ASSERT_TRUE(parseMKAStatus(
+        statusOutput(NEW_PRIMARY_CKN, NEW_FALLBACK_CKN), stale, error));
+    commandState.primaryCknByPort["Ethernet0"] = NEW_PRIMARY_CKN;
+    commandState.fallbackCknByPort["Ethernet0"] = NEW_FALLBACK_CKN;
+    commandState.failedQueriesByPort["Ethernet0"].insert(3);
 
-        EXPECT_TRUE(m_mgr->clearStaleMACsecState("Ethernet1"));
+    EXPECT_FALSE(manager->reconcileObservedParticipants(
+        "Ethernet0", runtime, manager->m_profiles.at("profile"), stale));
+    EXPECT_EQ(1, count_if(mockCallArgs.begin(), mockCallArgs.end(), [](const string &cmd) {
+        return cmd.find("macsec_del_mka") != string::npos;
+    }));
+    EXPECT_EQ(0, commandState.addCalls);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+    EXPECT_FALSE(manager->m_stateMkaParticipantTable.get("Ethernet0|" + NEW_FALLBACK_CKN, values));
+}
 
-        EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME,       "Ethernet1"));
-        EXPECT_FALSE(exists(APP_MACSEC_EGRESS_SC_TABLE_NAME,  "Ethernet1:" + kSci));
-        EXPECT_FALSE(exists(APP_MACSEC_INGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci));
-        EXPECT_FALSE(exists(APP_MACSEC_EGRESS_SA_TABLE_NAME,  "Ethernet1:" + kSci + ":0"));
-        EXPECT_FALSE(exists(APP_MACSEC_INGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":1"));
-
-        EXPECT_TRUE(exists(APP_MACSEC_PORT_TABLE_NAME,      "Ethernet10"));
-        EXPECT_TRUE(exists(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet10:" + kSci + ":0"));
-    }
-
-    TEST_F(MACsecMgrStaleStateTest, clearStale_scAndSaLeftoversWithoutPortEntry)
-    {
-        // orchagent already dropped the port (for example after its own
-        // restart) but the old session's SC and SA rows are still in APPL_DB.
-        // They must go so a later orchagent restart cannot replay old keys,
-        // and with no PORT entry there is nothing to wait for.
-        seed(APP_MACSEC_EGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci);
-        seed(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0");
-
-        EXPECT_TRUE(m_mgr->clearStaleMACsecState("Ethernet1"));
-
-        EXPECT_FALSE(exists(APP_MACSEC_EGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci));
-        EXPECT_FALSE(exists(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":0"));
-    }
-
-    TEST_F(MACsecMgrStaleStateTest, clearStale_removesSetsOrchagentHasNotPoppedYet)
-    {
-        // The supplicant died between writing an SA SET and orchagent popping
-        // it: nothing is visible in the SA table yet, but the staged SET would be
-        // applied after the new session started if it were left alone.
-        seed(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1");
-        seed_staged(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":1");
-        seed_staged(APP_MACSEC_EGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci);
-        seed_staged(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet10:" + kSci + ":1");
-
-        EXPECT_TRUE(m_mgr->clearStaleMACsecState("Ethernet1"));
-
-        EXPECT_FALSE(staged(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet1:" + kSci + ":1"));
-        EXPECT_FALSE(staged(APP_MACSEC_EGRESS_SC_TABLE_NAME, "Ethernet1:" + kSci));
-        EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
-        EXPECT_TRUE(staged(APP_MACSEC_EGRESS_SA_TABLE_NAME, "Ethernet10:" + kSci + ":1"));
-    }
-
-    TEST_F(MACsecMgrStaleStateTest, clearStale_stagedPortEntryCountsAsPortEntry)
-    {
-        // Only a staged PORT SET exists: it must still be deleted through the
-        // producer and waited for, like a visible one.
-        seed_staged(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1");
-
-        EXPECT_TRUE(m_mgr->clearStaleMACsecState("Ethernet1"));
-
-        EXPECT_FALSE(staged(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
-        EXPECT_FALSE(exists(APP_MACSEC_PORT_TABLE_NAME, "Ethernet1"));
-    }
 }

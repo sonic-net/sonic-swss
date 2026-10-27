@@ -33,10 +33,6 @@ using namespace swss;
 #define WPA_CLI_CMD        "/sbin/wpa_cli"
 #define WPA_CONF           "/etc/wpa_supplicant.conf"
 #define SOCK_DIR           "/var/run/"
-// How long enableMACsec waits for orchagent to consume the DEL of a stale
-// MACSEC_PORT_TABLE entry before giving up and retrying the task later.
-#define CLEAR_STALE_TIMEOUT_MS  10000
-#define CLEAR_STALE_POLL_MS     100
 
 constexpr std::uint64_t RETRY_TIME = 30;
 
@@ -424,14 +420,12 @@ static void wpa_cli_exec_and_check(
 
 MACsecMgr::MACsecMgr(
     DBConnector *cfgDb,
-    DBConnector *appDb,
     DBConnector *stateDb,
     const vector<std::string> &tables) :
         Orch(cfgDb, tables),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateMkaSessionTable(stateDb, STATE_MACSEC_MKA_SESSION_TABLE_NAME),
-        m_stateMkaParticipantTable(stateDb, STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME),
-        m_clearStaleTimeoutMs(CLEAR_STALE_TIMEOUT_MS)
+        m_stateMkaParticipantTable(stateDb, STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME)
 {
     auto profileConsumer = dynamic_cast<Consumer *>(getExecutor(CFG_MACSEC_PROFILE_TABLE_NAME));
     if (profileConsumer == nullptr)
@@ -454,23 +448,6 @@ MACsecMgr::MACsecMgr(
     Orch::addExecutor(executor);
     m_mkaStatusTimer->start();
 
-    // SA and SC entries first, the PORT entry last: the PORT DEL is the one
-    // orchagent acts on (it cascades to every SC and SA under the port), so it
-    // must be the last thing written and the one waited for.
-    for (const auto &name : {APP_MACSEC_EGRESS_SA_TABLE_NAME,
-                             APP_MACSEC_INGRESS_SA_TABLE_NAME,
-                             APP_MACSEC_EGRESS_SC_TABLE_NAME,
-                             APP_MACSEC_INGRESS_SC_TABLE_NAME,
-                             APP_MACSEC_PORT_TABLE_NAME})
-    {
-        AppMACsecTable t;
-        t.visible.reset(new Table(appDb, name));
-        t.producer.reset(new ProducerStateTable(appDb, name));
-        // A SET a producer has written but the consumer has not popped lives in
-        // the staging hash under the table name prefixed by the state hash prefix.
-        t.staged.reset(new Table(appDb, t.producer->getStateHashPrefix() + name));
-        m_appMACsecTables.push_back(std::move(t));
-    }
 }
 
 MACsecMgr::~MACsecMgr()
@@ -797,15 +774,6 @@ task_process_status MACsecMgr::enableMACsec(
             }
         }
     }
-    // A previous wpa_supplicant that was killed without running its deinit
-    // leaves its APPL_DB entries, and with them orchagent's SAI objects,
-    // behind. They have to go before the new session writes, or orchagent
-    // sees SETs on objects it already holds and keeps the old key.
-    if (!clearStaleMACsecState(port_name))
-    {
-        return task_need_retry;
-    }
-
     // Create MKA Session object
     auto port = m_macsec_ports.emplace(
         std::piecewise_construct,
@@ -888,76 +856,6 @@ task_process_status MACsecMgr::disableMACsec(
     }
     m_macsec_ports.erase(itr);
     return ret;
-}
-
-bool MACsecMgr::clearStaleMACsecState(const std::string & port_name)
-{
-    SWSS_LOG_ENTER();
-
-    // Keys are "<port>" in the PORT table, "<port>:<sci>" in the SC tables
-    // and "<port>:<sci>:<an>" in the SA tables. The ':' keeps Ethernet1 from
-    // matching Ethernet10.
-    const std::string prefix = port_name + ":";
-    auto belongs_to_port = [&](const std::string & key)
-    {
-        return key == port_name || key.compare(0, prefix.size(), prefix) == 0;
-    };
-
-    bool port_entry_found = false;
-    for (auto & table : m_appMACsecTables)
-    {
-        // Both what orchagent has already consumed and what the dead
-        // supplicant wrote but orchagent has not popped yet: a SET still in the
-        // staging hash would otherwise be applied on top of the new session.
-        std::set<std::string> keys;
-        for (auto * t : {table.visible.get(), table.staged.get()})
-        {
-            std::vector<std::string> found;
-            t->getKeys(found);
-            keys.insert(found.begin(), found.end());
-        }
-        const std::string & name = table.visible->getTableName();
-        for (const auto & key : keys)
-        {
-            if (!belongs_to_port(key))
-            {
-                continue;
-            }
-            SWSS_LOG_NOTICE("Removing stale %s entry '%s' left by a previous MKA session on the port '%s'",
-                name.c_str(), key.c_str(), port_name.c_str());
-            // Through the producer: it drops the staged SET, if any, in the same
-            // step and queues a DEL for orchagent. For the PORT entry the DEL is
-            // what tears the SAI port, SCs, SAs, flows and ACL entries down.
-            table.producer->del(key);
-            if (name == APP_MACSEC_PORT_TABLE_NAME)
-            {
-                port_entry_found = true;
-            }
-        }
-    }
-    if (!port_entry_found)
-    {
-        return true;
-    }
-
-    // Wait until orchagent has popped the DEL: the consumer removes the key
-    // from the table and the staging hash when it does. Only then can the new
-    // supplicant write its SET without ProducerStateTable folding the two into
-    // a single SET, which would reproduce the stale state this clears.
-    auto & port_table = m_appMACsecTables.back();
-    std::vector<FieldValueTuple> fvs;
-    for (unsigned int waited = 0; waited < m_clearStaleTimeoutMs; waited += CLEAR_STALE_POLL_MS)
-    {
-        if (!port_table.visible->get(port_name, fvs) && !port_table.staged->get(port_name, fvs))
-        {
-            SWSS_LOG_NOTICE("Stale MACsec state on the port '%s' has been cleared", port_name.c_str());
-            return true;
-        }
-        usleep(CLEAR_STALE_POLL_MS * 1000);
-    }
-    SWSS_LOG_WARN("orchagent did not clear the stale MACsec state on the port '%s' within %u ms",
-        port_name.c_str(), m_clearStaleTimeoutMs);
-    return false;
 }
 
 bool MACsecMgr::isPortStateOk(const std::string & port_name)
@@ -1311,6 +1209,29 @@ bool MACsecMgr::queryMKAStatus(
     }
 }
 
+bool MACsecMgr::observeRemovalTarget(
+    const std::string &port_name,
+    MKASession &session,
+    const std::string &ckn,
+    bool primary,
+    MKASessionStatus &status)
+{
+    if (!collectMKAStatus(port_name, session, &status))
+    {
+        setConfigState(port_name, session, "fresh pre-removal observation is unavailable");
+        return false;
+    }
+
+    const auto target = findParticipant(status, ckn);
+    if (target != nullptr && target->isPrimary != primary)
+    {
+        session.participants_verified = false;
+        setConfigState(port_name, session, "participant role changed before removal");
+        return false;
+    }
+    return true;
+}
+
 bool MACsecMgr::validateExpectedParticipants(
     const MKASession &session,
     const MKASessionStatus &status,
@@ -1631,9 +1552,28 @@ bool MACsecMgr::reconcileObservedParticipants(
             desired.primary_ckn : desired.fallback_ckn;
         if (participant.ckn != expected)
         {
+            MKASessionStatus fresh;
+            if (!observeRemovalTarget(
+                    port_name, session, participant.ckn, participant.isPrimary, fresh))
+            {
+                return false;
+            }
+            if (findParticipant(fresh, participant.ckn) == nullptr)
+            {
+                continue;
+            }
             if (!removeParticipant(port_name, session, participant.ckn))
             {
                 setConfigState(port_name, session, "failed to remove unexpected participant");
+                return false;
+            }
+            if (!collectMKAStatus(port_name, session, &fresh))
+            {
+                return false;
+            }
+            if (findParticipant(fresh, participant.ckn) != nullptr)
+            {
+                setConfigState(port_name, session, "unexpected participant removal is not yet verified");
                 return false;
             }
         }
@@ -1646,7 +1586,12 @@ bool MACsecMgr::reconcileObservedParticipants(
         {
             continue;
         }
-        const auto observed = findParticipant(status, ckn);
+        MKASessionStatus fresh;
+        if (!collectMKAStatus(port_name, session, &fresh))
+        {
+            return false;
+        }
+        const auto observed = findParticipant(fresh, ckn);
         if (observed != nullptr && observed->isPrimary == primary)
         {
             continue;
@@ -1673,14 +1618,12 @@ bool MACsecMgr::reconcileParticipant(
 {
     bool primary = false;
     MKASessionStatus status;
-    bool haveStatus = false;
     if (!session.pending_old_ckn.empty())
     {
         if (!collectMKAStatus(port_name, session, &status))
         {
             return false;
         }
-        haveStatus = true;
     }
     if (!selectParticipantToUpdate(port_name, session, desired, primary))
     {
@@ -1713,11 +1656,20 @@ bool MACsecMgr::reconcileParticipant(
         (primary ?
          session.applied_profile.primary_ckn :
          session.applied_profile.fallback_ckn);
-    const bool pending = !session.pending_old_ckn.empty();
-    if (!oldCkn.empty() &&
-        (!pending || (haveStatus && findParticipant(status, oldCkn) != nullptr)))
+    if (!oldCkn.empty())
     {
-        const bool removeAccepted = removeParticipant(port_name, session, oldCkn);
+        const bool pending = !session.pending_old_ckn.empty();
+        if (!observeRemovalTarget(port_name, session, oldCkn, primary, status))
+        {
+            return false;
+        }
+        if (pending && session.pending_old_ckn.empty())
+        {
+            return true;
+        }
+        const bool removeAccepted =
+            findParticipant(status, oldCkn) == nullptr ||
+            removeParticipant(port_name, session, oldCkn);
         session.pending_old_ckn = oldCkn;
         session.pending_primary = primary;
         session.pending_new_ckn = primary ? replacement.primary_ckn : replacement.fallback_ckn;
