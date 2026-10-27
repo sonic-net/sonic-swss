@@ -2454,8 +2454,13 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
 
     if (!isVrfMapExists(full_map_entry_name))
     {
-        SWSS_LOG_ERROR("VxlanVrfMapOrch Vxlan map '%s' do not exist", full_map_entry_name.c_str());
-        return false;
+        /*
+         * A delete for an already-absent mapping is complete.  Retrying it
+         * can leave an older DEL ahead of a newer SET for the same key and
+         * remove the newly-created mapping on the next orchestration pass.
+         */
+        SWSS_LOG_NOTICE("VxlanVrfMapOrch Vxlan map '%s' is already absent", full_map_entry_name.c_str());
+        return true;
     }
 
     vrf_map_entry_t entry = vxlan_vrf_table_.at(full_map_entry_name);
