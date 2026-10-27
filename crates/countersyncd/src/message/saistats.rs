@@ -97,12 +97,14 @@ pub struct SAIStatRef<'a> {
     metadata: Option<&'a SAIStatMetadata>,
 }
 impl SAIStatRef<'_> {
+    #[inline]
     pub fn type_name(self) -> Option<&'static str> {
         match self.metadata {
             Some(m) => m.type_name,
             None => resolve_names(self.type_id, self.stat_id).0,
         }
     }
+    #[inline]
     pub fn stat_name(self) -> Option<&'static str> {
         match self.metadata {
             Some(m) => m.stat_name,
@@ -124,6 +126,7 @@ impl SAIStatRef<'_> {
     }
 }
 impl<'a> From<&'a SAIStat> for SAIStatRef<'a> {
+    #[inline]
     fn from(stat: &'a SAIStat) -> Self {
         // Owned/manual inputs have no shared template; their name methods
         // resolve on demand. IPFIX Shared views borrow precomputed metadata.
@@ -146,12 +149,14 @@ pub enum SAIStatsView<'a> {
     },
 }
 impl<'a> SAIStatsView<'a> {
+    #[inline]
     pub fn len(self) -> usize {
         match self {
             Self::Owned(s) => s.len(),
             Self::Shared { values, .. } => values.len(),
         }
     }
+    #[inline]
     pub fn get(self, index: usize) -> Option<SAIStatRef<'a>> {
         match self {
             Self::Owned(stats) => stats.get(index).map(SAIStatRef::from),
@@ -167,6 +172,7 @@ impl<'a> SAIStatsView<'a> {
             }),
         }
     }
+    #[inline]
     pub fn iter(self) -> SAIStatsIter<'a> {
         SAIStatsIter {
             stats: self,
@@ -180,11 +186,13 @@ pub struct SAIStatsIter<'a> {
 }
 impl<'a> Iterator for SAIStatsIter<'a> {
     type Item = SAIStatRef<'a>;
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         let value = self.stats.get(self.index)?;
         self.index += 1;
         Some(value)
     }
+    #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = self.stats.len() - self.index;
         (n, Some(n))
@@ -194,6 +202,7 @@ impl ExactSizeIterator for SAIStatsIter<'_> {}
 impl<'a> IntoIterator for SAIStatsView<'a> {
     type Item = SAIStatRef<'a>;
     type IntoIter = SAIStatsIter<'a>;
+    #[inline]
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
     }
@@ -385,8 +394,17 @@ impl SAIStatsBatch {
     }
 
     /// Borrowed record/point iteration with no per-point allocation or Arc clone.
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = SAIStatsRef<'_>> {
-        self.records.iter().map(|r| SAIStatsRef {
+    #[inline]
+    pub fn iter(&self) -> SAIStatsBatchIter<'_> {
+        SAIStatsBatchIter {
+            batch: self,
+            records: self.records.iter(),
+        }
+    }
+
+    #[inline]
+    fn record_ref<'a>(&'a self, r: &'a SAIStatsRecord) -> SAIStatsRef<'a> {
+        SAIStatsRef {
             observation_time: r.observation_time,
             stats: match r.metadata {
                 Some(index) => SAIStatsView::Shared {
@@ -395,17 +413,20 @@ impl SAIStatsBatch {
                 },
                 None => SAIStatsView::Owned(&self.stats[r.stats.clone()]),
             },
-        })
+        }
     }
 
+    #[inline]
     pub fn record_count(&self) -> usize {
         self.records.len()
     }
 
+    #[inline]
     pub fn counter_count(&self) -> usize {
         self.stats.len() + self.values.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
     }
@@ -429,6 +450,30 @@ impl SAIStatsBatch {
         }
     }
 }
+
+/// Records of a [`SAIStatsBatch`] in order; a named type (instead of a `map`
+/// closure) so that consumers in other modules and crates inline `next()`.
+pub struct SAIStatsBatchIter<'a> {
+    batch: &'a SAIStatsBatch,
+    records: std::slice::Iter<'a, SAIStatsRecord>,
+}
+
+impl<'a> Iterator for SAIStatsBatchIter<'a> {
+    type Item = SAIStatsRef<'a>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = self.records.next()?;
+        Some(self.batch.record_ref(record))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.records.size_hint()
+    }
+}
+
+impl ExactSizeIterator for SAIStatsBatchIter<'_> {}
 
 impl From<SAIStats> for SAIStatsBatch {
     fn from(value: SAIStats) -> Self {
