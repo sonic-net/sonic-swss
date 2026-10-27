@@ -1416,6 +1416,11 @@ bool RouteOrch::isStandbyMuxNextHop(const NextHopGroupKey &nexthops)
     }
 
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    if (mux_orch == nullptr)
+    {
+        return false;
+    }
+
     sai_object_id_t tunnel_nh_id = mux_orch->getTunnelNextHopId();
     if (tunnel_nh_id == SAI_NULL_OBJECT_ID)
     {
