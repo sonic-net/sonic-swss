@@ -548,4 +548,31 @@ TEST_F(VrfOrchTest, VxlanVrfMapDeleteUsesStoredDefaultVrfName)
     EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
 }
 
+TEST_F(VrfOrchTest, VxlanVrfMapNewerSetSupersedesPendingDelete)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    const string map_key = "EVPN_2.2.2.2:map_default_5200";
+
+    // A delete for a map that was never published is an idempotent success;
+    // it must not remain queued ahead of a later SET for the same key.
+    consumer->addToSync({{map_key, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+
+    // A newer SET is the desired final state. The older pending DEL must not
+    // remove the mapping after the SET succeeds.
+    consumer->addToSync(
+        {{map_key, "SET", {{"vni", "5200"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
+}
+
 } // namespace vrforch_test
