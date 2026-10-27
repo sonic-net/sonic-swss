@@ -16,6 +16,8 @@ namespace testing_db
     std::map<int, TablesT> gDB;
     std::map<std::string, std::size_t> gProducerSetCounts;
     std::map<std::string, std::size_t> gProducerDelCounts;
+    std::map<std::string, std::size_t> gTableGetCounts;
+    std::map<std::string, std::size_t> gTableGetKeysCounts;
 
     void reset()
     {
@@ -27,6 +29,8 @@ namespace testing_db
     {
         gProducerSetCounts.clear();
         gProducerDelCounts.clear();
+        gTableGetCounts.clear();
+        gTableGetKeysCounts.clear();
     }
 
     std::size_t getProducerSetCount(const std::string &tableName)
@@ -37,6 +41,16 @@ namespace testing_db
     std::size_t getProducerDelCount(const std::string &tableName)
     {
         return gProducerDelCounts[tableName];
+    }
+
+    std::size_t getTableGetCount(const std::string &tableName)
+    {
+        return gTableGetCounts[tableName];
+    }
+
+    std::size_t getTableGetKeysCount(const std::string &tableName)
+    {
+        return gTableGetKeysCounts[tableName];
     }
 }
 
@@ -87,6 +101,7 @@ namespace swss
 
     bool Table::get(const std::string &key, std::vector<FieldValueTuple> &ovalues)
     {
+        ++gTableGetCounts[getTableName()];
         auto table = gDB[m_pipe->getDbId()][getTableName()];
         if (table.find(key) == table.end())
         {
@@ -130,6 +145,7 @@ namespace swss
 
     void Table::getKeys(std::vector<std::string> &keys)
     {
+        ++gTableGetKeysCounts[getTableName()];
         keys.clear();
         auto table = gDB[m_pipe->getDbId()][getTableName()];
         for (const auto &it : table)
