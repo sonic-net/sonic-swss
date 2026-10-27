@@ -8,11 +8,6 @@
 
 #include <memory>
 
-#ifndef CFG_FDB_SYNC_TABLE_NAME
-// TODO: drop once sonic-net/sonic-buildimage#30365 is merged.
-#define CFG_FDB_SYNC_TABLE_NAME "FDB_SYNC"
-#endif
-
 class MacMoveGuard;
 
 enum FdbOrigin
@@ -167,13 +162,6 @@ private:
     NotificationConsumer* m_fdbNotificationConsumer;
     shared_ptr<DBConnector> m_notificationsDb;
     std::unique_ptr<MacMoveGuard> m_macMoveGuard;
-
-    /* In FPM MAC-sync mode zebra owns local-host probing after an ASIC
-       ageout. The legacy NEIGH_RESOLVE request would otherwise feed the
-       still-programmed ASIC neighbor back into FDB learning. */
-    bool m_fpmMacSync = false;
-    /* An L3EvpnMH device always syncs MACs over FPM, whatever FDB_SYNC says. */
-    bool m_l3EvpnMh = false;
 
     map<FdbDest, string> destTypeToString =
         { { FdbDest::UNKNOWN, "Unknown" },

@@ -1846,74 +1846,15 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget("Vlan40:aa:bb:cc:dd:ee:60", "port", port), false);
     }
 
-    TEST_F(VxlanFdbOrchTest, FdbSyncModeConfigUpdatesAgeoutOwner)
+    TEST_F(VxlanFdbOrchTest, FpmModeAgeoutRequestsNeighborResolve)
     {
-        auto consumer = dynamic_cast<Consumer *>(
-            gFdbOrch->getExecutor(CFG_FDB_SYNC_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"global", "SET", {{"mac_sync_mode", "fpm"}}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gFdbOrch)->doTask();
-        EXPECT_TRUE(gFdbOrch->m_fpmMacSync);
-
-        entries.clear();
-        entries.push_back({"global", "SET", {{"mac_sync_mode", "kernel"}}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gFdbOrch)->doTask();
-        EXPECT_FALSE(gFdbOrch->m_fpmMacSync);
-
-        entries.clear();
-        entries.push_back({"global", "SET", {{"mac_sync_mode", "fpm"}}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gFdbOrch)->doTask();
-        entries.clear();
-        entries.push_back({"global", "DEL", {}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gFdbOrch)->doTask();
-        EXPECT_FALSE(gFdbOrch->m_fpmMacSync);
-    }
-
-    TEST_F(VxlanFdbOrchTest, L3EvpnMhSubtypeAlwaysSyncsMacsOverFpm)
-    {
+        /* The age-out refresh is the same in both MAC sync modes: zebra does
+         * not probe a host whose local MAC aged out. */
+        Table fdbSync(m_config_db.get(), "FDB_SYNC");
+        fdbSync.set("global", {{"mac_sync_mode", "fpm"}});
         Table deviceMetadata(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
         deviceMetadata.set("localhost", {{"subtype", "L3EvpnMH"}});
 
-        vector<table_name_with_pri_t> app_fdb_tables = {
-            { APP_FDB_TABLE_NAME, FdbOrch::fdborch_pri }
-        };
-        TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
-        TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-        FdbOrch *fixtureFdbOrch = gFdbOrch;
-        auto *fdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb,
-                                    m_portsOrch.get(), m_config_db.get());
-        EXPECT_TRUE(fdbOrch->m_fpmMacSync);
-
-        auto consumer = dynamic_cast<Consumer *>(fdbOrch->getExecutor(CFG_FDB_SYNC_TABLE_NAME));
-        ASSERT_NE(consumer, nullptr);
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"global", "SET", {{"mac_sync_mode", "kernel"}}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(fdbOrch)->doTask();
-        EXPECT_TRUE(fdbOrch->m_fpmMacSync);
-
-        entries.clear();
-        entries.push_back({"global", "DEL", {}});
-        consumer->addToSync(entries);
-        static_cast<Orch *>(fdbOrch)->doTask();
-        EXPECT_TRUE(fdbOrch->m_fpmMacSync);
-
-        /* ~FdbOrch() clears gFdbOrch, which the fixture still owns. */
-        fdbOrch->detachObservers();
-        delete fdbOrch;
-        gFdbOrch = fixtureFdbOrch;
-        deviceMetadata.del("localhost");
-    }
-
-    TEST_F(VxlanFdbOrchTest, FpmModeAgeoutDoesNotRequestLegacyNeighborResolve)
-    {
         Table portTable(m_app_db.get(), APP_PORT_TABLE_NAME);
         auto ports = ut_helper::getInitialSaiPorts();
         for (const auto &it : ports)
@@ -1940,18 +1881,35 @@ namespace fdborch_vxlan_ut
             .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
         learnNeighbor(m_app_db.get(), VLAN40, ip, mac);
 
+        /* Built after the configuration, so it starts in fpm mode. */
+        vector<table_name_with_pri_t> app_fdb_tables = {
+            { APP_FDB_TABLE_NAME, FdbOrch::fdborch_pri }
+        };
+        TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+        TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+        FdbOrch *fixtureFdbOrch = gFdbOrch;
+        auto *fdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb,
+                                    m_portsOrch.get(), m_config_db.get());
+
         vector<uint8_t> macAddr = {0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x61};
-        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, macAddr,
+        triggerUpdate(fdbOrch, SAI_FDB_EVENT_LEARNED, macAddr,
                       m_portsOrch->m_portList[ETH0].m_bridge_port_id,
                       m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
 
-        gFdbOrch->m_fpmMacSync = true;
-        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, macAddr,
+        triggerUpdate(fdbOrch, SAI_FDB_EVENT_AGED, macAddr,
                       m_portsOrch->m_portList[ETH0].m_bridge_port_id,
                       m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
 
         string value;
-        EXPECT_FALSE(resolveTable.hget(resolveKey, "mac", value));
+        EXPECT_TRUE(resolveTable.hget(resolveKey, "mac", value));
+        EXPECT_EQ(value, mac);
+
+        fdbOrch->detachObservers();
+        delete fdbOrch;
+        gFdbOrch = fixtureFdbOrch;
+        resolveTable.del(resolveKey);
+        fdbSync.del("global");
+        deviceMetadata.del("localhost");
     }
 
     TEST_F(VxlanFdbOrchTest, FdbMoveEvent)
