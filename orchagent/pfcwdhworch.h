@@ -55,7 +55,10 @@ private:
     // Hardware-specific methods
     bool configureHwWatchdog(const Port& port, uint32_t detectionTime,
                             uint32_t restorationTime, PfcWdAction action);
-    bool disableHwWatchdog(const Port& port);
+    // bestEffort finishes the port level teardown even when a queue could not be
+    // disabled. The configuration rollback uses it: no queue was armed there, so a
+    // failed disable must not leave the port half configured.
+    bool disableHwWatchdog(const Port& port, bool bestEffort = false);
 
     // Member variables
     const vector<sai_port_stat_t> c_portStatIds;
