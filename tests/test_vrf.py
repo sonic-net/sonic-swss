@@ -6,6 +6,7 @@ import pytest
 from swsscommon import swsscommon
 from pprint import pprint
 from evpn_tunnel import VxlanTunnel
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 
 class TestVrf(object):
@@ -141,9 +142,18 @@ class TestVrf(object):
         # check that the correct vrf entry was removed
         assert state['initial_entries'] == self.entries(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"), "The incorrect entry was removed"
 
-        # check vrf was removed from kernel
-        (status, rslt) = dvs.runcmd("ip link show " + vrf_name)
-        assert status != 0
+        # Kernel netdevice cleanup follows APP_DB and ASIC_DB cleanup
+        # asynchronously. Poll for the link to disappear instead of racing
+        # vrfmgrd immediately after the database assertions complete.
+        def _vrf_link_removed():
+            status, output = dvs.runcmd("ip link show " + vrf_name)
+            return (status != 0, output)
+
+        wait_for_result(
+            _vrf_link_removed,
+            PollingConfig(polling_interval=0.1, timeout=20, strict=True),
+            failure_message="VRF netdevice %s was not removed" % vrf_name,
+        )
 
     def vrf_update(self, vrf_name, attributes, expected_attributes, state):
         # update the VRF entry in Config DB
@@ -542,6 +552,7 @@ class TestVrf(object):
         tenant_first = "VrfTenantFirst"
         tenant_second = "VrfTenantSecond"
         app_db = dvs.get_app_db()
+        initial_default_vrf = app_db.get_entry("VRF_TABLE", "default")
 
         vxlan.create_vlan1(dvs, "Vlan130")
         vxlan.create_vlan1(dvs, "Vlan131")
@@ -566,7 +577,11 @@ class TestVrf(object):
         app_db.wait_for_entry("VXLAN_VRF_TABLE", tenant_map_key)
         self.create_entry_tbl(
             self.cdb, "VRF", "default", [("vni", "5300")])
-        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        # A baseline image may retain a logical default-VRF placeholder with
+        # no VNI. Rejecting this conflict must preserve that pre-existing row,
+        # not require the whole APP_DB key to be absent.
+        time.sleep(2)
+        assert app_db.get_entry("VRF_TABLE", "default") == initial_default_vrf
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_5300_key)
         (status, _) = dvs.runcmd("ip link show dev default")
         assert status != 0
@@ -665,6 +680,109 @@ class TestVrf(object):
         vxlan.remove_evpn_nvo(dvs, nvo_name)
         vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan.remove_vlan(dvs, "110")
+
+    def test_VRFMgr_DefaultVrfUnrelatedMapDoesNotQueueStaleDelete(self, dvs, testlog):
+        """An unrelated L2VNI event must not delete a later valid L3VNI map."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-stale-delete"
+        nvo_name = "nvo-default-stale-delete"
+        vni = "5900"
+        unrelated_vni = "5910"
+        vlan = "Vlan190"
+        unrelated_vlan = "Vlan191"
+        map_key = "%s:evpn_map_%s_default" % (tunnel_name, vni)
+        app_db = dvs.get_app_db()
+
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vlan1(dvs, unrelated_vlan)
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "16.16.16.16")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+
+        try:
+            # The VRF mapping is valid but cannot be published until its own
+            # VNI-to-VLAN dependency arrives.
+            self.create_entry_tbl(
+                self.cdb, "VRF", "default", [("vni", vni)])
+            app_db.wait_for_field_match(
+                "VRF_TABLE", "default", {"vni": vni})
+            app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+
+            # This unrelated event must not enqueue a DEL for map_key.
+            vxlan.create_vxlan_tunnel_map(
+                dvs, tunnel_name, "map-unrelated-5910",
+                unrelated_vni, unrelated_vlan)
+            time.sleep(2)
+
+            # Once the matching dependency arrives, the newest desired state
+            # is present and both SAI mapper directions must remain present.
+            vxlan.create_vxlan_tunnel_map(
+                dvs, tunnel_name, "map-default-5900", vni, vlan)
+            app_db.wait_for_field_match(
+                "VXLAN_VRF_TABLE", map_key,
+                {"vni": vni, "vrf": "default"})
+            time.sleep(2)
+            assert self.vrf_tunnel_map_types(vni) == sorted([
+                "SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI",
+                "SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID",
+            ])
+        finally:
+            self.delete_entry_tbl(self.cdb, "VRF", "default")
+            vxlan.remove_vxlan_tunnel_map(
+                dvs, tunnel_name, "map-default-5900", vni, vlan)
+            vxlan.remove_vxlan_tunnel_map(
+                dvs, tunnel_name, "map-unrelated-5910",
+                unrelated_vni, unrelated_vlan)
+            vxlan.remove_evpn_nvo(dvs, nvo_name)
+            vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+            vxlan.remove_vlan(dvs, "190")
+            vxlan.remove_vlan(dvs, "191")
+
+    def test_VRFMgr_DefaultVrfVniFieldRemovalClearsStaleState(self, dvs, testlog):
+        """Removing only the CONFIG_DB vni field must not leave its old value."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-field-remove"
+        nvo_name = "nvo-default-field-remove"
+        map_name = "map-default-field-remove"
+        vni = "5920"
+        vlan = "Vlan192"
+        map_key = "%s:evpn_map_%s_default" % (tunnel_name, vni)
+        app_db = dvs.get_app_db()
+        config_db = dvs.get_config_db()
+
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "17.17.17.17")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+
+        try:
+            # Keep another field in the row so hdel(vni) produces a SET-style
+            # field-removal update rather than deleting the whole VRF key.
+            self.create_entry_tbl(
+                self.cdb, "VRF", "default",
+                [("vni", vni), ("v4", "true")])
+            app_db.wait_for_field_match(
+                "VRF_TABLE", "default", {"vni": vni})
+            app_db.wait_for_entry("VXLAN_VRF_TABLE", map_key)
+
+            config_db.delete_field("VRF", "default", "vni")
+            app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+            time.sleep(2)
+
+            app_vrf = app_db.get_entry("VRF_TABLE", "default")
+            assert app_vrf.get("vni") == "0", \
+                "removed CONFIG_DB vni did not publish the unmap lifecycle value: %s" % app_vrf
+        finally:
+            self.delete_entry_tbl(self.cdb, "VRF", "default")
+            vxlan.remove_vxlan_tunnel_map(
+                dvs, tunnel_name, map_name, vni, vlan)
+            vxlan.remove_evpn_nvo(dvs, nvo_name)
+            vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+            vxlan.remove_vlan(dvs, "192")
 
     def test_VRFMgr_DefaultVrfL3VniWarmRestart(self, dvs, testlog):
         """Warm-restart SWSS without duplicating or losing the default mapping."""
