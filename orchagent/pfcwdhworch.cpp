@@ -658,7 +658,7 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     // Cleanup handler called on configuration failure
     auto handleFailure = [this, &port](const string& errorMsg) -> bool {
         SWSS_LOG_ERROR("%s", errorMsg.c_str());
-        disableHwWatchdog(port);
+        disableHwWatchdog(port, /*bestEffort=*/true);
         writeFailureStatus(port);
         return false;
     };
@@ -876,7 +876,7 @@ bool PfcWdHwOrch::disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t
     return true;
 }
 
-bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
+bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
 {
     SWSS_LOG_ENTER();
 
@@ -942,9 +942,9 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
         }
     }
 
-    // The port keeps its tracking and STATE_DB entry while any queue is still
-    // armed, so the operation can be retried.
-    if (!cleanupOk)
+    // A queue that could not be disabled is still armed, so the port keeps its
+    // intervals, its tracking and its STATE_DB entry, and the caller retries.
+    if (!cleanupOk && !bestEffort)
     {
         return false;
     }
@@ -994,10 +994,13 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port)
         SWSS_LOG_NOTICE("All hardware PFC watchdog ports disabled, reset action to UNKNOWN");
     }
 
-    SWSS_LOG_NOTICE("Successfully disabled hardware PFC watchdog on port %s",
-                   port.m_alias.c_str());
+    if (cleanupOk)
+    {
+        SWSS_LOG_NOTICE("Successfully disabled hardware PFC watchdog on port %s",
+                       port.m_alias.c_str());
+    }
 
-    return true;
+    return cleanupOk;
 }
 
 void PfcWdHwOrch::writeFailureStatus(const Port& port)
