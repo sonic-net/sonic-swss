@@ -4,15 +4,7 @@
 //! Names occur only in `series`, including duplicate tuples.
 //! All integers are exact, timestamps are nanoseconds, and there is no app delta.
 use super::{BATCH_TARGET_BYTES, MAX_RECORD_BYTES, MAX_ROWS};
-use crate::{
-    message::saistats::{SAIStatsRef, SAIStatsView},
-    sai::{
-        saibuffer::{SaiBufferPoolStat, SaiIngressPriorityGroupStat},
-        saiport::SaiPortStat,
-        saiqueue::SaiQueueStat,
-        saitypes::SaiObjectType,
-    },
-};
+use crate::message::saistats::{SAIStatsRef, SAIStatsView};
 use arrow_array::{Array, ArrayRef, Int32Array, ListArray, RecordBatch, UInt64Array};
 use arrow_ipc::{MessageHeader, reader::StreamReader};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
@@ -70,28 +62,6 @@ pub struct DecodedSample {
     pub value: u64,
 }
 
-/// Full known SAI names, or unambiguous numeric suffixes for unknown IDs.
-pub fn series_names(type_id: u32, stat_id: u32) -> (String, String) {
-    let object_type = SaiObjectType::try_from(type_id).ok();
-    let type_name = object_type
-        .map(|t| t.to_c_name().to_string())
-        .unwrap_or_else(|| format!("SAI_OBJECT_TYPE_UNKNOWN_{type_id}"));
-    let stat_name = match object_type {
-        Some(SaiObjectType::Port) => SaiPortStat::from_u32(stat_id).map(|s| s.to_c_name()),
-        Some(SaiObjectType::Queue) => SaiQueueStat::from_u32(stat_id).map(|s| s.to_c_name()),
-        Some(SaiObjectType::BufferPool) => {
-            SaiBufferPoolStat::from_u32(stat_id).map(|s| s.to_c_name())
-        }
-        Some(SaiObjectType::IngressPriorityGroup) => {
-            SaiIngressPriorityGroupStat::from_u32(stat_id).map(|s| s.to_c_name())
-        }
-        _ => None,
-    }
-    .map(str::to_string)
-    .unwrap_or_else(|| format!("{type_name}_STAT_UNKNOWN_{stat_id}"));
-    (type_name, stat_name)
-}
-
 pub(super) struct Layout {
     // Only the current layout is retained. No per-metric hashing or name allocation
     // occurs on the stable-layout path; even duplicate identities retain position.
@@ -136,11 +106,11 @@ impl Layout {
         let mut series = Vec::with_capacity(stats.len());
         let mut identities = Vec::with_capacity(stats.len());
         for stat in stats {
-            let (type_name, stat_name) = series_names(stat.type_id, stat.stat_id);
+            // Shared IPFIX views reuse the names cached in their template metadata.
             series.push(Series {
                 object_name: Arc::clone(stat.object_name),
-                type_name: type_name.into(),
-                stat_name: stat_name.into(),
+                type_name: Arc::from(stat.type_name_or_id()),
+                stat_name: Arc::from(stat.stat_name_or_id()),
             });
             identities.push((Arc::clone(stat.object_name), stat.type_id, stat.stat_id));
         }

@@ -104,14 +104,12 @@ use clap::{Parser, ValueEnum};
 use countersyncd::{
     actor::{
         ipfix::IpfixActor,
-        local_storage::{
-            read_shard, series_names, DecodedSample, LocalStorageActor, LocalStorageConfig,
-        },
+        local_storage::{read_shard, DecodedSample, LocalStorageActor, LocalStorageConfig},
     },
     message::{
         ipfix::IPFixTemplatesMessage,
         local_storage::LocalStorageStatus,
-        saistats::{SAIStat, SAIStatsBatch, SAIStatsBatchMessage},
+        saistats::{SAIStat, SAIStatRef, SAIStatsBatch, SAIStatsBatchMessage},
     },
 };
 use serde_json::json;
@@ -638,7 +636,14 @@ fn verify(
     let mut result = Verification::default();
     let (objects, _) = helpers::generate_object_metadata(args.counters);
     let names: Vec<_> = (0..args.counters)
-        .map(|i| series_names(i as u32 + 1, i as u32 + 1))
+        .map(|i| {
+            let stat = SAIStat::new("", i as u32 + 1, i as u32 + 1, 0);
+            let stat = SAIStatRef::from(&stat);
+            (
+                stat.type_name_or_id().into_owned(),
+                stat.stat_name_or_id().into_owned(),
+            )
+        })
         .collect();
     // Always scan all raw arrays; the optional API pass never collects samples.
     let mut raw_records = vec![false; audit.seen.len()];

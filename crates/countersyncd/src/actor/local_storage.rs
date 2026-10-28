@@ -124,7 +124,7 @@ use tokio::{sync::mpsc::Receiver, time::MissedTickBehavior};
 
 mod codec;
 #[allow(unused_imports)]
-pub use codec::{DecodedSample, read_shard, series_names};
+pub use codec::{DecodedSample, read_shard};
 
 const LOCK_FILE: &str = ".writer.lock";
 const BATCH_TARGET_BYTES: usize = 16 * 1024 * 1024;
@@ -813,7 +813,9 @@ fn tmpfs_available_bytes(free: u64, meminfo: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::saistats::{SAIStat, SAIStatMetadata, SAIStatsBatch, SAIStatsView};
+    use crate::message::saistats::{
+        SAIStat, SAIStatMetadata, SAIStatRef, SAIStatsBatch, SAIStatsView,
+    };
     use arrow_array::{Array, ListArray};
     use arrow_ipc::reader::StreamReader;
     use std::{
@@ -886,17 +888,18 @@ mod tests {
         batch
             .iter()
             .flat_map(|record| {
-                record.stats.iter().enumerate().map(move |(i, stat)| {
-                    let (type_name, stat_name) = series_names(stat.type_id, stat.stat_id);
-                    DecodedSample {
+                record
+                    .stats
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, stat)| DecodedSample {
                         stat_index: i as u32,
                         object_name: Arc::clone(stat.object_name),
-                        type_name: type_name.into(),
-                        stat_name: stat_name.into(),
+                        type_name: Arc::from(stat.type_name_or_id()),
+                        stat_name: Arc::from(stat.stat_name_or_id()),
                         observation_time: record.observation_time,
                         value: stat.counter,
-                    }
-                })
+                    })
             })
             .collect()
     }
@@ -1130,12 +1133,13 @@ mod tests {
             .unwrap();
             writer.write(&batch).unwrap();
             boundaries.push((writer.get_ref().len(), i + 1));
-            let (ty, stat) = series_names(1, 2);
+            let source = stat("a", 0);
+            let source = SAIStatRef::from(&source);
             expected.push(DecodedSample {
                 stat_index: 0,
                 object_name: "a".into(),
-                type_name: ty.into(),
-                stat_name: stat.into(),
+                type_name: Arc::from(source.type_name_or_id()),
+                stat_name: Arc::from(source.stat_name_or_id()),
                 observation_time: u64::MAX - i,
                 value: [u64::MAX, 0, 1 << 63][i as usize],
             });
@@ -1771,23 +1775,45 @@ mod tests {
 
     #[test]
     fn names_limits_and_setup_status() {
+        // Series names match the other sinks, including unknown numeric IDs.
+        let stats = [
+            SAIStat::new("Ethernet0", 1, 0, 0),
+            SAIStat::new("Ethernet0|0", 21, 0, 0),
+            SAIStat::new("pool", 24, 0, 0),
+            SAIStat::new("Ethernet0|0", 26, 0, 0),
+            SAIStat::new("x", u32::MAX, 7, 0),
+        ];
+        let layout = codec::Layout::new(SAIStatsView::Owned(&stats)).unwrap();
+        let series: serde_json::Value =
+            serde_json::from_str(&layout.schema.metadata()["series"]).unwrap();
+        let names: Vec<_> = series
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["type_name"].as_str().unwrap(),
+                    s["stat_name"].as_str().unwrap(),
+                )
+            })
+            .collect();
         assert_eq!(
-            series_names(1, 0),
-            (
-                "SAI_OBJECT_TYPE_PORT".into(),
-                "SAI_PORT_STAT_IF_IN_OCTETS".into()
-            )
+            names[0],
+            ("SAI_OBJECT_TYPE_PORT", "SAI_PORT_STAT_IF_IN_OCTETS")
         );
-        for (id, prefix) in [
-            (21, "SAI_QUEUE_STAT_"),
-            (24, "SAI_BUFFER_POOL_STAT_"),
-            (26, "SAI_INGRESS_PRIORITY_GROUP_STAT_"),
+        for (index, prefix) in [
+            (1, "SAI_QUEUE_STAT_"),
+            (2, "SAI_BUFFER_POOL_STAT_"),
+            (3, "SAI_INGRESS_PRIORITY_GROUP_STAT_"),
         ] {
-            assert!(series_names(id, 0).1.starts_with(prefix));
+            assert!(names[index].1.starts_with(prefix));
         }
         assert_eq!(
-            series_names(u32::MAX, 7).1,
-            "SAI_OBJECT_TYPE_UNKNOWN_4294967295_STAT_UNKNOWN_7"
+            names[4],
+            (
+                "UNKNOWN_SAI_OBJECT_TYPE_4294967295",
+                "UNKNOWN_SAI_STAT_TYPE_4294967295_ID_7"
+            )
         );
         let temp = private_tempdir();
         let mut config = config(temp.path());
