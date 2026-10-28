@@ -1141,7 +1141,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 continue;
             }
 
-            const auto& ctx = found->second;
+            auto& ctx = found->second;
 
             // if retry_cst field is set, move this task to retry cache:
             // - add it to retry cache before executing addRoutePost/removeRoutePost
@@ -1188,7 +1188,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
-                    if (addRoutePost(ctx, nhg) || rc_inserted)
+                    bool post_ok = addRoutePost(ctx, nhg);
+                    /* addRoutePost() may set ctx.retry_cst when the create failed with
+                     * SAI resource exhaustion; park the task on its constraint instead of
+                     * leaving it in m_toSync to be retried every doTask cycle. */
+                    if (!post_ok && !rc_inserted && ctx.retry_cst != DUMMY_CONSTRAINT)
+                        rc_inserted = consumer.addToRetry(it_prev->second, ctx.retry_cst);
+                    if (post_ok || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1199,7 +1205,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                          gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                          ctx.using_temp_nhg)
                 {
-                    if (addRoutePost(ctx, nhg) || rc_inserted)
+                    bool post_ok = addRoutePost(ctx, nhg);
+                    /* addRoutePost() may set ctx.retry_cst when the create failed with
+                     * SAI resource exhaustion; park the task on its constraint instead of
+                     * leaving it in m_toSync to be retried every doTask cycle. */
+                    if (!post_ok && !rc_inserted && ctx.retry_cst != DUMMY_CONSTRAINT)
+                        rc_inserted = consumer.addToRetry(it_prev->second, ctx.retry_cst);
+                    if (post_ok || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1222,7 +1234,18 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(ctx) || rc_inserted)
+                bool removed = removeRoutePost(ctx);
+                if (removed)
+                {
+                    /* A programmed route was freed from the ASIC (removeRoutePost is only
+                     * reached for routes that removeRoute() bulked, i.e. routes present in
+                     * m_syncdRoutes). Wake any route creates parked on SAI resource
+                     * exhaustion so they can be retried; mark_resolved() is a no-op when
+                     * nothing is parked. */
+                    notifyRetry(this, consumer.getName(),
+                                make_constraint(RETRY_CST_SAI_RESOURCE, APP_ROUTE_TABLE_NAME));
+                }
+                if (removed || rc_inserted)
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
@@ -2417,7 +2440,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     return false;
 }
 
-bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
@@ -2596,8 +2619,28 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
-                    ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+            if (isSaiStatusResourceFull(status))
+            {
+                /* Route-table exhaustion is a high-volume, repetitive failure.
+                 * Throttle the log (first occurrence, then at most once per 5s with a
+                 * running count) to avoid flooding syslog. */
+                m_routeResourceFullCount++;
+                auto now = std::chrono::steady_clock::now();
+                if (m_routeResourceFullCount == 1 ||
+                    now - m_lastRouteResourceFullLog >= std::chrono::seconds(5))
+                {
+                    SWSS_LOG_ERROR("Route table full: failed to create route %s "
+                                   "(%" PRIu64 " route create(s) failed since first exhaustion); "
+                                   "parking creates until resources are freed",
+                                   ipPrefix.to_string().c_str(), m_routeResourceFullCount);
+                    m_lastRouteResourceFullLog = now;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
+                        ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+            }
 
             /* Check that the next hop group is not owned by NhgOrch. */
             if (ctx.nhg_index.empty() && nextHops.getSize() > 1)
@@ -2608,6 +2651,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
+                /* Park route creates that failed due to ASIC resource exhaustion on a
+                 * retry constraint so they are retried only when resources are freed
+                 * (a route is deleted), not every cycle. Do not clobber a constraint
+                 * already set earlier this cycle (e.g. PIC). */
+                if (isSaiStatusResourceFull(status) && ctx.retry_cst == DUMMY_CONSTRAINT)
+                {
+                    ctx.retry_cst = make_constraint(RETRY_CST_SAI_RESOURCE, APP_ROUTE_TABLE_NAME);
+                }
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
