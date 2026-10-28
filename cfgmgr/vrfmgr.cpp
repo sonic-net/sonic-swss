@@ -769,7 +769,7 @@ bool VrfMgr::doVrfVxlanTableUpdate(const string& vrf_name, const string& vni, bo
 
         string key = tunnel_name + ":" + "evpn_map_" + vni + "_" + vrf_name;
 
-        SWSS_LOG_INFO("VRF VNI map table update for tunnel %s, vrf %s, vni %s, add %d", 
+        SWSS_LOG_INFO("VRF VNI map table update for tunnel %s, vrf %s, vni %s, add %d",
                       tunnel_name.c_str(), vrf_name.c_str(), vni.c_str(), add);
 
         if (add)
