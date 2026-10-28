@@ -10,6 +10,8 @@
 #include "srv6orch.h"
 
 #include "ipaddress.h"
+#include <chrono>
+#include <cstdint>
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nexthopgroupkey.h"
@@ -245,7 +247,9 @@ public:
 
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoute(RouteBulkContext& ctx);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    // ctx is mutable: on SAI resource exhaustion addRoutePost() records a
+    // RETRY_CST_SAI_RESOURCE constraint on ctx.retry_cst so doTask() can park the task.
+    bool addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoutePost(const RouteBulkContext& ctx);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
@@ -294,6 +298,10 @@ private:
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
+
+    // Throttled logging for route-table (SAI resource) exhaustion
+    uint64_t m_routeResourceFullCount = 0;
+    std::chrono::steady_clock::time_point m_lastRouteResourceFullLog;
 
     std::set<NextHopKey> v4_active_default_route_nhops;
     std::set<NextHopKey> v6_active_default_route_nhops;

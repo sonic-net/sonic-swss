@@ -1860,4 +1860,221 @@ namespace routeorch_test
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
     }
+
+    // Tier1+Tier2 (route-table SAI resource exhaustion backoff + throttled logging):
+    // A route create that fails with SAI resource exhaustion is parked on a retry
+    // constraint and is NOT retried every doTask cycle; it is retried only after a
+    // route delete frees resources.
+    TEST_F(RouteOrchTest, RouteOrchResourceExhaustionBackoff)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // A programmed route we can later delete to free resources (uses the default stub).
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "2.2.2.0/24", "SET",
+                          { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} } });
+            routeConsumer->addToSync(e);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+
+        // Intercept route creates: report resource exhaustion while 'exhaust' is set.
+        bool exhaust = true;
+        int creates = 0;
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_,
+                                         ::testing::_, ::testing::_, ::testing::_))
+            .WillRepeatedly(::testing::Invoke(
+                [&](uint32_t object_count,
+                    const sai_route_entry_t * /*route_entries*/,
+                    const uint32_t * /*attr_count*/,
+                    const sai_attribute_t ** /*attr_list*/,
+                    sai_bulk_op_error_mode_t /*mode*/,
+                    sai_status_t *object_statuses) -> sai_status_t
+                {
+                    ++creates;
+                    sai_status_t per = exhaust ? SAI_STATUS_INSUFFICIENT_RESOURCES
+                                               : SAI_STATUS_SUCCESS;
+                    for (uint32_t i = 0; i < object_count; ++i)
+                        object_statuses[i] = per;
+                    return exhaust ? SAI_STATUS_FAILURE : SAI_STATUS_SUCCESS;
+                }));
+
+        // Inject a route that hits exhaustion.
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "3.3.3.0/24", "SET",
+                          { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} } });
+            routeConsumer->addToSync(e);
+        }
+        int c0 = creates;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_GT(creates, c0);   // create was attempted
+
+        // Parked, not spinning: further doTask cycles must NOT re-attempt the create
+        // while resources remain exhausted.
+        int parked = creates;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(creates, parked)
+            << "parked create must not be retried every cycle";
+
+        // Free resources: delete the programmed route -> notifyRetry wakes the parked
+        // create, which is retried and now succeeds.
+        exhaust = false;
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "2.2.2.0/24", "DEL", {} });
+            routeConsumer->addToSync(e);
+        }
+        int base = creates;
+        bool retried = false;
+        for (int i = 0; i < 12 && !retried; ++i)
+        {
+            static_cast<Orch *>(gRouteOrch)->doTask();
+            if (creates > base)
+                retried = true;
+        }
+        ASSERT_TRUE(retried)
+            << "parked route create was not retried after resources were freed";
+    }
+
+    // Tier2: a DEL for a prefix whose create is still parked must cancel (evict) the
+    // parked create, so withdrawn routes are not programmed later.
+    TEST_F(RouteOrchTest, RouteOrchResourceExhaustionDelEvictsParkedCreate)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        bool exhaust = true;
+        int creates = 0;
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_,
+                                         ::testing::_, ::testing::_, ::testing::_))
+            .WillRepeatedly(::testing::Invoke(
+                [&](uint32_t object_count,
+                    const sai_route_entry_t * /*route_entries*/,
+                    const uint32_t * /*attr_count*/,
+                    const sai_attribute_t ** /*attr_list*/,
+                    sai_bulk_op_error_mode_t /*mode*/,
+                    sai_status_t *object_statuses) -> sai_status_t
+                {
+                    ++creates;
+                    sai_status_t per = exhaust ? SAI_STATUS_INSUFFICIENT_RESOURCES
+                                               : SAI_STATUS_SUCCESS;
+                    for (uint32_t i = 0; i < object_count; ++i)
+                        object_statuses[i] = per;
+                    return exhaust ? SAI_STATUS_FAILURE : SAI_STATUS_SUCCESS;
+                }));
+
+        // Park a create via exhaustion.
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "5.5.5.0/24", "SET",
+                          { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} } });
+            routeConsumer->addToSync(e);
+        }
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_GT(creates, 0);
+
+        // Withdraw the same prefix while its create is parked.
+        exhaust = false;
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "5.5.5.0/24", "DEL", {} });
+            routeConsumer->addToSync(e);
+        }
+        int base = creates;
+        for (int i = 0; i < 12; ++i)
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        // The parked create was evicted by the DEL; it must NOT be created.
+        ASSERT_EQ(creates, base)
+            << "withdrawn (parked) route must not be created";
+    }
+
+    // Coverage: resource exhaustion on the interface-nexthop create path
+    // (nhg.getSize()==1 && hasIntfNextHop()) must also park, not spin.
+    TEST_F(RouteOrchTest, RouteOrchResourceExhaustionIntfNextHopParks)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        bool exhaust = true;
+        int creates = 0;
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_,
+                                         ::testing::_, ::testing::_, ::testing::_))
+            .WillRepeatedly(::testing::Invoke(
+                [&](uint32_t object_count,
+                    const sai_route_entry_t * /*route_entries*/,
+                    const uint32_t * /*attr_count*/,
+                    const sai_attribute_t ** /*attr_list*/,
+                    sai_bulk_op_error_mode_t /*mode*/,
+                    sai_status_t *object_statuses) -> sai_status_t
+                {
+                    ++creates;
+                    sai_status_t per = exhaust ? SAI_STATUS_INSUFFICIENT_RESOURCES
+                                               : SAI_STATUS_SUCCESS;
+                    for (uint32_t i = 0; i < object_count; ++i)
+                        object_statuses[i] = per;
+                    return exhaust ? SAI_STATUS_FAILURE : SAI_STATUS_SUCCESS;
+                }));
+
+        // Route whose only next hop is the interface (ifname, no explicit nexthop)
+        // exercises the nhg.getSize()==1 && hasIntfNextHop() branch.
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "6.6.6.0/24", "SET", { {"ifname", "Ethernet0"} } });
+            routeConsumer->addToSync(e);
+        }
+        int c0 = creates;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_GT(creates, c0);           // create attempted on the intf path
+
+        int parked = creates;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(creates, parked)
+            << "intf-nexthop create must be parked, not retried every cycle";
+    }
+
+    // Coverage: a non-resource create failure keeps the original error log path and
+    // does NOT park (it falls through to normal failure handling).
+    TEST_F(RouteOrchTest, RouteOrchNonResourceFailureNotParked)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Fail creates with a non-resource status (e.g. NOT_IMPLEMENTED).
+        EXPECT_CALL(*mock_sai_route_api,
+                    create_route_entries(::testing::_, ::testing::_, ::testing::_,
+                                         ::testing::_, ::testing::_, ::testing::_))
+            .WillRepeatedly(::testing::Invoke(
+                [&](uint32_t object_count,
+                    const sai_route_entry_t * /*route_entries*/,
+                    const uint32_t * /*attr_count*/,
+                    const sai_attribute_t ** /*attr_list*/,
+                    sai_bulk_op_error_mode_t /*mode*/,
+                    sai_status_t *object_statuses) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < object_count; ++i)
+                        object_statuses[i] = SAI_STATUS_NOT_IMPLEMENTED;
+                    return SAI_STATUS_FAILURE;
+                }));
+
+        {
+            std::deque<KeyOpFieldsValuesTuple> e;
+            e.push_back({ "8.8.8.0/24", "SET",
+                          { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} } });
+            routeConsumer->addToSync(e);
+        }
+        // Just drive the failure path; the route must not end up programmed.
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        auto itr = gRouteOrch->m_syncdRoutes.find(gVirtualRouterId);
+        bool present = (itr != gRouteOrch->m_syncdRoutes.end() &&
+                        itr->second.find(IpPrefix("8.8.8.0/24")) != itr->second.end());
+        ASSERT_FALSE(present) << "non-resource-failed route must not be marked programmed";
+    }
+
 }
