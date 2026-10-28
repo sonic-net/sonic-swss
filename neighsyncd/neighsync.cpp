@@ -32,7 +32,6 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_kernelFailedNeighTable(pipelineAppDB, APP_NEIGH_FAILED_TABLE_NAME),
     m_routeTable(pipelineAppDB, APP_ROUTE_TABLE_NAME, false),
     m_routeCheckTable(appDb, APP_ROUTE_TABLE_NAME),
-    m_kernelFailedNeighCheckTable(appDb, APP_NEIGH_FAILED_TABLE_NAME),
     m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
@@ -258,13 +257,11 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
                  ((nlmsg_type == RTM_NEWNEIGH || nlmsg_type == RTM_GETNEIGH) &&
                   (state & VALID_NEIGH_STATES)))
         {
-            std::vector<FieldValueTuple> failedNeighFields;
-            if (m_kernelFailedNeighCheckTable.get(key, failedNeighFields))
-            {
-                m_kernelFailedNeighTable.del(key);
-                SWSS_LOG_INFO("Removed resolved or deleted kernel neighbor '%s' from failed neighbor table",
-                              key.c_str());
-            }
+            // A pending producer update is not visible in the materialized table.
+            // Always queue the delete so it also cancels an unconsumed failure.
+            m_kernelFailedNeighTable.del(key);
+            SWSS_LOG_INFO("Removed resolved or deleted kernel neighbor '%s' from failed neighbor table",
+                          key.c_str());
         }
     }
 
