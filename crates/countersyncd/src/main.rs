@@ -549,7 +549,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (sender, receiver) = channel(32);
         ipfix.add_recipient(sender);
         info!(
-            "Local storage requested: path={}, format=sonic-hft-arrow-v5, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture applies backpressure",
+            "Local storage requested: path={}, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, batch_flush_ms=100, queue_batches=32; capture applies backpressure",
             config.root.display(),
             config.max_bytes,
             config.file_target_bytes,

@@ -8,7 +8,7 @@
 //! UDP packets or standalone batches inside timing without replaying a pool. All modes
 //! time enqueue/send through reducer/writer join and final publish fsync.
 //! Default segments add finalization cost, not uninterrupted streaming throughput.
-//! Standard Arrow IPC v5 shards retain exactly two raw UInt64 lists,
+//! Standard Arrow IPC shards retain exactly two raw UInt64 lists,
 //! timestamps_ns and series-major values; defaults rotate at
 //! 100 MB of compressed IPC bytes or 1800 s maximum age, after complete batches.
 //! Each physical IPC row is one matrix block; reported rows remain logical source
@@ -64,7 +64,7 @@
 //! Retained trials share the quota/watchdog budget. Finalized allocated bytes
 //! include the storage root, not physical write amplification. Ratios divide
 //! actual persisted value bytes or canonical record payload (values*8+records*8)
-//! by all Arrow file bytes, with no codec-ratio claim. Fresh v5 trials must not
+//! by all Arrow file bytes, with no codec-ratio claim. Fresh trials must not
 //! produce loss.json. Bounded storage queues backpressure rather than discard.
 //! No compression numerator includes dropped input.
 //!
@@ -134,7 +134,6 @@ const QUOTA: u64 = 2_400_000_000;
 const INPUT_BUDGET: usize = 120_000_000;
 const ID: u16 = 300;
 const STORAGE_QUEUE_BATCHES: usize = 32;
-const FORMAT_VERSION: &str = "sonic-hft-arrow-v5";
 const GENERATOR_VERSION: &str = "interval-bytes-v1";
 const STREAMING_RECORD_CAP: usize = 6_000_000;
 const AUDIT_BUDGET: usize = 96_000_000;
@@ -671,7 +670,6 @@ fn verify(
         let reader = StreamReader::try_new(file, None)?;
         let schema = reader.schema();
         if schema.fields().len() != 2
-            || schema.metadata().get("format_version").map(String::as_str) != Some(FORMAT_VERSION)
             || schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
             || schema.metadata().get("matrix_order").map(String::as_str) != Some("series-major")
         {
@@ -1198,7 +1196,7 @@ fn run(args: Args) -> Result<()> {
                     "records":args.records, "counters":args.counters, "large_counters":large,
                     "large_fraction":large as f64 / args.counters as f64,
                     "rate_metrics_per_second":args.rate, "step_ns":args.step_ns,
-                    "format_version":FORMAT_VERSION, "shard_ns":args.local_storage_file_seconds.checked_mul(1_000_000_000),
+                    "shard_ns":args.local_storage_file_seconds.checked_mul(1_000_000_000),
                     "file_target_bytes":args.local_storage_file_bytes,
                     "file_max_age_seconds":args.local_storage_file_seconds,
                     "file_rotation_basis":"logical compressed IPC bytes including schema/framing; checked after complete batch flush; up to one batch plus 8-byte EOS overshoot",

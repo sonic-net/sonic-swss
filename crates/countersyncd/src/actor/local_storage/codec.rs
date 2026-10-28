@@ -1,9 +1,9 @@
-//! Standard Arrow IPC v5: one row per block, two non-null List<UInt64> fields.
+//! Standard Arrow IPC: one row per block, two non-null List<UInt64> fields.
 //! T = timestamps_ns[0].len(), C = schema metadata `series` JSON array length.
 //! values[0][c*T+t] is the raw value for ordered series c at timestamp t.
 //! Names occur only in `series`, including duplicate tuples.
 //! All integers are exact, timestamps are nanoseconds, and there is no app delta.
-use super::{BATCH_TARGET_BYTES, FORMAT_VERSION, MAX_RECORD_BYTES, MAX_ROWS};
+use super::{BATCH_TARGET_BYTES, MAX_RECORD_BYTES, MAX_ROWS};
 use crate::{
     message::saistats::{SAIStatsRef, SAIStatsView},
     sai::{
@@ -176,7 +176,6 @@ impl Layout {
             schema: Arc::new(Schema::new_with_metadata(
                 fields.to_vec(),
                 HashMap::from([
-                    ("format_version".into(), FORMAT_VERSION.into()),
                     ("timestamp_unit".into(), "ns".into()),
                     ("matrix_order".into(), "series-major".into()),
                     (
@@ -191,18 +190,11 @@ impl Layout {
 }
 
 fn validate_schema(schema: &Schema) -> Result<Vec<Series>, String> {
-    let version = schema.metadata().get("format_version").map(String::as_str);
-    if version != Some(FORMAT_VERSION) {
-        return Err(format!(
-            "unsupported Arrow storage format version {}; expected {FORMAT_VERSION}",
-            version.unwrap_or("<missing>")
-        ));
-    }
     if schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
         || schema.metadata().get("matrix_order").map(String::as_str) != Some("series-major")
         || schema.fields().len() != 2
     {
-        return Err("invalid Arrow storage schema/version".into());
+        return Err("invalid Arrow storage schema".into());
     }
     for (field, name) in schema.fields().iter().zip(["timestamps_ns", "values"]) {
         if field.name() != name
@@ -705,10 +697,9 @@ mod tests {
     }
 
     #[test]
-    fn v4_three_field_stream_is_explicitly_unsupported_and_unchanged() {
+    fn foreign_three_field_stream_is_rejected_and_unchanged() {
         let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
-        let mut metadata = layout.schema.metadata().clone();
-        metadata.insert("format_version".into(), "sonic-hft-arrow-v4".into());
+        let metadata = layout.schema.metadata().clone();
         let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
         fields.insert(
             1,
@@ -736,16 +727,17 @@ mod tests {
         writer.finish().unwrap();
         let bytes = writer.into_inner().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("v4.arrow");
+        let path = temp.path().join("foreign.arrow");
         std::fs::write(&path, &bytes).unwrap();
-        assert_eq!(read_shard(&path, |_| panic!("v4 must not emit samples")), Err(
-            "unsupported Arrow storage format version sonic-hft-arrow-v4; expected sonic-hft-arrow-v5".into()
-        ));
+        assert_eq!(
+            read_shard(&path, |_| panic!("a foreign schema must not emit samples")),
+            Err("invalid Arrow storage schema".into())
+        );
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
 
     #[test]
-    fn rejects_old_versions_nullable_fields_extra_fields_and_invalid_series() {
+    fn rejects_nullable_fields_extra_fields_and_invalid_series() {
         let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
         assert!(validate_schema(&layout.schema).is_ok());
         for (column, nullable_child) in [(0, false), (1, false), (0, true), (1, true)] {
@@ -769,7 +761,6 @@ mod tests {
             );
         }
         for (key, value) in [
-            ("format_version", "sonic-hft-arrow-v3"),
             ("matrix_order", "time-major"),
             ("timestamp_unit", "ms"),
             ("series", "{}"),

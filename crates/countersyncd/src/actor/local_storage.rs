@@ -8,7 +8,6 @@
 //!
 //! Each file is a self-contained **Arrow IPC stream**, compressed with ZSTD, not
 //! an Arrow IPC file/Feather file or Parquet file. Schema metadata contains:
-//! - `format_version = sonic-hft-arrow-v5`
 //! - `timestamp_unit = ns` (the source observation time, not writer wall time)
 //! - `matrix_order = series-major`
 //! - `series`: an ordered JSON array of `{object_name, type_name, stat_name}`.
@@ -49,7 +48,6 @@
 //! with pa.OSFile("capture.arrow", "rb") as source:
 //!     reader = ipc.open_stream(source)
 //!     meta = reader.schema.metadata
-//!     assert meta[b"format_version"] == b"sonic-hft-arrow-v5"
 //!     assert meta[b"timestamp_unit"] == b"ns"
 //!     assert meta[b"matrix_order"] == b"series-major"
 //!     series = json.loads(meta[b"series"].decode("utf-8"))
@@ -65,8 +63,7 @@
 //! Keep timestamps and values as unsigned integers/Python ints, not floats or
 //! JavaScript Numbers. Compute differences with signed/widened arithmetic to
 //! handle timestamp regressions and counter resets without unsigned underflow.
-//! Do not reconstruct timestamps from a nominal polling interval. Earlier format
-//! versions require their corresponding readers; v5 rejects them explicitly.
+//! Do not reconstruct timestamps from a nominal polling interval.
 //!
 //! # Publication, limits and lifetime
 //!
@@ -129,7 +126,6 @@ mod codec;
 #[allow(unused_imports)]
 pub use codec::{DecodedSample, read_shard, series_names};
 
-const FORMAT_VERSION: &str = "sonic-hft-arrow-v5";
 const LOCK_FILE: &str = ".writer.lock";
 const BATCH_TARGET_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROWS: usize = 4096;
@@ -993,10 +989,6 @@ mod tests {
             assert_eq!(files.len(), 1);
             assert_eq!(decoded(&files[0]), expected(&batch));
             let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
-            assert_eq!(
-                reader.schema().metadata()["format_version"],
-                "sonic-hft-arrow-v5"
-            );
             assert_eq!(reader.schema().fields().len(), 2);
             assert_eq!(reader.schema().field(0).name(), "timestamps_ns");
             assert_eq!(reader.schema().field(1).name(), "values");
@@ -1209,14 +1201,14 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_header_and_wrong_version_without_removing_state() {
+    fn rejects_invalid_header_and_schema_without_removing_state() {
         let temp = private_tempdir();
         drop(prepare_storage(&config(temp.path())).unwrap());
         let partial = temp.path().join(".staging/bad.arrow.partial");
         for bytes in [b"not an Arrow stream".to_vec(), {
             let layout = codec::Layout::new(SAIStatsView::Owned(&[stat("a", 0)])).unwrap();
             let mut metadata = layout.schema.metadata().clone();
-            metadata.insert("format_version".into(), "sonic-hft-arrow-v4".into());
+            metadata.insert("matrix_order".into(), "time-major".into());
             let schema =
                 arrow_schema::Schema::new_with_metadata(layout.schema.fields().clone(), metadata);
             let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
