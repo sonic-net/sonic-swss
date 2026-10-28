@@ -1455,10 +1455,9 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         }
         else if (field == PORT_SI_SYNC_SETTINGS)
         {
-            if (!this->parsePortSiSyncStatus(port, field, value))
-            {
-                return false;
-            }
+            // Best-effort: an unparsable/future SI value leaves the status unset and must not
+            // fail the whole port config (which would drop other fields / block port creation).
+            this->parsePortSiSyncStatus(port, field, value);
         }
         else if (field == PORT_MODE)
         {

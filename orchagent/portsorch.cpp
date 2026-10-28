@@ -747,8 +747,33 @@ static bool isMlnxPlatform()
  */
 bool PortsOrch::isXcvrdExpectedToRun()
 {
-    for (const auto &path : { std::string(PMON_DAEMON_CONTROL_HWSKU_FILE),
-                              std::string(PMON_DAEMON_CONTROL_PLATFORM_FILE) })
+    DBConnector cfgDb("CONFIG_DB", 0);
+
+    // pmon disabled => xcvrd never runs / never publishes SI => don't gate (else Ext ports strand).
+    Table featureTable(&cfgDb, "FEATURE");
+    std::string pmonState;
+    if (featureTable.hget("pmon", "state", pmonState) &&
+        (pmonState == "disabled" || pmonState == "always_disabled"))
+    {
+        SWSS_LOG_NOTICE("pmon feature state is '%s'; xcvrd not expected to run", pmonState.c_str());
+        return false;
+    }
+
+    // On multi-ASIC, /usr/share/sonic/hwsku is the per-ASIC subdir, not the hwsku dir pmon reads.
+    // Prefer /usr/share/sonic/platform/<hwsku> so orchagent and pmon agree on single/multi-ASIC.
+    std::string hwsku;
+    Table deviceMetadataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    deviceMetadataTable.hget("localhost", "hwsku", hwsku);
+
+    std::vector<std::string> paths;
+    if (!hwsku.empty())
+    {
+        paths.push_back("/usr/share/sonic/platform/" + hwsku + "/pmon_daemon_control.json");
+    }
+    paths.push_back(PMON_DAEMON_CONTROL_HWSKU_FILE);
+    paths.push_back(PMON_DAEMON_CONTROL_PLATFORM_FILE);
+
+    for (const auto &path : paths)
     {
         std::ifstream ifs(path);
         if (!ifs.good())
