@@ -665,6 +665,9 @@ impl Store {
         let row_bytes = record.stats.len().saturating_add(1).saturating_mul(8);
         if self.pending_bytes.saturating_add(row_bytes) > BATCH_TARGET_BYTES {
             self.flush()?;
+            if self.stopped {
+                return Ok(());
+            }
         }
         let index = match self.lane_for(record.stats) {
             Ok(index) => index,
@@ -2058,6 +2061,40 @@ mod tests {
         assert!(publish(temp.path(), &collision).is_err());
         assert_eq!(fs::read(&first).unwrap(), bytes);
         assert!(collision.exists());
+    }
+
+    #[test]
+    fn record_whose_flush_stops_capture_is_not_stored() {
+        let temp = private_tempdir();
+        let mut store = store(temp.path());
+        let (narrow, wide) = (template("narrow", 1023), template("wide", 1024));
+        let values = [7u64; 1024];
+        let add = |store: &mut Store, template: &Arc<[SAIStatMetadata]>, time| {
+            store.add_record(SAIStatsRef {
+                observation_time: time,
+                stats: SAIStatsView::Shared {
+                    metadata: template,
+                    values: &values[..template.len()],
+                },
+            })
+        };
+        // Fill the batch to one narrow record short of its target, so that a
+        // wider record first flushes it.
+        let rows = BATCH_TARGET_BYTES / ((narrow.len() + 1) * 8) - 1;
+        for time in 0..rows as u64 {
+            add(&mut store, &narrow, time).unwrap();
+        }
+        assert!(store.active.is_none() && store.pending_since.is_some());
+        // The stream's schema fits the quota; its batch does not.
+        store.config.max_bytes = store.used_bytes + 4 * 1024 * 1024;
+        add(&mut store, &wide, rows as u64).unwrap();
+        assert!(store.stopped && store.pending_since.is_none());
+        store.finish_stream().unwrap();
+        // Only the stopped stream is published, without the wider record.
+        let files = paths(temp.path(), "shards");
+        assert_eq!(files.len(), 1);
+        assert!(decoded(&files[0]).is_empty());
+        assert!(paths(temp.path(), ".staging").is_empty());
     }
 
     #[test]
