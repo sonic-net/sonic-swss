@@ -718,7 +718,7 @@ bool NbrMgr::addKernelRoute(string odev, IpAddress ip_addr)
 
     if(ip_addr.isV4())
     {
-        cmd = string("") + IP_CMD + " route add " + ip_str + "/32 dev " + odev;
+        cmd = string("") + IP_CMD + " route add " + ip_str + "/32 dev " + shellquote(odev);
         SWSS_LOG_NOTICE("IPv4 Route Add cmd: %s",cmd.c_str());
     }
     else
@@ -728,7 +728,7 @@ bool NbrMgr::addKernelRoute(string odev, IpAddress ip_addr)
         // via eBGP and iBGP over the internal inband port be part of same ecmp group.
         // For v4 both the metrics (connected and static) are default 0 so we do not need
         // to set the metric explicitly.
-        cmd = string("") + IP_CMD + " -6 route add " + ip_str + "/128 dev " + odev + " metric 256";
+        cmd = string("") + IP_CMD + " -6 route add " + ip_str + "/128 dev " + shellquote(odev) + " metric 256";
         SWSS_LOG_NOTICE("IPv6 Route Add cmd: %s",cmd.c_str());
     }
 
@@ -787,12 +787,12 @@ bool NbrMgr::addKernelNeigh(string odev, IpAddress ip_addr, MacAddress mac_addr)
 
     if(ip_addr.isV4())
     {
-        cmd = string("") + IP_CMD + " neigh add " + ip_str + " lladdr " + mac_str + " dev " + odev;
+        cmd = string("") + IP_CMD + " neigh add " + ip_str + " lladdr " + mac_str + " dev " + shellquote(odev);
         SWSS_LOG_NOTICE("IPv4 Nbr Add cmd: %s",cmd.c_str());
     }
     else
     {
-        cmd = string("") + IP_CMD + " -6 neigh add " + ip_str + " lladdr " + mac_str + " dev " + odev;
+        cmd = string("") + IP_CMD + " -6 neigh add " + ip_str + " lladdr " + mac_str + " dev " + shellquote(odev);
         SWSS_LOG_NOTICE("IPv6 Nbr Add cmd: %s",cmd.c_str());
     }
 
@@ -819,12 +819,12 @@ bool NbrMgr::delKernelNeigh(string odev, IpAddress ip_addr)
 
     if(ip_addr.isV4())
     {
-        cmd = string("") + IP_CMD + " neigh del " + ip_str + " dev " + odev;
+        cmd = string("") + IP_CMD + " neigh del " + ip_str + " dev " + shellquote(odev);
         SWSS_LOG_NOTICE("IPv4 Nbr Del cmd: %s",cmd.c_str());
     }
     else
     {
-        cmd = string("") + IP_CMD + " -6 neigh del " + ip_str + " dev " + odev;
+        cmd = string("") + IP_CMD + " -6 neigh del " + ip_str + " dev " + shellquote(odev);
         SWSS_LOG_NOTICE("IPv6 Nbr Del cmd: %s",cmd.c_str());
     }
 
