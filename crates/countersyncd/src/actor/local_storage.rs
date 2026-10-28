@@ -143,7 +143,10 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::mpsc::Receiver;
+use tokio::{
+    sync::mpsc::{Receiver, Sender},
+    task::JoinHandle,
+};
 
 mod codec;
 #[allow(unused_imports)]
@@ -176,6 +179,117 @@ trait Context<T> {
 impl<T, E: Display> Context<T> for Result<T, E> {
     fn context(self, operation: &str, path: &Path) -> Result<T, String> {
         self.map_err(|e| format!("{operation} {}: {e}", path.display()))
+    }
+}
+
+/// Batches the IPFIX actor can queue ahead of the storage worker.
+const QUEUE_BATCHES: usize = 32;
+
+/// Command-line options of the local storage sink.
+#[derive(Debug, Clone, clap::Args)]
+pub struct LocalStorageArgs {
+    /// Enable bounded raw UInt64 Arrow IPC streams with backpressure (100 ms batch flush)
+    #[arg(long, default_value = "false")]
+    pub enable_local_storage: bool,
+
+    /// Private capture directory; create the final directory when capture is enabled
+    #[arg(long, default_value = "/tmp/hft")]
+    pub local_storage_root: PathBuf,
+
+    /// Local storage quota in bytes, including directories; at least 32 MiB
+    #[arg(
+        long,
+        default_value = "134217728",
+        value_parser = clap::value_parser!(u64).range(MIN_MAX_BYTES..)
+    )]
+    pub local_storage_max_bytes: u64,
+
+    /// Compressed IPC file byte target; rotate after a complete batch flush
+    #[arg(long, default_value = "100000000", value_parser = clap::value_parser!(u64).range(1..))]
+    pub local_storage_file_bytes: u64,
+
+    /// Maximum local storage file age in wall-clock seconds
+    #[arg(long, default_value = "1800", value_parser = clap::value_parser!(u64).range(1..))]
+    pub local_storage_file_seconds: u64,
+}
+
+impl LocalStorageArgs {
+    pub fn config(&self) -> LocalStorageConfig {
+        LocalStorageConfig {
+            root: self.local_storage_root.clone(),
+            shard_interval: Duration::from_secs(self.local_storage_file_seconds),
+            file_target_bytes: self.local_storage_file_bytes,
+            max_bytes: self.local_storage_max_bytes,
+        }
+    }
+}
+
+/// The local storage sink before its worker starts. Its queue exists first,
+/// so IPFIX can hold the only sender from startup.
+pub struct LocalStorage {
+    receiver: Receiver<SAIStatsBatchMessage>,
+    config: LocalStorageConfig,
+    status: LocalStorageStatus,
+}
+
+impl LocalStorage {
+    /// The sink and the sender for its IPFIX recipient queue.
+    pub fn new(config: LocalStorageConfig) -> (Self, Sender<SAIStatsBatchMessage>) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(QUEUE_BATCHES);
+        info!(
+            "Local storage requested: path={}, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, flush_interval_ms={}, queue_batches={QUEUE_BATCHES}; capture applies backpressure",
+            config.root.display(),
+            config.max_bytes,
+            config.file_target_bytes,
+            config.shard_interval.as_secs(),
+            FLUSH_INTERVAL.as_millis(),
+        );
+        let status = LocalStorageStatus::default();
+        (
+            Self {
+                receiver,
+                config,
+                status,
+            },
+            sender,
+        )
+    }
+
+    /// Set up storage and run the worker on a blocking thread. Until setup
+    /// finishes, the bounded queue applies backpressure; a setup error closes
+    /// it, and IPFIX continues without this sink.
+    pub fn spawn(self) -> LocalStorageHandle {
+        let status = self.status.clone();
+        let task = tokio::task::spawn_blocking(move || {
+            match LocalStorageActor::new(self.receiver, self.config, self.status) {
+                Ok(actor) => actor.run(),
+                Err(reason) => {
+                    error!("Local storage setup failed; continuing without local output: {reason}")
+                }
+            }
+        });
+        LocalStorageHandle { status, task }
+    }
+}
+
+pub struct LocalStorageHandle {
+    status: LocalStorageStatus,
+    task: JoinHandle<()>,
+}
+
+impl LocalStorageHandle {
+    /// Drain the accepted batches and publish, waiting at most `timeout`. Stop
+    /// the sender's owner first, so that the queue closes.
+    pub async fn shutdown(self, timeout: Duration) {
+        self.status.request_shutdown();
+        match tokio::time::timeout(timeout, self.task).await {
+            Ok(Ok(())) if self.status.failed() => {
+                error!("Local storage stopped with a failure; drain is incomplete")
+            }
+            Ok(Ok(())) => info!("Local storage flushed before shutdown"),
+            Ok(Err(reason)) => error!("Local storage task failed: {reason}"),
+            Err(_) => error!("Timed out draining local storage; final data may be incomplete"),
+        }
     }
 }
 
