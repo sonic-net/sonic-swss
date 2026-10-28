@@ -20,6 +20,7 @@
 #include "macaddress.h"
 
 #include "neighsync.h"
+#include "linklocalconfig.h"
 #include "warm_restart.h"
 #include <algorithm>
 #include <linux/neighbour.h>
@@ -626,46 +627,29 @@ bool NeighSync::isLinkLocalEnabled(const string &port)
 {
     vector<FieldValueTuple> values;
 
-    // Sub-ports own their mode in VLAN_SUB_INTERFACE, independently of the
-    // parent. Eth/Po also cover the shortened Linux subinterface names.
-    const bool subPort = port.find('.') != string::npos &&
-        (!port.compare(0, strlen("Eth"), "Eth") ||
-         !port.compare(0, strlen("Po"), "Po"));
-    if (subPort)
-    {
-        if (!m_cfgSubInterfaceTable.get(port, values))
-        {
-            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
-            return false;
-        }
-    }
-    else if (!port.compare(0, strlen("Vlan"), "Vlan"))
-    {
-        if (!m_cfgVlanInterfaceTable.get(port, values))
-        {
-            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
-            return false;
-        }
-    }
-    else if (!port.compare(0, strlen("PortChannel"), "PortChannel"))
-    {
-        if (!m_cfgLagInterfaceTable.get(port, values))
-        {
-            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
-            return false;
-        }
-    }
-    else if (!port.compare(0, strlen("Ethernet"), "Ethernet"))
-    {
-        if (!m_cfgInterfaceTable.get(port, values))
-        {
-            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
-            return false;
-        }
-    }
-    else
+    const auto tableName = getLinkLocalInterfaceTable(port);
+    if (tableName.empty())
     {
         SWSS_LOG_INFO("IPv6 Link local is not supported for %s ", port.c_str());
+        return false;
+    }
+
+    Table *table = &m_cfgInterfaceTable;
+    if (tableName == CFG_VLAN_SUB_INTF_TABLE_NAME)
+    {
+        table = &m_cfgSubInterfaceTable;
+    }
+    else if (tableName == CFG_VLAN_INTF_TABLE_NAME)
+    {
+        table = &m_cfgVlanInterfaceTable;
+    }
+    else if (tableName == CFG_LAG_INTF_TABLE_NAME)
+    {
+        table = &m_cfgLagInterfaceTable;
+    }
+    if (!table->get(port, values))
+    {
+        SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
         return false;
     }
 

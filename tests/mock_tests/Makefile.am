@@ -402,6 +402,7 @@ tests_fdbsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 ## neighsyncd unit tests
 
 tests_neighsyncd_SOURCES = neighsyncd/neighsync_ut.cpp \
+                           $(top_srcdir)/neighsyncd/linklocalresyncstate.cpp \
                            fdbsyncd/fake_warmstartassist.cpp \
                            fdbsyncd/fake_producerstatetable.cpp \
                            fdbsyncd/fake_subscriberstatetable.cpp \

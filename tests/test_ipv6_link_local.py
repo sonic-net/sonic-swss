@@ -118,7 +118,7 @@ class TestIPv6LinkLocal(object):
 
         try:
             rc, output = dvs.runcmd(
-                "ip -6 neigh replace {} lladdr {} nud reachable dev {}".format(
+                "ip -6 neigh replace {} lladdr {} nud permanent dev {}".format(
                     neighbor, mac, interface
                 )
             )

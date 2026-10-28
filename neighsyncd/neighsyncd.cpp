@@ -10,6 +10,7 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "neighsyncd/linklocalresyncstate.h"
+#include "neighsyncd/linklocalconfigconsumer.h"
 #include "neighsyncd/neighsync.h"
 
 using namespace std;
@@ -81,11 +82,9 @@ int main(int argc, char **argv)
             LinkLocalResyncState resyncState;
             for (auto *table : interfaceTables)
             {
-                deque<KeyOpFieldsValuesTuple> entries;
-                table->pops(entries);
                 // Existing rows initialize the observed state. The startup
                 // RTM_GETNEIGH request already covers their kernel neighbors.
-                resyncState.initialize(entries);
+                initializeLinkLocalConfigTable(*table, resyncState);
                 s.addSelectable(table);
             }
             map<string, steady_clock::time_point> retryAfter;
@@ -146,9 +145,7 @@ int main(int argc, char **argv)
                     {
                         continue;
                     }
-                    deque<KeyOpFieldsValuesTuple> entries;
-                    table->pops(entries);
-                    const auto transitions = resyncState.process(entries);
+                    const auto transitions = processLinkLocalConfigTable(*table, resyncState);
                     for (const auto &interface : transitions.enabled)
                     {
                         retryAfter.erase(interface);
