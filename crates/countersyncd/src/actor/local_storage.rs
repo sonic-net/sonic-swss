@@ -94,6 +94,17 @@
 //! files by numeric file_sequence, not wall time (which can regress). Filenames
 //! alone do not identify runs globally.
 //!
+//! By default the worker also encodes and writes each batch. With
+//! `--local-storage-threads` N above 1, it numbers each batch and hands it to the
+//! lowest-numbered idle one of N encoding threads; one more thread writes the
+//! encoded batches and stream closures in number order. Record order and the
+//! file format do not depend on N; only where files split does. At most 2N
+//! batches are in flight, numbered but not yet written: a file can also exceed
+//! the size target by up to 2N batches handed over before the worker learned
+//! that it was reached. Threads without work wait without using CPU. Each
+//! encoding thread holds up to about 32 MiB of batch buffers. When the threads
+//! fall behind, the worker waits, applying backpressure as a slow disk does.
+//!
 //! Writers never repair abandoned partials. After the writer stops, `read_shard`
 //! can return the completely decoded prefix of an interrupted stream; an invalid
 //! suffix is not returned and operational I/O errors propagate. Standard Arrow
@@ -152,6 +163,7 @@ use tokio::{
 };
 
 mod codec;
+mod pipeline;
 #[allow(unused_imports)]
 pub use codec::{DecodedSample, read_shard};
 
@@ -173,6 +185,8 @@ const IPC_FRAMING_BYTES: u64 = 64 * 1024;
 /// Kept free with every write, so the end-of-stream marker always fits.
 const EOS_RESERVE_BYTES: u64 = 64 * 1024;
 const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
+/// Most encoding threads.
+pub const MAX_THREADS: usize = 64;
 /// The IPC stream end-of-stream marker: a continuation token and length 0.
 const END_OF_STREAM: [u8; 8] = [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0];
 
@@ -222,6 +236,17 @@ pub struct LocalStorageArgs {
         value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
     )]
     pub local_storage_capacity: usize,
+
+    /// Threads that encode local storage batches. 1 encodes and writes on the
+    /// storage thread; above 1, batches are encoded in parallel and one more
+    /// thread writes them in order
+    #[arg(
+        long,
+        default_value = "1",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new()
+            .range(1..=MAX_THREADS as u64)
+    )]
+    pub local_storage_threads: usize,
 }
 
 impl LocalStorageArgs {
@@ -231,6 +256,7 @@ impl LocalStorageArgs {
             shard_interval: Duration::from_secs(self.local_storage_file_seconds),
             file_target_bytes: self.local_storage_file_bytes,
             max_bytes: self.local_storage_max_bytes,
+            threads: self.local_storage_threads,
         }
     }
 }
@@ -252,12 +278,13 @@ impl LocalStorage {
         let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
         set_comm_capacity(ChannelLabel::IpfixToLocalStorage, capacity);
         info!(
-            "Local storage requested: path={}, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, flush_interval_ms={}, queue_batches={capacity}; capture applies backpressure",
+            "Local storage requested: path={}, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, flush_interval_ms={}, queue_batches={capacity}, threads={}; capture applies backpressure",
             config.root.display(),
             config.max_bytes,
             config.file_target_bytes,
             config.shard_interval.as_secs(),
             FLUSH_INTERVAL.as_millis(),
+            config.threads,
         );
         let status = LocalStorageStatus::default();
         (
@@ -317,6 +344,8 @@ pub struct LocalStorageConfig {
     /// Logical compressed IPC bytes, checked after each complete batch flush.
     pub file_target_bytes: u64,
     pub max_bytes: u64,
+    /// Encoding threads; 1 encodes and writes on the storage thread.
+    pub threads: usize,
 }
 
 impl LocalStorageConfig {
@@ -330,6 +359,11 @@ impl LocalStorageConfig {
         if self.max_bytes < MIN_MAX_BYTES {
             return Err(format!(
                 "local storage max bytes must be at least {MIN_MAX_BYTES}"
+            ));
+        }
+        if !(1..=MAX_THREADS).contains(&self.threads) {
+            return Err(format!(
+                "local storage threads must be between 1 and {MAX_THREADS}"
             ));
         }
         Ok(())
@@ -767,6 +801,17 @@ struct OpenGeneration {
     started: Instant,
 }
 
+/// Where flushed batches go.
+enum Sink {
+    /// Encode and write on the storage thread.
+    Inline {
+        encoder: Encoder,
+        writer: Box<Writer>,
+    },
+    /// Encode on worker threads, then write in order on one more thread.
+    Parallel(pipeline::Pipeline),
+}
+
 struct Store {
     config: LocalStorageConfig,
     lanes: Vec<Lane>,
@@ -778,6 +823,8 @@ struct Store {
     pending_bytes: usize,
     /// Arrival of the oldest pending record.
     pending_since: Option<Instant>,
+    /// Row buffers back from encoding, for lanes without one.
+    spare_rows: Vec<Vec<u64>>,
     /// Generations started so far. Each lists the layouts its stream holds.
     generation: u64,
     open: Option<OpenGeneration>,
@@ -785,14 +832,22 @@ struct Store {
     schema_stale: bool,
     /// Capture stopped at the quota or the filesystem reserve.
     stopped: bool,
-    encoder: Encoder,
-    writer: Writer,
+    sink: Sink,
+    // Dropped after the sink, so storage threads stop before the root unlocks.
     _storage_lock: File,
 }
 
 impl Store {
     fn new(config: LocalStorageConfig, lock: File) -> Result<Self, String> {
         let writer = Writer::new(config.clone())?;
+        let sink = if config.threads > 1 {
+            Sink::Parallel(pipeline::Pipeline::start(writer, config.threads)?)
+        } else {
+            Sink::Inline {
+                encoder: Encoder::new()?,
+                writer: Box::new(writer),
+            }
+        };
         Ok(Self {
             config,
             lanes: Vec::new(),
@@ -800,12 +855,12 @@ impl Store {
             last_lane: 0,
             pending_bytes: 0,
             pending_since: None,
+            spare_rows: Vec::new(),
             generation: 0,
             open: None,
             schema_stale: false,
             stopped: false,
-            encoder: Encoder::new()?,
-            writer,
+            sink,
             _storage_lock: lock,
         })
     }
@@ -825,7 +880,14 @@ impl Store {
         self.pending_since = None;
         self.stopped = true;
         self.open = None;
-        let discarded = unwritten + pending;
+        let in_flight = match &mut self.sink {
+            Sink::Inline { .. } => 0,
+            Sink::Parallel(pipeline) => {
+                pipeline.sync()?;
+                pipeline.discarded()
+            }
+        };
+        let discarded = unwritten + pending + in_flight;
         warn!("Local storage stopped, {reason}; discarded {discarded} pending records");
         Ok(())
     }
@@ -863,7 +925,48 @@ impl Store {
         if self.open.take().is_none() {
             return Ok(());
         }
-        self.writer.publish()
+        match &mut self.sink {
+            Sink::Inline { writer, .. } => writer.publish(),
+            Sink::Parallel(pipeline) => pipeline.close(self.generation),
+        }
+    }
+
+    /// Apply what the writer thread reported: a failure, a stop at the quota,
+    /// or a stream that reached the size target.
+    fn check_sink(&mut self) -> Result<(), String> {
+        let Sink::Parallel(pipeline) = &self.sink else {
+            return Ok(());
+        };
+        let failure = pipeline.failure();
+        let stopped = pipeline.stop_reason();
+        let full = pipeline.full_generation();
+        if let Some(reason) = failure {
+            return Err(reason);
+        }
+        if let Some(reason) = stopped {
+            if self.stopped {
+                return Ok(());
+            }
+            return self.stop(reason, 0);
+        }
+        if self.open.is_some() && full == self.generation {
+            // Batches already handed to encoders still join this stream.
+            return self.close_generation();
+        }
+        Ok(())
+    }
+
+    /// A row buffer back from encoding, if any.
+    fn take_spare_rows(&mut self) -> Option<Vec<u64>> {
+        if let Sink::Parallel(pipeline) = &self.sink {
+            let limit = self.lanes.len() + 2 * self.config.threads;
+            for rows in pipeline.returned_rows() {
+                if self.spare_rows.len() < limit {
+                    self.spare_rows.push(rows);
+                }
+            }
+        }
+        self.spare_rows.pop()
     }
 
     fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
@@ -885,6 +988,11 @@ impl Store {
                 return Err(reason);
             }
         };
+        if self.lanes[index].rows.capacity() == 0 {
+            if let Some(rows) = self.take_spare_rows() {
+                self.lanes[index].rows = rows;
+            }
+        }
         let lane = &mut self.lanes[index];
         let stride = lane.stride();
         if lane.rows.capacity() - lane.rows.len() < stride {
@@ -976,6 +1084,7 @@ impl Store {
 
     /// Write every lane's pending records as one batch, a block per layout.
     fn flush(&mut self) -> Result<(), String> {
+        self.check_sink()?;
         if self.stopped || self.pending_since.is_none() {
             return Ok(());
         }
@@ -988,17 +1097,20 @@ impl Store {
         let batch = self.take_batch()?;
         self.pending_bytes = 0;
         self.pending_since = None;
-        let encoded = self.encoder.encode(&batch);
-        // Each lane gets its buffer back: the batch was encoded in place.
-        for mut block in batch.blocks {
-            recycle_rows(&mut block.rows);
-            let lane = &mut self.lanes[block.layout as usize];
-            debug_assert_eq!(lane.index, Some(block.layout));
-            lane.rows = block.rows;
-        }
-        let written = self
-            .writer
-            .write(batch.generation, &batch.schema, encoded?, batch.bound)?;
+        let written = match &mut self.sink {
+            Sink::Parallel(pipeline) => return pipeline.submit(batch),
+            Sink::Inline { encoder, writer } => {
+                let encoded = encoder.encode(&batch);
+                // Each lane gets its buffer back: the batch was encoded in place.
+                for mut block in batch.blocks {
+                    recycle_rows(&mut block.rows);
+                    let lane = &mut self.lanes[block.layout as usize];
+                    debug_assert_eq!(lane.index, Some(block.layout));
+                    lane.rows = block.rows;
+                }
+                writer.write(batch.generation, &batch.schema, encoded?, batch.bound)?
+            }
+        };
         match written {
             Written::Synced { full: true } => self.close_generation(),
             Written::Synced { full: false } => Ok(()),
@@ -1036,9 +1148,20 @@ impl Store {
         })
     }
 
-    fn finish_stream(&mut self) -> Result<(), String> {
+    /// Write the pending records and close the stream.
+    fn close_stream(&mut self) -> Result<(), String> {
         self.flush()?;
         self.close_generation()
+    }
+
+    /// Write the pending records, close the stream, and wait until every
+    /// batch is written and the stream published.
+    fn finish_stream(&mut self) -> Result<(), String> {
+        self.close_stream()?;
+        if let Sink::Parallel(pipeline) = &mut self.sink {
+            pipeline.sync()?;
+        }
+        self.check_sink()
     }
 
     /// When `poll` next has work: a due batch or the stream's maximum age.
@@ -1057,6 +1180,7 @@ impl Store {
     }
 
     fn poll(&mut self, now: Instant) -> Result<(), String> {
+        self.check_sink()?;
         let interval = self.config.shard_interval;
         if self
             .open
@@ -1067,7 +1191,7 @@ impl Store {
                 // Adding the missing layout starts a new stream anyway.
                 return self.flush();
             }
-            return self.finish_stream();
+            return self.close_stream();
         }
         if self
             .pending_since
@@ -1446,6 +1570,7 @@ mod tests {
             shard_interval: Duration::from_secs(1800),
             file_target_bytes: 100_000_000,
             max_bytes: 1_000_000_000,
+            threads: 1,
         }
     }
 
@@ -1460,15 +1585,31 @@ mod tests {
 
     impl Store {
         fn writer(&self) -> &Writer {
-            &self.writer
+            match &self.sink {
+                Sink::Inline { writer, .. } => writer,
+                Sink::Parallel(_) => panic!("the writer runs on its own thread"),
+            }
         }
 
         fn writer_mut(&mut self) -> &mut Writer {
-            &mut self.writer
+            match &mut self.sink {
+                Sink::Inline { writer, .. } => writer,
+                Sink::Parallel(_) => panic!("the writer runs on its own thread"),
+            }
         }
 
         fn encoder(&self) -> &Encoder {
-            &self.encoder
+            match &self.sink {
+                Sink::Inline { encoder, .. } => encoder,
+                Sink::Parallel(_) => panic!("encoders run on their own threads"),
+            }
+        }
+
+        fn pipeline(&mut self) -> &mut pipeline::Pipeline {
+            match &mut self.sink {
+                Sink::Parallel(pipeline) => pipeline,
+                Sink::Inline { .. } => panic!("no encoding threads"),
+            }
         }
     }
 
@@ -1478,6 +1619,21 @@ mod tests {
         assert_eq!(bytes[..4], [0xff; 4]);
         let length = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
         bytes.split_at(8 + length)
+    }
+
+    /// Assert that two sets of files hold the same schemas and identical batches.
+    fn assert_same_streams(left: &[PathBuf], right: &[PathBuf]) {
+        assert_eq!(left.len(), right.len());
+        for (left, right) in left.iter().zip(right) {
+            let schema = |path| {
+                StreamReader::try_new(File::open(path).unwrap(), None)
+                    .unwrap()
+                    .schema()
+            };
+            assert_eq!(schema(left), schema(right));
+            let (left, right) = (fs::read(left).unwrap(), fs::read(right).unwrap());
+            assert_eq!(split_schema(&left).1, split_schema(&right).1);
+        }
     }
 
     fn stat(name: &str, value: u64) -> SAIStat {
@@ -1560,19 +1716,34 @@ mod tests {
             .collect()
     }
 
+    /// Store `batch` on the storage thread, and check that three encoding
+    /// threads write the same streams.
     fn encode(batch: &SAIStatsBatch) -> (tempfile::TempDir, Vec<PathBuf>) {
-        let temp = private_tempdir();
-        let mut store = store(temp.path());
-        for record in batch.iter() {
-            store.add_record(record).unwrap();
-        }
-        store.finish_stream().unwrap();
-        assert_eq!(
-            store.writer().used_bytes,
-            directory_bytes(temp.path()).unwrap()
-        );
-        let paths = paths(temp.path(), "shards");
-        (temp, paths)
+        let write = |threads| {
+            let temp = private_tempdir();
+            let mut store = store_with(LocalStorageConfig {
+                threads,
+                ..config(temp.path())
+            });
+            for record in batch.iter() {
+                store.add_record(record).unwrap();
+            }
+            store.finish_stream().unwrap();
+            if threads == 1 {
+                assert_eq!(
+                    store.writer().used_bytes,
+                    directory_bytes(temp.path()).unwrap()
+                );
+            }
+            drop(store);
+            assert!(paths(temp.path(), ".staging").is_empty());
+            let files = paths(temp.path(), "shards");
+            (temp, files)
+        };
+        let (temp, files) = write(1);
+        let (_parallel, parallel_files) = write(3);
+        assert_same_streams(&files, &parallel_files);
+        (temp, files)
     }
 
     fn template(prefix: &str, width: usize) -> Arc<[SAIStatMetadata]> {
@@ -1783,8 +1954,17 @@ mod tests {
 
     #[test]
     fn new_template_rotates_once_and_idle_templates_retire() {
+        for threads in [1, 3] {
+            new_template_rotates_once_and_idle_templates_retire_with(threads);
+        }
+    }
+
+    fn new_template_rotates_once_and_idle_templates_retire_with(threads: usize) {
         let temp = private_tempdir();
-        let mut store = store(temp.path());
+        let mut store = store_with(LocalStorageConfig {
+            threads,
+            ..config(temp.path())
+        });
         let [a, b, c] = [template("a", 1), template("b", 2), template("c", 3)];
         let add = |store: &mut Store, template: &Arc<[SAIStatMetadata]>, time| {
             let values: Vec<_> = (0..template.len() as u64).collect();
@@ -2400,11 +2580,14 @@ mod tests {
         let temp = private_tempdir();
         let loss = temp.path().join("loss.json");
         fs::write(&loss, b"obsolete diagnostics").unwrap();
-        for _ in 0..2 {
+        for threads in [1, 3] {
             let (sender, receiver) = channel(32);
             let status = LocalStorageStatus::default();
-            let actor =
-                LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
+            let config = LocalStorageConfig {
+                threads,
+                ..config(temp.path())
+            };
+            let actor = LocalStorageActor::new(receiver, config, status.clone()).unwrap();
             let mut batch = SAIStatsBatch::default();
             for time in [1, 2, 2, 1] {
                 batch.push_record(time, [stat("Ethernet0", u64::MAX)]);
@@ -2427,12 +2610,15 @@ mod tests {
 
     #[test]
     fn shutdown_closes_full_queue_wakes_producer_and_drains_every_accepted_batch() {
-        for shutdown_before_run in [true, false] {
+        for (shutdown_before_run, threads) in [(true, 1), (false, 1), (true, 3), (false, 3)] {
             let temp = private_tempdir();
             let (sender, receiver) = channel(32);
             let status = LocalStorageStatus::default();
-            let actor =
-                LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
+            let config = LocalStorageConfig {
+                threads,
+                ..config(temp.path())
+            };
+            let actor = LocalStorageActor::new(receiver, config, status.clone()).unwrap();
             let mut batch = SAIStatsBatch::default();
             for time in [u64::MAX, 42, 42, 0] {
                 batch.push_record(time, [stat("a", time)]);
@@ -2490,10 +2676,20 @@ mod tests {
 
     #[test]
     fn idle_wall_flush_then_shutdown_with_sender_still_connected() {
+        for threads in [1, 3] {
+            idle_wall_flush_then_shutdown_with(threads);
+        }
+    }
+
+    fn idle_wall_flush_then_shutdown_with(threads: usize) {
         let temp = private_tempdir();
         let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
-        let actor = LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
+        let config = LocalStorageConfig {
+            threads,
+            ..config(temp.path())
+        };
+        let actor = LocalStorageActor::new(receiver, config, status.clone()).unwrap();
         let mut batch = SAIStatsBatch::default();
         batch.push_record(0, [stat("a", 42)]);
         sender.blocking_send(Arc::new(batch)).unwrap();
@@ -2733,6 +2929,15 @@ mod tests {
         assert!(config.validate().is_err());
         config.file_target_bytes = 1;
         assert!(config.validate().is_ok());
+        for (threads, valid) in [
+            (0, false),
+            (1, true),
+            (MAX_THREADS, true),
+            (MAX_THREADS + 1, false),
+        ] {
+            config.threads = threads;
+            assert_eq!(config.validate().is_ok(), valid, "threads={threads}");
+        }
         config.max_bytes = MIN_MAX_BYTES - 1;
         assert!(config.validate().is_err());
         let (sender, receiver) = channel(32);
@@ -2904,6 +3109,139 @@ mod tests {
         let expected = writer.into_inner().unwrap();
         assert_eq!(split_schema(&bytes).1, split_schema(&expected).1);
         assert_eq!(bytes[bytes.len() - 8..], END_OF_STREAM);
+    }
+
+    #[test]
+    fn parallel_streams_keep_in_flight_batches_when_full() {
+        let temp = private_tempdir();
+        // Every batch reaches the size target.
+        let mut store = store_with(LocalStorageConfig {
+            threads: 3,
+            file_target_bytes: 1,
+            ..config(temp.path())
+        });
+        let mut input = SAIStatsBatch::default();
+        for time in 0..40u64 {
+            let stats = [stat("a", time), stat("b", u64::MAX - time)];
+            input.push_record(time, stats.clone());
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: time,
+                    stats: SAIStatsView::Owned(&stats),
+                })
+                .unwrap();
+            store.flush().unwrap();
+        }
+        store.finish_stream().unwrap();
+        drop(store);
+        // A full stream closes after the batches already handed over, at most
+        // 2N, which join it instead of opening files of their own.
+        let files = paths(temp.path(), "shards");
+        for path in &files {
+            // A batch holds one record of two series.
+            let batches = decoded(path).len() / 2;
+            assert!((1..=2 * 3 + 1).contains(&batches), "{batches} batches");
+        }
+        let samples: Vec<_> = files.iter().flat_map(|path| decoded(path)).collect();
+        assert_eq!(samples, expected(&input));
+        assert!(paths(temp.path(), ".staging").is_empty());
+    }
+
+    #[test]
+    fn parallel_quota_stop_publishes_the_written_prefix() {
+        let temp = private_tempdir();
+        let mut store = store_with(LocalStorageConfig {
+            threads: 3,
+            max_bytes: MIN_MAX_BYTES,
+            ..config(temp.path())
+        });
+        let mut random = 0x1234_5678_9abc_def0u64;
+        let mut time = 0u64;
+        while !store.stopped {
+            // Incompressible values make batches as large as their raw bytes.
+            let stats: Vec<_> = (0..64)
+                .map(|_| {
+                    random ^= random << 13;
+                    random ^= random >> 7;
+                    random ^= random << 17;
+                    stat("a", random)
+                })
+                .collect();
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: time,
+                    stats: SAIStatsView::Owned(&stats),
+                })
+                .unwrap();
+            time += 1;
+            assert!(time < 1_000_000);
+        }
+        store.finish_stream().unwrap();
+        drop(store);
+        assert!(directory_bytes(temp.path()).unwrap() <= MIN_MAX_BYTES);
+        assert!(paths(temp.path(), ".staging").is_empty());
+        let samples: Vec<_> = paths(temp.path(), "shards")
+            .iter()
+            .flat_map(|path| decoded(path))
+            .collect();
+        assert!(!samples.is_empty() && samples.len() % 64 == 0);
+        for (record, samples) in samples.chunks(64).enumerate() {
+            assert!(samples.iter().all(|s| s.observation_time == record as u64));
+        }
+    }
+
+    #[test]
+    fn writer_failures_reach_the_storage_thread_and_keep_the_stream() {
+        for threads in [1, 3] {
+            let temp = private_tempdir();
+            let mut store = store_with(LocalStorageConfig {
+                threads,
+                ..config(temp.path())
+            });
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: 42,
+                    stats: SAIStatsView::Owned(&[stat("a", 7)]),
+                })
+                .unwrap();
+            store.flush().unwrap();
+            if threads > 1 {
+                store.pipeline().sync().unwrap();
+            }
+            // Publication fails once the staging directory is gone.
+            let moved = temp.path().join("moved");
+            fs::rename(temp.path().join(".staging"), &moved).unwrap();
+            let error = store.finish_stream().unwrap_err();
+            assert!(error.contains("publish"), "{error}");
+            drop(store);
+            assert!(paths(temp.path(), "shards").is_empty());
+            let partials = paths(temp.path(), "moved");
+            assert_eq!(partials.len(), 1);
+            assert_eq!(decoded(&partials[0]).len(), 1);
+        }
+    }
+
+    #[test]
+    fn idle_low_numbered_threads_encode_first() {
+        let temp = private_tempdir();
+        let mut store = store_with(LocalStorageConfig {
+            threads: 4,
+            ..config(temp.path())
+        });
+        for time in 0..6u64 {
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: time,
+                    stats: SAIStatsView::Owned(&[stat("a", time)]),
+                })
+                .unwrap();
+            store.flush().unwrap();
+            store.pipeline().sync().unwrap();
+        }
+        // One batch at a time needs one thread; the others stay idle.
+        assert_eq!(store.pipeline().encoded_batches(), [6, 0, 0, 0]);
+        store.finish_stream().unwrap();
+        assert_eq!(decoded(&paths(temp.path(), "shards")[0]).len(), 6);
     }
 
     #[test]

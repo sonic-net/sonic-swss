@@ -208,6 +208,9 @@ struct Args {
     /// Maximum file age in wall-clock seconds, independent of source timestamps.
     #[arg(long, default_value = "1800", value_parser = clap::value_parser!(u64).range(1..))]
     local_storage_file_seconds: u64,
+    /// Threads that encode batches; 1 encodes and writes on the storage thread.
+    #[arg(long, default_value_t = 1)]
+    local_storage_threads: usize,
     /// Print all trial accounting, then fail if any input was lost.
     #[arg(long)]
     require_lossless: bool,
@@ -1000,6 +1003,7 @@ fn run(args: Args) -> Result<()> {
                             max_bytes: QUOTA
                                 .checked_sub(retained_bytes)
                                 .ok_or("retained output exhausted the shared 2.4 GB quota")?,
+                            threads: args.local_storage_threads,
                         },
                         status.clone(),
                     )
@@ -1226,7 +1230,8 @@ fn run(args: Args) -> Result<()> {
                     "shard_ns":args.local_storage_file_seconds.checked_mul(1_000_000_000),
                     "file_target_bytes":args.local_storage_file_bytes,
                     "file_max_age_seconds":args.local_storage_file_seconds,
-                    "file_rotation_basis":"logical compressed IPC bytes including schema/framing; checked after complete batch flush; up to one batch plus 8-byte EOS overshoot",
+                    "local_storage_threads":args.local_storage_threads,
+                    "file_rotation_basis":"logical compressed IPC bytes including schema/framing; checked after complete batch flush; up to one batch (2N+1 batches with N>1 encoding threads) plus 8-byte EOS overshoot",
                     "value_unit":if matches!(pattern, Pattern::Idle | Pattern::Burst | Pattern::Sustained | Pattern::Mixed) { "bytes_per_interval" } else { "raw_u64" },
                     "generator_version":GENERATOR_VERSION,
                     "bps_assumption":BPS_ASSUMPTION,

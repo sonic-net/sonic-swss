@@ -745,6 +745,16 @@ mod tests {
                 assert_eq!(args.local_storage_file_bytes, 100_000_000);
                 assert_eq!(args.local_storage_file_seconds, 1800);
                 assert_eq!(args.local_storage_capacity, 32);
+                assert_eq!(args.local_storage_threads, 1);
+                assert_eq!(args.config().threads, 1);
+            }
+        }
+
+        #[test]
+        fn local_storage_threads_are_bounded() {
+            for (threads, valid) in [("0", false), ("1", true), ("64", true), ("65", false)] {
+                let result = parse(&["countersyncd", "--local-storage-threads", threads]);
+                assert_eq!(result.is_ok(), valid, "threads={threads}");
             }
         }
 
@@ -772,6 +782,8 @@ mod tests {
                 "2000000",
                 "--local-storage-file-seconds",
                 "60",
+                "--local-storage-threads",
+                "3",
             ])
             .unwrap()
             .local_storage;
@@ -780,6 +792,8 @@ mod tests {
             assert_eq!(args.local_storage_max_bytes, 2_400_000_000);
             assert_eq!(args.local_storage_file_bytes, 2_000_000);
             assert_eq!(args.local_storage_file_seconds, 60);
+            assert_eq!(args.local_storage_threads, 3);
+            assert_eq!(args.config().threads, 3);
         }
 
         #[test]
@@ -891,6 +905,7 @@ mod tests {
             "--local-storage-file-bytes",
             "--local-storage-file-seconds",
             "--local-storage-capacity",
+            "--local-storage-threads",
         ] {
             assert_eq!(
                 parse(&["countersyncd", option]).err().unwrap().kind(),
