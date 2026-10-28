@@ -8,6 +8,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include "netlink_groups.h"
 
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 5097
@@ -111,6 +112,23 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     }
 }
 
+VrfMgr::~VrfMgr()
+{
+    SWSS_LOG_ENTER();
+
+    if (WarmStart::isWarmStart())
+    {
+        SWSS_LOG_NOTICE("vrfmgr: warm restart, skipping bulk delete");
+        return;
+    }
+    std::string res;
+    std::ostringstream cmd;
+    cmd << IP_CMD << " link delete group " << NETLINK_GROUP_VRF_MGR << " type vrf";
+    int rc = swss::exec(cmd.str(), res);
+    SWSS_LOG_NOTICE("vrfmgr: bulk delete group 0x%x rc=%d out=%s",
+                    (unsigned)NETLINK_GROUP_VRF_MGR, rc, res.c_str());
+}
+
 uint32_t VrfMgr::getFreeTable(void)
 {
     SWSS_LOG_ENTER();
@@ -188,7 +206,9 @@ bool VrfMgr::setLink(const string& vrfName)
         return false;
     }
 
-    cmd << IP_CMD << " link add " << shellquote(vrfName) << " type vrf table " << table;
+    cmd << IP_CMD << " link add " << shellquote(vrfName)
+        << " group " << NETLINK_GROUP_VRF_MGR
+        << " type vrf table " << table;
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     m_vrfTableMap.emplace(vrfName, table);
