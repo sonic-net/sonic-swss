@@ -46,6 +46,7 @@ private:
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
+    void updateIpv6IntfMode(const std::string &alias, const std::string &ipv6_link_local_mode);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);
     void setIntfState(const std::string &alias, bool isUp);
     void setSagFdbEntry(const std::string &op, const std::string &alias, const std::string &mac_str);
