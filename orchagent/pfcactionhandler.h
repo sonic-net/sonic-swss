@@ -55,18 +55,10 @@ class PfcWdActionHandler
         // that defer work override this.
         virtual void markInvalid(void) { }
 
-        // Hooks that let PfcWdSwOrch keep switch programming off the storm
-        // detection path. The defaults are no-ops, so handlers that touch
-        // nothing shared (DLR, zero-buffer, lossy) are unaffected.
-        //
-        //   prepare()   - called when the watchdog is configured on a port,
-        //                 long before any storm, to pre-create shared state.
-        //   unprepare() - called when the watchdog is removed from a port.
-        //   flush()     - called once after a whole batch of storm/restore
-        //                 events has been handled. Returns the OIDs of the
-        //                 queues whose deferred programming failed.
-        static bool prepare(sai_object_id_t, const std::set<uint8_t> &) { return true; }
-        static void unprepare(sai_object_id_t) { }
+        // Called once after a whole batch of storm/restore events has been
+        // handled, so handlers that defer switch programming can apply it.
+        // Returns the OIDs of the queues whose programming failed. The default
+        // is a no-op for handlers that program nothing shared.
         static std::set<sai_object_id_t> flush(void) { return std::set<sai_object_id_t>(); }
 
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
@@ -121,35 +113,31 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         static void clear();
 
         bool isValid(void) const override { return !m_rolledBack; }
-        void markInvalid(void) override { m_rolledBack = true; }
+        void markInvalid(void) override;
 
-        // Pre-create the egress ACL tables the storm path would otherwise build
-        // inline. Binds no ports.
-        static bool prepare(sai_object_id_t port, const std::set<uint8_t> &queueIds);
-
-        // Apply every ingress IN_PORTS change accumulated since the last
-        // flush: one set_acl_entry_attribute per queue index, instead of one
-        // per (port, queue). Returns the OIDs of the queues whose programming
-        // failed, so the caller can mark those handlers invalid.
+        // Bring each changed queue index's ingress drop rule in line with the
+        // ports its live handlers mitigate: one SAI call per queue index,
+        // instead of one per (port, queue). A failed write leaves the rule as
+        // it was. Only removals are retried by the next flush: a port that
+        // could not be added is dropped from the desired ports and not tried
+        // again, so its queue keeps only the egress drop until the storm ends,
+        // as before batching. Returns the OIDs of the queues whose port could
+        // not be added, so the caller can mark those handlers invalid.
         static std::set<sai_object_id_t> flush(void);
-
-        // A deferred ingress change, recorded by the constructor (add) or the
-        // destructor (remove) and applied by flush().
-        struct PendingPortOp
-        {
-            bool add = true;
-            sai_object_id_t queueOid = SAI_NULL_OBJECT_ID;
-        };
 
     private:
         // class shared dict: ACL table name -> ACL table
         static std::map<std::string, AclTable> m_aclTables;
 
-        // Ingress IN_PORTS changes waiting for the next flush(), indexed by
-        // queue index and then by port. Indexing by port means a storm and a
-        // restore on the same (port, TC) inside one batch collapse to a single
-        // net change, so the ASIC never sees the intermediate state.
-        static std::map<uint8_t, std::map<sai_object_id_t, PendingPortOp>> m_pendingInPorts;
+        // Ports the ingress drop rule must carry: queue index -> port -> OID of
+        // the queue whose live handler mitigates that port.
+        static std::map<uint8_t, std::map<sai_object_id_t, sai_object_id_t>> m_desiredInPorts;
+
+        // Queue indexes whose rule may not match m_desiredInPorts yet.
+        static std::set<uint8_t> m_dirtyQueueIds;
+
+        // Consecutive failed flushes per queue index, to rate-limit the log.
+        static std::map<uint8_t, uint32_t> m_failedFlushes;
 
         bool shared_egress_acl_table = false;
 
@@ -160,9 +148,7 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strRule;
         string m_strEgressRule;
 
-        // Put a queue's unapplied in-ports changes back for the next flush.
-        static void requeue(uint8_t queueId,
-                            const std::map<sai_object_id_t, PendingPortOp> &ops);
+        static bool flushQueueId(uint8_t queueId, std::set<sai_object_id_t> &failedQueues);
         static bool useSharedEgressAclTable(void);
         static string ingressRuleName(uint8_t queueId);
         static string egressTableName(uint8_t queueId);

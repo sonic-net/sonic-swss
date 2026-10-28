@@ -65,7 +65,7 @@ class TestPfcwdBatchedStorm(object):
 
     def set_cable_len(self, port_name, cable_len):
         fvs = {port_name: cable_len}
-        self.config_db.update_entry("CABLE_LEN", "AZURE", fvs)
+        self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
 
     def _get_bitmask(self, queues):
         mask = 0

@@ -339,16 +339,20 @@ namespace pfcactionhandler_test
             gAclOrch = new AclOrch(acl_table_connectors, m_state_db.get(), gSwitchOrch, gPortsOrch,
                                    gMirrorOrch, gNeighOrch, gRouteOrch);
 
-            // The handler's table dict and pending-edit map are class-static;
+            // The handler's table dict and in-ports state are class-static;
             // start each test clean.
             PfcWdAclHandler::m_aclTables.clear();
-            PfcWdAclHandler::m_pendingInPorts.clear();
+            PfcWdAclHandler::m_desiredInPorts.clear();
+            PfcWdAclHandler::m_dirtyQueueIds.clear();
+            PfcWdAclHandler::m_failedFlushes.clear();
         }
 
         void TearDown() override
         {
             PfcWdAclHandler::m_aclTables.clear();
-            PfcWdAclHandler::m_pendingInPorts.clear();
+            PfcWdAclHandler::m_desiredInPorts.clear();
+            PfcWdAclHandler::m_dirtyQueueIds.clear();
+            PfcWdAclHandler::m_failedFlushes.clear();
 
             delete gAclOrch;
             gAclOrch = nullptr;
@@ -458,6 +462,20 @@ namespace pfcactionhandler_test
         }
     };
 
+    // Nothing left for flush() to program: no port is asked for on any queue
+    // index and no queue index is waiting to be reconciled.
+    static bool noPendingInPorts()
+    {
+        for (const auto &kv : PfcWdAclHandler::m_desiredInPorts)
+        {
+            if (!kv.second.empty())
+            {
+                return false;
+            }
+        }
+        return PfcWdAclHandler::m_dirtyQueueIds.empty();
+    }
+
     static string ingressRuleName(uint8_t queueId)
     {
         return "Rule_PfcWdAclHandler_" + to_string(queueId);
@@ -498,14 +516,14 @@ namespace pfcactionhandler_test
             EXPECT_EQ(gAclOrch->getTableById(INGRESS_TABLE_DROP), SAI_NULL_OBJECT_ID);
             EXPECT_EQ(PfcWdAclHandler::m_aclTables.count(INGRESS_TABLE_DROP), 0U);
             // A create failure is not retried.
-            EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+            EXPECT_TRUE(noPendingInPorts());
 
             // PfcWdSwOrch invalidates the handler before dropping it; the
             // destructor of an invalid handler must queue no removal.
             handler.markInvalid();
             EXPECT_FALSE(handler.isValid());
         }
-        EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+        EXPECT_TRUE(noPendingInPorts());
     }
 
     // Ingress table creation succeeds but the ingress rule fails (first-time
@@ -567,7 +585,7 @@ namespace pfcactionhandler_test
             PfcWdAclHandler handler(getPortOid("Ethernet0"), getQueueOid("Ethernet0", 3), 3, m_countersTable);
             EXPECT_TRUE(handler.m_rolledBack);
             EXPECT_FALSE(handler.isValid());
-            EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+            EXPECT_TRUE(noPendingInPorts());
             EXPECT_TRUE(flushHandlers().empty());
             EXPECT_EQ(gAclOrch->getTableById(INGRESS_TABLE_DROP), SAI_NULL_OBJECT_ID);
             // No egress table was left behind.
@@ -587,7 +605,7 @@ namespace pfcactionhandler_test
             PfcWdAclHandler handler(getPortOid("Ethernet0"), getQueueOid("Ethernet0", 3), 3, m_countersTable);
             EXPECT_TRUE(handler.m_rolledBack);
             EXPECT_FALSE(handler.isValid());
-            EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+            EXPECT_TRUE(noPendingInPorts());
             EXPECT_TRUE(flushHandlers().empty());
             EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
             EXPECT_EQ(gAclOrch->getAclRule("EgressTable_PfcWdAclHandler_3", ingressRuleName(3)), nullptr);
@@ -606,7 +624,7 @@ namespace pfcactionhandler_test
             PfcWdAclHandler handler(getPortOid("Ethernet0"), getQueueOid("Ethernet0", 3), 3, m_countersTable);
             EXPECT_TRUE(handler.m_rolledBack);
             EXPECT_FALSE(handler.isValid());
-            EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+            EXPECT_TRUE(noPendingInPorts());
             EXPECT_TRUE(flushHandlers().empty());
             EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
             EXPECT_EQ(gAclOrch->getTableById("EgressTable_PfcWdAclHandler"), SAI_NULL_OBJECT_ID);
@@ -638,7 +656,9 @@ namespace pfcactionhandler_test
             PfcWdAclHandler bad(getPortOid("Ethernet4"), getQueueOid("Ethernet4", 4), 4, m_countersTable);
             EXPECT_TRUE(bad.m_rolledBack);
             EXPECT_FALSE(bad.isValid());
-            EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+            // The failed handler asks for nothing; the good one stays wanted.
+            EXPECT_TRUE(PfcWdAclHandler::m_desiredInPorts[4].empty());
+            EXPECT_EQ(PfcWdAclHandler::m_desiredInPorts[3].size(), 1U);
             EXPECT_TRUE(flushHandlers().empty());
             // Shared egress table survives, along with the good handler's rules.
             EXPECT_NE(gAclOrch->getTableById("EgressTable_PfcWdAclHandler"), SAI_NULL_OBJECT_ID);
@@ -728,11 +748,10 @@ namespace pfcactionhandler_test
         EXPECT_EQ(queueStatus(queueB), "operational");
     }
 
-    // A batch that fails its IN_PORTS write retries only its removals. The
-    // failed add's handler is invalidated and destroyed, and an invalid
-    // handler never queues a removal, so retrying the add would leave the
-    // port in the rule with nothing to take it out.
-    TEST_F(PfcActionHandlerTest, FailedInPortsWriteRetriesOnlyRemovals)
+    // A recovers and B storms in one batch whose single write fails. B's
+    // handler is kept, marked invalid, and B is no longer asked for; A's
+    // removal stays pending and the next flush empties the rule.
+    TEST_F(PfcActionHandlerTest, FailedInPortsWriteKeepsHandlerAndRetriesRemoval)
     {
         AclCreateFailureInjector inject;
         auto orch = makeOrch({ "Ethernet0", "Ethernet4" });
@@ -742,22 +761,30 @@ namespace pfcactionhandler_test
         batch(*orch, { { "storm", queueA } });
         ASSERT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
 
-        // A recovers and B storms in the same batch; the one write fails.
         inject.m_failInPortsSetAt = 1;
         batch(*orch, { { "restore", queueA }, { "storm", queueB } });
 
         EXPECT_EQ(inject.m_inPortsSetCalls, 1);
         EXPECT_FALSE(hasHandler(*orch, queueA));
+        ASSERT_TRUE(hasHandler(*orch, queueB));
+        EXPECT_FALSE(orch->m_entryMap.at(queueB).handler->isValid());
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
+
+        // The timer's flush retries the removal.
+        orch->flushPendingActions();
+        EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+        EXPECT_TRUE(PfcWdAclHandler::m_dirtyQueueIds.empty());
+
+        batch(*orch, { { "restore", queueB } });
         EXPECT_FALSE(hasHandler(*orch, queueB));
-        // A's removal was retried and emptied the rule; B was not re-added.
         EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
     }
 
-    // After a failed write the queue must go back to "operational" in the
-    // counters table: pfc_detect_*.lua only evaluates queues in that state, so
-    // a queue left "stormed" with no handler would never be detected again
-    // until pfcwd is restarted on the port.
-    TEST_F(PfcActionHandlerTest, FailedInPortsWriteReleasesQueueForRedetection)
+    // A queue whose add failed stays "stormed" with its (invalid) handler, as
+    // the queue is still lossy: re-arming detection would re-detect the same
+    // storm every poll and toggle PFC on the port. The restore releases it,
+    // and a later storm goes through the normal path.
+    TEST_F(PfcActionHandlerTest, FailedInPortsWriteKeepsQueueStormed)
     {
         AclCreateFailureInjector inject;
         auto orch = makeOrch({ "Ethernet0", "Ethernet4" });
@@ -770,65 +797,113 @@ namespace pfcactionhandler_test
         inject.m_failInPortsSetAt = 1;
         batch(*orch, { { "storm", queueB } });
 
-        EXPECT_FALSE(hasHandler(*orch, queueB));
-        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
-        EXPECT_EQ(queueStatus(queueB), "operational");
-
-        // A restore for a queue with no handler changes nothing.
-        batch(*orch, { { "restore", queueB } });
-        EXPECT_EQ(queueStatus(queueB), "operational");
-
-        // The next detection retries through the normal path.
-        batch(*orch, { { "storm", queueB } });
-        EXPECT_TRUE(hasHandler(*orch, queueB));
-        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA, portB }));
+        ASSERT_TRUE(hasHandler(*orch, queueB));
+        EXPECT_FALSE(orch->m_entryMap.at(queueB).handler->isValid());
         EXPECT_EQ(queueStatus(queueB), "stormed");
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
 
-        // Restore before the orch (and gAclOrch) go away.
+        // Another storm event for the same queue does not rebuild the handler.
+        batch(*orch, { { "storm", queueB } });
+        EXPECT_EQ(inject.m_inPortsSetCalls, 1);
+
+        batch(*orch, { { "restore", queueB } });
+        EXPECT_FALSE(hasHandler(*orch, queueB));
+        EXPECT_EQ(queueStatus(queueB), "operational");
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
+
+        batch(*orch, { { "storm", queueB } });
+        EXPECT_TRUE(orch->m_entryMap.at(queueB).handler->isValid());
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA, portB }));
+
         batch(*orch, { { "restore", queueA }, { "restore", queueB } });
         EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
     }
 
-    // prepare() runs at watchdog configuration time and pre-creates only the
-    // egress tables. The ingress table is left to the first storm: it is
-    // IngressTableDrop, which MuxOrch shares and binds its ports to only when
-    // it creates the table itself.
-    TEST_F(PfcActionHandlerTest, PrepareCreatesOnlyEgressTables)
+    // A storm and its restore inside one batch cancel out: the ingress rule is
+    // never created, written or removed, and an existing rule is not touched.
+    TEST_F(PfcActionHandlerTest, StormAndRestoreInOneBatchCancelOut)
     {
-        const set<uint8_t> queueIds = { 3, 4 };
-        EXPECT_TRUE(PfcWdAclHandler::prepare(getPortOid("Ethernet0"), queueIds));
+        AclCreateFailureInjector inject;
+        auto orch = makeOrch({ "Ethernet0", "Ethernet4" });
+        sai_object_id_t portA = getPortOid("Ethernet0");
+        sai_object_id_t queueA = getQueueOid("Ethernet0", 3), queueB = getQueueOid("Ethernet4", 3);
 
+        batch(*orch, { { "storm", queueB }, { "restore", queueB } });
         EXPECT_EQ(gAclOrch->getTableById(INGRESS_TABLE_DROP), SAI_NULL_OBJECT_ID);
-        EXPECT_EQ(PfcWdAclHandler::m_aclTables.count(INGRESS_TABLE_DROP), 0U);
+        EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+        EXPECT_TRUE(noPendingInPorts());
 
-        for (uint8_t queueId : queueIds)
-        {
-            string table = "EgressTable_PfcWdAclHandler_" + to_string(queueId);
-            sai_object_id_t tableOid = gAclOrch->getTableById(table);
-            ASSERT_NE(tableOid, SAI_NULL_OBJECT_ID) << table;
-            // Pre-created with no port bound; the storm path binds the port.
-            const AclTable *aclTable = gAclOrch->getTableByOid(tableOid);
-            ASSERT_NE(aclTable, nullptr);
-            EXPECT_TRUE(aclTable->ports.empty()) << table;
-        }
+        batch(*orch, { { "storm", queueA } });
+        ASSERT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
+        int sets = inject.m_inPortsSetCalls;
 
-        // The storm path reuses the pre-created egress table and creates only
-        // the ingress table.
+        batch(*orch, { { "storm", queueB }, { "restore", queueB } });
+        EXPECT_EQ(inject.m_inPortsSetCalls, sets);
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA }));
+
+        batch(*orch, { { "restore", queueA } });
+        EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+    }
+
+    // P's removal fails, P storms again before the retry, and then a write for
+    // another port fails. P must neither be lost from the rule while its new
+    // handler mitigates it, nor be left in the rule once that handler goes.
+    TEST_F(PfcActionHandlerTest, PortRestormingDuringFailedRemovalIsNotOrphaned)
+    {
+        AclCreateFailureInjector inject;
+        auto orch = makeOrch({ "Ethernet0", "Ethernet4", "Ethernet8" });
+        sai_object_id_t portP = getPortOid("Ethernet0"), portQ = getPortOid("Ethernet4");
+        sai_object_id_t queueP = getQueueOid("Ethernet0", 3), queueQ = getQueueOid("Ethernet4", 3);
+        sai_object_id_t queueR = getQueueOid("Ethernet8", 3);
+
+        batch(*orch, { { "storm", queueP }, { "storm", queueQ } });
+        ASSERT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portP, portQ }));
+
+        // P recovers; the write that takes it out fails.
+        inject.m_failInPortsSetAt = inject.m_inPortsSetCalls + 1;
+        batch(*orch, { { "restore", queueP } });
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portP, portQ }));
+
+        // P storms again before any retry, and R storms with a failing write.
+        inject.m_failInPortsSetAt = inject.m_inPortsSetCalls + 1;
+        batch(*orch, { { "storm", queueP }, { "storm", queueR } });
+        EXPECT_TRUE(orch->m_entryMap.at(queueP).handler->isValid());
+        EXPECT_FALSE(orch->m_entryMap.at(queueR).handler->isValid());
+        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portP, portQ }));
+
+        // Once every handler is gone, nothing is left in the rule.
+        batch(*orch, { { "restore", queueP }, { "restore", queueQ }, { "restore", queueR } });
+        EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+        EXPECT_TRUE(PfcWdAclHandler::m_dirtyQueueIds.empty());
+    }
+
+    // If IngressTableDrop disappears from AclOrch while PFCWD still caches it,
+    // building the rule throws. The flush must contain that and fail only the
+    // queues it was adding, not abort orchagent.
+    TEST_F(PfcActionHandlerTest, VanishedIngressTableFailsQueueWithoutThrowing)
+    {
         AclCreateFailureInjector inject;
         auto orch = makeOrch({ "Ethernet0" });
-        sai_object_id_t queueOid = getQueueOid("Ethernet0", 3);
-        batch(*orch, { { "storm", queueOid } });
-        EXPECT_EQ(inject.m_tableCalls, 1);
-        EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ getPortOid("Ethernet0") }));
+        sai_object_id_t queueA = getQueueOid("Ethernet0", 3);
 
-        batch(*orch, { { "restore", queueOid } });
-        EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+        batch(*orch, { { "storm", queueA } });
+        batch(*orch, { { "restore", queueA } });
+        ASSERT_EQ(PfcWdAclHandler::m_aclTables.count(INGRESS_TABLE_DROP), 1U);
+        ASSERT_TRUE(gAclOrch->removeAclTable(INGRESS_TABLE_DROP));
+
+        EXPECT_NO_THROW(batch(*orch, { { "storm", queueA } }));
+        ASSERT_TRUE(hasHandler(*orch, queueA));
+        EXPECT_FALSE(orch->m_entryMap.at(queueA).handler->isValid());
+
+        batch(*orch, { { "restore", queueA } });
+        EXPECT_FALSE(hasHandler(*orch, queueA));
+        PfcWdAclHandler::m_aclTables.erase(INGRESS_TABLE_DROP);
     }
 
     // Under BIG_RED_SWITCH the registered entry keeps its slot with no
     // handler and the live handler sits in m_brsEntryMap. A failed batched
-    // write must reach that handler: invalidate it, release the queue and
-    // leave no half-programmed ingress state.
+    // write must reach that handler and invalidate it, leaving no
+    // half-programmed ingress state.
     TEST_F(PfcActionHandlerTest, FailedWriteInvalidatesBigRedSwitchHandler)
     {
         AclCreateFailureInjector inject;
@@ -851,10 +926,11 @@ namespace pfcactionhandler_test
         inject.m_failEntryAt = inject.m_entryCalls + 1;
         orch->flushPendingActions();
 
-        EXPECT_EQ(orch->m_brsEntryMap.at(queueA).handler, nullptr);
+        ASSERT_NE(orch->m_brsEntryMap.at(queueA).handler, nullptr);
+        EXPECT_FALSE(orch->m_brsEntryMap.at(queueA).handler->isValid());
         EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
-        EXPECT_EQ(queueStatus(queueA), "operational");
-        EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+        EXPECT_TRUE(PfcWdAclHandler::m_desiredInPorts[3].empty());
+        EXPECT_TRUE(PfcWdAclHandler::m_dirtyQueueIds.empty());
 
         orch->m_brsEntryMap.clear();
         orch->m_bigRedSwitchFlag = false;
@@ -884,7 +960,8 @@ namespace pfcactionhandler_test
         EXPECT_EQ(failed, set<sai_object_id_t>({ queueB }));
         EXPECT_EQ(ingressRuleInPorts(3), set<sai_object_id_t>({ portA, portC }));
         EXPECT_EQ(inject.m_inPortsSetCalls, 1);
-        EXPECT_TRUE(PfcWdAclHandler::m_pendingInPorts.empty());
+        EXPECT_EQ(PfcWdAclHandler::m_desiredInPorts[3].count(portB), 0U);
+        EXPECT_TRUE(PfcWdAclHandler::m_dirtyQueueIds.empty());
 
         // Everything the orch still holds comes down cleanly.
         batch(*orch, { { "restore", queueA }, { "restore", queueB }, { "restore", queueC } });

@@ -280,17 +280,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         this->m_pfcwdFlexCounterManager->setCounterIdList(port.m_port_id, CounterType::PORT, portStatIdSet, SAI_OBJECT_TYPE_PORT);
     }
 
-    // Pre-create the switch state the storm path would otherwise have to
-    // build inline, while we are far away from any storm. Only the drop
-    // action uses it. A failure here is not fatal: the storm path still
-    // creates whatever is missing, just more slowly.
-    if (action == PfcWdAction::PFC_WD_ACTION_DROP && !DropHandler::prepare(port.m_port_id, losslessTc))
-    {
-        SWSS_LOG_WARN("Failed to pre-provision PFC watchdog ACL state on port %s; "
-                      "storm mitigation will fall back to creating it on demand",
-                      port.m_alias.c_str());
-    }
-
     for (auto i : losslessTc)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
@@ -426,8 +415,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 
     // Destroying the handlers above queued their ACL removals.
     flushPendingActions();
-
-    DropHandler::unprepare(port.m_port_id);
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -702,7 +689,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
 
     if (events.size() > 1)
     {
-        SWSS_LOG_NOTICE("Handled %zu PFC watchdog events in one batch", events.size());
+        SWSS_LOG_INFO("Handled %zu PFC watchdog events in one batch", events.size());
     }
 
     flushPendingActions();
@@ -734,20 +721,15 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::flushPendingActions(void)
                 }
             }
 
-            SWSS_LOG_WARN("PFC storm on port %s queue %d detected but drop action could not be "
-                          "installed (ACL programming failed); queue is NOT being mitigated",
+            SWSS_LOG_WARN("PFC storm on port %s queue %d detected but the ingress drop could not be "
+                          "installed (ACL programming failed); the queue is lossy and egress drop is in place",
                           entry->second.portAlias.c_str(), entry->second.index);
 
-            // Invalidate first so the destructor queues no removal for an add
-            // that never landed; commit the counters so the queue returns to
-            // "operational", or the detection script never evaluates it again.
+            // Keep the handler: the queue stays lossy and "stormed" until the
+            // restore event tears it down. Releasing it here would re-enable
+            // PFC and re-arm detection, re-detecting the same storm every poll.
             entry->second.handler->markInvalid();
-            entry->second.handler->commitCounters();
-            entry->second.handler = nullptr;
         }
-
-        // Tearing those handlers down may have queued more work.
-        DropHandler::flush();
     }
 
     // The outcome is known now, so write the warm-reboot record and state.
