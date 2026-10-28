@@ -5,7 +5,7 @@ import pytest
 import re
 import json
 from swsscommon import swsscommon
-from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 PFCWD_TABLE_NAME = "DROP_TEST_TABLE"
 PFCWD_TABLE_TYPE = "DROP"
@@ -413,6 +413,82 @@ class TestPfcwdFunc(object):
             self.reset_pfcwd_counters(storm_queue)
             for port, _field, _value in bad_rows:
                 self.app_db.delete_entry("PFC_WD_TABLE", port)
+
+    def test_pfcwd_stop_clears_detection_state(self, dvs, setup_teardown_test):
+        queue_fields = ["PFC_WD_DETECTION_TIME_LEFT", "SAI_QUEUE_STAT_PACKETS_last"]
+        port_fields = ["SAI_PORT_STAT_PFC_3_RX_PKTS_last"]
+        try:
+            test_queues = [3, 4]
+            self.set_ports_pfc(pfc_queues=test_queues)
+            self.verify_ports_pfc(test_queues)
+
+            self.start_pfcwd_on_ports()
+
+            # wait for the detect plugin to lay down its countdown and baseline
+            queue_oid = self.queue_oids["Ethernet0:3"]
+            port_oid = self.port_oids["Ethernet0"]
+            self.counters_db.wait_for_fields("COUNTERS", queue_oid, queue_fields)
+            self.counters_db.wait_for_fields("COUNTERS", port_oid, port_fields)
+
+            self.stop_pfcwd_on_ports()
+
+            # a re-enable must start from a fresh countdown and baseline, not
+            # resume from the pre-disable state
+            def _cleared():
+                q = self.counters_db.get_entry("COUNTERS", queue_oid)
+                p = self.counters_db.get_entry("COUNTERS", port_oid)
+                present = [f for f in queue_fields if f in q] + [f for f in port_fields if f in p]
+                return (not present, present)
+
+            wait_for_result(_cleared, PollingConfig(polling_interval=1, timeout=10, strict=True))
+        finally:
+            self.stop_pfcwd_on_ports()
+
+    def test_pfcwd_start_ignores_stale_detection_state(self, dvs, setup_teardown_test):
+        # State left in COUNTERS_DB by an earlier registration that was never
+        # unregistered (orchagent restarting on a live database) must not
+        # shorten the new registration's detection time.
+        storm_queue = [3]
+        queue_oid = self.queue_oids["Ethernet0:3"]
+        port_oid = self.port_oids["Ethernet0"]
+        try:
+            self.set_ports_pfc(pfc_queues=[3, 4])
+            self.verify_ports_pfc([3, 4])
+
+            self.start_pfcwd_on_ports(detection_time="5000")
+            self.counters_db.wait_for_fields("COUNTERS", port_oid, ["SAI_PORT_STAT_PFC_3_RX_PKTS_last"])
+            self.stop_pfcwd_on_ports()
+
+            # a baseline and an almost spent countdown, as a previous
+            # registration would have left them
+            q = self.counters_db.get_entry("COUNTERS", queue_oid)
+            p = self.counters_db.get_entry("COUNTERS", port_oid)
+            self.counters_db.update_entry("COUNTERS", queue_oid, {
+                "PFC_WD_DETECTION_TIME_LEFT": "1",
+                "SAI_QUEUE_STAT_PACKETS_last": q["SAI_QUEUE_STAT_PACKETS"]})
+            self.counters_db.update_entry("COUNTERS", port_oid, {
+                "SAI_PORT_STAT_PFC_3_RX_PKTS_last": p["SAI_PORT_STAT_PFC_3_RX_PKTS"],
+                "SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US_last": p["SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US"]})
+
+            self.set_storm_state(storm_queue)
+            self.start_pfcwd_on_ports(detection_time="5000")
+
+            # resuming the planted countdown would storm on the first poll
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                status = self.counters_db.get_entry("COUNTERS", queue_oid).get("PFC_WD_STATUS")
+                assert status != "stormed", "storm declared from stale countdown"
+                time.sleep(0.1)
+
+            # and the storm is still detected once the full detection time runs
+            self.counters_db.wait_for_field_match("COUNTERS", queue_oid, {"PFC_WD_STATUS": "stormed"},
+                                                  polling_config=PollingConfig(polling_interval=0.5, timeout=15, strict=True))
+        finally:
+            self.set_storm_state(storm_queue, state="disabled")
+            self.counters_db.wait_for_field_match("COUNTERS", queue_oid, {"PFC_WD_STATUS": "operational"},
+                                                  polling_config=PollingConfig(polling_interval=0.5, timeout=15, strict=False))
+            self.reset_pfcwd_counters(storm_queue)
+            self.stop_pfcwd_on_ports()
 
     def test_pfcwd_software_multi_queue(self, dvs, setup_teardown_test):
         try:

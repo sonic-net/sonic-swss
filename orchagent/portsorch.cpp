@@ -24,6 +24,8 @@
 #include <sstream>
 #include <unordered_set>
 
+#include <boost/algorithm/string.hpp>
+
 #include <netinet/if_ether.h>
 #include "net/if.h"
 
@@ -74,7 +76,7 @@ extern string gMyHostName;
 extern string gMyAsicName;
 extern EvpnMhOrch *gEvpnMhOrch;
 extern event_handle_t g_events_handle;
-extern bool isChassisDbInUse();
+extern bool isVoqChassisDbInUse();
 extern bool gMultiAsicVoq;
 
 // defines ------------------------------------------------------------------------------------------------------------
@@ -485,6 +487,13 @@ const std::unordered_map<sai_port_error_status_t, std::string> PortOperErrorEven
 static bool isValidPortTypeForLagMember(const Port& port)
 {
     return (port.m_type == Port::Type::PHY || port.m_type == Port::Type::SYSTEM);
+}
+
+/* The DF role attributes are optional: a platform may implement neither. */
+static bool isDfAttrUnsupported(sai_status_t status)
+{
+    return status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+           SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status);
 }
 
 // Generic helper function to extract serdes attributes from any serdes instance
@@ -1131,7 +1140,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         string tableName;
         //Add subscriber to process system LAG (System PortChannel) table
@@ -2896,7 +2905,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
         group_attrs.push_back(group_attr);
 
         group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
-        group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        group_attr.value.s32 = querySupportedAclTableGroupType(gSwitchId);
         group_attrs.push_back(group_attr);
 
         status = sai_acl_api->create_acl_table_group(&group_oid_ref, gSwitchId,
@@ -6426,12 +6435,33 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         {
             if (gMySwitchType == "voq")
             {
-                size_t pos = lag_alias.find('|');
-                std::string port_hostname = (pos != std::string::npos) ? lag_alias.substr(0, pos) : lag_alias;
+                // VoQ LAG aliases can include <hostname>|<asic>|<local-alias> even without chassis DB.
+                const auto alias_tokens = tokenize(lag_alias, '|');
+                std::string port_hostname = alias_tokens.empty() ? lag_alias : alias_tokens[0];
                 if (gMyHostName == port_hostname)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    if (isVoqChassisDbInUse())
+                    {
+                        std::string port_asic = alias_tokens.size() > 1 ? alias_tokens[1] : "";
+                        std::string lower_port_asic = port_asic;
+                        std::string lower_my_asic = gMyAsicName;
+                        boost::algorithm::to_lower(lower_port_asic);
+                        boost::algorithm::to_lower(lower_my_asic);
+                        SWSS_LOG_DEBUG("doLagMemberTask: lag_alias=%s hostname=%s asic=%s local_asic=%s",
+                                       lag_alias.c_str(), port_hostname.c_str(), port_asic.c_str(), gMyAsicName.c_str());
+                        if (lower_port_asic == lower_my_asic)
+                        {
+                            SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (same host and asic)", lag_alias.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_DEBUG("doLagMemberTask: erasing local entry %s (single-asic voq)", lag_alias.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
                 }
             }
             SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
@@ -6510,7 +6540,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 }
             }
 
-            if (isChassisDbInUse() && (port.m_type != Port::SYSTEM))
+            if (isVoqChassisDbInUse() && (port.m_type != Port::SYSTEM))
             {
                //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
                voqSyncAddLagMember(lag, port, status);
@@ -7430,14 +7460,6 @@ bool PortsOrch::addBridgePort(Port &port)
     attr.value.s32 = port.m_learn_mode;
     attrs.push_back(attr);
 
-    /* If the interface is associated with an ethernet segment, set the DF role */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
-        /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
-        attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
-        attrs.push_back(attr);
-    }
-
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -7449,6 +7471,40 @@ bool PortsOrch::addBridgePort(Port &port)
             return parseHandleSaiStatusFailure(handle_status);
         }
         return false;
+    }
+
+    /* Set after create: the DF role is optional, and a platform that does not
+     * implement it must not lose the bridge port along with it. */
+    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
+        /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
+        sai_attribute_t df_attr;
+        df_attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
+        df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
+
+        sai_status_t df_status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &df_attr);
+        if (isDfAttrUnsupported(df_status))
+        {
+            SWSS_LOG_WARN("Bridge port %s: DF role attribute unavailable on this platform, "
+                          "non-DF BUM suppression not applied", port.m_alias.c_str());
+        }
+        else if (df_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Bridge port %s: failed to set DF role, rv:%d",
+                           port.m_alias.c_str(), df_status);
+            /* On a retryable status, remove the bridge port so the retry creates it and sets
+             * the role again; otherwise keep it, as a port without its DF role still forwards. */
+            if (handleSaiSetStatus(SAI_API_BRIDGE, df_status) == task_need_retry)
+            {
+                sai_status_t rm_status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
+                if (rm_status == SAI_STATUS_SUCCESS)
+                {
+                    port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+                    return false;
+                }
+                SWSS_LOG_ERROR("Bridge port %s: failed to remove it for a retry, keeping it, rv:%d",
+                               port.m_alias.c_str(), rm_status);
+            }
+        }
     }
 
     if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
@@ -7733,15 +7789,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
 
-    /* If the interface is associated with an ethernet segment, send the SAI vlan DF attribute */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
-        /* TODO: Use proper attribute once its available in SAI */
-        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
-        attrs.push_back(attr);
-    }
-
-    sai_object_id_t vlan_member_id;
+    sai_object_id_t vlan_member_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -7751,6 +7799,40 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    /* Set after create, for the same reason as the bridge port DF role above, and only on a
+     * member this call created. */
+    if (status == SAI_STATUS_SUCCESS && gEvpnMhOrch &&
+        gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
+        /* TODO: Use proper attribute once its available in SAI */
+        sai_attribute_t df_attr;
+        df_attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
+        df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
+
+        sai_status_t df_status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &df_attr);
+        if (isDfAttrUnsupported(df_status))
+        {
+            SWSS_LOG_WARN("VLAN member %s on %s: DF role attribute unavailable on this platform, "
+                          "non-DF BUM suppression not applied", port.m_alias.c_str(), vlan.m_alias.c_str());
+        }
+        else if (df_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("VLAN member %s on %s: failed to set DF role, rv:%d",
+                           port.m_alias.c_str(), vlan.m_alias.c_str(), df_status);
+            /* As for the bridge port: remove the member on a retryable status so the retry
+             * creates it again, and keep it otherwise. */
+            if (handleSaiSetStatus(SAI_API_VLAN, df_status) == task_need_retry)
+            {
+                sai_status_t rm_status = sai_vlan_api->remove_vlan_member(vlan_member_id);
+                if (rm_status == SAI_STATUS_SUCCESS)
+                {
+                    return false;
+                }
+                SWSS_LOG_ERROR("VLAN member %s on %s: failed to remove it for a retry, keeping it, rv:%d",
+                               port.m_alias.c_str(), vlan.m_alias.c_str(), rm_status);
+            }
         }
     }
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
@@ -8286,7 +8368,7 @@ bool PortsOrch::removeLag(Port lag)
 
     m_counterLagTable->hdel("", lag.m_alias);
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         // Free the lag id, if this is local LAG
 
@@ -8399,7 +8481,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncAddLagMember(lag, port, member_status);
@@ -8447,7 +8529,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
-    if (isChassisDbInUse())
+    if (isVoqChassisDbInUse())
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
         voqSyncDelLagMember(lag, port);
@@ -10096,7 +10178,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         }
     }
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         if (gIntfsOrch->isLocalSystemPortIntf(port.m_alias))
         {

@@ -758,6 +758,52 @@ namespace mirrororch_test
         sai_mirror_api->remove_mirror_session(sessionOid);
     }
 
+    TEST_F(MirrorOrchPortTest, SampledMirrorPhyPortAllowsPreRebootBindingDuringWarmRestore)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+        ASSERT_NE(gMirrorOrch, nullptr);
+        ASSERT_NE(gPortsOrch, nullptr);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        sai_object_id_t sessionOid = createErspanSessionOid(port.m_port_id);
+        ASSERT_NE(sessionOid, SAI_NULL_OBJECT_ID);
+
+        MirrorEntry preReboot("");
+        preReboot.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("warm_pre_reboot", preReboot));
+        MirrorEntry restored("");
+        restored.sample_rate = 50000;
+        ASSERT_TRUE(gMirrorOrch->createSamplePacket("warm_restored", restored));
+        ASSERT_NE(preReboot.samplepacketId, restored.samplepacketId);
+
+        // Port still bound to the pre-reboot samplepacket.
+        sai_attribute_t pre;
+        pre.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        pre.value.oid = preReboot.samplepacketId;
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &pre), SAI_STATUS_SUCCESS);
+
+        gMirrorOrch->m_isWarmRestoreStage = true;
+        ASSERT_TRUE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, MirrorBindDirection::Ingress, sessionOid, restored.samplepacketId));
+
+        // After warm boot ends the conflict check is enforced again.
+        gMirrorOrch->onWarmBootEnd();
+        ASSERT_FALSE(gMirrorOrch->m_isWarmRestoreStage);
+        ASSERT_TRUE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ false, MirrorBindDirection::Ingress, sessionOid, restored.samplepacketId));
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &pre), SAI_STATUS_SUCCESS);
+        ASSERT_FALSE(gMirrorOrch->setUnsetSampledMirrorOnPhyPort(
+            port.m_port_id, port.m_alias, /*set*/ true, MirrorBindDirection::Ingress, sessionOid, restored.samplepacketId));
+
+        pre.value.oid = SAI_NULL_OBJECT_ID;
+        sai_port_api->set_port_attribute(port.m_port_id, &pre);
+        sai_samplepacket_api->remove_samplepacket(preReboot.samplepacketId);
+        sai_samplepacket_api->remove_samplepacket(restored.samplepacketId);
+        sai_mirror_api->remove_mirror_session(sessionOid);
+    }
+
     TEST_F(MirrorOrchPortTest, ConfigurePortMirrorSessionSampledPhy)
     {
         mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;

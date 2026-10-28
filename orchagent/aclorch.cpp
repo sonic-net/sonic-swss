@@ -33,6 +33,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
@@ -765,9 +766,50 @@ AclTableTypeBuilder& AclTableTypeBuilder::withBindPointType(sai_acl_bind_point_t
     return *this;
 }
 
+/*
+ * Returns true if the platform/SAI implements the given ACL table match field.
+ *
+ * Uses sai_query_attribute_capability() for SAI_OBJECT_TYPE_ACL_TABLE. If the
+ * capability query itself is not implemented (SAI_STATUS_NOT_IMPLEMENTED /
+ * SAI_STATUS_NOT_SUPPORTED) we preserve the historical behavior and assume the
+ * field is supported, so platforms that do not implement the query are
+ * unaffected. Any other (genuine) query failure treats the field as unsupported.
+ */
+static bool isAclTableMatchFieldSupported(sai_acl_table_attr_t matchField)
+{
+    sai_attr_capability_t capability = {};
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE, matchField, &capability);
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        return capability.create_implemented;
+    }
+
+    // Preserve historical behavior only when the capability query itself is unsupported.
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_INFO("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                      "assuming match field is supported", matchField, status);
+        return true;
+    }
+
+    SWSS_LOG_WARN("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                  "treating match field as unsupported", matchField, status);
+    return false;
+}
+
 AclTableTypeBuilder& AclTableTypeBuilder::withMatch(shared_ptr<AclTableMatchInterface> match)
 {
-    m_tableType.m_matches.emplace(match->getId(), match);
+    auto matchField = match->getId();
+    if (!isAclTableMatchFieldSupported(matchField))
+    {
+        const auto *meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_TABLE, matchField);
+        SWSS_LOG_NOTICE("Skipping ACL table match field %s: not supported by the platform",
+                        meta ? meta->attridname : std::to_string(static_cast<int>(matchField)).c_str());
+        return *this;
+    }
+    m_tableType.m_matches.emplace(matchField, match);
     return *this;
 }
 
@@ -4488,6 +4530,8 @@ AclOrch::~AclOrch()
     }
 
     deleteDTelWatchListTables();
+
+    gAclOrch = nullptr;
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -6286,7 +6330,7 @@ sai_object_id_t AclOrch::getTableById(string table_id)
         return SAI_NULL_OBJECT_ID;
     }
 
-    for (auto it : m_AclTables)
+    for (const auto& it : m_AclTables)
     {
         if (it.second.id == table_id)
         {

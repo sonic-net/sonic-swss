@@ -129,6 +129,17 @@ OrchDaemon::~OrchDaemon()
     }
 
     /*
+     * Detach observers while all orchs are still alive.
+     * m_orchList reverse deletion can destroy a Subject before its
+     * Observers (e.g. FdbOrch before MuxOrch/NeighOrch). Calling
+     * detachObservers() here avoids the ordering dependency entirely.
+     */
+    for (auto* orch : m_orchList)
+    {
+        orch->detachObservers();
+    }
+
+    /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
      * NOTE: This is still not a robust solution, as order in this list
@@ -887,13 +898,15 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+        // LCOV_EXCL_START: cisco-8000 platform branch is not exercised by the VS test environment
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
+        // LCOV_EXCL_STOP
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));

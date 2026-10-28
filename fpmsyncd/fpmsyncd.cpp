@@ -1,6 +1,7 @@
 #include <iostream>
 #include <inttypes.h>
 #include <sys/stat.h>
+#include <jemalloc/jemalloc.h>
 #include "logger.h"
 #include "routesync.h"
 #include "select.h"
@@ -17,6 +18,8 @@
 
 using namespace std;
 using namespace swss;
+
+const char *malloc_conf = "background_thread:true";
 
 // gSelectTimeout specifies the maximum wait time in milliseconds (-1 == infinite)
 static int gSelectTimeout;
@@ -152,6 +155,9 @@ int main(int argc, char **argv)
             bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
             if (warmStartEnabled)
             {
+                // Reconcile writes the route tables directly on this thread.
+                sync.retireRouteCoalescer();
+
                 /* Obtain warm-restart timer defined for routing application */
                 time_t warmRestartIval = sync.getWarmStartHelper().getRestartTimer();
                 if (!warmRestartIval)
@@ -179,6 +185,7 @@ int main(int argc, char **argv)
             }
             else
             {
+                sync.startRouteCoalescer();
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
             }
 
