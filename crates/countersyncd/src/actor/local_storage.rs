@@ -116,9 +116,12 @@
 //! namespaces. For longer captures, configure a suitable root and quota. Stop
 //! capture and verify transfer before deleting the capture directory.
 
-use crate::message::{
-    local_storage::LocalStorageStatus,
-    saistats::{SAIStatMetadata, SAIStatsBatchMessage, SAIStatsRef, SAIStatsView},
+use crate::{
+    message::{
+        local_storage::LocalStorageStatus,
+        saistats::{SAIStatMetadata, SAIStatsBatchMessage, SAIStatsRef, SAIStatsView},
+    },
+    utilities::{ChannelLabel, record_comm_stats, set_comm_capacity},
 };
 use ahash::{HashMap, HashMapExt};
 use arrow_array::{RecordBatch, UInt32Array, UInt64Array};
@@ -182,9 +185,6 @@ impl<T, E: Display> Context<T> for Result<T, E> {
     }
 }
 
-/// Batches the IPFIX actor can queue ahead of the storage worker.
-const QUEUE_BATCHES: usize = 32;
-
 /// Command-line options of the local storage sink.
 #[derive(Debug, Clone, clap::Args)]
 pub struct LocalStorageArgs {
@@ -211,6 +211,15 @@ pub struct LocalStorageArgs {
     /// Maximum local storage file age in wall-clock seconds
     #[arg(long, default_value = "1800", value_parser = clap::value_parser!(u64).range(1..))]
     pub local_storage_file_seconds: u64,
+
+    /// SAI stats batches IPFIX can queue for local storage; values above 64 are
+    /// clamped to 64
+    #[arg(
+        long,
+        default_value = "32",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..)
+    )]
+    pub local_storage_capacity: usize,
 }
 
 impl LocalStorageArgs {
@@ -233,11 +242,15 @@ pub struct LocalStorage {
 }
 
 impl LocalStorage {
-    /// The sink and the sender for its IPFIX recipient queue.
-    pub fn new(config: LocalStorageConfig) -> (Self, Sender<SAIStatsBatchMessage>) {
-        let (sender, receiver) = tokio::sync::mpsc::channel(QUEUE_BATCHES);
+    /// The sink and the sender for its IPFIX recipient queue of `capacity` batches.
+    pub fn new(
+        config: LocalStorageConfig,
+        capacity: usize,
+    ) -> (Self, Sender<SAIStatsBatchMessage>) {
+        let (sender, receiver) = tokio::sync::mpsc::channel(capacity);
+        set_comm_capacity(ChannelLabel::IpfixToLocalStorage, capacity);
         info!(
-            "Local storage requested: path={}, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, flush_interval_ms={}, queue_batches={QUEUE_BATCHES}; capture applies backpressure",
+            "Local storage requested: path={}, compression=zstd, max_bytes={}, file_target_bytes={}, shard_interval_secs={}, flush_interval_ms={}, queue_batches={capacity}; capture applies backpressure",
             config.root.display(),
             config.max_bytes,
             config.file_target_bytes,
@@ -983,6 +996,10 @@ impl LocalStorageActor {
                             }
                             message = self.receiver.recv() => {
                                 let Some(message) = message else { break; };
+                                record_comm_stats(
+                                    ChannelLabel::IpfixToLocalStorage,
+                                    self.receiver.len(),
+                                );
                                 for record in message.iter() {
                                     self.store.add_record(record)?;
                                 }

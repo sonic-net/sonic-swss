@@ -331,6 +331,13 @@ impl Args {
             clamp_batch_capacity("--stats-reporter-capacity", self.stats_reporter_capacity);
         self.counter_db_capacity =
             clamp_batch_capacity("--counter-db-capacity", self.counter_db_capacity);
+        #[cfg(not(target_arch = "arm"))]
+        {
+            self.local_storage.local_storage_capacity = clamp_batch_capacity(
+                "--local-storage-capacity",
+                self.local_storage.local_storage_capacity,
+            );
+        }
     }
 }
 
@@ -509,7 +516,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // IPFIX so aborting that actor closes the queue and starts a graceful drain.
     #[cfg(not(target_arch = "arm"))]
     let local_storage = args.local_storage.enable_local_storage.then(|| {
-        let (storage, sender) = LocalStorage::new(args.local_storage.config());
+        let (storage, sender) = LocalStorage::new(
+            args.local_storage.config(),
+            args.local_storage.local_storage_capacity,
+        );
         ipfix.add_recipient(sender);
         storage
     });
@@ -706,6 +716,18 @@ mod tests {
                 assert_eq!(args.local_storage_max_bytes, 128 * 1024 * 1024);
                 assert_eq!(args.local_storage_file_bytes, 100_000_000);
                 assert_eq!(args.local_storage_file_seconds, 1800);
+                assert_eq!(args.local_storage_capacity, 32);
+            }
+        }
+
+        #[test]
+        fn local_storage_capacity_is_positive_and_clamped() {
+            assert!(parse(&["countersyncd", "--local-storage-capacity", "0"]).is_err());
+            for (capacity, expected) in [("1", 1), ("64", 64), ("65", 64), ("1024", 64)] {
+                let mut args =
+                    parse(&["countersyncd", "--local-storage-capacity", capacity]).unwrap();
+                args.normalize_capacities();
+                assert_eq!(args.local_storage.local_storage_capacity, expected);
             }
         }
 
@@ -840,6 +862,7 @@ mod tests {
             "--local-storage-max-bytes",
             "--local-storage-file-bytes",
             "--local-storage-file-seconds",
+            "--local-storage-capacity",
         ] {
             assert_eq!(
                 parse(&["countersyncd", option]).err().unwrap().kind(),
