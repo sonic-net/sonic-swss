@@ -127,7 +127,7 @@ use ahash::{HashMap, HashMapExt};
 use arrow_array::{RecordBatch, UInt32Array, UInt64Array};
 use arrow_ipc::{
     CompressionType,
-    writer::{IpcWriteOptions, StreamWriter},
+    writer::{DictionaryTracker, EncodedData, IpcDataGenerator, IpcWriteOptions, write_message},
 };
 use arrow_schema::{ArrowError, SchemaRef};
 use log::{error, info, warn};
@@ -173,6 +173,8 @@ const IPC_FRAMING_BYTES: u64 = 64 * 1024;
 /// Kept free with every write, so the end-of-stream marker always fits.
 const EOS_RESERVE_BYTES: u64 = 64 * 1024;
 const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
+/// The IPC stream end-of-stream marker: a continuation token and length 0.
+const END_OF_STREAM: [u8; 8] = [0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0];
 
 /// Name the failed operation and path in errors that are only logged.
 trait Context<T> {
@@ -401,10 +403,10 @@ impl CappedFile {
 }
 
 struct ActiveStream {
-    writer: StreamWriter<CappedFile>,
+    file: CappedFile,
     path: PathBuf,
-    started: Instant,
-    schema: SchemaRef,
+    /// The store generation whose layouts the stream's schema lists.
+    generation: u64,
 }
 
 impl ActiveStream {
@@ -412,21 +414,13 @@ impl ActiveStream {
     fn write_synced(
         &mut self,
         cap: u64,
-        write: impl FnOnce(&mut StreamWriter<CappedFile>) -> Result<(), ArrowError>,
+        write: impl FnOnce(&mut CappedFile) -> Result<(), ArrowError>,
     ) -> Result<u64, String> {
-        let before = self
-            .writer
-            .get_ref()
-            .allocated_bytes()
-            .context("inspect", &self.path)?;
-        self.writer.get_mut().remaining = cap;
-        write(&mut self.writer).context("write", &self.path)?;
-        self.writer.get_mut().sync().context("sync", &self.path)?;
-        let after = self
-            .writer
-            .get_ref()
-            .allocated_bytes()
-            .context("inspect", &self.path)?;
+        let before = self.file.allocated_bytes().context("inspect", &self.path)?;
+        self.file.remaining = cap;
+        write(&mut self.file).context("write", &self.path)?;
+        self.file.sync().context("sync", &self.path)?;
+        let after = self.file.allocated_bytes().context("inspect", &self.path)?;
         Ok(after.saturating_sub(before))
     }
 }
@@ -465,57 +459,154 @@ fn template_key(metadata: &Arc<[SAIStatMetadata]>) -> usize {
     Arc::as_ptr(metadata).cast::<u8>() as usize
 }
 
-struct Store {
-    config: LocalStorageConfig,
-    lanes: Vec<Lane>,
-    /// Lane index by template address, for records of many interleaved templates.
-    templates: HashMap<usize, usize>,
-    /// Lane of the previous record; consecutive records usually share it.
-    last_lane: usize,
-    /// Raw bytes of the pending records of all lanes.
-    pending_bytes: usize,
-    /// Arrival of the oldest pending record.
-    pending_since: Option<Instant>,
-    active: Option<ActiveStream>,
-    /// A lane created after the active stream opened is missing from its schema.
-    schema_stale: bool,
-    /// Streams opened so far.
+/// The pending records of one flush: a block per layout, in layout order.
+struct Batch {
+    /// The store generation whose layouts the block indices refer to.
     generation: u64,
-    /// Capture stopped at the quota or the filesystem reserve.
-    stopped: bool,
+    schema: SchemaRef,
+    blocks: Vec<Block>,
+    /// Upper bound of the batch's IPC encoding, for quota admission.
+    bound: u64,
+    records: usize,
+}
+
+/// Records of one layout, row-major: the timestamp, then one value per series.
+struct Block {
+    layout: u32,
+    stride: usize,
+    rows: Vec<u64>,
+}
+
+/// Empty a block's buffer for reuse: keep its capacity for similar batches,
+/// but release a past burst.
+fn recycle_rows(rows: &mut Vec<u64>) {
+    let used = rows.len();
+    rows.clear();
+    if rows.capacity() > 4 * used {
+        rows.shrink_to(2 * used);
+    }
+}
+
+fn ipc_options() -> Result<IpcWriteOptions, String> {
+    IpcWriteOptions::default()
+        .try_with_compression(Some(CompressionType::ZSTD))
+        .map_err(|e| e.to_string())
+}
+
+/// Transposes batches into series-major columns and encodes them as IPC
+/// messages.
+struct Encoder {
+    options: IpcWriteOptions,
     // Reusable batch columns, at most one batch of pending records.
     layout_ids: Vec<u32>,
     timestamps: Vec<u64>,
     values: Vec<u64>,
+}
+
+impl Encoder {
+    fn new() -> Result<Self, String> {
+        Ok(Self {
+            options: ipc_options()?,
+            layout_ids: Vec::new(),
+            timestamps: Vec::new(),
+            values: Vec::new(),
+        })
+    }
+
+    fn encode(&mut self, batch: &Batch) -> Result<EncodedData, String> {
+        let (rows, values) = batch.blocks.iter().fold((0, 0), |(rows, values), block| {
+            let records = block.rows.len() / block.stride;
+            (rows + records, values + records * (block.stride - 1))
+        });
+        // Size the reused columns exactly; doubling could exceed one batch.
+        // Blocks overwrite values in place, so only growth is zero-filled.
+        self.layout_ids.clear();
+        self.layout_ids.reserve_exact(batch.blocks.len());
+        self.timestamps.clear();
+        self.timestamps.reserve_exact(rows);
+        self.values
+            .reserve_exact(values.saturating_sub(self.values.len()));
+        self.values.resize(values, 0);
+        let mut offset = 0;
+        let mut time_offsets = Vec::with_capacity(batch.blocks.len() + 1);
+        let mut value_offsets = Vec::with_capacity(batch.blocks.len() + 1);
+        time_offsets.push(0);
+        value_offsets.push(0);
+        for block in &batch.blocks {
+            self.layout_ids.push(block.layout);
+            self.timestamps
+                .extend(block.rows.iter().step_by(block.stride));
+            let len = block.rows.len() / block.stride * (block.stride - 1);
+            transpose(
+                &block.rows,
+                block.stride,
+                &mut self.values[offset..offset + len],
+            );
+            offset += len;
+            time_offsets.push(list_offset(self.timestamps.len())?);
+            value_offsets.push(list_offset(offset)?);
+        }
+        let layout_ids = UInt32Array::from(std::mem::take(&mut self.layout_ids));
+        let timestamps = UInt64Array::from(std::mem::take(&mut self.timestamps));
+        let values = UInt64Array::from(std::mem::take(&mut self.values));
+        let encoded = RecordBatch::try_new(
+            Arc::clone(&batch.schema),
+            vec![
+                Arc::new(layout_ids.clone()),
+                codec::list(timestamps.clone(), time_offsets),
+                codec::list(values.clone(), value_offsets),
+            ],
+        )
+        .and_then(|record_batch| {
+            IpcDataGenerator {}.encoded_batch(
+                &record_batch,
+                &mut DictionaryTracker::new(false),
+                &self.options,
+            )
+        });
+        self.layout_ids = codec::reclaim(layout_ids);
+        self.timestamps = codec::reclaim(timestamps);
+        self.values = codec::reclaim(values);
+        encoded
+            .map(|(_, message)| message)
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// What became of a batch handed to the writer.
+enum Written {
+    /// Durable; `full` once its stream reached the size target.
+    Synced { full: bool },
+    /// Not written: capture stopped, and the stream was published.
+    Stopped(String),
+}
+
+/// Writes encoded batches to stream files, a file per store generation: quota
+/// admission, fsync and publication.
+struct Writer {
+    config: LocalStorageConfig,
+    options: IpcWriteOptions,
+    active: Option<ActiveStream>,
     file_sequence: u64,
     // Includes all files and directory blocks, including active staging data.
     used_bytes: u64,
     directory_blocks: u64,
-    _storage_lock: File,
+    /// Capture stopped at the quota or the filesystem reserve.
+    stopped: bool,
 }
 
-impl Store {
-    fn new(config: LocalStorageConfig, lock: File) -> Result<Self, String> {
+impl Writer {
+    fn new(config: LocalStorageConfig) -> Result<Self, String> {
         let used_bytes = directory_bytes(&config.root).context("measure", &config.root)?;
         let directory_blocks = directory_overhead(&config.root)?;
         Ok(Self {
             config,
-            lanes: Vec::new(),
-            templates: HashMap::new(),
-            last_lane: 0,
-            pending_bytes: 0,
-            pending_since: None,
+            options: ipc_options()?,
             active: None,
-            schema_stale: false,
-            generation: 0,
-            stopped: false,
-            layout_ids: Vec::new(),
-            timestamps: Vec::new(),
-            values: Vec::new(),
             file_sequence: 0,
             used_bytes,
             directory_blocks,
-            _storage_lock: lock,
+            stopped: false,
         })
     }
 
@@ -539,52 +630,66 @@ impl Store {
         Ok(None)
     }
 
-    /// Stop capturing: publish what was written and discard what does not fit.
-    fn stop(&mut self, reason: String) -> Result<(), String> {
-        let discarded: usize = self
-            .lanes
-            .iter()
-            .map(|lane| lane.rows.len() / lane.stride())
-            .sum();
-        for lane in &mut self.lanes {
-            lane.rows = Vec::new();
-        }
-        self.pending_bytes = 0;
-        self.pending_since = None;
-        self.stopped = true;
-        self.publish_stream()?;
-        warn!("Local storage stopped, {reason}; discarded {discarded} pending records");
+    fn refresh_directory_blocks(&mut self) -> Result<(), String> {
+        let overhead = directory_overhead(&self.config.root)?;
+        self.used_bytes = self
+            .used_bytes
+            .saturating_sub(self.directory_blocks)
+            .saturating_add(overhead);
+        self.directory_blocks = overhead;
         Ok(())
     }
 
-    /// Open a stream that lists every lane with pending records or records in
-    /// the previous stream. Other lanes are retired.
-    fn open_stream(&mut self) -> Result<(), String> {
-        let previous = self.generation;
-        self.lanes
-            .retain(|lane| !lane.rows.is_empty() || lane.written == Some(previous));
-        self.templates.clear();
-        self.last_lane = 0;
-        let mut layouts = String::from("[");
-        for (index, lane) in self.lanes.iter_mut().enumerate() {
-            if index > 0 {
-                layouts.push(',');
-            }
-            layouts.push_str(&lane.layout.json);
-            lane.index = Some(index as u32);
-            if let Some(template) = &lane.template {
-                self.templates.insert(template_key(template), index);
+    /// Write a batch of `generation`, first opening its stream if needed.
+    fn write(
+        &mut self,
+        generation: u64,
+        schema: &SchemaRef,
+        encoded: EncodedData,
+        bound: u64,
+    ) -> Result<Written, String> {
+        if self.stopped {
+            return Ok(Written::Stopped("capture already stopped".into()));
+        }
+        if self
+            .active
+            .as_ref()
+            .is_some_and(|active| active.generation != generation)
+        {
+            self.publish()?;
+        }
+        if self.active.is_none() {
+            if let Some(reason) = self.open(generation, schema)? {
+                return self.stop(reason);
             }
         }
-        layouts.push(']');
-        let bound = layouts.len() as u64 + IPC_FRAMING_BYTES;
         if let Some(reason) = self.admit(bound)? {
             return self.stop(reason);
         }
-        let schema = codec::schema(layouts);
-        let options = IpcWriteOptions::default()
-            .try_with_compression(Some(CompressionType::ZSTD))
-            .map_err(|e| e.to_string())?;
+        let options = &self.options;
+        let active = self.active.as_mut().ok_or("missing batch stream")?;
+        let allocated = active.write_synced(bound, |file| {
+            write_message(file, encoded, options).map(drop)
+        })?;
+        let full = active.file.bytes_written >= self.config.file_target_bytes;
+        self.used_bytes = self.used_bytes.saturating_add(allocated);
+        Ok(Written::Synced { full })
+    }
+
+    /// Stop capturing: publish what was written.
+    fn stop(&mut self, reason: String) -> Result<Written, String> {
+        self.stopped = true;
+        self.publish()?;
+        Ok(Written::Stopped(reason))
+    }
+
+    /// Open a stream of `generation`. Returns why its schema does not fit.
+    fn open(&mut self, generation: u64, schema: &SchemaRef) -> Result<Option<String>, String> {
+        let layouts = schema.metadata().get("layouts").map_or(0, String::len);
+        let bound = layouts as u64 + IPC_FRAMING_BYTES;
+        if let Some(reason) = self.admit(bound)? {
+            return Ok(Some(reason));
+        }
         let shards = self.config.root.join("shards");
         let staging = self.config.root.join(".staging");
         let (path, file) = loop {
@@ -619,43 +724,146 @@ impl Store {
                 Err(e) => return Err(e).context("create", &path),
             }
         };
-        let mut writer = StreamWriter::try_new_with_options(
-            CappedFile {
-                file: BufWriter::with_capacity(256 * 1024, file),
-                remaining: bound,
-                bytes_written: 0,
-            },
-            &schema,
-            options,
-        )
-        .context("write schema to", &path)?;
-        writer.get_mut().sync().context("sync", &path)?;
-        let allocated = writer
-            .get_ref()
-            .allocated_bytes()
-            .context("inspect", &path)?;
-        self.used_bytes = self.used_bytes.saturating_add(allocated);
-        self.generation += 1;
-        self.schema_stale = false;
-        self.active = Some(ActiveStream {
-            writer,
-            path,
-            started: Instant::now(),
+        let mut file = CappedFile {
+            file: BufWriter::with_capacity(256 * 1024, file),
+            remaining: bound,
+            bytes_written: 0,
+        };
+        let message = IpcDataGenerator {}.schema_to_bytes_with_dictionary_tracker(
             schema,
+            &mut DictionaryTracker::new(false),
+            &self.options,
+        );
+        write_message(&mut file, message, &self.options).context("write schema to", &path)?;
+        file.sync().context("sync", &path)?;
+        let allocated = file.allocated_bytes().context("inspect", &path)?;
+        self.used_bytes = self.used_bytes.saturating_add(allocated);
+        self.active = Some(ActiveStream {
+            file,
+            path,
+            generation,
         });
         self.refresh_directory_blocks()?;
         sync_directory(&staging).context("sync", &staging)?;
+        Ok(None)
+    }
+
+    fn publish(&mut self) -> Result<(), String> {
+        if let Some(mut active) = self.active.take() {
+            let allocated = active.write_synced(END_OF_STREAM.len() as u64, |file| {
+                file.write_all(&END_OF_STREAM).map_err(ArrowError::from)
+            })?;
+            publish(&self.config.root, &active.path)?;
+            self.used_bytes = self.used_bytes.saturating_add(allocated);
+            self.refresh_directory_blocks()?;
+        }
+        Ok(())
+    }
+}
+
+/// The open store generation: the layouts its batches index, and its age.
+struct OpenGeneration {
+    schema: SchemaRef,
+    started: Instant,
+}
+
+struct Store {
+    config: LocalStorageConfig,
+    lanes: Vec<Lane>,
+    /// Lane index by template address, for records of many interleaved templates.
+    templates: HashMap<usize, usize>,
+    /// Lane of the previous record; consecutive records usually share it.
+    last_lane: usize,
+    /// Raw bytes of the pending records of all lanes.
+    pending_bytes: usize,
+    /// Arrival of the oldest pending record.
+    pending_since: Option<Instant>,
+    /// Generations started so far. Each lists the layouts its stream holds.
+    generation: u64,
+    open: Option<OpenGeneration>,
+    /// A lane created after the open generation started is missing from its schema.
+    schema_stale: bool,
+    /// Capture stopped at the quota or the filesystem reserve.
+    stopped: bool,
+    encoder: Encoder,
+    writer: Writer,
+    _storage_lock: File,
+}
+
+impl Store {
+    fn new(config: LocalStorageConfig, lock: File) -> Result<Self, String> {
+        let writer = Writer::new(config.clone())?;
+        Ok(Self {
+            config,
+            lanes: Vec::new(),
+            templates: HashMap::new(),
+            last_lane: 0,
+            pending_bytes: 0,
+            pending_since: None,
+            generation: 0,
+            open: None,
+            schema_stale: false,
+            stopped: false,
+            encoder: Encoder::new()?,
+            writer,
+            _storage_lock: lock,
+        })
+    }
+
+    /// Stop capturing and discard what was not written; the writer published
+    /// the stream. `unwritten` records were rejected by the writer.
+    fn stop(&mut self, reason: String, unwritten: usize) -> Result<(), String> {
+        let pending: usize = self
+            .lanes
+            .iter()
+            .map(|lane| lane.rows.len() / lane.stride())
+            .sum();
+        for lane in &mut self.lanes {
+            lane.rows = Vec::new();
+        }
+        self.pending_bytes = 0;
+        self.pending_since = None;
+        self.stopped = true;
+        self.open = None;
+        let discarded = unwritten + pending;
+        warn!("Local storage stopped, {reason}; discarded {discarded} pending records");
         Ok(())
     }
 
-    fn refresh_directory_blocks(&mut self) -> Result<(), String> {
-        let overhead = directory_overhead(&self.config.root)?;
-        self.used_bytes = self
-            .used_bytes
-            .saturating_sub(self.directory_blocks)
-            .saturating_add(overhead);
-        self.directory_blocks = overhead;
-        Ok(())
+    /// Start a generation that lists every lane with pending records or
+    /// records in the previous generation. Other lanes are retired.
+    fn start_generation(&mut self) {
+        let previous = self.generation;
+        self.lanes
+            .retain(|lane| !lane.rows.is_empty() || lane.written == Some(previous));
+        self.templates.clear();
+        self.last_lane = 0;
+        let mut layouts = String::from("[");
+        for (index, lane) in self.lanes.iter_mut().enumerate() {
+            if index > 0 {
+                layouts.push(',');
+            }
+            layouts.push_str(&lane.layout.json);
+            lane.index = Some(index as u32);
+            if let Some(template) = &lane.template {
+                self.templates.insert(template_key(template), index);
+            }
+        }
+        layouts.push(']');
+        self.generation += 1;
+        self.schema_stale = false;
+        self.open = Some(OpenGeneration {
+            schema: codec::schema(layouts),
+            started: Instant::now(),
+        });
+    }
+
+    /// Close the open generation's stream; the next batch starts a new one.
+    fn close_generation(&mut self) -> Result<(), String> {
+        if self.open.take().is_none() {
+            return Ok(());
+        }
+        self.writer.publish()
     }
 
     fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
@@ -755,7 +963,7 @@ impl Store {
                 "{count} concurrent layouts exceed the stream schema limits"
             ));
         }
-        self.schema_stale |= self.active.is_some();
+        self.schema_stale |= self.open.is_some();
         self.lanes.push(Lane {
             layout,
             template: None,
@@ -768,108 +976,69 @@ impl Store {
 
     /// Write every lane's pending records as one batch, a block per layout.
     fn flush(&mut self) -> Result<(), String> {
-        if self.pending_since.is_none() {
+        if self.stopped || self.pending_since.is_none() {
             return Ok(());
         }
         if self.schema_stale {
-            self.publish_stream()?;
+            self.close_generation()?;
         }
-        if self.active.is_none() {
-            self.open_stream()?;
-            if self.stopped {
-                return Ok(());
-            }
+        if self.open.is_none() {
+            self.start_generation();
         }
-        let (blocks, rows, values) = self.lanes.iter().filter(|lane| !lane.rows.is_empty()).fold(
-            (0, 0, 0),
-            |(blocks, rows, values), lane| {
-                let records = lane.rows.len() / lane.stride();
-                let series = records * lane.layout.width();
-                (blocks + 1, rows + records, values + series)
-            },
-        );
-        let bound = batch_bound(blocks, rows, values);
-        if let Some(reason) = self.admit(bound)? {
-            return self.stop(reason);
+        let batch = self.take_batch()?;
+        self.pending_bytes = 0;
+        self.pending_since = None;
+        let encoded = self.encoder.encode(&batch);
+        // Each lane gets its buffer back: the batch was encoded in place.
+        for mut block in batch.blocks {
+            recycle_rows(&mut block.rows);
+            let lane = &mut self.lanes[block.layout as usize];
+            debug_assert_eq!(lane.index, Some(block.layout));
+            lane.rows = block.rows;
         }
-        // Size the reused columns exactly; doubling could exceed one batch.
-        // Blocks overwrite values in place, so only growth is zero-filled.
-        self.layout_ids.clear();
-        self.layout_ids.reserve_exact(blocks);
-        self.timestamps.clear();
-        self.timestamps.reserve_exact(rows);
-        self.values
-            .reserve_exact(values.saturating_sub(self.values.len()));
-        self.values.resize(values, 0);
-        let mut offset = 0;
-        let mut time_offsets = Vec::with_capacity(blocks + 1);
-        let mut value_offsets = Vec::with_capacity(blocks + 1);
-        time_offsets.push(0);
-        value_offsets.push(0);
+        let written = self
+            .writer
+            .write(batch.generation, &batch.schema, encoded?, batch.bound)?;
+        match written {
+            Written::Synced { full: true } => self.close_generation(),
+            Written::Synced { full: false } => Ok(()),
+            Written::Stopped(reason) => self.stop(reason, batch.records),
+        }
+    }
+
+    /// Move every lane's pending records into a batch of the open generation.
+    fn take_batch(&mut self) -> Result<Batch, String> {
+        let open = self.open.as_ref().ok_or("no open stream generation")?;
+        let mut blocks = Vec::new();
+        let (mut rows, mut values) = (0, 0);
         for lane in &mut self.lanes {
             if lane.rows.is_empty() {
                 continue;
             }
             let stride = lane.stride();
-            let index = lane.index.ok_or("layout missing from the stream schema")?;
-            self.layout_ids.push(index);
-            self.timestamps.extend(lane.rows.iter().step_by(stride));
-            let block = lane.rows.len() / stride * (stride - 1);
-            transpose(&lane.rows, stride, &mut self.values[offset..offset + block]);
-            offset += block;
-            time_offsets.push(list_offset(self.timestamps.len())?);
-            value_offsets.push(list_offset(offset)?);
-            // Keep capacity for similar batches, but release a past burst.
-            let used = lane.rows.len();
-            lane.rows.clear();
-            if lane.rows.capacity() > 4 * used {
-                lane.rows.shrink_to(2 * used);
-            }
+            let layout = lane.index.ok_or("layout missing from the stream schema")?;
+            let records = lane.rows.len() / stride;
+            rows += records;
+            values += records * (stride - 1);
+            blocks.push(Block {
+                layout,
+                stride,
+                rows: std::mem::take(&mut lane.rows),
+            });
             lane.written = Some(self.generation);
         }
-        let layout_ids = UInt32Array::from(std::mem::take(&mut self.layout_ids));
-        let timestamps = UInt64Array::from(std::mem::take(&mut self.timestamps));
-        let values = UInt64Array::from(std::mem::take(&mut self.values));
-        let active = self.active.as_mut().ok_or("missing batch stream")?;
-        let batch = RecordBatch::try_new(
-            Arc::clone(&active.schema),
-            vec![
-                Arc::new(layout_ids.clone()),
-                codec::list(timestamps.clone(), time_offsets),
-                codec::list(values.clone(), value_offsets),
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        let allocated = active.write_synced(bound, |writer| writer.write(&batch))?;
-        let rotate = active.writer.get_ref().bytes_written >= self.config.file_target_bytes;
-        self.used_bytes = self.used_bytes.saturating_add(allocated);
-        drop(batch);
-        self.layout_ids = codec::reclaim(layout_ids);
-        self.timestamps = codec::reclaim(timestamps);
-        self.values = codec::reclaim(values);
-        self.pending_bytes = 0;
-        self.pending_since = None;
-        // Include schema/framing, but always persist a batch before size rotation.
-        if rotate {
-            self.publish_stream()?;
-        }
-        Ok(())
+        Ok(Batch {
+            generation: self.generation,
+            schema: Arc::clone(&open.schema),
+            bound: batch_bound(blocks.len(), rows, values),
+            records: rows,
+            blocks,
+        })
     }
 
     fn finish_stream(&mut self) -> Result<(), String> {
         self.flush()?;
-        self.publish_stream()
-    }
-
-    fn publish_stream(&mut self) -> Result<(), String> {
-        if let Some(mut active) = self.active.take() {
-            // The end-of-stream marker is 8 bytes.
-            let allocated = active.write_synced(8, StreamWriter::finish)?;
-            publish(&self.config.root, &active.path)?;
-            self.used_bytes = self.used_bytes.saturating_add(allocated);
-            self.refresh_directory_blocks()?;
-        }
-        Ok(())
+        self.close_generation()
     }
 
     /// When `poll` next has work: a due batch or the stream's maximum age.
@@ -878,9 +1047,9 @@ impl Store {
             .pending_since
             .and_then(|since| since.checked_add(FLUSH_INTERVAL));
         let rotate = self
-            .active
+            .open
             .as_ref()
-            .and_then(|active| active.started.checked_add(self.config.shard_interval));
+            .and_then(|open| open.started.checked_add(self.config.shard_interval));
         match (flush, rotate) {
             (Some(flush), Some(rotate)) => Some(flush.min(rotate)),
             (flush, rotate) => flush.or(rotate),
@@ -890,9 +1059,9 @@ impl Store {
     fn poll(&mut self, now: Instant) -> Result<(), String> {
         let interval = self.config.shard_interval;
         if self
-            .active
+            .open
             .as_ref()
-            .is_some_and(|active| now.saturating_duration_since(active.started) >= interval)
+            .is_some_and(|open| now.saturating_duration_since(open.started) >= interval)
         {
             if self.schema_stale && self.pending_since.is_some() {
                 // Adding the missing layout starts a new stream anyway.
@@ -1253,7 +1422,7 @@ mod tests {
     use super::*;
     use crate::message::saistats::{SAIStat, SAIStatRef, SAIStatsBatch};
     use arrow_array::{Array, ListArray};
-    use arrow_ipc::reader::StreamReader;
+    use arrow_ipc::{reader::StreamReader, writer::StreamWriter};
     use arrow_schema::{DataType, Field};
     use std::{
         process::{Command, Stdio},
@@ -1281,9 +1450,34 @@ mod tests {
     }
 
     fn store(root: &Path) -> Store {
-        let config = config(root);
+        store_with(config(root))
+    }
+
+    fn store_with(config: LocalStorageConfig) -> Store {
         let lock = prepare_storage(&config).unwrap();
         Store::new(config, lock).unwrap()
+    }
+
+    impl Store {
+        fn writer(&self) -> &Writer {
+            &self.writer
+        }
+
+        fn writer_mut(&mut self) -> &mut Writer {
+            &mut self.writer
+        }
+
+        fn encoder(&self) -> &Encoder {
+            &self.encoder
+        }
+    }
+
+    /// Split an IPC stream into its schema message and the rest. Schema
+    /// metadata is a hash map, so its encoded key order varies between maps.
+    fn split_schema(bytes: &[u8]) -> (&[u8], &[u8]) {
+        assert_eq!(bytes[..4], [0xff; 4]);
+        let length = u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as usize;
+        bytes.split_at(8 + length)
     }
 
     fn stat(name: &str, value: u64) -> SAIStat {
@@ -1373,7 +1567,10 @@ mod tests {
             store.add_record(record).unwrap();
         }
         store.finish_stream().unwrap();
-        assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+        assert_eq!(
+            store.writer().used_bytes,
+            directory_bytes(temp.path()).unwrap()
+        );
         let paths = paths(temp.path(), "shards");
         (temp, paths)
     }
@@ -1686,13 +1883,17 @@ mod tests {
                 // A full batch is written without waiting for its deadline.
                 assert!(store.pending_since.is_none());
                 let lane = &store.lanes[0];
+                let values = &store.encoder().values;
                 assert!(lane.rows.capacity() * 8 <= BATCH_TARGET_BYTES);
-                assert!(store.values.capacity() * 8 <= BATCH_TARGET_BYTES);
+                assert!(values.capacity() * 8 <= BATCH_TARGET_BYTES);
                 // The next batch reuses both buffers.
-                let current = (lane.rows.as_ptr(), store.values.as_ptr());
+                let current = (lane.rows.as_ptr(), values.as_ptr());
                 assert_eq!(*buffers.get_or_insert(current), current);
             }
-            assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+            assert_eq!(
+                store.writer().used_bytes,
+                directory_bytes(temp.path()).unwrap()
+            );
             store.finish_stream().unwrap();
             let samples = decoded(&paths(temp.path(), "shards")[0]).len();
             assert_eq!(samples, width * rows * 2);
@@ -1767,17 +1968,18 @@ mod tests {
             damaged.extend(suffix);
             fs::write(&partial, &damaged).unwrap();
             for _ in 0..2 {
-                let mut writer = store(temp.path());
-                assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
-                writer
+                let mut store = store(temp.path());
+                let used = store.writer().used_bytes;
+                assert_eq!(used, directory_bytes(temp.path()).unwrap());
+                store
                     .add_record(SAIStatsRef {
                         observation_time: 0,
                         stats: SAIStatsView::Owned(&[]),
                     })
                     .unwrap();
-                writer.flush().unwrap();
-                assert_ne!(writer.active.as_ref().unwrap().path, partial);
-                writer.finish_stream().unwrap();
+                store.flush().unwrap();
+                assert_ne!(store.writer().active.as_ref().unwrap().path, partial);
+                store.finish_stream().unwrap();
                 assert_eq!(decoded(&partial), expected);
                 assert_eq!(fs::read(&partial).unwrap(), damaged);
                 assert_eq!(paths(temp.path(), ".staging"), vec![partial.clone()]);
@@ -1822,17 +2024,18 @@ mod tests {
         for (path, data) in files {
             fs::write(temp.path().join(path), data).unwrap();
         }
-        let mut writer = store(temp.path());
-        assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
-        writer.config.max_bytes = writer.used_bytes;
-        writer
+        let mut store = store(temp.path());
+        let used = store.writer().used_bytes;
+        assert_eq!(used, directory_bytes(temp.path()).unwrap());
+        store.writer_mut().config.max_bytes = used;
+        store
             .add_record(SAIStatsRef {
                 observation_time: 0,
                 stats: SAIStatsView::Owned(&[]),
             })
             .unwrap();
-        writer.flush().unwrap();
-        assert!(writer.stopped);
+        store.flush().unwrap();
+        assert!(store.stopped);
         assert_eq!(paths(temp.path(), ".staging").len(), 3);
         for (path, data) in files {
             assert_eq!(fs::read(temp.path().join(path)).unwrap(), data);
@@ -1892,7 +2095,7 @@ mod tests {
             })
             .unwrap();
         actor.store.flush().unwrap();
-        let partial = actor.store.active.as_ref().unwrap().path.clone();
+        let partial = actor.store.writer().active.as_ref().unwrap().path.clone();
         assert_eq!(fs::metadata(partial).unwrap().mode() & 0o777, 0o600);
         actor.store.finish_stream().unwrap();
         for directory in [root.clone(), root.join(".staging"), root.join("shards")] {
@@ -2039,16 +2242,19 @@ mod tests {
         store.add_record(record).unwrap();
         store.flush().unwrap();
         store.add_record(record).unwrap();
-        store.config.max_bytes = store.used_bytes + EOS_RESERVE_BYTES;
+        let writer = store.writer_mut();
+        writer.config.max_bytes = writer.used_bytes + EOS_RESERVE_BYTES;
         // The next batch does not fit: capture stops and publishes the stream.
         store.flush().unwrap();
         assert!(store.stopped);
-        assert!(store.active.is_none() && store.pending_since.is_none());
+        assert!(store.writer().active.is_none() && store.open.is_none());
+        assert!(store.pending_since.is_none());
         store.add_record(record).unwrap();
         assert!(store.pending_since.is_none());
         assert_eq!(fs::read(&first).unwrap(), bytes);
-        assert!(store.used_bytes <= store.config.max_bytes);
-        assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+        let writer = store.writer();
+        assert!(writer.used_bytes <= writer.config.max_bytes);
+        assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
         let files = paths(temp.path(), "shards");
         assert_eq!(files.len(), 2);
         assert_eq!(decoded(&files[1]).len(), 1);
@@ -2084,9 +2290,10 @@ mod tests {
         for time in 0..rows as u64 {
             add(&mut store, &narrow, time).unwrap();
         }
-        assert!(store.active.is_none() && store.pending_since.is_some());
+        assert!(store.open.is_none() && store.pending_since.is_some());
         // The stream's schema fits the quota; its batch does not.
-        store.config.max_bytes = store.used_bytes + 4 * 1024 * 1024;
+        let writer = store.writer_mut();
+        writer.config.max_bytes = writer.used_bytes + 4 * 1024 * 1024;
         add(&mut store, &wide, rows as u64).unwrap();
         assert!(store.stopped && store.pending_since.is_none());
         store.finish_stream().unwrap();
@@ -2102,7 +2309,8 @@ mod tests {
         let temp = private_tempdir();
         let mut store = store(temp.path());
         let quota = 8 * 1024 * 1024;
-        store.config.max_bytes = store.used_bytes + quota;
+        let writer = store.writer_mut();
+        writer.config.max_bytes = writer.used_bytes + quota;
         let mut random = 0x1234_5678_9abc_def0u64;
         let mut written = 0u64;
         while !store.stopped {
@@ -2123,10 +2331,11 @@ mod tests {
                 .unwrap();
             written += 1;
         }
-        assert!(store.used_bytes <= store.config.max_bytes);
-        assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+        let writer = store.writer();
+        assert!(writer.used_bytes <= writer.config.max_bytes);
+        assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
         // Less than one more full batch stays unused.
-        let unused = store.config.max_bytes - store.used_bytes;
+        let unused = writer.config.max_bytes - writer.used_bytes;
         let batch = batch_bound(1, MAX_ROWS, 64 * MAX_ROWS) + EOS_RESERVE_BYTES;
         assert!(unused < batch, "unused={unused}");
         let persisted: usize = paths(temp.path(), "shards")
@@ -2319,7 +2528,7 @@ mod tests {
             let target = if schema_exceeds_target { 1 } else { u64::MAX };
             let temp = private_tempdir();
             let mut store = store(temp.path());
-            store.config.file_target_bytes = target;
+            store.writer_mut().config.file_target_bytes = target;
             let stats = [stat(&"a".repeat(4096), u64::MAX)];
             let record = SAIStatsRef {
                 observation_time: 0,
@@ -2331,16 +2540,16 @@ mod tests {
                 if !schema_exceeds_target {
                     // Below the target, the stream stays open; the next complete
                     // batch crosses it.
-                    let active = store.active.as_ref().unwrap();
-                    let bytes = active.writer.get_ref().bytes_written;
+                    let active = store.writer().active.as_ref().unwrap();
+                    let bytes = active.file.bytes_written;
                     assert_eq!(bytes, fs::metadata(&active.path).unwrap().len());
                     assert_eq!(paths(temp.path(), "shards").len(), seq);
-                    store.config.file_target_bytes = bytes + 1;
+                    store.writer_mut().config.file_target_bytes = bytes + 1;
                     store.add_record(record).unwrap();
                     store.flush().unwrap();
-                    store.config.file_target_bytes = target;
+                    store.writer_mut().config.file_target_bytes = target;
                 }
-                assert!(store.active.is_none());
+                assert!(store.writer().active.is_none());
                 assert!(store.pending_since.is_none());
                 let files = paths(temp.path(), "shards");
                 assert_eq!(files.len(), seq + 1);
@@ -2355,7 +2564,10 @@ mod tests {
             store.finish_stream().unwrap();
             assert_eq!(paths(temp.path(), "shards").len(), 3);
             assert!(paths(temp.path(), ".staging").is_empty());
-            assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+            assert_eq!(
+                store.writer().used_bytes,
+                directory_bytes(temp.path()).unwrap()
+            );
         }
     }
 
@@ -2377,13 +2589,14 @@ mod tests {
         }
         store.flush().unwrap();
         assert!(paths(temp.path(), "shards").is_empty());
-        let active = store.active.as_ref().unwrap();
-        let bytes = active.writer.get_ref().bytes_written;
+        let writer = store.writer();
+        let active = writer.active.as_ref().unwrap();
+        let bytes = active.file.bytes_written;
         assert_eq!(bytes, fs::metadata(&active.path).unwrap().len());
-        assert!(bytes < store.config.file_target_bytes);
-        assert_eq!(store.file_sequence, 1);
+        assert!(bytes < writer.config.file_target_bytes);
+        assert_eq!(writer.file_sequence, 1);
         assert!(store.lanes[0].rows.capacity() * 8 <= BATCH_TARGET_BYTES);
-        assert!(store.values.capacity() * 8 <= BATCH_TARGET_BYTES);
+        assert!(store.encoder().values.capacity() * 8 <= BATCH_TARGET_BYTES);
         store.finish_stream().unwrap();
         let files = paths(temp.path(), "shards");
         assert_eq!(files.len(), 1);
@@ -2414,10 +2627,10 @@ mod tests {
         }
         store.flush().unwrap();
         assert!(paths(temp.path(), "shards").is_empty());
-        store.active.as_mut().unwrap().started = Instant::now() - store.config.shard_interval;
+        store.open.as_mut().unwrap().started = Instant::now() - store.config.shard_interval;
         store.poll(Instant::now()).unwrap();
         assert_eq!(paths(temp.path(), "shards").len(), 1);
-        assert!(store.active.is_none());
+        assert!(store.open.is_none() && store.writer().active.is_none());
         assert_eq!(
             codec::scan(&paths(temp.path(), "shards")[0])
                 .unwrap()
@@ -2426,7 +2639,7 @@ mod tests {
         );
         store.add_record(empty(0)).unwrap();
         // Streams open with their first batch.
-        assert!(store.active.is_none());
+        assert!(store.open.is_none() && store.writer().active.is_none());
         assert_eq!(paths(temp.path(), "shards").len(), 1);
         store.add_record(empty(0)).unwrap();
         store.finish_stream().unwrap();
@@ -2457,7 +2670,7 @@ mod tests {
         assert_eq!(store.pending_since, Some(since));
         store.poll(since + FLUSH_INTERVAL).unwrap();
         assert!(store.pending_since.is_none());
-        let started = store.active.as_ref().unwrap().started;
+        let started = store.open.as_ref().unwrap().started;
         assert_eq!(
             store.next_deadline(),
             Some(started + store.config.shard_interval)
@@ -2466,7 +2679,7 @@ mod tests {
         store.config.shard_interval = Duration::from_secs(u64::MAX);
         assert_eq!(store.next_deadline(), None);
         store.poll(Instant::now()).unwrap();
-        assert!(store.active.is_some());
+        assert!(store.open.is_some() && store.writer().active.is_some());
     }
 
     #[test]
@@ -2597,12 +2810,16 @@ mod tests {
             })
             .unwrap();
         store.flush().unwrap();
-        let schema = Arc::clone(&store.active.as_ref().unwrap().schema);
+        let schema = Arc::clone(&store.open.as_ref().unwrap().schema);
         let batch = codec::test_batch(&schema, &[(0, &[0], &[0])]);
-        let active = store.active.as_mut().unwrap();
-        active.writer.get_mut().remaining = 8;
-        assert!(active.writer.write(&batch).is_err());
-        active.writer.get_mut().flush().unwrap();
+        let options = ipc_options().unwrap();
+        let (_, encoded) = IpcDataGenerator {}
+            .encoded_batch(&batch, &mut DictionaryTracker::new(false), &options)
+            .unwrap();
+        let active = store.writer_mut().active.as_mut().unwrap();
+        active.file.remaining = 8;
+        assert!(write_message(&mut active.file, encoded, &options).is_err());
+        active.file.flush().unwrap();
         let partial = active.path.clone();
         assert_eq!(codec::scan(&partial).unwrap().records, 1);
         drop(store);
@@ -2621,7 +2838,8 @@ mod tests {
         let status = LocalStorageStatus::default();
         let mut actor =
             LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
-        actor.store.config.max_bytes = actor.store.used_bytes;
+        let writer = actor.store.writer_mut();
+        writer.config.max_bytes = writer.used_bytes;
         let mut batch = SAIStatsBatch::default();
         batch.push_record(42, [stat("a", 42)]);
         let batch = Arc::new(batch);
@@ -2646,6 +2864,46 @@ mod tests {
         );
         assert!(paths(temp.path(), "shards").is_empty());
         assert!(paths(temp.path(), ".staging").is_empty());
+    }
+
+    #[test]
+    fn streams_match_the_arrow_stream_writer() {
+        let temp = private_tempdir();
+        let mut store = store(temp.path());
+        let templates = [template("Ethernet", 3), template("Queue", 2)];
+        for time in 0..9u64 {
+            let template = &templates[time as usize % 2];
+            let values: Vec<_> = (0..template.len() as u64).map(|i| time * 100 + i).collect();
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: time,
+                    stats: SAIStatsView::Shared {
+                        metadata: template,
+                        values: &values,
+                    },
+                })
+                .unwrap();
+            if time % 3 == 2 {
+                store.flush().unwrap();
+            }
+        }
+        store.finish_stream().unwrap();
+        let path = &paths(temp.path(), "shards")[0];
+        let bytes = fs::read(path).unwrap();
+        let reader = StreamReader::try_new(File::open(path).unwrap(), None).unwrap();
+        let options = ipc_options().unwrap();
+        let mut writer =
+            StreamWriter::try_new_with_options(Vec::new(), &reader.schema(), options).unwrap();
+        let mut batches = 0;
+        for batch in reader {
+            writer.write(&batch.unwrap()).unwrap();
+            batches += 1;
+        }
+        writer.finish().unwrap();
+        assert_eq!(batches, 3);
+        let expected = writer.into_inner().unwrap();
+        assert_eq!(split_schema(&bytes).1, split_schema(&expected).1);
+        assert_eq!(bytes[bytes.len() - 8..], END_OF_STREAM);
     }
 
     #[test]
