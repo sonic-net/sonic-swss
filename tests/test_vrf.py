@@ -442,8 +442,44 @@ class TestVrf(object):
         } == initial_default_maps
         assert self.entries(
             self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+
+    def test_VRFMgr_DefaultVrfCanonicalizesNumericVni(self, dvs, testlog):
+        """Equivalent numeric spellings must have one internal VNI identity."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-canonical-vni"
+        nvo_name = "nvo-default-canonical-vni"
+        map_name = "map-default-canonical-vni"
+        canonical_vni = "5700"
+        configured_vni = "05700"
+        vlan = "Vlan170"
+        map_key = "%s:evpn_map_%s_default" % (
+            tunnel_name, canonical_vni)
+        app_db = dvs.get_app_db()
+
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "17.17.17.17")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, configured_vni, vlan)
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", configured_vni)])
+
+        app_db.wait_for_field_match(
+            "VRF_TABLE", "default", {"vni": canonical_vni})
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", map_key,
+            {"vni": canonical_vni, "vrf": "default"})
 
         self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.remove_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, configured_vni, vlan)
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan.remove_vlan(dvs, "170")
 
     def test_VRFMgr_DefaultVrfIgnoresMalformedTunnelMapKey(self, dvs, testlog):
         """A malformed VXLAN_TUNNEL_MAP event must not disturb a valid map."""

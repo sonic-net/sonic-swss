@@ -344,4 +344,66 @@ TEST_F(VrfMgrTest, TunnelMapVniFieldRemovalWithdrawsCachedDependency)
     EXPECT_FALSE(app_vxlan_vrf.get(app_key, values));
 }
 
+TEST_F(VrfMgrTest, NumericVniSpellingMatchesCanonicalTunnelMapVni)
+{
+    const string app_key = "tunnel0:evpn_map_5000_default";
+
+    addNvo("tunnel0");
+    addTunnelMap("tunnel0", "map5000", "5000");
+
+    // CONFIG_DB can be written without going through sonic-utilities/YANG.
+    // A numerically valid VNI must not create a second string identity that
+    // fails to match the canonical VNI used by VXLAN_TUNNEL_MAP.
+    addDefaultVrf("05000");
+
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_TRUE(app_vxlan_vrf.get(app_key, values));
+
+    Table app_vrf(m_app_db.get(), APP_VRF_TABLE_NAME);
+    values.clear();
+    ASSERT_TRUE(app_vrf.get("default", values));
+    const auto app_vni = fvsGetValue(values, "vni", true);
+    ASSERT_TRUE(app_vni);
+    EXPECT_EQ(app_vni.get(), "5000");
+}
+
+TEST_F(VrfMgrTest, TunnelMapNumericVniSpellingMatchesCanonicalVrfVni)
+{
+    const string app_key = "tunnel0:evpn_map_5000_default";
+
+    addNvo("tunnel0");
+    addTunnelMap("tunnel0", "map5000", "05000");
+    addDefaultVrf("5000");
+
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_TRUE(app_vxlan_vrf.get(app_key, values));
+}
+
+TEST_F(VrfMgrTest, InvalidTunnelMapVniWithdrawsCachedDependency)
+{
+    const string config_key = string("tunnel0") + config_db_key_delimiter + "map5000";
+    const string app_key = "tunnel0:evpn_map_5000_default";
+
+    addNvo("tunnel0");
+    addTunnelMap("tunnel0", "map5000", "5000");
+    addDefaultVrf("5000");
+
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    ASSERT_TRUE(app_vxlan_vrf.get(app_key, values));
+
+    Table config_tunnel_map(m_config_db.get(), CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    config_tunnel_map.hset(config_key, "vni", "invalid");
+
+    testing_db::resetOperationCounters();
+    process(CFG_VXLAN_TUNNEL_MAP_TABLE_NAME,
+            config_key, SET_COMMAND, {{"vni", "invalid"}, {"vlan", "Vlan5000"}});
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 1u);
+    values.clear();
+    EXPECT_FALSE(app_vxlan_vrf.get(app_key, values));
+}
+
 } // namespace vrfmgr_ut
