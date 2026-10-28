@@ -12,6 +12,8 @@ neighsyncd_SOURCES = neighsyncd.cpp \
                      neighsync.cpp \
                      linklocalresyncstate.cpp \
                      linklocalresyncstate.h \
+                     linklocalconfig.h \
+                     linklocalconfigconsumer.h \
                      $(top_srcdir)/warmrestart/warmRestartAssist.cpp
 
 neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)

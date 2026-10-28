@@ -19,8 +19,9 @@ public:
         std::set<std::string> disabled;
     };
 
-    void initialize(const std::deque<KeyOpFieldsValuesTuple> &entries);
-    InterfaceTransitions process(const std::deque<KeyOpFieldsValuesTuple> &entries);
+    void initialize(const std::string &tableName, const std::deque<KeyOpFieldsValuesTuple> &entries);
+    InterfaceTransitions process(
+        const std::string &tableName, const std::deque<KeyOpFieldsValuesTuple> &entries);
 
     const std::set<std::string> &getPendingInterfaces() const;
     void markResyncComplete(const std::string &interface);
@@ -33,7 +34,8 @@ private:
         Enable,
     };
 
-    static InterfaceUpdate getInterfaceUpdate(const KeyOpFieldsValuesTuple &entry);
+    static InterfaceUpdate getInterfaceUpdate(
+        const std::string &tableName, const KeyOpFieldsValuesTuple &entry);
 
     std::set<std::string> m_enabledInterfaces;
     std::set<std::string> m_pendingInterfaces;
