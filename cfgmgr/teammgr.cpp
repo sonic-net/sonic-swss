@@ -247,6 +247,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
         {
             int min_links = 0;
             bool fallback = false;
+            int fallback_timeout = 0;
             bool fast_rate = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
@@ -268,6 +269,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     fallback = fvValue(i) == "true";
                     SWSS_LOG_INFO("Get fallback option %s",
                             fallback ? "true" : "false");
+                }
+                else if (fvField(i) == "fallback_timeout")
+                {
+                    fallback_timeout = stoi(fvValue(i));
+                    SWSS_LOG_INFO("Get fallback_timeout value %d", fallback_timeout);
                 }
                 else if (fvField(i) == "admin_status")
                 {
@@ -306,7 +312,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
+                if (addLag(alias, min_links, fallback, fast_rate, fallback_timeout) == task_need_retry)
                 {
                     // If LAG creation fails, we need to clean up any potentially orphaned teamd processes
                     removeLag(alias);
@@ -690,7 +696,7 @@ bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate, int fallback_timeout)
 {
     SWSS_LOG_ENTER();
 
@@ -745,6 +751,11 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     if (fallback)
     {
         conf << ",\"fallback\":true";
+
+        if (fallback_timeout != 0)
+        {
+            conf << ",\"fallback_timeout\":" << fallback_timeout;
+        }
     }
 
     if (fast_rate)
