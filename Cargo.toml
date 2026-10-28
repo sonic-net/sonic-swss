@@ -26,7 +26,8 @@ tokio = { version = "1.37", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tokio-stream = "0.1"
 
-# Local columnar storage (Pterosaur PR7)
+# Local storage (Arrow IPC). Exact pins keep the on-disk encoding unchanged
+# when Cargo.lock is re-resolved, e.g. by image builds without --locked.
 arrow-array = "=55.2.0"
 arrow-schema = "=55.2.0"
 arrow-ipc = { version = "=55.2.0", features = ["zstd"] }

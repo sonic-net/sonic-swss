@@ -75,6 +75,7 @@
 //!   --counters 8000 --repeats 1 --rate 0
 //! - Full queue: --root <disk> --mode standalone --full-queue --records 32
 //!   --counters 8 --repeats 1 --rate 0 --require-lossless
+//!
 //! Lossless sample storage describes surviving samples, not zero packet/storage
 //! loss: check all_input_persisted separately or require --require-lossless.
 
@@ -505,7 +506,9 @@ async fn udp(
                     generate(&mut base, offset + i);
                     &base
                 } else {
-                    &payloads[i]
+                    payloads
+                        .get(i)
+                        .ok_or_else(|| io::Error::other("missing prebuilt UDP payload"))?
                 };
                 if sender.send(payload)? != payload.len() {
                     return Err(io::Error::other("short UDP send"));

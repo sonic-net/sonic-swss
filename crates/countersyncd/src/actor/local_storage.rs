@@ -107,10 +107,14 @@ use arrow_ipc::{
     CompressionType,
     writer::{IpcWriteOptions, StreamWriter},
 };
+use arrow_schema::ArrowError;
 use log::{error, info};
 use std::{
+    ffi::CString,
+    fmt::Display,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Write},
+    mem::MaybeUninit,
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, MetadataExt, OpenOptionsExt},
@@ -140,6 +144,17 @@ const _: () = assert!(
         <= BATCH_RESERVE_BYTES
 );
 const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// Name the failed operation and path in errors that are only logged.
+trait Context<T> {
+    fn context(self, operation: &str, path: &Path) -> Result<T, String>;
+}
+
+impl<T, E: Display> Context<T> for Result<T, E> {
+    fn context(self, operation: &str, path: &Path) -> Result<T, String> {
+        self.map_err(|e| format!("{operation} {}: {e}", path.display()))
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct LocalStorageConfig {
@@ -182,10 +197,10 @@ impl LocalStorageConfig {
                     fs::DirBuilder::new()
                         .mode(0o700)
                         .create(&root)
-                        .map_err(|e| e.to_string())?;
-                    fs::symlink_metadata(&root).map_err(|e| e.to_string())?
+                        .context("create", &root)?;
+                    fs::symlink_metadata(&root).context("inspect", &root)?
                 }
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(e).context("inspect", &root),
             };
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
                 return Err(format!(
@@ -194,7 +209,7 @@ impl LocalStorageConfig {
                 ));
             }
         }
-        let metadata = fs::symlink_metadata(&root).map_err(|e| e.to_string())?;
+        let metadata = fs::symlink_metadata(&root).context("inspect", &root)?;
         validate_root_access(&root, metadata.uid(), metadata.mode())?;
         Ok(())
     }
@@ -223,10 +238,46 @@ impl Write for CappedFile {
     }
 }
 
+impl CappedFile {
+    /// Hand buffered bytes to the kernel and fsync the file.
+    fn sync(&mut self) -> io::Result<()> {
+        self.file.flush()?;
+        self.file.get_ref().sync_all()
+    }
+
+    fn allocated_bytes(&self) -> io::Result<u64> {
+        Ok(self.file.get_ref().metadata()?.blocks().saturating_mul(512))
+    }
+}
+
 struct ActiveStream {
     writer: StreamWriter<CappedFile>,
     path: PathBuf,
     started: Instant,
+}
+
+impl ActiveStream {
+    /// Write under a byte cap, then fsync. Returns the newly allocated bytes.
+    fn write_synced(
+        &mut self,
+        cap: u64,
+        write: impl FnOnce(&mut StreamWriter<CappedFile>) -> Result<(), ArrowError>,
+    ) -> Result<u64, String> {
+        let before = self
+            .writer
+            .get_ref()
+            .allocated_bytes()
+            .context("inspect", &self.path)?;
+        self.writer.get_mut().remaining = cap;
+        write(&mut self.writer).context("write", &self.path)?;
+        self.writer.get_mut().sync().context("sync", &self.path)?;
+        let after = self
+            .writer
+            .get_ref()
+            .allocated_bytes()
+            .context("inspect", &self.path)?;
+        Ok(after.saturating_sub(before))
+    }
 }
 
 struct Store {
@@ -247,7 +298,7 @@ struct Store {
 
 impl Store {
     fn new(config: LocalStorageConfig, lock: File) -> Result<Self, String> {
-        let used_bytes = directory_bytes(&config.root).map_err(|e| e.to_string())?;
+        let used_bytes = directory_bytes(&config.root).context("measure", &config.root)?;
         let directory_blocks = directory_overhead(&config.root)?;
         Ok(Self {
             config,
@@ -287,6 +338,8 @@ impl Store {
         let options = IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
             .map_err(|e| e.to_string())?;
+        let shards = self.config.root.join("shards");
+        let staging = self.config.root.join(".staging");
         let (path, file) = loop {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -301,21 +354,11 @@ impl Store {
                 .file_sequence
                 .checked_add(1)
                 .ok_or("file sequence exhausted")?;
-            if self
-                .config
-                .root
-                .join("shards")
-                .join(&name)
-                .try_exists()
-                .map_err(|e| e.to_string())?
-            {
+            let published = shards.join(&name);
+            if published.try_exists().context("inspect", &published)? {
                 continue;
             }
-            let path = self
-                .config
-                .root
-                .join(".staging")
-                .join(format!("{name}.partial"));
+            let path = staging.join(format!("{name}.partial"));
             match OpenOptions::new()
                 .create_new(true)
                 .read(true)
@@ -326,10 +369,10 @@ impl Store {
             {
                 Ok(file) => break (path, file),
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(e).context("create", &path),
             }
         };
-        let writer = StreamWriter::try_new_with_options(
+        let mut writer = StreamWriter::try_new_with_options(
             CappedFile {
                 file: BufWriter::with_capacity(256 * 1024, file),
                 remaining: BATCH_RESERVE_BYTES,
@@ -338,39 +381,20 @@ impl Store {
             &layout.schema,
             options,
         )
-        .map_err(|e| e.to_string())?;
+        .context("write schema to", &path)?;
+        writer.get_mut().sync().context("sync", &path)?;
+        let allocated = writer
+            .get_ref()
+            .allocated_bytes()
+            .context("inspect", &path)?;
+        self.used_bytes = self.used_bytes.saturating_add(allocated);
         self.active = Some(ActiveStream {
             writer,
             path,
             started: Instant::now(),
         });
-        self.sync_active()?;
-        sync_directory(&self.config.root.join(".staging")).map_err(|e| e.to_string())?;
-        Ok(())
-    }
-
-    fn sync_active(&mut self) -> Result<(), String> {
-        let active = self.active.as_mut().ok_or("no active stream")?;
-        active.writer.get_mut().flush().map_err(|e| e.to_string())?;
-        active
-            .writer
-            .get_ref()
-            .file
-            .get_ref()
-            .sync_all()
-            .map_err(|e| e.to_string())?;
-        self.used_bytes = self.used_bytes.saturating_add(
-            active
-                .writer
-                .get_ref()
-                .file
-                .get_ref()
-                .metadata()
-                .map_err(|e| e.to_string())?
-                .blocks()
-                * 512,
-        );
         self.refresh_directory_blocks()?;
+        sync_directory(&staging).context("sync", &staging)?;
         Ok(())
     }
 
@@ -386,10 +410,6 @@ impl Store {
 
     fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
         self.tick()?;
-        if record.stats.len().saturating_add(1).saturating_mul(8) > MAX_RECORD_BYTES {
-            self.finish_stream()?;
-            return Err("record exceeds 128 MiB raw limit; previous records flushed".into());
-        }
         if !self.layout.as_ref().is_some_and(|l| l.matches(record)) {
             self.finish_stream()?;
             self.layout = None;
@@ -438,35 +458,8 @@ impl Store {
         )
         .map_err(|e| e.to_string())?;
         let active = self.active.as_mut().ok_or("missing batch stream")?;
-        let before = active
-            .writer
-            .get_ref()
-            .file
-            .get_ref()
-            .metadata()
-            .map_err(|e| e.to_string())?
-            .blocks()
-            * 512;
-        active.writer.get_mut().remaining = BATCH_RESERVE_BYTES;
-        active.writer.write(&batch).map_err(|e| e.to_string())?;
-        active.writer.get_mut().flush().map_err(|e| e.to_string())?;
-        active
-            .writer
-            .get_ref()
-            .file
-            .get_ref()
-            .sync_all()
-            .map_err(|e| e.to_string())?;
-        let after = active
-            .writer
-            .get_ref()
-            .file
-            .get_ref()
-            .metadata()
-            .map_err(|e| e.to_string())?
-            .blocks()
-            * 512;
-        self.used_bytes = self.used_bytes.saturating_add(after.saturating_sub(before));
+        let allocated = active.write_synced(BATCH_RESERVE_BYTES, |writer| writer.write(&batch))?;
+        self.used_bytes = self.used_bytes.saturating_add(allocated);
         drop(batch);
         let rows = self.layout.as_ref().unwrap().batch_rows;
         // Reclaim the original Vec allocations after Arrow releases its references.
@@ -506,36 +499,10 @@ impl Store {
 
     fn publish_stream(&mut self) -> Result<(), String> {
         if let Some(mut active) = self.active.take() {
-            let before = active
-                .writer
-                .get_ref()
-                .file
-                .get_ref()
-                .metadata()
-                .map_err(|e| e.to_string())?
-                .blocks()
-                * 512;
-            active.writer.get_mut().remaining = 8;
-            active.writer.finish().map_err(|e| e.to_string())?;
-            active.writer.get_mut().flush().map_err(|e| e.to_string())?;
-            active
-                .writer
-                .get_ref()
-                .file
-                .get_ref()
-                .sync_all()
-                .map_err(|e| e.to_string())?;
+            // The end-of-stream marker is 8 bytes.
+            let allocated = active.write_synced(8, StreamWriter::finish)?;
             publish(&self.config.root, &active.path)?;
-            let after = active
-                .writer
-                .get_ref()
-                .file
-                .get_ref()
-                .metadata()
-                .map_err(|e| e.to_string())?
-                .blocks()
-                * 512;
-            self.used_bytes = self.used_bytes.saturating_add(after.saturating_sub(before));
+            self.used_bytes = self.used_bytes.saturating_add(allocated);
             self.refresh_directory_blocks()?;
         }
         Ok(())
@@ -623,6 +590,7 @@ impl LocalStorageActor {
 }
 
 fn validate_root_access(path: &Path, owner: u32, mode: u32) -> Result<(), String> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
     if owner != unsafe { libc::geteuid() } || mode & 0o077 != 0 {
         return Err(format!(
             "local storage root {} must be owned by the effective service user with no group/other permissions",
@@ -653,16 +621,17 @@ fn ensure_directory(path: &Path, root_dev: u64) -> Result<(), String> {
             fs::DirBuilder::new()
                 .mode(0o700)
                 .create(path)
-                .map_err(|e| e.to_string())?;
-            let metadata = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+                .context("create", path)?;
+            let metadata = fs::symlink_metadata(path).context("inspect", path)?;
             validate_storage_device(root_dev, metadata.dev(), path)
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e).context("inspect", path),
     }
 }
 
 fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
     config.prepare_root()?;
+    let lock_path = config.root.join(LOCK_FILE);
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -670,8 +639,9 @@ fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
         .write(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
-        .open(config.root.join(LOCK_FILE))
-        .map_err(|e| e.to_string())?;
+        .open(&lock_path)
+        .context("open", &lock_path)?;
+    // SAFETY: `lock` owns an open descriptor for the duration of the call.
     if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         return Err(format!(
             "local storage root is already in use: {}",
@@ -680,24 +650,36 @@ fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
     }
     // Reservation uses root's statvfs, and publication renames between these
     // directories. Reject nested filesystems before writing any IPC data.
-    let root_dev = fs::metadata(&config.root).map_err(|e| e.to_string())?.dev();
-    ensure_directory(&config.root.join(".staging"), root_dev)?;
-    ensure_directory(&config.root.join("shards"), root_dev)?;
-    sync_directory(&config.root).map_err(|e| e.to_string())?;
+    let root_dev = fs::metadata(&config.root)
+        .context("inspect", &config.root)?
+        .dev();
+    let staging = config.root.join(".staging");
+    let shards = config.root.join("shards");
+    ensure_directory(&staging, root_dev)?;
+    ensure_directory(&shards, root_dev)?;
+    sync_directory(&config.root).context("sync", &config.root)?;
     // Leave regular files from every writer generation untouched. Readers decide
     // format support; all abandoned files remain charged against the disk quota.
-    for entry in fs::read_dir(config.root.join("shards")).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+    for entry in fs::read_dir(&shards).context("read", &shards)? {
+        let entry = entry.context("read", &shards)?;
+        if !entry
+            .file_type()
+            .context("inspect", &entry.path())?
+            .is_file()
+        {
             return Err(format!(
                 "unsupported archive entry {}; use a separate empty storage root",
                 entry.path().display()
             ));
         }
     }
-    for entry in fs::read_dir(config.root.join(".staging")).map_err(|e| e.to_string())? {
-        let entry = entry.map_err(|e| e.to_string())?;
-        if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
+    for entry in fs::read_dir(&staging).context("read", &staging)? {
+        let entry = entry.context("read", &staging)?;
+        if !entry
+            .file_type()
+            .context("inspect", &entry.path())?
+            .is_file()
+        {
             return Err(format!(
                 "unknown staging entry {}; left untouched",
                 entry.path().display()
@@ -713,12 +695,22 @@ fn publish(root: &Path, path: &Path) -> Result<(), String> {
         .and_then(|n| n.to_str())
         .and_then(|n| n.strip_suffix(".partial"))
         .ok_or("invalid partial filename")?;
-    let destination = root.join("shards").join(name);
-    // RENAME_NOREPLACE preserves finalized data even if a name unexpectedly collides.
-    let from = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-    let to =
-        std::ffi::CString::new(destination.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-    if unsafe {
+    let shards = root.join("shards");
+    let destination = shards.join(name);
+    // Never replace finalized data, even if a name unexpectedly collides.
+    rename_noreplace(path, &destination).context("publish", path)?;
+    sync_directory(&shards).context("sync", &shards)?;
+    let staging = root.join(".staging");
+    sync_directory(&staging).context("sync", &staging)?;
+    info!("Published local HFT stream {}", destination.display());
+    Ok(())
+}
+
+fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    let from = CString::new(from.as_os_str().as_bytes())?;
+    let to = CString::new(to.as_os_str().as_bytes())?;
+    // SAFETY: both arguments are NUL-terminated paths that outlive the call.
+    let result = unsafe {
         libc::renameat2(
             libc::AT_FDCWD,
             from.as_ptr(),
@@ -726,13 +718,10 @@ fn publish(root: &Path, path: &Path) -> Result<(), String> {
             to.as_ptr(),
             libc::RENAME_NOREPLACE,
         )
-    } != 0
-    {
-        return Err(io::Error::last_os_error().to_string());
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
     }
-    sync_directory(&root.join("shards")).map_err(|e| e.to_string())?;
-    sync_directory(&root.join(".staging")).map_err(|e| e.to_string())?;
-    info!("Published local HFT stream {}", destination.display());
     Ok(())
 }
 
@@ -758,12 +747,8 @@ fn directory_overhead(root: &Path) -> Result<u64, String> {
     ]
     .iter()
     .try_fold(0u64, |sum, path| {
-        Ok(sum.saturating_add(
-            fs::metadata(path)
-                .map_err(|e| e.to_string())?
-                .blocks()
-                .saturating_mul(512),
-        ))
+        let metadata = fs::metadata(path).context("inspect", path)?;
+        Ok(sum.saturating_add(metadata.blocks().saturating_mul(512)))
     })
 }
 
@@ -772,19 +757,26 @@ fn sync_directory(path: &Path) -> io::Result<()> {
 }
 
 fn available_bytes(path: &Path) -> Result<u64, String> {
-    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-    let mut stats = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    if unsafe { libc::statvfs(path.as_ptr(), stats.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error().to_string());
+    let c_path = CString::new(path.as_os_str().as_bytes()).context("inspect", path)?;
+    let mut stats = MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `c_path` is NUL-terminated and `stats` is valid for writes.
+    if unsafe { libc::statvfs(c_path.as_ptr(), stats.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error()).context("statvfs", path);
     }
+    // SAFETY: statvfs succeeded, so it initialized `stats`.
     let stats = unsafe { stats.assume_init() };
+    // Field widths differ between targets.
+    #[allow(clippy::unnecessary_cast)]
     let free = (stats.f_bavail as u64).saturating_mul(stats.f_frsize as u64);
-    let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
-    if unsafe { libc::statfs(path.as_ptr(), filesystem.as_mut_ptr()) } != 0 {
-        return Err(io::Error::last_os_error().to_string());
+    let mut filesystem = MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: `c_path` is NUL-terminated and `filesystem` is valid for writes.
+    if unsafe { libc::statfs(c_path.as_ptr(), filesystem.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error()).context("statfs", path);
     }
-    if unsafe { filesystem.assume_init() }.f_type == 0x0102_1994 {
-        let meminfo = fs::read_to_string("/proc/meminfo").map_err(|e| e.to_string())?;
+    // SAFETY: statfs succeeded, so it initialized `filesystem`.
+    if unsafe { filesystem.assume_init() }.f_type == libc::TMPFS_MAGIC {
+        let meminfo = Path::new("/proc/meminfo");
+        let meminfo = fs::read_to_string(meminfo).context("read", meminfo)?;
         return tmpfs_available_bytes(free, &meminfo);
     }
     Ok(free)
@@ -1160,7 +1152,7 @@ mod tests {
                 .iter()
                 .filter(|(end, _)| *end <= cut)
                 .map(|(_, count)| *count)
-                .last()
+                .next_back()
                 .unwrap_or(0);
             let scan = codec::scan(&partial).unwrap();
             assert_eq!(scan.records, count, "cut={cut}");

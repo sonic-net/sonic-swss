@@ -18,7 +18,6 @@ tokio = { workspace = true }
 
 # Configuration and serialization
 serde = { workspace = true }
-serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 
 # Netlink for network operations
@@ -70,11 +69,13 @@ reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
 # SONiC specific dependencies
 swss-common = { workspace = true }
 
-# Local storage is unsupported on armhf (32-bit ARM).
+# Local storage is unsupported on armhf (32-bit ARM): arrow-ipc before 60 writes
+# a 4-byte compressed length prefix there. arrow-ipc 60 fixes it but needs Rust 1.88.
 [target.'cfg(not(target_arch = "arm"))'.dependencies]
 arrow-array = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-ipc = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 # Test utilities  
