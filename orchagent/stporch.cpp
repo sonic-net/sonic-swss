@@ -377,6 +377,49 @@ bool StpOrch::stpVlanFdbFlush(string vlan_alias)
     return true;
 }
 
+bool StpOrch::stpInstancePortFdbFlush(string port_alias, sai_uint16_t instance)
+{
+    SWSS_LOG_ENTER();
+
+    Port port;
+
+    if (!gPortsOrch->getPort(port_alias, port))
+    {
+        SWSS_LOG_ERROR("STP port FDB flush: port %s not found", port_alias.c_str());
+        return false;
+    }
+
+    if (port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("STP port FDB flush: port %s has no bridge port", port_alias.c_str());
+        return false;
+    }
+
+    auto it_map = m_vlanAliasToStpInstanceMap.find(instance);
+    if (it_map == m_vlanAliasToStpInstanceMap.end())
+    {
+        SWSS_LOG_WARN("STP port FDB flush: instance %d not found", instance);
+        return false;
+    }
+
+    for (const auto& vlan_alias : it_map->second.stp_inst_vlan_list)
+    {
+        Port vlan;
+
+        if (!gPortsOrch->getPort(vlan_alias, vlan))
+        {
+            SWSS_LOG_WARN("STP port FDB flush: vlan %s not found", vlan_alias.c_str());
+            continue;
+        }
+
+        gFdbOrch->flushFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
+        SWSS_LOG_INFO("STP FDB flush instance %d port %s vlan %s",
+                      instance, port_alias.c_str(), vlan_alias.c_str());
+    }
+
+    return true;
+}
+
 void StpOrch::doStpTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -528,10 +571,11 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
         string op = kfvOp(t);
         string key = kfvKey(t);
         size_t found = key.find(':');
-        /* Return if the format of key is wrong */
+        /* Skip if the format of key is wrong */
         if (found == string::npos)
         {
-            return;
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
 
         if (op == SET_COMMAND)
@@ -550,15 +594,7 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
 
             if (state.compare("true") == 0)
             {
-                // Get all VLAN aliases for the given STP instance
-                auto it_map = m_vlanAliasToStpInstanceMap.find(instance);
-                if (it_map != m_vlanAliasToStpInstanceMap.end())
-                {
-                    for (const auto& vlan_alias : it_map->second.stp_inst_vlan_list)
-                    {
-                        stpVlanFdbFlush(vlan_alias);
-                    }
-                }
+                stpInstancePortFdbFlush(port_alias, instance);
             }
         }
         else if (op == DEL_COMMAND)
