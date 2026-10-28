@@ -11,6 +11,7 @@
 #include <iostream>
 #include <string>
 #include <climits>
+#include <algorithm>
 #include <boost/algorithm/string.hpp>
 
 using namespace std;
@@ -582,6 +583,132 @@ void WredMapHandler::appendThresholdToAttributeList(sai_attr_id_t type,
 
 WredMapHandler::qos_wred_thresholds_store_t WredMapHandler::m_wredProfiles;
 
+bool WredMapHandler::enableEcnEctThreshold()
+{
+    SWSS_LOG_ENTER();
+
+    // Enable only once. SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE makes ECT traffic honor the
+    // independent ECN marking thresholds instead of the WRED drop thresholds. Its default is
+    // false, so platforms/profiles that do not configure ECN thresholds keep the legacy behavior.
+    static bool ect_threshold_enabled = false;
+    if (ect_threshold_enabled)
+    {
+        return true;
+    }
+
+    // Query the capability directly so we can distinguish "not supported" from "capability query
+    // not implemented". Some platforms (e.g. Broadcom XGS) do not implement the attribute
+    // capability query but do support setting the attribute; treat that case as supported and let
+    // the SAI set validate it, matching the convention used elsewhere in SONiC.
+    sai_attr_capability_t capability;
+    sai_status_t query_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                    SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE, &capability);
+    if (query_status == SAI_STATUS_SUCCESS && !capability.set_implemented)
+    {
+        SWSS_LOG_NOTICE("SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE is not supported; "
+                        "ECN marking thresholds will follow the WRED drop thresholds");
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE;
+    attr.value.booldata = true;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to enable SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE, status:%d", status);
+        return false;
+    }
+
+    ect_threshold_enabled = true;
+    SWSS_LOG_NOTICE("Enabled SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE for independent ECN marking thresholds");
+    return true;
+}
+
+bool WredMapHandler::ecnThresholdSupported()
+{
+    SWSS_LOG_ENTER();
+
+    // Query once and cache. The per-WRED ECN threshold/mark attributes are optional in SAI; on
+    // platforms that do not implement them, programming them would fail the WRED create/set. So
+    // we gate on capability and silently ignore the ECN fields where unsupported, leaving the
+    // existing WRED drop-threshold behavior intact.
+    static bool queried = false;
+    static bool supported = false;
+    if (!queried)
+    {
+        queried = true;
+
+        // Query the per-WRED ECN threshold capability directly. A successful query reports whether
+        // the attribute can be set; if the platform does not implement the capability query at all
+        // (e.g. Broadcom XGS returns SAI_STATUS_NOT_IMPLEMENTED), assume the attributes are
+        // supported and let the WRED create/set validate them, as is the convention in SONiC.
+        sai_attr_capability_t capability;
+        sai_status_t query_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_WRED,
+                                        SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD, &capability);
+        if (query_status == SAI_STATUS_SUCCESS)
+        {
+            supported = capability.set_implemented;
+        }
+        else if (query_status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            supported = true;
+            SWSS_LOG_NOTICE("Per-WRED ECN marking threshold capability query is not implemented "
+                            "(status:%d); assuming supported", query_status);
+        }
+        else
+        {
+            supported = true;
+            SWSS_LOG_NOTICE("Per-WRED ECN marking threshold capability query failed "
+                            "(status:%d); assuming supported", query_status);
+        }
+
+        if (!supported)
+        {
+            SWSS_LOG_NOTICE("Per-WRED ECN marking thresholds are not supported on this platform; "
+                            "ECN threshold fields will be ignored");
+        }
+    }
+    return supported;
+}
+
+// Parse a WRED threshold; reject malformed input.
+static bool parseWredThreshold(const std::string &value, sai_uint32_t &out)
+{
+    try
+    {
+        out = static_cast<sai_uint32_t>(stoi(value));
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Invalid wred threshold value '%s': %s", value.c_str(), e.what());
+        return false;
+    }
+    return true;
+}
+
+// ECN mark probability is a 0..100 percentage. Reject malformed input; clamp out-of-range values.
+static bool parseEcnMarkProbability(const std::string &value, sai_uint32_t &out)
+{
+    int prob;
+    try
+    {
+        prob = stoi(value);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Invalid ECN mark probability '%s': %s", value.c_str(), e.what());
+        return false;
+    }
+    if (prob < 0 || prob > 100)
+    {
+        SWSS_LOG_WARN("ECN mark probability %d out of range [0,100]; clamping to range", prob);
+        prob = (prob < 0) ? 0 : 100;
+    }
+    out = static_cast<sai_uint32_t>(prob);
+    return true;
+}
+
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
@@ -591,6 +718,8 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
     auto &storedProfile = WredMapHandler::m_wredProfiles[key];
     qos_wred_thresholds_t currentProfile = storedProfile;
     sai_uint32_t threshold;
+    bool has_ecn_threshold = false;
+    bool ecn_supported = ecnThresholdSupported();
 
     /*
      * Setting WRED profile can fail in case
@@ -738,6 +867,102 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             }
             attribs.push_back(attr);
         }
+        else if (fvField(*i) == green_ect_min_threshold_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            if (!parseWredThreshold(fvValue(*i), threshold)) { return false; }
+            appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_ect_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_ect_min_threshold);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == green_ect_max_threshold_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            if (!parseWredThreshold(fvValue(*i), threshold)) { return false; }
+            appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_ect_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_ect_max_threshold);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == green_ect_mark_probability_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            attr.id = SAI_WRED_ATTR_ECN_GREEN_MARK_PROBABILITY;
+            if (!parseEcnMarkProbability(fvValue(*i), attr.value.u32)) { return false; }
+            attribs.push_back(attr);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == yellow_ect_min_threshold_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            if (!parseWredThreshold(fvValue(*i), threshold)) { return false; }
+            appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_ect_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_ect_min_threshold);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == yellow_ect_max_threshold_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            if (!parseWredThreshold(fvValue(*i), threshold)) { return false; }
+            appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_ect_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_ect_max_threshold);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == yellow_ect_mark_probability_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            attr.id = SAI_WRED_ATTR_ECN_YELLOW_MARK_PROBABILITY;
+            if (!parseEcnMarkProbability(fvValue(*i), attr.value.u32)) { return false; }
+            attribs.push_back(attr);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == red_ect_min_threshold_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            if (!parseWredThreshold(fvValue(*i), threshold)) { return false; }
+            appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_ect_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_ect_min_threshold);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == red_ect_max_threshold_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            if (!parseWredThreshold(fvValue(*i), threshold)) { return false; }
+            appendThresholdToAttributeList(SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_ect_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_ect_max_threshold);
+            has_ecn_threshold = true;
+        }
+        else if (fvField(*i) == red_ect_mark_probability_field_name)
+        {
+            if (!ecn_supported) { continue; }
+            attr.id = SAI_WRED_ATTR_ECN_RED_MARK_PROBABILITY;
+            if (!parseEcnMarkProbability(fvValue(*i), attr.value.u32)) { return false; }
+            attribs.push_back(attr);
+            has_ecn_threshold = true;
+        }
         else if (fvField(*i) == ecn_field_name)
         {
             attr.id = SAI_WRED_ATTR_ECN_MARK_MODE;
@@ -759,24 +984,170 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
         return false;
     }
 
+    // ECN thresholds are optional/best-effort and per-color. If a color's min > max, skip only that
+    // color's ECN threshold (keep the base profile and other colors) rather than failing the profile.
+    auto skipColorEcnThreshold = [&](sai_attr_id_t minId, sai_attr_id_t maxId,
+                                     sai_uint32_t &curMin, sai_uint32_t &curMax,
+                                     sai_uint32_t storedMin, sai_uint32_t storedMax,
+                                     const char *color)
+    {
+        SWSS_LOG_WARN("Wred profile ECN %s min threshold (%u) is greater than max (%u); skipping "
+                      "this color's ECN marking threshold and keeping the rest of the profile",
+                      color, curMin, curMax);
+        auto isColorEcn = [&](const sai_attribute_t &a) { return a.id == minId || a.id == maxId; };
+        attribs.erase(std::remove_if(attribs.begin(), attribs.end(), isColorEcn), attribs.end());
+        deferred_attributes.erase(
+            std::remove_if(deferred_attributes.begin(), deferred_attributes.end(), isColorEcn),
+            deferred_attributes.end());
+        curMin = storedMin;
+        curMax = storedMax;
+    };
+
+    if (currentProfile.green_ect_min_threshold > currentProfile.green_ect_max_threshold)
+    {
+        skipColorEcnThreshold(SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD, SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD,
+                              currentProfile.green_ect_min_threshold, currentProfile.green_ect_max_threshold,
+                              storedProfile.green_ect_min_threshold, storedProfile.green_ect_max_threshold, "green");
+    }
+    if (currentProfile.yellow_ect_min_threshold > currentProfile.yellow_ect_max_threshold)
+    {
+        skipColorEcnThreshold(SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD, SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD,
+                              currentProfile.yellow_ect_min_threshold, currentProfile.yellow_ect_max_threshold,
+                              storedProfile.yellow_ect_min_threshold, storedProfile.yellow_ect_max_threshold, "yellow");
+    }
+    if (currentProfile.red_ect_min_threshold > currentProfile.red_ect_max_threshold)
+    {
+        skipColorEcnThreshold(SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD, SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD,
+                              currentProfile.red_ect_min_threshold, currentProfile.red_ect_max_threshold,
+                              storedProfile.red_ect_min_threshold, storedProfile.red_ect_max_threshold, "red");
+    }
+
+    // Record whether this profile carries any independent ECN marking threshold. The switch-level
+    // ECT control is enabled later, from add/modifyQosItem(), once the profile has been programmed.
+    m_ecnThresholdConfigured = has_ecn_threshold;
+
     attribs.insert(attribs.end(), deferred_attributes.begin(), deferred_attributes.end());
+
+    // Commit drop thresholds now, but hold ECN thresholds at their prior values: they are committed
+    // to the cache by applyEcnThresholdAttributes() only after each best-effort SAI set succeeds.
+    qos_wred_thresholds_t priorEcn = storedProfile;
+    m_pendingWredKey = key;
     storedProfile = currentProfile;
+    storedProfile.green_ect_min_threshold  = priorEcn.green_ect_min_threshold;
+    storedProfile.green_ect_max_threshold  = priorEcn.green_ect_max_threshold;
+    storedProfile.yellow_ect_min_threshold = priorEcn.yellow_ect_min_threshold;
+    storedProfile.yellow_ect_max_threshold = priorEcn.yellow_ect_max_threshold;
+    storedProfile.red_ect_min_threshold    = priorEcn.red_ect_min_threshold;
+    storedProfile.red_ect_max_threshold    = priorEcn.red_ect_max_threshold;
 
     return true;
+}
+
+// The per-WRED ECN marking attributes (independent threshold/probability per color) are optional
+// and capability-dependent. They are kept out of the base WRED create/set and applied separately
+// as best-effort by applyEcnThresholdAttributes(), so the base WRED profile (drop behaviour) is
+// always programmed.
+static bool isEcnThresholdAttribute(sai_attr_id_t id)
+{
+    switch (id)
+    {
+    case SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD:
+    case SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD:
+    case SAI_WRED_ATTR_ECN_GREEN_MARK_PROBABILITY:
+    case SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD:
+    case SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD:
+    case SAI_WRED_ATTR_ECN_YELLOW_MARK_PROBABILITY:
+    case SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD:
+    case SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD:
+    case SAI_WRED_ATTR_ECN_RED_MARK_PROBABILITY:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Commit a successfully-set ECN threshold to the in-flight profile's cache (m_pendingWredKey), so the
+// cache never records a threshold the best-effort SAI set dropped.
+void WredMapHandler::commitEcnThresholdToCache(sai_attr_id_t id, sai_uint32_t value)
+{
+    if (m_pendingWredKey.empty())
+    {
+        return;
+    }
+    auto &profile = m_wredProfiles[m_pendingWredKey];
+    switch (id)
+    {
+    case SAI_WRED_ATTR_ECN_GREEN_MIN_THRESHOLD:  profile.green_ect_min_threshold  = value; break;
+    case SAI_WRED_ATTR_ECN_GREEN_MAX_THRESHOLD:  profile.green_ect_max_threshold  = value; break;
+    case SAI_WRED_ATTR_ECN_YELLOW_MIN_THRESHOLD: profile.yellow_ect_min_threshold = value; break;
+    case SAI_WRED_ATTR_ECN_YELLOW_MAX_THRESHOLD: profile.yellow_ect_max_threshold = value; break;
+    case SAI_WRED_ATTR_ECN_RED_MIN_THRESHOLD:    profile.red_ect_min_threshold    = value; break;
+    case SAI_WRED_ATTR_ECN_RED_MAX_THRESHOLD:    profile.red_ect_max_threshold    = value; break;
+    default: break;  // mark-probability attributes are not cached
+    }
+}
+
+void WredMapHandler::applyEcnThresholdAttributes(sai_object_id_t sai_object,
+                                                 const vector<sai_attribute_t> &ecn_attributes)
+{
+    SWSS_LOG_ENTER();
+
+    if (ecn_attributes.empty())
+    {
+        return;
+    }
+
+    // Enable the switch-level ECT control first; if it fails the per-WRED ECN thresholds can't take
+    // effect, so skip them rather than proceeding as if ECN marking were active.
+    if (!enableEcnEctThreshold())
+    {
+        SWSS_LOG_WARN("SAI_SWITCH_ATTR_ECN_ECT_THRESHOLD_ENABLE not enabled; skipping ECN marking "
+                      "threshold programming for this wred profile");
+        return;
+    }
+
+    // Best-effort: the ECN marking attributes are optional. A platform that does not support a
+    // given attribute (even if its capability query did not report it) must not fail the WRED
+    // profile, so a failed set is logged and skipped, leaving the base drop behaviour intact. This
+    // mirrors how PortsOrch applies optional port attributes (FEC/autoneg/PFC).
+    for (const auto &attr : ecn_attributes)
+    {
+        sai_status_t status = sai_wred_api->set_wred_attribute(sai_object, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to set ECN marking attribute id:%d (status:%d); "
+                          "ignoring the ECN marking threshold for this wred profile", attr.id, status);
+            continue;
+        }
+        // SAI set succeeded: reflect this threshold in the cache (mark-probability isn't cached).
+        commitEcnThresholdToCache(attr.id, attr.value.u32);
+    }
 }
 
 bool WredMapHandler::modifyQosItem(sai_object_id_t sai_object, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
     sai_status_t sai_status;
+    vector<sai_attribute_t> ecn_attributes;
     for (auto attr : attribs)
     {
+        // Defer the optional ECN marking attributes; apply them best-effort after the mandatory
+        // attributes so an unsupported ECN attribute cannot fail the WRED profile update.
+        if (isEcnThresholdAttribute(attr.id))
+        {
+            ecn_attributes.push_back(attr);
+            continue;
+        }
         sai_status = sai_wred_api->set_wred_attribute(sai_object, &attr);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set wred profile attribute, id:%d, status:%d", attr.id, sai_status);
             return false;
         }
+    }
+    if (m_ecnThresholdConfigured)
+    {
+        applyEcnThresholdAttributes(sai_object, ecn_attributes);
     }
     return true;
 }
@@ -788,6 +1159,7 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     sai_object_id_t sai_object;
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
+    vector<sai_attribute_t> ecn_attributes;
     uint8_t drop_prob_set = 0;
     uint8_t wred_enable_set = 0;
 
@@ -797,6 +1169,14 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
 
     for(auto attrib : attribs)
     {
+        // Defer the optional ECN marking attributes. They are applied best-effort after the base
+        // WRED profile is created so an unsupported ECN attribute cannot fail the create.
+        if (isEcnThresholdAttribute(attrib.id))
+        {
+            ecn_attributes.push_back(attrib);
+            continue;
+        }
+
         attrs.push_back(attrib);
 
         switch (attrib.id)
@@ -857,6 +1237,12 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     {
         SWSS_LOG_ERROR("Failed to create wred profile: %d", sai_status);
         return false;
+    }
+    // The base WRED profile exists. Apply the optional ECN marking attributes best-effort so an
+    // unsupported platform cannot fail the profile (mirrors PortsOrch optional port attributes).
+    if (m_ecnThresholdConfigured)
+    {
+        applyEcnThresholdAttributes(sai_object, ecn_attributes);
     }
     return sai_object;
 }
