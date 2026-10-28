@@ -252,6 +252,11 @@ createUserDefinedTrapAndHostIfTableEntry(const sai_object_id_t trap_group_oid,
           trap_attrs.data()),
       "Failed to create trap by calling "
       "sai_hostif_api->create_hostif_user_defined_trap");
+
+  if (hostif_oid == SAI_NULL_OBJECT_ID) {
+      return udt_hostif;
+  }
+
   const auto sai_host_table_attrs = getUserDefinedTrapHostIfTableEntryAttrs(
       udt_hostif.user_defined_trap, hostif_oid);
   auto sai_status = sai_hostif_api->create_hostif_table_entry(
@@ -390,16 +395,21 @@ ReturnCode AclRuleManager::setUserDefinedTrap(
 
     auto udt_it = m_userDefinedTraps.find(queue_num);
     if (udt_it != m_userDefinedTraps.end()) {
-      CHECK_ERROR_AND_LOG_AND_RETURN(
-          sai_hostif_api->remove_hostif_table_entry(
-              udt_it->second.hostif_table_entry),
-          "Received trap group update request but "
-          "failed to remove the old hostif table entry.");
+      if (udt_it->second.hostif_table_entry != SAI_NULL_OBJECT_ID) {
+        CHECK_ERROR_AND_LOG_AND_RETURN(
+            sai_hostif_api->remove_hostif_table_entry(
+                udt_it->second.hostif_table_entry),
+            "Received trap group update request but "
+            "failed to remove the old hostif table entry.");
+      }
       CHECK_ERROR_AND_LOG_AND_RETURN(
           sai_hostif_api->remove_hostif_user_defined_trap(
               udt_it->second.user_defined_trap),
           "Received trap group update request but "
           "failed to remove the old user defined trap.");
+      m_p4OidMapper->decreaseRefCount(
+          SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+          std::to_string(queue_num));
       m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
                               std::to_string(queue_num));
       m_userDefinedTraps.erase(queue_num);
@@ -436,16 +446,19 @@ ReturnCode AclRuleManager::initializeUserDefinedTraps() {
             trap_group_name.substr(strlen(GENL_PACKET_TRAP_GROUP_NAME_PREFIX));
         ASSIGN_OR_RETURN(auto queue_num, parseQueueNumberFromStr(queue_num_str));
         const sai_object_id_t trap_group_oid = trap_group_it.second;
+        sai_object_id_t hostif_oid = SAI_NULL_OBJECT_ID;
         auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
         if (hostif_oid_it == trapGroupHostIfMap.end()) {
-          LOG_ERROR_AND_RETURN(
-              ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-              << "Hostif object id was not found given trap group - "
-              << trap_group_it.first);
+          SWSS_LOG_NOTICE(
+              "Hostif object id not found for trap group %s,"
+              " skip hostif table entry creation",
+              trap_group_it.first.c_str());
+        } else {
+          hostif_oid = hostif_oid_it->second;
         }
         // Create user defined trap and add it in hostif table.
         LOG_AND_RETURN_IF_ERROR(
-            setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid_it->second));
+            setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid));
       }
       m_isAclTableReferencingUserDefinedTrapsAdded = true;
       return ReturnCode();
@@ -493,16 +506,20 @@ ReturnCode AclRuleManager::updateUserDefinedTrap(
         // create user defined trap referencing the trap group and hostif table
         // entry.
         const sai_object_id_t trap_group_oid = trap_group_it->second;
+        sai_object_id_t hostif_oid = SAI_NULL_OBJECT_ID;
         auto hostif_oid_it = trapGroupHostIfMap.find(trap_group_oid);
         if (hostif_oid_it == trapGroupHostIfMap.end())
         {
-            LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                                 << "Hostif object id was not found given trap group - "
-         << QuotedVar(trap_group_name));
+            SWSS_LOG_NOTICE(
+               "Hostif object id not found for trap group %s,"
+               "skip hostif table entry creation",
+               trap_group_name.c_str());
+        } else {
+            hostif_oid = hostif_oid_it->second;
         }
         // Create user defined trap and add it in hostif table.
         LOG_AND_RETURN_IF_ERROR(
-            setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid_it->second));
+            setUserDefinedTrap(queue_num, trap_group_oid, hostif_oid));
       } else {
         // trap_group_name has been deleted from the trapGroupMap,
         // if no ACL rules are referencing its corresponding user defined trap, then
@@ -518,9 +535,11 @@ ReturnCode AclRuleManager::updateUserDefinedTrap(
                  << "User defined trap for queue:" << QuotedVar(queue_num_str)
                  << " can not be removed as it is in use.";
         }
-        CHECK_ERROR_AND_LOG_AND_RETURN(sai_hostif_api->remove_hostif_table_entry(
-                                       udt_it->second.hostif_table_entry),
-                                       "Failed to remove hostif table entry.");
+        if (udt_it->second.hostif_table_entry != SAI_NULL_OBJECT_ID) {
+          CHECK_ERROR_AND_LOG_AND_RETURN(sai_hostif_api->remove_hostif_table_entry(
+                                         udt_it->second.hostif_table_entry),
+                                         "Failed to remove hostif table entry.");
+        }
 
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
                                         std::to_string(queue_num));
