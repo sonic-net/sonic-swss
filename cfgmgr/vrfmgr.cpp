@@ -251,17 +251,13 @@ void VrfMgr::doTask(Consumer &consumer)
                         }
                     }
 
-                    const auto cached = m_vxlanTunnelMapCache.find(vrfName);
-                    if (vni.empty() && cached != m_vxlanTunnelMapCache.end())
-                    {
-                        vni = cached->second.vni;
-                    }
-                    else if (vni.empty())
+                    if (vni.empty())
                     {
                         /*
-                         * A normal tunnel-map SET carries vni.  Fall back to
-                         * one direct row read for a partial update; never scan
-                         * the table.
+                         * CONFIG_DB notifications can contain only the fields
+                         * changed by a partial SET. Read this one row to
+                         * distinguish an unchanged VNI from removal of the VNI
+                         * field; never scan the table.
                          */
                         vector<FieldValueTuple> config_fields;
                         if (m_cfgVxlanTunnelMapTable.get(vrfName, config_fields))
@@ -279,10 +275,21 @@ void VrfMgr::doTask(Consumer &consumer)
 
                     if (vni.empty())
                     {
-                        SWSS_LOG_ERROR("VXLAN tunnel map %s has no VNI", vrfName.c_str());
+                        VxlanTunnelMapCacheEntry old_entry;
+                        if (removeVxlanTunnelMapFromCache(vrfName, old_entry))
+                        {
+                            SWSS_LOG_NOTICE("VXLAN tunnel map %s no longer has a VNI; withdrawing cached dependency",
+                                            vrfName.c_str());
+                            syncVrfVxlanTableForVni(old_entry.tunnel_name, old_entry.vni);
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("VXLAN tunnel map %s has no VNI", vrfName.c_str());
+                        }
                     }
                     else
                     {
+                        const auto cached = m_vxlanTunnelMapCache.find(vrfName);
                         if ((cached != m_vxlanTunnelMapCache.end()) &&
                             ((cached->second.tunnel_name != tunnel_name) || (cached->second.vni != vni)))
                         {
