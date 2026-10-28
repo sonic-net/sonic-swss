@@ -381,6 +381,124 @@ class TestFdb(object):
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
 
+    def test_FdbConfigStaticMac(self, dvs, testlog):
+        # A static MAC configured in CONFIG_DB FDB (as "config mac add" does) is
+        # handled by vlanmgr -> APPL_DB FDB_TABLE -> FdbOrch, and programmed into
+        # the ASIC as a SAI static FDB entry.
+        dvs.setup_db()
+
+        dvs.clear_fdb()
+        time.sleep(2)
+
+        # create vlan and add a member port
+        dvs.create_vlan("3")
+        dvs.create_vlan_member("3", "Ethernet0")
+        time.sleep(1)
+
+        # Get bvid from vlanid
+        ok, bvid = dvs.get_vlan_oid(dvs.adb, "3")
+        assert ok, bvid
+
+        iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
+
+        # configure a static MAC via CONFIG_DB FDB table
+        create_entry_tbl(
+            dvs.cdb,
+            "FDB", "Vlan3|52:54:00:25:06:09",
+            [
+                ("port", "Ethernet0"),
+            ]
+        )
+        time.sleep(2)
+
+        # check that the entry was programmed into ASIC DB as a static FDB entry
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:09"), ("bvid", bvid)],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"])])
+        assert ok, str(extra)
+
+        # remove the static MAC from CONFIG_DB
+        tbl = swsscommon.Table(dvs.cdb, "FDB")
+        tbl._del("Vlan3|52:54:00:25:06:09")
+        time.sleep(2)
+
+        # check that the entry was removed from ASIC DB
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:09"), ("bvid", bvid)], [])
+        assert ok == False, "The static fdb entry was not removed from ASIC"
+
+        dvs.clear_fdb()
+        dvs.remove_vlan_member("3", "Ethernet0")
+        dvs.remove_vlan("3")
+
+    def test_FdbConfigStaticMacVariants(self, dvs, testlog):
+        # vlanmgr static-FDB branches (typed, malformed, no-port, deferred) on dedicated Vlan9/Vlan10 for isolation.
+        dvs.setup_db()
+        dvs.clear_fdb()
+        time.sleep(2)
+
+        tbl = swsscommon.Table(dvs.cdb, "FDB")
+
+        dvs.create_vlan("9")
+        dvs.create_vlan_member("9", "Ethernet0")
+        time.sleep(2)
+
+        ok, bvid = dvs.get_vlan_oid(dvs.adb, "9")
+        assert ok, bvid
+
+        # An explicit type field is programmed as static.
+        create_entry_tbl(
+            dvs.cdb, "FDB", "Vlan9|52:54:00:25:06:16",
+            [("port", "Ethernet0"), ("type", "static")]
+        )
+        time.sleep(2)
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:16"), ("bvid", bvid)],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")])
+        assert ok, str(extra)
+
+        # A malformed key, malformed MAC and no-port entry are skipped; no-port is never programmed.
+        create_entry_tbl(dvs.cdb, "FDB", "NotAVlanKey", [("port", "Ethernet0")])
+        create_entry_tbl(dvs.cdb, "FDB", "Vlan9|NOT_A_MAC", [("port", "Ethernet0")])
+        create_entry_tbl(dvs.cdb, "FDB", "Vlan9|52:54:00:25:06:17", [("type", "static")])
+        time.sleep(2)
+        ok, _ = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:17")], [])
+        assert ok == False, "no-port static fdb should not be programmed"
+
+        # vlanmgr survived the bad entries: a later valid entry still programs.
+        create_entry_tbl(dvs.cdb, "FDB", "Vlan9|52:54:00:25:06:19", [("port", "Ethernet0")])
+        time.sleep(2)
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:19"), ("bvid", bvid)],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")])
+        assert ok, str(extra)
+
+        # A static FDB configured before its VLAN is deferred, then programmed once the VLAN and member exist.
+        create_entry_tbl(dvs.cdb, "FDB", "Vlan10|52:54:00:25:06:18", [("port", "Ethernet4")])
+        time.sleep(2)
+        dvs.create_vlan("10")
+        dvs.create_vlan_member("10", "Ethernet4")
+        time.sleep(2)
+        ok, bvid10 = dvs.get_vlan_oid(dvs.adb, "10")
+        assert ok, bvid10
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:18"), ("bvid", bvid10)],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")])
+        assert ok, str(extra)
+
+        for key in ["Vlan9|52:54:00:25:06:16", "Vlan9|52:54:00:25:06:19",
+                    "NotAVlanKey", "Vlan9|NOT_A_MAC", "Vlan9|52:54:00:25:06:17",
+                    "Vlan10|52:54:00:25:06:18"]:
+            tbl._del(key)
+        time.sleep(2)
+        dvs.clear_fdb()
+        dvs.remove_vlan_member("9", "Ethernet0")
+        dvs.remove_vlan("9")
+        dvs.remove_vlan_member("10", "Ethernet4")
+        dvs.remove_vlan("10")
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
