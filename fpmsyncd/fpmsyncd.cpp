@@ -1,6 +1,7 @@
 #include <iostream>
 #include <inttypes.h>
 #include <sys/stat.h>
+#include <jemalloc/jemalloc.h>
 #include "logger.h"
 #include "routesync.h"
 #include "select.h"
@@ -18,6 +19,8 @@
 
 using namespace std;
 using namespace swss;
+
+const char *malloc_conf = "background_thread:true";
 
 // gSelectTimeout specifies the maximum wait time in milliseconds (-1 == infinite)
 static int gSelectTimeout;
