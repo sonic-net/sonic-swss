@@ -110,7 +110,7 @@ use countersyncd::{
     message::{
         ipfix::IPFixTemplatesMessage,
         local_storage::LocalStorageStatus,
-        saistats::{SAIStat, SAIStatRef, SAIStatsBatch, SAIStatsBatchMessage},
+        saistats::{SAIStat, SAIStatMetadata, SAIStatRef, SAIStatsBatch, SAIStatsBatchMessage},
     },
 };
 use serde_json::json;
@@ -211,6 +211,10 @@ struct Args {
     /// Threads that encode batches; 1 encodes and writes on the storage thread.
     #[arg(long, default_value_t = 1)]
     local_storage_threads: usize,
+    /// Standalone records share one template's metadata, as IPFIX output does,
+    /// instead of each value owning its name.
+    #[arg(long)]
+    shared_records: bool,
     /// Print all trial accounting, then fail if any input was lost.
     #[arg(long)]
     require_lossless: bool,
@@ -1012,6 +1016,13 @@ fn run(args: Args) -> Result<()> {
                     let mut batches = Vec::new();
                     let (names, _) = helpers::generate_object_metadata(args.counters);
                     let names: Vec<Arc<str>> = names.into_iter().map(Arc::from).collect();
+                    let metadata: Arc<[SAIStatMetadata]> = names
+                        .iter()
+                        .enumerate()
+                        .map(|(index, name)| {
+                            SAIStatMetadata::new(name.clone(), index as u32 + 1, index as u32 + 1)
+                        })
+                        .collect();
                     let batch_records = if args.full_queue {
                         1
                     } else {
@@ -1019,6 +1030,19 @@ fn run(args: Args) -> Result<()> {
                     };
                     let generate_batch = |begin: usize| {
                         let end = (begin + batch_records).min(offset + count);
+                        if args.shared_records {
+                            let mut batch = SAIStatsBatch::default();
+                            batch.reserve_shared(end - begin, (end - begin) * args.counters);
+                            for sequence in begin..end {
+                                batch.push_shared_record(
+                                    (sequence as u64 + 1) * args.step_ns,
+                                    Arc::clone(&metadata),
+                                    (0..args.counters)
+                                        .map(|index| pattern.value(sequence, index, args.step_ns)),
+                                );
+                            }
+                            return Arc::new(batch);
+                        }
                         let mut batch = SAIStatsBatch::with_capacity(
                             end - begin,
                             (end - begin) * args.counters,
@@ -1231,6 +1255,7 @@ fn run(args: Args) -> Result<()> {
                     "file_target_bytes":args.local_storage_file_bytes,
                     "file_max_age_seconds":args.local_storage_file_seconds,
                     "local_storage_threads":args.local_storage_threads,
+                    "shared_records":args.shared_records,
                     "file_rotation_basis":"logical compressed IPC bytes including schema/framing; checked after complete batch flush; up to one batch (2N+1 batches with N>1 encoding threads) plus 8-byte EOS overshoot",
                     "value_unit":if matches!(pattern, Pattern::Idle | Pattern::Burst | Pattern::Sustained | Pattern::Mixed) { "bytes_per_interval" } else { "raw_u64" },
                     "generator_version":GENERATOR_VERSION,
