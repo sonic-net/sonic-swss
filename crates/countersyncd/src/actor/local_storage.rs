@@ -102,11 +102,13 @@
 //!
 //! Capture is opt-in. The default `/tmp/hft` is created privately (0700), with
 //! service-owned files (0600), a single-writer lock, symlink/device checks and a
-//! 128 MiB quota including directory/staging allocation. Schema and batch admission
-//! each reserve 64 MiB of headroom, so capture can stop before the 100 MB
-//! rotation target. Storage
-//! errors close this recipient; backpressure and upstream receive loss remain
-//! possible. There is no automatic upload, eviction or retention management.
+//! 128 MiB quota including directory/staging allocation. A schema or batch is
+//! written only if its worst-case encoding (its raw bytes plus IPC framing) and
+//! room for the end-of-stream marker fit the quota. When one does not fit,
+//! capture stops: the stream is published and the records that did not fit are
+//! discarded. Storage errors also close this recipient; backpressure and
+//! upstream receive loss remain possible. There is no automatic upload,
+//! eviction or retention management.
 //!
 //! On tmpfs, admission also checks host MemAvailable with a 512 MiB emergency
 //! reserve; this does not cover cgroup limits or guarantee against concurrent OOM.
@@ -125,7 +127,7 @@ use arrow_ipc::{
     writer::{IpcWriteOptions, StreamWriter},
 };
 use arrow_schema::{ArrowError, SchemaRef};
-use log::{error, info};
+use log::{error, info, warn};
 use std::{
     ffi::CString,
     fmt::Display,
@@ -155,15 +157,15 @@ const MAX_ROWS: usize = 4096;
 /// Longest time a buffered record waits for its batch.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_RECORD_BYTES: usize = 128 * 1024 * 1024;
-const BATCH_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
-// One record fits a batch, and even the conservative IPC bound of a batch with a
-// block per layout fits the fixed reservation. Keep reader limits independent
-// of these writer bounds.
+// One record fits a batch. Keep reader limits independent of writer bounds.
 const _: () = assert!((codec::MAX_COUNTERS + 1) * 8 <= BATCH_TARGET_BYTES);
-const _: () = assert!(
-    2 * BATCH_TARGET_BYTES as u64 + (codec::MAX_LAYOUTS as u64) * 256 + 8 * 1024 * 1024
-        <= BATCH_RESERVE_BYTES
-);
+/// Smallest quota: one full batch and the largest schema.
+pub const MIN_MAX_BYTES: u64 = 2 * BATCH_TARGET_BYTES as u64;
+const _: () = assert!(codec::MAX_SCHEMA_BYTES as u64 <= BATCH_TARGET_BYTES as u64);
+/// IPC message metadata and length prefixes beyond the raw buffer bytes.
+const IPC_FRAMING_BYTES: u64 = 64 * 1024;
+/// Kept free with every write, so the end-of-stream marker always fits.
+const EOS_RESERVE_BYTES: u64 = 64 * 1024;
 const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
 
 /// Name the failed operation and path in errors that are only logged.
@@ -196,9 +198,9 @@ impl LocalStorageConfig {
         if self.file_target_bytes == 0 {
             return Err("local storage file target bytes must be greater than zero".into());
         }
-        if self.max_bytes <= BATCH_RESERVE_BYTES {
+        if self.max_bytes < MIN_MAX_BYTES {
             return Err(format!(
-                "local storage max bytes must exceed the {BATCH_RESERVE_BYTES} byte batch reserve"
+                "local storage max bytes must be at least {MIN_MAX_BYTES}"
             ));
         }
         Ok(())
@@ -236,7 +238,7 @@ impl LocalStorageConfig {
     }
 }
 
-// Cap each schema/batch write before it consumes unreserved disk space. The
+// Cap each schema/batch write at its admitted size before it uses more disk. The
 // BufWriter sits inside the cap so its buffered bytes are charged immediately.
 struct CappedFile {
     file: BufWriter<File>,
@@ -247,7 +249,7 @@ struct CappedFile {
 impl Write for CappedFile {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         if bytes.len() as u64 > self.remaining {
-            return Err(io::Error::other("IPC write exceeds batch reservation"));
+            return Err(io::Error::other("IPC write exceeds its admitted size"));
         }
         let written = self.file.write(bytes)?;
         self.remaining -= written as u64;
@@ -352,6 +354,8 @@ struct Store {
     schema_stale: bool,
     /// Streams opened so far.
     generation: u64,
+    /// Capture stopped at the quota or the filesystem reserve.
+    stopped: bool,
     // Reusable batch columns, at most one batch of pending records.
     layout_ids: Vec<u32>,
     timestamps: Vec<u64>,
@@ -377,6 +381,7 @@ impl Store {
             active: None,
             schema_stale: false,
             generation: 0,
+            stopped: false,
             layout_ids: Vec::new(),
             timestamps: Vec::new(),
             values: Vec::new(),
@@ -387,28 +392,47 @@ impl Store {
         })
     }
 
-    fn reserve(&mut self, bytes: u64) -> Result<(), String> {
+    /// Admit a write of at most `bytes`. Returns why a write does not fit.
+    fn admit(&mut self, bytes: u64) -> Result<Option<String>, String> {
         // Only directory blocks can change independently of our writes under the
         // service-owned root. Refresh them without rescanning finalized files.
         self.refresh_directory_blocks()?;
+        let bytes = bytes.saturating_add(EOS_RESERVE_BYTES);
         if self.used_bytes.saturating_add(bytes) > self.config.max_bytes {
-            return Err(format!(
-                "local storage quota cannot reserve batch: {} allocated + {bytes} reserve > {}",
+            return Ok(Some(format!(
+                "quota reached: {} allocated + {bytes} for the next write > {}",
                 self.used_bytes, self.config.max_bytes
-            ));
+            )));
         }
         if available_bytes(&self.config.root)? < bytes.saturating_add(FILESYSTEM_RESERVE_BYTES) {
-            return Err(
-                "local storage filesystem or tmpfs host-memory emergency reserve reached".into(),
-            );
+            return Ok(Some(
+                "filesystem or tmpfs host-memory emergency reserve reached".into(),
+            ));
         }
+        Ok(None)
+    }
+
+    /// Stop capturing: publish what was written and discard what does not fit.
+    fn stop(&mut self, reason: String) -> Result<(), String> {
+        let discarded: usize = self
+            .lanes
+            .iter()
+            .map(|lane| lane.rows.len() / lane.stride())
+            .sum();
+        for lane in &mut self.lanes {
+            lane.rows = Vec::new();
+        }
+        self.pending_bytes = 0;
+        self.pending_since = None;
+        self.stopped = true;
+        self.publish_stream()?;
+        warn!("Local storage stopped, {reason}; discarded {discarded} pending records");
         Ok(())
     }
 
     /// Open a stream that lists every lane with pending records or records in
     /// the previous stream. Other lanes are retired.
     fn open_stream(&mut self) -> Result<(), String> {
-        self.reserve(BATCH_RESERVE_BYTES)?;
         let previous = self.generation;
         self.lanes
             .retain(|lane| !lane.rows.is_empty() || lane.written == Some(previous));
@@ -426,6 +450,10 @@ impl Store {
             }
         }
         layouts.push(']');
+        let bound = layouts.len() as u64 + IPC_FRAMING_BYTES;
+        if let Some(reason) = self.admit(bound)? {
+            return self.stop(reason);
+        }
         let schema = codec::schema(layouts);
         let options = IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
@@ -467,7 +495,7 @@ impl Store {
         let mut writer = StreamWriter::try_new_with_options(
             CappedFile {
                 file: BufWriter::with_capacity(256 * 1024, file),
-                remaining: BATCH_RESERVE_BYTES,
+                remaining: bound,
                 bytes_written: 0,
             },
             &schema,
@@ -504,6 +532,9 @@ impl Store {
     }
 
     fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
+        if self.stopped {
+            return Ok(());
+        }
         let row_bytes = record.stats.len().saturating_add(1).saturating_mul(8);
         if self.pending_bytes.saturating_add(row_bytes) > BATCH_TARGET_BYTES {
             self.flush()?;
@@ -615,8 +646,10 @@ impl Store {
         }
         if self.active.is_none() {
             self.open_stream()?;
+            if self.stopped {
+                return Ok(());
+            }
         }
-        self.reserve(BATCH_RESERVE_BYTES)?;
         let (blocks, rows, values) = self.lanes.iter().filter(|lane| !lane.rows.is_empty()).fold(
             (0, 0, 0),
             |(blocks, rows, values), lane| {
@@ -625,6 +658,10 @@ impl Store {
                 (blocks + 1, rows + records, values + series)
             },
         );
+        let bound = batch_bound(blocks, rows, values);
+        if let Some(reason) = self.admit(bound)? {
+            return self.stop(reason);
+        }
         // Size the reused columns exactly; doubling could exceed one batch.
         // Blocks overwrite values in place, so only growth is zero-filled.
         self.layout_ids.clear();
@@ -673,7 +710,7 @@ impl Store {
             ],
         )
         .map_err(|e| e.to_string())?;
-        let allocated = active.write_synced(BATCH_RESERVE_BYTES, |writer| writer.write(&batch))?;
+        let allocated = active.write_synced(bound, |writer| writer.write(&batch))?;
         let rotate = active.writer.get_ref().bytes_written >= self.config.file_target_bytes;
         self.used_bytes = self.used_bytes.saturating_add(allocated);
         drop(batch);
@@ -760,6 +797,22 @@ fn transpose(rows: &[u64], stride: usize, block: &mut [u64]) {
     }
 }
 
+/// Upper bound of a batch's IPC encoding. Arrow keeps a buffer uncompressed
+/// when compression would not shrink it, adding an 8-byte length prefix and up
+/// to 7 bytes of padding to each of the 10 buffers (layout ids, list offsets,
+/// values and their validity bitmaps).
+fn batch_bound(blocks: usize, rows: usize, values: usize) -> u64 {
+    let validity = |len: usize| len.div_ceil(8);
+    let raw = 3 * validity(blocks)
+        + 4 * blocks
+        + 8 * (blocks + 1)
+        + validity(rows)
+        + 8 * rows
+        + validity(values)
+        + 8 * values;
+    raw as u64 + 10 * 15 + IPC_FRAMING_BYTES
+}
+
 fn list_offset(len: usize) -> Result<i32, String> {
     i32::try_from(len).map_err(|_| "batch exceeds list offset range".into())
 }
@@ -820,6 +873,9 @@ impl LocalStorageActor {
                                     self.store.add_record(record)?;
                                 }
                             }
+                        }
+                        if self.store.stopped {
+                            break;
                         }
                     }
                     self.store.finish_stream()
@@ -893,7 +949,7 @@ fn prepare_storage(config: &LocalStorageConfig) -> Result<File, String> {
             io::Error::last_os_error()
         ));
     }
-    // Reservation uses root's statvfs, and publication renames between these
+    // Admission uses root's statvfs, and publication renames between these
     // directories. Reject nested filesystems before writing any IPC data.
     let root_dev = fs::metadata(&config.root)
         .context("inspect", &config.root)?
@@ -1634,14 +1690,16 @@ mod tests {
         }
         let mut writer = store(temp.path());
         assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
-        writer.config.max_bytes = writer.used_bytes + BATCH_RESERVE_BYTES - 1;
+        writer.config.max_bytes = writer.used_bytes;
         writer
             .add_record(SAIStatsRef {
                 observation_time: 0,
                 stats: SAIStatsView::Owned(&[]),
             })
             .unwrap();
-        assert!(writer.flush().is_err());
+        writer.flush().unwrap();
+        assert!(writer.stopped);
+        assert_eq!(paths(temp.path(), ".staging").len(), 3);
         for (path, data) in files {
             assert_eq!(fs::read(temp.path().join(path)).unwrap(), data);
         }
@@ -1683,7 +1741,7 @@ mod tests {
         let parent = private_tempdir();
         let root = parent.path().join("capture");
         let mut config = config(&root);
-        config.max_bytes = BATCH_RESERVE_BYTES;
+        config.max_bytes = MIN_MAX_BYTES - 1;
         assert!(prepare_storage(&config).is_err());
         assert!(!root.exists());
         config.max_bytes = 128 * 1024 * 1024;
@@ -1759,7 +1817,7 @@ mod tests {
                 "{invalid}"
             );
         }
-        let needed = FILESYSTEM_RESERVE_BYTES + BATCH_RESERVE_BYTES;
+        let needed = FILESYSTEM_RESERVE_BYTES + BATCH_TARGET_BYTES as u64;
         for memory in [
             0,
             FILESYSTEM_RESERVE_BYTES,
@@ -1832,7 +1890,7 @@ mod tests {
     }
 
     #[test]
-    fn quota_stops_append_keeps_durable_prefix_and_never_overwrites_published() {
+    fn quota_stop_publishes_written_batches_and_never_overwrites_published() {
         let temp = private_tempdir();
         let mut store = store(temp.path());
         let stats = [stat("a", u64::MAX)];
@@ -1847,16 +1905,20 @@ mod tests {
         store.add_record(record).unwrap();
         store.flush().unwrap();
         store.add_record(record).unwrap();
-        store.config.max_bytes = store.used_bytes + BATCH_RESERVE_BYTES - 1;
-        assert!(store.flush().is_err());
+        store.config.max_bytes = store.used_bytes + EOS_RESERVE_BYTES;
+        // The next batch does not fit: capture stops and publishes the stream.
+        store.flush().unwrap();
+        assert!(store.stopped);
+        assert!(store.active.is_none() && store.pending_since.is_none());
+        store.add_record(record).unwrap();
+        assert!(store.pending_since.is_none());
         assert_eq!(fs::read(&first).unwrap(), bytes);
-        drop(store);
-        drop(prepare_storage(&config(temp.path())).unwrap());
+        assert!(store.used_bytes <= store.config.max_bytes);
+        assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
         let files = paths(temp.path(), "shards");
-        assert_eq!(files.len(), 1);
-        let partials = paths(temp.path(), ".staging");
-        assert_eq!(partials.len(), 1);
-        assert_eq!(decoded(&partials[0]).len(), 1);
+        assert_eq!(files.len(), 2);
+        assert_eq!(decoded(&files[1]).len(), 1);
+        assert!(paths(temp.path(), ".staging").is_empty());
         let collision = temp.path().join(".staging").join(format!(
             "{}.partial",
             first.file_name().unwrap().to_str().unwrap()
@@ -1865,6 +1927,46 @@ mod tests {
         assert!(publish(temp.path(), &collision).is_err());
         assert_eq!(fs::read(&first).unwrap(), bytes);
         assert!(collision.exists());
+    }
+
+    #[test]
+    fn quota_admits_by_encoded_size_and_fills_most_of_it() {
+        let temp = private_tempdir();
+        let mut store = store(temp.path());
+        let quota = 8 * 1024 * 1024;
+        store.config.max_bytes = store.used_bytes + quota;
+        let mut random = 0x1234_5678_9abc_def0u64;
+        let mut written = 0u64;
+        while !store.stopped {
+            // Incompressible values make batches as large as their raw bytes.
+            let stats: Vec<_> = (0..64)
+                .map(|_| {
+                    random ^= random << 13;
+                    random ^= random >> 7;
+                    random ^= random << 17;
+                    stat("a", random)
+                })
+                .collect();
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: written,
+                    stats: SAIStatsView::Owned(&stats),
+                })
+                .unwrap();
+            written += 1;
+        }
+        assert!(store.used_bytes <= store.config.max_bytes);
+        assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
+        // Less than one more full batch stays unused.
+        let unused = store.config.max_bytes - store.used_bytes;
+        let batch = batch_bound(1, MAX_ROWS, 64 * MAX_ROWS) + EOS_RESERVE_BYTES;
+        assert!(unused < batch, "unused={unused}");
+        let persisted: usize = paths(temp.path(), "shards")
+            .iter()
+            .map(|p| decoded(p).len())
+            .sum();
+        assert!(persisted > 0 && persisted % 64 == 0);
+        assert!(paths(temp.path(), ".staging").is_empty());
     }
 
     #[test]
@@ -2250,7 +2352,7 @@ mod tests {
         assert!(config.validate().is_err());
         config.file_target_bytes = 1;
         assert!(config.validate().is_ok());
-        config.max_bytes = BATCH_RESERVE_BYTES;
+        config.max_bytes = MIN_MAX_BYTES - 1;
         assert!(config.validate().is_err());
         let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
@@ -2345,13 +2447,13 @@ mod tests {
     }
 
     #[test]
-    fn actor_quota_failure_sets_status_and_disconnects_without_touching_archive() {
+    fn actor_quota_stop_disconnects_without_failure_or_touching_archive() {
         let temp = private_tempdir();
         let (sender, receiver) = channel(32);
         let status = LocalStorageStatus::default();
         let mut actor =
             LocalStorageActor::new(receiver, config(temp.path()), status.clone()).unwrap();
-        actor.store.config.max_bytes = actor.store.used_bytes + BATCH_RESERVE_BYTES - 1;
+        actor.store.config.max_bytes = actor.store.used_bytes;
         let mut batch = SAIStatsBatch::default();
         batch.push_record(42, [stat("a", 42)]);
         let batch = Arc::new(batch);
@@ -2368,7 +2470,7 @@ mod tests {
         actor.run();
         done_rx.recv_timeout(Duration::from_secs(3)).unwrap();
         producer.join().unwrap();
-        assert!(status.failed());
+        assert!(!status.failed());
         assert!(
             sender
                 .blocking_send(Arc::new(SAIStatsBatch::default()))

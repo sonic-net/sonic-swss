@@ -15,7 +15,7 @@ use tokio::{spawn, sync::mpsc::channel};
 
 // Internal actor implementations
 #[cfg(not(target_arch = "arm"))]
-use crate::actor::local_storage::{LocalStorageActor, LocalStorageConfig};
+use crate::actor::local_storage::{LocalStorageActor, LocalStorageConfig, MIN_MAX_BYTES};
 use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
@@ -334,12 +334,12 @@ struct Args {
     #[arg(long, default_value = "/tmp/hft")]
     local_storage_root: PathBuf,
 
-    /// Local storage quota in bytes; must exceed the 64 MiB batch reserve
+    /// Local storage quota in bytes, including directories; at least 32 MiB
     #[cfg(not(target_arch = "arm"))]
     #[arg(
         long,
         default_value = "134217728",
-        value_parser = clap::value_parser!(u64).range(67_108_865..)
+        value_parser = clap::value_parser!(u64).range(MIN_MAX_BYTES..)
     )]
     local_storage_max_bytes: u64,
 
@@ -853,8 +853,8 @@ mod tests {
         fn local_storage_quota_bounds() {
             for (quota, valid) in [
                 ("0", false),
-                ("67108864", false),
-                ("67108865", true),
+                ("33554431", false),
+                ("33554432", true),
                 ("18446744073709551615", true),
             ] {
                 assert_eq!(
