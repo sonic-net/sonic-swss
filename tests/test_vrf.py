@@ -784,6 +784,57 @@ class TestVrf(object):
             vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
             vxlan.remove_vlan(dvs, "192")
 
+    def test_VRFMgr_TunnelMapVniFieldRemovalWithdrawsDefaultVrfMap(self, dvs, testlog):
+        """An incomplete tunnel-map row must not retain a cached L3VNI dependency."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-map-field-remove"
+        nvo_name = "nvo-map-field-remove"
+        map_name = "map-field-remove"
+        vni = "5930"
+        vlan = "Vlan193"
+        config_key = "%s|%s" % (tunnel_name, map_name)
+        app_key = "%s:evpn_map_%s_default" % (tunnel_name, vni)
+        app_db = dvs.get_app_db()
+        config_db = dvs.get_config_db()
+
+        vxlan.create_vlan1(dvs, vlan)
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "18.18.18.18")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        vxlan.create_vxlan_tunnel_map(
+            dvs, tunnel_name, map_name, vni, vlan)
+
+        try:
+            self.create_entry_tbl(
+                self.cdb, "VRF", "default", [("vni", vni)])
+            app_db.wait_for_entry("VXLAN_VRF_TABLE", app_key)
+
+            config_db.delete_field(
+                "VXLAN_TUNNEL_MAP", config_key, "vni")
+            app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", app_key)
+            app_db.wait_for_field_match(
+                "VRF_TABLE", "default", {"vni": vni})
+
+            # Restoring the required field must rebuild the cached dependency
+            # and republish the mapping without replaying VRF configuration.
+            config_db.update_entry(
+                "VXLAN_TUNNEL_MAP", config_key, {"vni": vni})
+            app_db.wait_for_field_match(
+                "VXLAN_VRF_TABLE", app_key,
+                {"vni": vni, "vrf": "default"})
+            assert self.vrf_tunnel_map_types(vni) == sorted([
+                "SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI",
+                "SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID",
+            ])
+        finally:
+            self.delete_entry_tbl(self.cdb, "VRF", "default")
+            vxlan.remove_vxlan_tunnel_map(
+                dvs, tunnel_name, map_name, vni, vlan)
+            vxlan.remove_evpn_nvo(dvs, nvo_name)
+            vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+            vxlan.remove_vlan(dvs, "193")
+
     def test_VRFMgr_DefaultVrfL3VniWarmRestart(self, dvs, testlog):
         """Warm-restart SWSS without duplicating or losing the default mapping."""
         self.setup_db(dvs)

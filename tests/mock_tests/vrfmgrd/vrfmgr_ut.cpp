@@ -310,4 +310,38 @@ TEST_F(VrfMgrTest, TunnelMapEventOnlyReconcilesVrfUsingChangedVni)
     EXPECT_TRUE(app_vxlan_vrf.get(tenant_key, values));
 }
 
+TEST_F(VrfMgrTest, TunnelMapVniFieldRemovalWithdrawsCachedDependency)
+{
+    const string tunnel_name = "tunnel0";
+    const string map_name = "map5000";
+    const string config_key = tunnel_name + config_db_key_delimiter + map_name;
+    const string app_key = "tunnel0:evpn_map_5000_default";
+
+    addNvo(tunnel_name);
+    addTunnelMap(tunnel_name, map_name, "5000");
+    addDefaultVrf("5000");
+
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    ASSERT_TRUE(app_vxlan_vrf.get(app_key, values));
+
+    // GCU can remove one field while leaving the CONFIG_DB row present. A
+    // SET-style notification without vni must invalidate the cached mapping,
+    // rather than silently retaining the old VNI dependency.
+    Table config_tunnel_map(m_config_db.get(), CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    config_tunnel_map.hdel(config_key, "vni");
+    config_tunnel_map.hset(config_key, "vlan", "Vlan5000");
+
+    testing_db::resetOperationCounters();
+    process(CFG_VXLAN_TUNNEL_MAP_TABLE_NAME,
+            config_key, SET_COMMAND, {{"vlan", "Vlan5000"}});
+
+    EXPECT_EQ(testing_db::getTableGetKeysCount(CFG_VXLAN_TUNNEL_MAP_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getTableGetCount(CFG_VXLAN_TUNNEL_MAP_TABLE_NAME), 1u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_VRF_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 1u);
+    values.clear();
+    EXPECT_FALSE(app_vxlan_vrf.get(app_key, values));
+}
+
 } // namespace vrfmgr_ut
