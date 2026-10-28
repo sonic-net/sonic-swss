@@ -9,9 +9,12 @@
 
 #include <algorithm>
 #include <iostream>
+#include <iterator>
 #include <fstream>
 #include <sstream>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -124,27 +127,49 @@ bool TeamMgr::isMACsecAttached(const std::string &port)
     return true;
 }
 
+/* True if STATE_DB holds at least one MACSEC_INGRESS_SA_TABLE|<port>|<sci>|<an>
+ * row, i.e. an ingress SA is programmed for the port and it can decrypt what
+ * the partner sends. A rekey installs the new AN before the old one is removed,
+ * so this never drops to false during a healthy rekey. */
+bool TeamMgr::hasMACsecIngressSA(const std::string &port)
+{
+    vector<string> keys;
+    m_stateMACsecIngressSATable.getKeys(keys);
+
+    for (const auto &key : keys)
+    {
+        auto tokens = tokenize(key, state_db_key_delimiter);
+        if (!tokens.empty() && tokens[0] == port)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool TeamMgr::isMACsecIngressSAOk(const std::string &port)
 {
     SWSS_LOG_ENTER();
 
-    vector<string> keys;
-    m_stateMACsecIngressSATable.getKeys(keys);
-
-    for (auto key: keys)
+    if (hasMACsecIngressSA(port))
     {
-        auto tokens = tokenize(key, state_db_key_delimiter);
-        auto interface = tokens[0];
-
-        if (port == interface)
-        {
-            SWSS_LOG_NOTICE(" MACsec is ready on the port %s", port.c_str());
-            return true;
-        }
+        SWSS_LOG_NOTICE(" MACsec is ready on the port %s", port.c_str());
+        return true;
     }
 
     SWSS_LOG_INFO("MACsec is NOT ready on the port %s", port.c_str());
     return false;
+}
+
+void TeamMgr::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    /* Failed teamdctl pushes stay in the desired map with no matching
+     * pushed entry. Retry them on the existing one-second select timeout
+     * rather than waiting for another MACsec notification. */
+    retryMacsecMemberGates();
+    Orch::doTask();
 }
 
 void TeamMgr::doTask(Consumer &consumer)
@@ -166,6 +191,14 @@ void TeamMgr::doTask(Consumer &consumer)
     else if (table == STATE_PORT_TABLE_NAME)
     {
         doPortUpdateTask(consumer);
+    }
+    else if (table == STATE_MACSEC_INGRESS_SA_TABLE_NAME)
+    {
+        doMacsecIngressSaTask(consumer);
+    }
+    else if (table == STATE_MACSEC_PORT_TABLE_NAME)
+    {
+        doMacsecPortTask(consumer);
     }
 }
 
@@ -315,6 +348,10 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
 
                 m_lagList.insert(alias);
+                /* A MACsec or member event can arrive before the LAG is in
+                 * m_lagList; evaluate then no-ops and the task is dropped.
+                 * Re-evaluate now that teamd exists. */
+                evaluateMacsecMembersOfLag(alias);
             }
 
             setLagAdminStatus(alias, admin_status);
@@ -345,7 +382,14 @@ void TeamMgr::doLagTask(Consumer &consumer)
         {
             if (m_lagList.find(alias) != m_lagList.end())
             {
-                removeLag(alias);
+                /* Keep the LAG, its gate maps, and this task when teamd is
+                 * still running. A missing pid file means teamd is already
+                 * gone; removeLag clears the maps and returns true. */
+                if (!removeLag(alias))
+                {
+                    it++;
+                    continue;
+                }
                 m_lagList.erase(alias);
             }
         }
@@ -378,18 +422,39 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
             }
             if (isMACsecAttached(member) && !isMACsecIngressSAOk(member))
             {
+                if (isPortEnslaved(member))
+                {
+                    /* Already a teamd port (teammgrd came back while the
+                     * member's MACsec session was down): no SA is going to
+                     * release a deferred add, so hold the member out of the
+                     * distributor through the gate instead. */
+                    evaluateMacsecMemberGate(member);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
                 it++;
                 continue;
             }
-            if (addLagMember(lag, member) == task_need_retry)
+            task_process_status status = addLagMember(lag, member);
+            if (status == task_need_retry)
             {
                 it++;
                 continue;
             }
+            /* Already in teamd (warm start). addLagMember did not record
+             * fail-open, so the gate teamd holds is unknown. */
+            if (status == task_ignore && isPortEnslaved(member))
+            {
+                evaluateMacsecMemberGate(member);
+            }
         }
         else if (op == DEL_COMMAND)
         {
-            removeLagMember(lag, member);
+            if (!removeLagMember(lag, member))
+            {
+                it++;
+                continue;
+            }
         }
 
         it = consumer.m_toSync.erase(it);
@@ -477,15 +542,26 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             {
                 if (isMACsecAttached(alias) && !isMACsecIngressSAOk(alias))
                 {
+                    if (isPortEnslaved(alias))
+                    {
+                        evaluateMacsecMemberGate(alias);
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
                     it++;
                     SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
                     continue;
                 }
 
-                if (addLagMember(lag, alias) == task_need_retry)
+                task_process_status status = addLagMember(lag, alias);
+                if (status == task_need_retry)
                 {
                     it++;
                     continue;
+                }
+                if (status == task_ignore && isPortEnslaved(alias))
+                {
+                    evaluateMacsecMemberGate(alias);
                 }
             }
         }
@@ -783,27 +859,28 @@ bool TeamMgr::removeLag(const string &alias)
     SWSS_LOG_ENTER();
 
     pid_t pid;
+    ifstream pidfile("/var/run/teamd/" + alias + ".pid");
 
+    if (!pidfile.is_open())
     {
-        ifstream pidfile("/var/run/teamd/" + alias + ".pid");
-        if (pidfile.is_open())
-        {
-            pidfile >> pid;
-            SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Failed to remove non-existent port channel %s pid...", alias.c_str());
-            return false;
-        }
+        /* No teamd left to hold a macsec_gate. Drop the bookkeeping. */
+        SWSS_LOG_NOTICE("Port channel %s has no teamd pid; treating it as stopped", alias.c_str());
+        forgetMacsecLagGates(alias);
+        return true;
     }
+
+    pidfile >> pid;
+    SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
 
     if (kill(pid, SIGTERM))
     {
+        /* teamd is still running and still holds macsec_gate. Leave the
+         * maps and let the caller retain the delete. */
         SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, strerror(errno));
         return false;
     }
 
+    forgetMacsecLagGates(alias);
     SWSS_LOG_NOTICE("Stop port channel %s", alias.c_str());
 
     return true;
@@ -956,6 +1033,11 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
 
     SWSS_LOG_NOTICE("Add %s to port channel %s", member.c_str(), lag.c_str());
 
+    /* This process just created the teamd port. It starts fail-open, so
+     * record that instead of treating a later missing entry as unknown. */
+    m_macsecGatePushed[lag][member] = true;
+    resetMacsecGatePushAttempts(lag, member);
+
     return task_success;
 }
 
@@ -969,7 +1051,21 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
     string res;
 
     // teamdctl <port_channel_name> port remove <member>;
-    cmd << TEAMDCTL_CMD << " " << lag << " port remove " << member << "; ";
+    cmd << TEAMDCTL_CMD << " " << lag << " port remove " << member;
+    if (exec(cmd.str(), res) != 0)
+    {
+        /* Member is still in teamd, so keep the gate maps and let the
+         * caller retain the delete. */
+        SWSS_LOG_WARN("Failed to remove %s from port channel %s: %s",
+                      member.c_str(), lag.c_str(), res.c_str());
+        return false;
+    }
+
+    // The port has left the team and its macsec_gate went with it.
+    forgetMacsecMemberGate(lag, member);
+
+    cmd.str("");
+    cmd.clear();
 
     vector<FieldValueTuple> fvs;
     m_cfgPortTable.get(member, fvs);
@@ -1005,4 +1101,273 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
     SWSS_LOG_NOTICE("Remove %s from port channel %s", member.c_str(), lag.c_str());
 
     return true;
+}
+
+// Push a member's MACsec gate into the running teamd through its writable
+// ports.<member>.runner.macsec_gate state item. No teamd restart, no netdev
+// change, no link flap: teamd itself clears or sets the member's kernel enabled
+// bit and stops or resumes advertising IN_SYNC to the partner.
+bool TeamMgr::setLagMemberMacsecGate(const string &lag, const string &member, bool gate)
+{
+    SWSS_LOG_ENTER();
+
+    stringstream cmd;
+    string res;
+
+    // teamdctl <port_channel_name> state item set ports.<member>.runner.macsec_gate [true|false]
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " state item set "
+        << shellquote("ports." + member + ".runner.macsec_gate") << " "
+        << (gate ? "true" : "false");
+
+    if (exec(cmd.str(), res) != 0)
+    {
+        SWSS_LOG_WARN("Failed to set macsec_gate=%s on %s member %s: %s",
+                      gate ? "true" : "false", lag.c_str(), member.c_str(), res.c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("MACsec: member %s %s the %s distributor (macsec_gate %s)",
+                    member.c_str(), gate ? "returned to" : "pulled from",
+                    lag.c_str(), gate ? "true" : "false");
+    return true;
+}
+
+// Record the desired gate, then push it when it differs from what teamd last
+// accepted. A missing pushed entry is unknown: teamd may have survived a warm
+// restart with the gate closed, so already-enslaved members get one write.
+// Fail-open is recorded only in addLagMember(), after this process creates
+// the port. A failed push is retried from the one-second sweep until
+// MACSEC_GATE_MAX_PUSH_ATTEMPTS; a new evaluate resets that budget.
+void TeamMgr::applyMacsecMemberGate(const string &lag, const string &member, bool gate)
+{
+    m_macsecMemberGate[lag][member] = gate;
+
+    if (m_lagList.find(lag) == m_lagList.end())
+    {
+        return;
+    }
+
+    auto lagIt = m_macsecGatePushed.find(lag);
+    if (lagIt != m_macsecGatePushed.end())
+    {
+        auto memIt = lagIt->second.find(member);
+        if (memIt != lagIt->second.end() && memIt->second == gate)
+        {
+            resetMacsecGatePushAttempts(lag, member);
+            return;
+        }
+    }
+
+    int attempts = 0;
+    auto failLag = m_macsecGatePushAttempts.find(lag);
+    if (failLag != m_macsecGatePushAttempts.end())
+    {
+        auto failMem = failLag->second.find(member);
+        if (failMem != failLag->second.end())
+        {
+            attempts = failMem->second;
+        }
+    }
+    if (attempts >= MACSEC_GATE_MAX_PUSH_ATTEMPTS)
+    {
+        return;
+    }
+
+    if (!setLagMemberMacsecGate(lag, member, gate))
+    {
+        attempts++;
+        m_macsecGatePushAttempts[lag][member] = attempts;
+        if (attempts == MACSEC_GATE_MAX_PUSH_ATTEMPTS)
+        {
+            SWSS_LOG_ERROR("MACsec: stopped retrying macsec_gate=%s on %s member %s after %d failed pushes",
+                           gate ? "true" : "false", lag.c_str(), member.c_str(), attempts);
+        }
+        return;
+    }
+
+    m_macsecGatePushed[lag][member] = gate;
+    resetMacsecGatePushAttempts(lag, member);
+}
+
+/* Recompute one port's MACsec gate from CONFIG_DB and STATE_DB and push it.
+ * Closed iff MACsec is attached to the port and it has no ingress SA: MKA never
+ * came up, or it timed out and macsecorch tore the SAs down. Open otherwise,
+ * including once the MACsec profile has been removed from the port, so a
+ * member never stays pulled after MACsec is unconfigured. */
+void TeamMgr::evaluateMacsecMemberGate(const string &port)
+{
+    SWSS_LOG_ENTER();
+
+    string lag;
+    if (!findPortMaster(lag, port) || m_lagList.find(lag) == m_lagList.end() ||
+        !isPortEnslaved(port))
+    {
+        /* Not an enslaved member of a running PortChannel: nothing to gate.
+         * A member added later starts fail-open in teamd and, with MACsec
+         * attached, is only added once it has an ingress SA. Drop any stale
+         * bookkeeping so that add starts from a clean slate. */
+        forgetMacsecPortGates(port);
+        return;
+    }
+
+    /* A real evaluation is new information. The sweep calls apply directly
+     * and must not clear this, or a teamd without macsec_gate never stops. */
+    resetMacsecGatePushAttempts(lag, port);
+
+    const bool gate = !isMACsecAttached(port) || hasMACsecIngressSA(port);
+    if (!gate)
+    {
+        SWSS_LOG_INFO("MACsec: %s member %s has MACsec attached but no ingress SA, closing macsec_gate",
+                      lag.c_str(), port.c_str());
+    }
+    applyMacsecMemberGate(lag, port, gate);
+}
+
+// Drop the bookkeeping for a member that left the team, without touching teamd.
+void TeamMgr::forgetMacsecMemberGate(const string &lag, const string &member)
+{
+    auto eraseMember = [&](map<string, map<string, bool>> &cache) {
+        auto lagIt = cache.find(lag);
+        if (lagIt == cache.end())
+        {
+            return;
+        }
+        lagIt->second.erase(member);
+        if (lagIt->second.empty())
+        {
+            cache.erase(lagIt);
+        }
+    };
+    eraseMember(m_macsecMemberGate);
+    eraseMember(m_macsecGatePushed);
+    resetMacsecGatePushAttempts(lag, member);
+}
+
+void TeamMgr::forgetMacsecLagGates(const string &lag)
+{
+    m_macsecMemberGate.erase(lag);
+    m_macsecGatePushed.erase(lag);
+    m_macsecGatePushAttempts.erase(lag);
+}
+
+void TeamMgr::resetMacsecGatePushAttempts(const string &lag, const string &member)
+{
+    auto lagIt = m_macsecGatePushAttempts.find(lag);
+    if (lagIt == m_macsecGatePushAttempts.end())
+    {
+        return;
+    }
+    lagIt->second.erase(member);
+    if (lagIt->second.empty())
+    {
+        m_macsecGatePushAttempts.erase(lagIt);
+    }
+}
+
+void TeamMgr::forgetMacsecPortGates(const string &port)
+{
+    auto erasePort = [&](map<string, map<string, bool>> &cache) {
+        for (auto it = cache.begin(); it != cache.end();)
+        {
+            it->second.erase(port);
+            it = it->second.empty() ? cache.erase(it) : std::next(it);
+        }
+    };
+    erasePort(m_macsecMemberGate);
+    erasePort(m_macsecGatePushed);
+    for (auto it = m_macsecGatePushAttempts.begin(); it != m_macsecGatePushAttempts.end();)
+    {
+        it->second.erase(port);
+        it = it->second.empty() ? m_macsecGatePushAttempts.erase(it) : std::next(it);
+    }
+}
+
+void TeamMgr::evaluateMacsecMembersOfLag(const string &lag)
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> keys;
+    m_cfgLagMemberTable.getKeys(keys);
+    for (const auto &key : keys)
+    {
+        auto tokens = tokenize(key, config_db_key_delimiter);
+        if (tokens.size() >= 2 && tokens[0] == lag)
+        {
+            evaluateMacsecMemberGate(tokens[1]);
+        }
+    }
+}
+
+void TeamMgr::retryMacsecMemberGates()
+{
+    vector<pair<string, string>> outstanding;
+    for (const auto &lagIt : m_macsecMemberGate)
+    {
+        for (const auto &memIt : lagIt.second)
+        {
+            outstanding.emplace_back(lagIt.first, memIt.first);
+        }
+    }
+    for (const auto &entry : outstanding)
+    {
+        applyMacsecMemberGate(entry.first, entry.second,
+                              m_macsecMemberGate[entry.first][entry.second]);
+    }
+}
+
+/* STATE_DB MACSEC_INGRESS_SA_TABLE consumer. macsecorch writes one row per
+ * ingress SA (key <port>|<sci>|<an>) when it creates the SA and deletes it when
+ * the SA goes, including through the SC and port teardown cascades, so the
+ * table is the live picture of whether the port can decrypt what the partner
+ * sends. Any SET or DEL for a port re-evaluates that port's gate from the table
+ * as it stands now; the row that changed is not itself the answer. */
+void TeamMgr::doMacsecIngressSaTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    // Many SA rows per port: evaluate each port once per batch.
+    set<string> ports;
+    for (const auto &entry : consumer.m_toSync)
+    {
+        const string &key = kfvKey(entry.second);
+        auto tokens = tokenize(key, state_db_key_delimiter);
+        if (tokens.empty() || tokens[0].empty())
+        {
+            SWSS_LOG_ERROR("Ignoring malformed MACSEC_INGRESS_SA key '%s'", key.c_str());
+            continue;
+        }
+        ports.insert(tokens[0]);
+    }
+    consumer.m_toSync.clear();
+
+    for (const auto &port : ports)
+    {
+        evaluateMacsecMemberGate(port);
+    }
+}
+
+/* STATE_DB MACSEC_PORT_TABLE consumer (key <port>). SET: MACsec was just
+ * enabled on the port; the hardware drops cleartext until SAs exist, so an
+ * already-enslaved member is pulled until its first SA lands. DEL: MACsec was
+ * unconfigured; the SA deletes that preceded it may have closed the gate, and
+ * with no SA ever coming back only this event can release it. */
+void TeamMgr::doMacsecPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    set<string> ports;
+    for (const auto &entry : consumer.m_toSync)
+    {
+        const string &port = kfvKey(entry.second);
+        if (!port.empty())
+        {
+            ports.insert(port);
+        }
+    }
+    consumer.m_toSync.clear();
+
+    for (const auto &port : ports)
+    {
+        evaluateMacsecMemberGate(port);
+    }
 }
