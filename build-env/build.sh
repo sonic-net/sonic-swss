@@ -22,3 +22,4 @@ RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j"$(nproc)"
 cp ../*.deb .
 
 RUSTFLAGS=-Dwarnings cargo test
+RUSTFLAGS=-Dwarnings timeout --signal=TERM --kill-after=30s 300s cargo test --features local-storage-benchmark --bench local_storage_perf -- --self-check

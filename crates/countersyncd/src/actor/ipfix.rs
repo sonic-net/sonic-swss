@@ -1299,6 +1299,44 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc::channel;
 
+    #[tokio::test]
+    async fn recipient_backpressure_preserves_fanout_and_closed_receivers_unblock() {
+        for close in [false, true] {
+            let mut actor = actor();
+            let (sender, mut receiver) = channel(1);
+            sender
+                .send(Arc::new(SAIStatsBatch::default()))
+                .await
+                .unwrap();
+            actor.add_recipient(sender);
+            let (healthy_sender, mut healthy_receiver) = channel(1);
+            actor.add_recipient(healthy_sender);
+            let mut batch = SAIStatsBatch::default();
+            batch.push_record(42, [SAIStat::new("Ethernet0", 1, 2, u64::MAX)]);
+            let send = actor.send_batch(batch);
+            tokio::pin!(send);
+            assert!(tokio::time::timeout(Duration::from_millis(20), &mut send)
+                .await
+                .is_err());
+            let received = healthy_receiver.try_recv().unwrap();
+            assert_eq!(
+                received.iter().next().unwrap().stats.get(0).unwrap().counter,
+                u64::MAX
+            );
+            if close {
+                receiver.close();
+            } else {
+                receiver.try_recv().unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(1), &mut send)
+                .await
+                .unwrap();
+            if !close {
+                assert!(Arc::ptr_eq(&received, &receiver.try_recv().unwrap()));
+            }
+        }
+    }
+
     const MIXED_GROUPS: [(&str, u16, u32, &str); 4] = [
         ("PORT", 1, 1, "Ethernet0"),
         ("QUEUE", 2, 21, "Ethernet0:0"),

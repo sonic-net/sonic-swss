@@ -12,6 +12,8 @@ use std::time::Duration;
 use tokio::{spawn, sync::mpsc::channel};
 
 // Internal actor implementations
+#[cfg(not(target_arch = "arm"))]
+use crate::actor::local_storage::{LocalStorage, LocalStorageArgs};
 use crate::actor::{
     control_netlink::ControlNetlinkActor,
     counter_db::{CounterDBActor, CounterDBConfig},
@@ -90,6 +92,33 @@ struct SupervisorExit {
     actor_name: &'static str,
     exit_code: i32,
     message: String,
+}
+
+/// Below supervisord's default stopwaitsecs (10 s), after which it sends SIGKILL.
+#[cfg(not(target_arch = "arm"))]
+const LOCAL_STORAGE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// SIGINT and SIGTERM, handled only to drain local storage before exiting.
+struct ShutdownSignals {
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+impl ShutdownSignals {
+    fn install() -> std::io::Result<Self> {
+        use tokio::signal::unix::{signal, SignalKind};
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt())?,
+            terminate: signal(SignalKind::terminate())?,
+        })
+    }
+
+    async fn recv(&mut self) -> &'static str {
+        tokio::select! {
+            _ = self.interrupt.recv() => "SIGINT",
+            _ = self.terminate.recv() => "SIGTERM",
+        }
+    }
 }
 
 fn describe_join_error(e: tokio::task::JoinError) -> String {
@@ -183,6 +212,10 @@ fn clamp_batch_capacity(option: &str, capacity: usize) -> usize {
 /// - CounterDBActor: Writes processed statistics to the Counter Database in Redis
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
+#[cfg_attr(
+    target_arch = "arm",
+    command(after_help = "Local storage is not available on 32-bit ARM (armhf).")
+)]
 struct Args {
     /// Enable stats reporting to console
     #[arg(short, long, default_value = "false")]
@@ -313,6 +346,10 @@ struct Args {
         help = "Flush timeout (ms) for OTLP export batch"
     )]
     otel_flush_timeout_ms: u64,
+
+    #[cfg(not(target_arch = "arm"))]
+    #[command(flatten)]
+    local_storage: LocalStorageArgs,
 }
 
 impl Args {
@@ -321,6 +358,13 @@ impl Args {
             clamp_batch_capacity("--stats-reporter-capacity", self.stats_reporter_capacity);
         self.counter_db_capacity =
             clamp_batch_capacity("--counter-db-capacity", self.counter_db_capacity);
+        #[cfg(not(target_arch = "arm"))]
+        {
+            self.local_storage.local_storage_capacity = clamp_batch_capacity(
+                "--local-storage-capacity",
+                self.local_storage.local_storage_capacity,
+            );
+        }
     }
 }
 
@@ -495,6 +539,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
+    // Setup failure disables only this optional sink. Keep the sole sender in
+    // IPFIX so aborting that actor closes the queue and starts a graceful drain.
+    #[cfg(not(target_arch = "arm"))]
+    let local_storage = args.local_storage.enable_local_storage.then(|| {
+        let (storage, sender) = LocalStorage::new(
+            args.local_storage.config(),
+            args.local_storage.local_storage_capacity,
+        );
+        ipfix.add_recipient(sender);
+        storage
+    });
+
+    // Handle SIGINT/SIGTERM only to drain local storage; otherwise keep the
+    // default termination. Install after critical startup: synchronous
+    // initialization (notably SwssActor's Redis connection) can block indefinitely.
+    #[cfg(not(target_arch = "arm"))]
+    let drain_on_signal = local_storage.is_some();
+    #[cfg(target_arch = "arm")]
+    let drain_on_signal = false;
+    let mut signals = if drain_on_signal {
+        Some(ShutdownSignals::install()?)
+    } else {
+        None
+    };
+
     info!("Starting actor tasks...");
 
     // Spawn actor tasks
@@ -559,7 +628,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
 
-    // All actors are treated as critical. If any actor exits, abort the rest and terminate.
+    // Started last: its setup must not delay critical startup or the signal
+    // supervisor, even on a stalled mount.
+    #[cfg(not(target_arch = "arm"))]
+    let local_storage = local_storage.map(LocalStorage::spawn);
+
+    // Local storage is optional and intentionally outside the critical set.
     let first_exit = tokio::select! {
         res = &mut data_netlink_handle => {
             classify_join("Data netlink", res)
@@ -582,12 +656,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
             classify_otel_join("OpenTelemetry", res)
         }
+        signal = async { signals.as_mut().unwrap().recv().await }, if signals.is_some() => SupervisorExit {
+            actor_name: signal,
+            exit_code: 0,
+            message: "shutdown requested".to_string(),
+        },
     };
 
-    error!(
-        "Critical actor '{}' triggered daemon shutdown: {}",
-        first_exit.actor_name, first_exit.message
-    );
+    if first_exit.exit_code == 0 {
+        info!("{}: {}", first_exit.actor_name, first_exit.message);
+    } else {
+        error!(
+            "Critical actor '{}' triggered daemon shutdown: {}",
+            first_exit.actor_name, first_exit.message
+        );
+    }
 
     data_netlink_handle.abort();
     control_netlink_handle.abort();
@@ -604,6 +687,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         handle.abort();
     }
 
+    // IPFIX held the only storage sender, so its abort lets storage drain.
+    #[cfg(not(target_arch = "arm"))]
+    if let Some(local_storage) = local_storage {
+        local_storage.shutdown(LOCAL_STORAGE_DRAIN_TIMEOUT).await;
+    }
+
+    // Do not let a blocked filesystem operation hold Tokio runtime teardown open.
     std::process::exit(first_exit.exit_code);
 }
 
@@ -631,6 +721,198 @@ mod tests {
         assert!(!args.enable_stats);
         assert!(!args.enable_counter_db);
         assert!(!args.enable_otel);
+        #[cfg(not(target_arch = "arm"))]
+        assert!(!args.local_storage.enable_local_storage);
+    }
+
+    #[cfg(not(target_arch = "arm"))]
+    mod local_storage_tests {
+        use super::*;
+        use std::path::PathBuf;
+
+        #[test]
+        fn local_storage_is_opt_in() {
+            for enabled in [false, true] {
+                let argv = if enabled {
+                    vec!["countersyncd", "--enable-local-storage"]
+                } else {
+                    vec!["countersyncd"]
+                };
+                let args = parse(&argv).unwrap().local_storage;
+                assert_eq!(args.enable_local_storage, enabled);
+                assert_eq!(args.local_storage_root, PathBuf::from("/tmp/hft"));
+                assert_eq!(args.local_storage_max_bytes, 128 * 1024 * 1024);
+                assert_eq!(args.local_storage_file_bytes, 100_000_000);
+                assert_eq!(args.local_storage_file_seconds, 1800);
+                assert_eq!(args.local_storage_capacity, 32);
+                assert_eq!(args.local_storage_threads, 1);
+                assert_eq!(args.config().threads, 1);
+            }
+        }
+
+        #[test]
+        fn local_storage_threads_are_bounded() {
+            for (threads, valid) in [("0", false), ("1", true), ("64", true), ("65", false)] {
+                let result = parse(&["countersyncd", "--local-storage-threads", threads]);
+                assert_eq!(result.is_ok(), valid, "threads={threads}");
+            }
+        }
+
+        #[test]
+        fn local_storage_capacity_is_positive_and_clamped() {
+            assert!(parse(&["countersyncd", "--local-storage-capacity", "0"]).is_err());
+            for (capacity, expected) in [("1", 1), ("64", 64), ("65", 64), ("1024", 64)] {
+                let mut args =
+                    parse(&["countersyncd", "--local-storage-capacity", capacity]).unwrap();
+                args.normalize_capacities();
+                assert_eq!(args.local_storage.local_storage_capacity, expected);
+            }
+        }
+
+        #[test]
+        fn local_storage_explicit_options() {
+            let args = parse(&[
+                "countersyncd",
+                "--enable-local-storage",
+                "--local-storage-root",
+                "/mnt/dut capture",
+                "--local-storage-max-bytes",
+                "2400000000",
+                "--local-storage-file-bytes",
+                "2000000",
+                "--local-storage-file-seconds",
+                "60",
+                "--local-storage-threads",
+                "3",
+            ])
+            .unwrap()
+            .local_storage;
+            assert!(args.enable_local_storage);
+            assert_eq!(args.local_storage_root, PathBuf::from("/mnt/dut capture"));
+            assert_eq!(args.local_storage_max_bytes, 2_400_000_000);
+            assert_eq!(args.local_storage_file_bytes, 2_000_000);
+            assert_eq!(args.local_storage_file_seconds, 60);
+            assert_eq!(args.local_storage_threads, 3);
+            assert_eq!(args.config().threads, 3);
+        }
+
+        #[test]
+        fn removed_local_storage_filesystem_options_are_unknown() {
+            use clap::CommandFactory;
+            let short_help = Args::command().render_help().to_string();
+            let long_help = Args::command().render_long_help().to_string();
+            for option in [
+                "--local-storage-allow-shared-filesystem",
+                "--local-storage-require-dedicated-filesystem",
+            ] {
+                for enabled in [false, true] {
+                    let mut argv = vec!["countersyncd"];
+                    if enabled {
+                        argv.push("--enable-local-storage");
+                    }
+                    argv.push(option);
+                    assert_eq!(
+                        parse(&argv).err().unwrap().kind(),
+                        clap::error::ErrorKind::UnknownArgument,
+                        "{option}, enabled={enabled}"
+                    );
+                }
+                assert!(!short_help.contains(option));
+                assert!(!long_help.contains(option));
+            }
+        }
+
+        #[test]
+        fn local_storage_parsing_does_not_create_root() {
+            let parent = tempfile::tempdir().unwrap();
+            let root = parent.path().join("capture");
+            for enabled in [false, true] {
+                let mut argv = vec![
+                    "countersyncd",
+                    "--local-storage-root",
+                    root.to_str().unwrap(),
+                ];
+                if enabled {
+                    argv.push("--enable-local-storage");
+                }
+                assert_eq!(
+                    parse(&argv).unwrap().local_storage.enable_local_storage,
+                    enabled
+                );
+                assert!(!root.exists());
+            }
+        }
+
+        #[test]
+        fn local_storage_quota_bounds() {
+            for (quota, valid) in [
+                ("0", false),
+                ("33554431", false),
+                ("33554432", true),
+                ("18446744073709551615", true),
+            ] {
+                assert_eq!(
+                    parse(&[
+                        "countersyncd",
+                        "--enable-local-storage",
+                        "--local-storage-max-bytes",
+                        quota,
+                    ])
+                    .is_ok(),
+                    valid,
+                    "quota={quota}"
+                );
+            }
+        }
+
+        #[test]
+        fn local_storage_rotation_bounds() {
+            for option in ["--local-storage-file-bytes", "--local-storage-file-seconds"] {
+                for (value, valid) in [
+                    ("0", false),
+                    ("-1", false),
+                    ("invalid", false),
+                    ("1", true),
+                    ("18446744073709551615", true),
+                    ("18446744073709551616", false),
+                ] {
+                    let result = parse(&["countersyncd", option, value]);
+                    assert_eq!(result.is_ok(), valid, "{option}={value}");
+                    if let Ok(args) = result {
+                        assert!(!args.local_storage.enable_local_storage);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_arch = "arm")]
+    #[test]
+    fn local_storage_is_unavailable_on_armhf() {
+        use clap::CommandFactory;
+
+        let short_help = Args::command().render_help().to_string();
+        let long_help = Args::command().render_long_help().to_string();
+        for help in [&short_help, &long_help] {
+            assert!(help.contains("Local storage is not available on 32-bit ARM (armhf)."));
+            assert!(!help.contains("--enable-local-storage"));
+            assert!(!help.contains("--local-storage-"));
+        }
+        for option in [
+            "--enable-local-storage",
+            "--local-storage-root",
+            "--local-storage-max-bytes",
+            "--local-storage-file-bytes",
+            "--local-storage-file-seconds",
+            "--local-storage-capacity",
+            "--local-storage-threads",
+        ] {
+            assert_eq!(
+                parse(&["countersyncd", option]).err().unwrap().kind(),
+                clap::error::ErrorKind::UnknownArgument,
+                "{option}"
+            );
+        }
     }
 
     #[test]
