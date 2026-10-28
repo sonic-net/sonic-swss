@@ -198,16 +198,20 @@ fn filesystem_magics_preserve_signed_32_bit_patterns() {
 #[test]
 fn sampler_drop_stops_and_joins_before_cancelling_deadline() {
     let deadline = HardDeadline::new(Duration::from_secs(60));
-    let (stop, rx) = mpsc::channel();
-    let (finished, done) = mpsc::channel();
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let (finished_tx, finished_rx) = mpsc::channel();
     let handle = thread::spawn(move || {
-        rx.recv().unwrap();
-        finished.send(()).unwrap();
+        stop_rx.recv().unwrap();
+        finished_tx.send(()).unwrap();
     });
-    drop(SamplerGuard::new(deadline, stop, handle));
-    // Drop must have joined, not merely sent the stop signal.
-    assert_eq!(done.try_recv(), Ok(()));
-    assert_eq!(done.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+    drop(SamplerGuard::new(deadline, stop_tx, handle));
+    // Drop must have joined, not merely sent the stop signal: the worker has
+    // already reported completion and exited, dropping its sender.
+    assert_eq!(finished_rx.try_recv(), Ok(()));
+    assert_eq!(
+        finished_rx.try_recv(),
+        Err(mpsc::TryRecvError::Disconnected)
+    );
 }
 
 #[test]
