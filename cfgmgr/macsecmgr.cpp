@@ -5,6 +5,7 @@
 #include <swss/stringutility.h>
 #include <swss/redisutility.h>
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/algorithm/string/replace.hpp>
 
 #include <signal.h>
 #include <unistd.h>
@@ -295,20 +296,12 @@ static void wpa_cli_commands(std::ostringstream & ostream)
 template<typename T, typename...Args>
 static void wpa_cli_commands(
     std::ostringstream & ostream,
-    T && t,
-    Args && ... args)
+    const T & t,
+    const Args & ... args)
 {
-    ostream << " " << t;
-    wpa_cli_commands(ostream, args...);
-}
-
-template<typename...Args>
-static void wpa_cli_commands(
-    std::ostringstream & ostream,
-    const std::string & t,
-    Args && ... args)
-{
-    ostream << shellquote(t) << " ";
+    std::ostringstream argument;
+    argument << t;
+    ostream << " '" << boost::replace_all_copy(argument.str(), "'", "'\\''") << "'";
     wpa_cli_commands(ostream, args...);
 }
 
@@ -1853,21 +1846,18 @@ bool MACsecMgr::reconcileParticipant(
                              "selected participant removal is unverified");
 
         MKASessionStatus postRemoveStatus;
-        if (collectMKAStatus(port_name, session, &postRemoveStatus))
-        {
-            if (findParticipant(postRemoveStatus, oldCkn) != nullptr)
-            {
-                setConfigState(port_name, session, "selected participant removal is not yet verified");
-                return false;
-            }
-            if (session.pending_old_ckn.empty())
-            {
-                return true;
-            }
-        }
-        else if (!removeAccepted)
+        if (!collectMKAStatus(port_name, session, &postRemoveStatus))
         {
             return false;
+        }
+        if (findParticipant(postRemoveStatus, oldCkn) != nullptr)
+        {
+            setConfigState(port_name, session, "selected participant removal is not yet verified");
+            return false;
+        }
+        if (session.pending_old_ckn.empty())
+        {
+            return true;
         }
     }
 

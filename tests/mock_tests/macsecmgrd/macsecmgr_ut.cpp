@@ -23,6 +23,8 @@
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);
 extern std::vector<std::string> mockCallArgs;
+extern "C" FILE *__real_popen(const char *command, const char *mode);
+extern "C" int __real_pclose(FILE *pipe);
 
 std::map<FILE *, int> wpaPipeStatuses;
 size_t wpaProcessCount = 0;
@@ -261,6 +263,42 @@ string commandPort(const string &cmd)
     return commandValue(cmd, "IFNAME=");
 }
 
+vector<string> shellArguments(const string &command)
+{
+    const string executable = "/sbin/wpa_cli";
+    const auto start = command.find(executable);
+    if (start == string::npos)
+    {
+        ADD_FAILURE() << "Not a WPA command";
+        return {};
+    }
+    // Exercise the real shell without executing WPA or printing the arguments.
+    const auto probe = "set -- " + command.substr(start + executable.size()) +
+        "; printf '%s\\000' \"$@\"";
+    FILE *pipe = __real_popen(probe.c_str(), "r");
+    if (pipe == nullptr)
+    {
+        ADD_FAILURE() << "Cannot start argument probe";
+        return {};
+    }
+    vector<string> arguments;
+    string argument;
+    for (int c; (c = fgetc(pipe)) != EOF;)
+    {
+        if (c == 0)
+        {
+            arguments.push_back(argument);
+            argument.clear();
+        }
+        else
+        {
+            argument += static_cast<char>(c);
+        }
+    }
+    EXPECT_EQ(0, __real_pclose(pipe));
+    return arguments;
+}
+
 int commandCallback(const string &cmd, string &output)
 {
     mockCallArgs.push_back(cmd);
@@ -430,8 +468,8 @@ int commandCallback(const string &cmd, string &output)
     if (cmd.find("set_network") != string::npos &&
         cmd.find("mka_ckn") != string::npos)
     {
-        const auto end = cmd.find_last_not_of(" \"");
-        const auto start = cmd.find_last_of(" \"", end);
+        const auto end = cmd.find_last_not_of(" \"'");
+        const auto start = cmd.find_last_of(" \"'", end);
         const auto ckn = cmd.substr(start + 1, end - start);
         if (cmd.find("mka_ckn_fallback") != string::npos)
         {
@@ -801,6 +839,88 @@ TEST_F(MACsecMgrTest, DebugAndErrorDiagnosticsNeverEchoKeys)
     const auto consumer = dynamic_cast<Consumer *>(executor(CFG_MACSEC_PROFILE_TABLE_NAME));
     ASSERT_NE(nullptr, consumer);
     EXPECT_FALSE(consumer->isRecordable());
+}
+
+TEST_F(MACsecMgrTest, WpaArgumentsSurviveShellAcrossAllOperations)
+{
+    const string port = "Ethernet0 '\"\\$()";
+    const string sock = "/var/run/a b'\"\\$`printf x`";
+    for (const size_t keyLength : {32u, 64u})
+    {
+        string plainKey = " \t'\"\\$(`printf x`);|&<>*\n";
+        plainKey.resize(keyLength - 1, 'a');
+        plainKey += '\\';
+        auto configured = profile();
+        configured.primary_cak = encodeTestCak(99, plainKey);
+        configured.fallback_cak = configured.primary_cak;
+        MACsecMgr::MKASession runtime;
+        runtime.sock = sock;
+        runtime.network_id = "0";
+        configured.cipher_suite = keyLength == 32 ?
+            MACsecMgr::MACsecProfile::GCM_AES_128 : MACsecMgr::MACsecProfile::GCM_AES_256;
+        mockCallArgs.clear();
+
+        ASSERT_TRUE(manager->configureMACsec(port, runtime, configured));
+        ASSERT_TRUE(manager->updateNetworkParticipant(port, runtime, configured, true));
+        ASSERT_TRUE(manager->updateNetworkParticipant(port, runtime, configured, false));
+        ASSERT_TRUE(manager->addParticipant(port, runtime, configured, true));
+        ASSERT_TRUE(manager->addParticipant(port, runtime, configured, false));
+        ASSERT_TRUE(manager->removeParticipant(port, runtime, PRIMARY_CKN));
+        MKASessionStatus status;
+        string error;
+        ASSERT_TRUE(manager->queryMKAStatus(port, runtime, status, error));
+        ASSERT_TRUE(manager->unconfigureMACsec(port, runtime));
+        ASSERT_TRUE(manager->terminateWPASupplicant(sock));
+        size_t keyWrites = 0;
+        for (const auto &command : mockCallArgs)
+        {
+            const auto arguments = shellArguments(command);
+            ASSERT_GE(arguments.size(), 3u);
+            EXPECT_EQ("-g", arguments[0]);
+            EXPECT_EQ(sock, arguments[1]);
+            if (arguments[2] == "interface_add")
+            {
+                EXPECT_EQ((vector<string>{"-g", sock, "interface_add", port,
+                    "/etc/wpa_supplicant.conf", "macsec_sonic"}), arguments);
+            }
+            else if (arguments[2] == "interface_remove")
+            {
+                EXPECT_EQ((vector<string>{"-g", sock, "interface_remove", port}), arguments);
+            }
+            else if (arguments[2] == "terminate")
+            {
+                EXPECT_EQ((vector<string>{"-g", sock, "terminate"}), arguments);
+            }
+            else
+            {
+                EXPECT_EQ("IFNAME=" + port, arguments[2]);
+                ASSERT_GE(arguments.size(), 4u);
+                if (arguments[3] == "set_network")
+                {
+                    ASSERT_EQ(7u, arguments.size());
+                    EXPECT_EQ("0", arguments[4]);
+                    if (arguments[5] == "mka_cak" || arguments[5] == "mka_cak_fallback")
+                    {
+                        EXPECT_EQ(plainKey, arguments[6]);
+                        ++keyWrites;
+                    }
+                }
+                else if (arguments[3] == "macsec_add_mka")
+                {
+                    ASSERT_GE(arguments.size(), 6u);
+                    EXPECT_EQ("ckn=" + (arguments.size() == 7 ? FALLBACK_CKN : PRIMARY_CKN),
+                        arguments[4]);
+                    EXPECT_EQ("cak=" + plainKey, arguments[5]);
+                    if (arguments.size() == 7)
+                    {
+                        EXPECT_EQ("fallback=1", arguments[6]);
+                    }
+                    ++keyWrites;
+                }
+            }
+        }
+        EXPECT_EQ(6u, keyWrites);
+    }
 }
 
 TEST_F(MACsecMgrTest, MissingProfileConsumerFailsStartupWithLoggedError)
@@ -1804,6 +1924,53 @@ TEST_F(MACsecMgrTest, AmbiguousRemoveWaitsForStatusThenAddsWithoutRemovingAgain)
     string status;
     ASSERT_TRUE(getField(sessionTable, "Ethernet0", "config_status", status));
     EXPECT_EQ("in-sync", status);
+}
+
+TEST_F(MACsecMgrTest, AcceptedRemoveWaitsForFreshAbsenceBeforeNetworkUpdateOrAdd)
+{
+    for (const bool primary : {true, false})
+    {
+        for (const bool malformed : {false, true})
+        {
+            auto &runtime = session();
+            commandState = CommandState();
+            mockCallArgs.clear();
+            if (malformed)
+            {
+                commandState.queryRepliesByPort["Ethernet0"][2] = "Authenticated=No\n";
+            }
+            else
+            {
+                commandState.failedQueriesByPort["Ethernet0"].insert(2);
+            }
+            auto desired = profile(primary ? NEW_PRIMARY_CKN : PRIMARY_CKN);
+            if (!primary)
+            {
+                desired.fallback_ckn = NEW_FALLBACK_CKN;
+            }
+            manager->m_profiles["profile"] = desired;
+            EXPECT_FALSE(manager->reconcilePort("Ethernet0", runtime, desired));
+            EXPECT_EQ(primary ? PRIMARY_CKN : FALLBACK_CKN, runtime.pending_old_ckn);
+            EXPECT_FALSE(runtime.status_published);
+            EXPECT_EQ(0, commandState.addCalls);
+            EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &command) {
+                return command.find("set_network") != string::npos;
+            }));
+
+            commandState.failQuery = true;
+            EXPECT_FALSE(manager->reconcilePort("Ethernet0", runtime, desired));
+            EXPECT_EQ(0, commandState.addCalls);
+            commandState.failQuery = false;
+            EXPECT_TRUE(manager->reconcilePort("Ethernet0", runtime, desired));
+            EXPECT_EQ(1, commandState.addCalls);
+            EXPECT_EQ(1, count_if(mockCallArgs.begin(), mockCallArgs.end(), [](const string &command) {
+                return command.find("macsec_del_mka") != string::npos;
+            }));
+            EXPECT_TRUE(runtime.pending_old_ckn.empty());
+            EXPECT_EQ(desired.primary_ckn, runtime.applied_profile.primary_ckn);
+            EXPECT_EQ(desired.fallback_ckn, runtime.applied_profile.fallback_ckn);
+        }
+    }
 }
 
 TEST_F(MACsecMgrTest, FallbackRolloverKeepsPrimaryAndAddsBestEffort)
