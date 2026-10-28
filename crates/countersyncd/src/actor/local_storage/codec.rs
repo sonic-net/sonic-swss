@@ -1,11 +1,14 @@
-//! Standard Arrow IPC: one row per block, two non-null List<UInt64> fields.
-//! T = timestamps_ns[0].len(), C = schema metadata `series` JSON array length.
-//! values[0][c*T+t] is the raw value for ordered series c at timestamp t.
-//! Names occur only in `series`, including duplicate tuples.
+//! Standard Arrow IPC: each row is one block of a layout, in three non-null
+//! fields `layout: UInt32`, `timestamps_ns: List<UInt64>` and
+//! `values: List<UInt64>`. Schema metadata `layouts` is a JSON array whose
+//! element l is the ordered series array of layout l. With T = len(timestamps_ns)
+//! and C = len(layouts[layout]), values[c*T+t] is the raw value of series c at
+//! timestamp t. Names occur only in `layouts`, including duplicate tuples.
 //! All integers are exact, timestamps are nanoseconds, and there is no app delta.
-use super::{BATCH_TARGET_BYTES, MAX_RECORD_BYTES, MAX_ROWS};
-use crate::message::saistats::{SAIStatsRef, SAIStatsView};
-use arrow_array::{Array, ArrayRef, Int32Array, ListArray, RecordBatch, UInt64Array};
+use super::{MAX_RECORD_BYTES, MAX_ROWS};
+use crate::message::saistats::SAIStatsView;
+use arrow_array::{Array, ArrayRef, ListArray, RecordBatch, UInt32Array, UInt64Array};
+use arrow_buffer::{OffsetBuffer, ScalarBuffer};
 use arrow_ipc::{MessageHeader, reader::StreamReader};
 use arrow_schema::{ArrowError, DataType, Field, Schema, SchemaRef};
 use serde::{Deserialize, Serialize};
@@ -17,8 +20,9 @@ use std::{
     sync::Arc,
 };
 
-const MAX_SCHEMA_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const MAX_SCHEMA_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const MAX_COUNTERS: usize = 65_536;
+pub(super) const MAX_LAYOUTS: usize = 65_536;
 pub(super) const MAX_ENCODED_BATCH_BYTES: u64 = (MAX_RECORD_BYTES as u64) * 2 + 64 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize)]
@@ -29,31 +33,45 @@ struct Series {
     stat_name: Arc<str>,
 }
 
-/// Wrap an owned primitive buffer without copying its values. ArrayData's builder
-/// lets us use standard list offsets without adding an arrow-buffer dependency.
-pub(super) fn list(array: UInt64Array) -> ArrayRef {
-    let offsets = Int32Array::from(vec![0, i32::try_from(array.len()).expect("bounded list")]);
-    let child = array.to_data();
-    let data = child
-        .clone()
-        .into_builder()
-        .data_type(DataType::List(Arc::new(Field::new(
-            "item",
-            DataType::UInt64,
-            false,
-        ))))
-        .len(1)
-        .buffers(vec![offsets.values().inner().clone()])
-        .child_data(vec![child])
-        .build()
-        .expect("valid non-null list");
-    Arc::new(ListArray::from(data))
+fn item() -> Arc<Field> {
+    Arc::new(Field::new("item", DataType::UInt64, false))
 }
 
-/// One raw observation in original record/stat order. Names are shared per file.
+fn fields() -> [Field; 3] {
+    [
+        Field::new("layout", DataType::UInt32, false),
+        Field::new("timestamps_ns", DataType::List(item()), false),
+        Field::new("values", DataType::List(item()), false),
+    ]
+}
+
+/// The stream schema; only the `layouts` JSON array differs between files.
+pub(super) fn schema(layouts: String) -> SchemaRef {
+    Arc::new(Schema::new_with_metadata(
+        fields().to_vec(),
+        HashMap::from([
+            ("timestamp_unit".into(), "ns".into()),
+            ("matrix_order".into(), "series-major".into()),
+            ("layouts".into(), layouts),
+        ]),
+    ))
+}
+
+/// Wrap an owned buffer as a list column without copying its values.
+pub(super) fn list(values: UInt64Array, offsets: Vec<i32>) -> ArrayRef {
+    Arc::new(ListArray::new(
+        item(),
+        OffsetBuffer::new(ScalarBuffer::from(offsets)),
+        Arc::new(values),
+        None,
+    ))
+}
+
+/// One raw observation in block order. Names are shared per file.
 #[allow(dead_code)] // The daemon writes; library clients also read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedSample {
+    pub layout: u32,
     pub stat_index: u32,
     pub object_name: Arc<str>,
     pub type_name: Arc<str>,
@@ -63,20 +81,24 @@ pub struct DecodedSample {
 }
 
 pub(super) struct Layout {
-    // Only the current layout is retained. No per-metric hashing or name allocation
-    // occurs on the stable-layout path; even duplicate identities retain position.
+    // Compared without hashing or allocating names; duplicate identities keep
+    // their position.
     identities: Vec<(Arc<str>, u32, u32)>,
-    pub schema: SchemaRef,
-    pub batch_rows: usize,
+    /// The ordered JSON series array embedded in each file's `layouts`.
+    pub json: String,
 }
 
 impl Layout {
-    pub fn matches(&self, record: SAIStatsRef<'_>) -> bool {
-        self.identities.len() == record.stats.len()
+    pub fn width(&self) -> usize {
+        self.identities.len()
+    }
+
+    pub fn matches(&self, stats: SAIStatsView<'_>) -> bool {
+        self.identities.len() == stats.len()
             && self
                 .identities
                 .iter()
-                .zip(record.stats)
+                .zip(stats)
                 .all(|((name, ty, id), stat)| {
                     *ty == stat.type_id
                         && *id == stat.stat_id
@@ -88,12 +110,6 @@ impl Layout {
         if stats.len() > MAX_COUNTERS {
             return Err("record exceeds 65536 counter limit".into());
         }
-        let row_bytes = stats
-            .len()
-            .checked_add(1)
-            .and_then(|n| n.checked_mul(8))
-            .filter(|&n| n <= MAX_RECORD_BYTES)
-            .ok_or("record exceeds 128 MiB raw limit")?;
         // Reject oversized source names before allocating the metadata. Then count
         // actual JSON bytes (including escaping), not a per-counter estimate.
         let names_bytes = stats
@@ -134,121 +150,200 @@ impl Layout {
         serde_json::to_writer(&mut size, &series).map_err(|e| e.to_string())?;
         let mut json = Vec::with_capacity(size.0);
         serde_json::to_writer(&mut json, &series).map_err(|e| e.to_string())?;
-        let fields = ["timestamps_ns", "values"].map(|name| {
-            Field::new(
-                name,
-                DataType::List(Arc::new(Field::new("item", DataType::UInt64, false))),
-                false,
-            )
-        });
         Ok(Self {
             identities,
-            schema: Arc::new(Schema::new_with_metadata(
-                fields.to_vec(),
-                HashMap::from([
-                    ("timestamp_unit".into(), "ns".into()),
-                    ("matrix_order".into(), "series-major".into()),
-                    (
-                        "series".into(),
-                        String::from_utf8(json).map_err(|e| e.to_string())?,
-                    ),
-                ]),
-            )),
-            batch_rows: (BATCH_TARGET_BYTES / row_bytes).clamp(1, MAX_ROWS),
+            json: String::from_utf8(json).map_err(|e| e.to_string())?,
         })
     }
 }
 
-fn validate_schema(schema: &Schema) -> Result<Vec<Series>, String> {
+fn validate_schema(schema: &Schema) -> Result<Vec<Vec<Series>>, String> {
     if schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
         || schema.metadata().get("matrix_order").map(String::as_str) != Some("series-major")
-        || schema.fields().len() != 2
     {
         return Err("invalid Arrow storage schema".into());
     }
-    for (field, name) in schema.fields().iter().zip(["timestamps_ns", "values"]) {
-        if field.name() != name
-            || field.is_nullable()
-            || !field.metadata().is_empty()
-            || !matches!(field.data_type(), DataType::List(child)
-                if child.data_type() == &DataType::UInt64 && !child.is_nullable()
-                    && child.metadata().is_empty())
-        {
-            return Err("expected two non-null List<UInt64> fields".into());
-        }
+    let expected = fields();
+    if schema.fields().len() != expected.len()
+        || schema
+            .fields()
+            .iter()
+            .zip(&expected)
+            .any(|(field, expected)| {
+                field.name() != expected.name()
+                    || field.is_nullable()
+                    || !field.metadata().is_empty()
+                    || match (field.data_type(), expected.data_type()) {
+                        (DataType::List(child), DataType::List(_)) => {
+                            child.data_type() != &DataType::UInt64
+                                || child.is_nullable()
+                                || !child.metadata().is_empty()
+                        }
+                        (actual, expected) => actual != expected,
+                    }
+            })
+    {
+        return Err("invalid Arrow storage fields".into());
     }
     let json = schema
         .metadata()
-        .get("series")
-        .ok_or("missing series metadata")?;
+        .get("layouts")
+        .ok_or("missing layouts metadata")?;
     if json.len() > MAX_SCHEMA_BYTES {
-        return Err("series metadata exceeds 16 MiB".into());
+        return Err("layouts metadata exceeds 16 MiB".into());
     }
-    // Bound element count before allocating named series, including malformed JSON
-    // with millions of tiny entries.
-    struct SeriesCount;
-    impl<'de> serde::de::Visitor<'de> for SeriesCount {
-        type Value = ();
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("an ordered series array")
-        }
-        fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
-            let mut count = 0;
-            while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
-                count += 1;
-                if count > MAX_COUNTERS {
-                    return Err(serde::de::Error::custom(
-                        "series exceeds 65536 counter limit",
-                    ));
-                }
-            }
-            Ok(())
-        }
-    }
+    // Bound element counts before allocating named series, including malformed
+    // JSON with millions of tiny entries.
     serde::Deserializer::deserialize_seq(
         &mut serde_json::Deserializer::from_str(json),
-        SeriesCount,
+        LayoutsCount,
     )
     .map_err(|e| e.to_string())?;
     serde_json::from_str(json).map_err(|e| e.to_string())
 }
 
-fn validate_batch(batch: &RecordBatch, counters: usize) -> Result<[&UInt64Array; 2], String> {
-    if batch.num_rows() != 1 || batch.num_columns() != 2 {
-        return Err("invalid batch dimensions or null values".into());
+struct LayoutsCount;
+
+impl<'de> serde::de::Visitor<'de> for LayoutsCount {
+    type Value = ();
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an array of series arrays")
     }
-    let mut arrays = Vec::with_capacity(2);
-    for column in batch.columns() {
-        let list = column
-            .as_any()
-            .downcast_ref::<ListArray>()
-            .ok_or("invalid list type")?;
-        let values = list
-            .values()
-            .as_any()
-            .downcast_ref::<UInt64Array>()
-            .ok_or("invalid child type")?;
-        if list.null_count() != 0
-            || values.null_count() != 0
-            || list.value_offsets() != [0, i32::try_from(values.len()).map_err(|e| e.to_string())?]
-        {
-            return Err("invalid list offsets or nulls".into());
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        let mut count = 0;
+        while seq.next_element_seed(SeriesCount)?.is_some() {
+            count += 1;
+            if count > MAX_LAYOUTS {
+                return Err(serde::de::Error::custom("layouts exceed 65536 limit"));
+            }
         }
-        arrays.push(values);
+        Ok(())
     }
-    let rows = arrays[0].len();
-    if rows == 0
-        || rows > MAX_ROWS
-        || rows.checked_mul(counters) != Some(arrays[1].len())
-        || counters
-            .checked_add(1)
-            .and_then(|n| n.checked_mul(rows))
-            .and_then(|n| n.checked_mul(8))
-            .is_none_or(|n| n > MAX_RECORD_BYTES)
+}
+
+struct SeriesCount;
+
+impl<'de> serde::de::DeserializeSeed<'de> for SeriesCount {
+    type Value = ();
+    fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> serde::de::Visitor<'de> for SeriesCount {
+    type Value = ();
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("an ordered series array")
+    }
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        let mut count = 0;
+        while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+            count += 1;
+            if count > MAX_COUNTERS {
+                return Err(serde::de::Error::custom(
+                    "series exceeds 65536 counter limit",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// One decoded row: T timestamps and C*T series-major values of one layout.
+struct Block<'a> {
+    layout: usize,
+    timestamps: &'a [u64],
+    values: &'a [u64],
+}
+
+fn validate_batch<'a>(
+    batch: &'a RecordBatch,
+    layouts: &[Vec<Series>],
+) -> Result<Vec<Block<'a>>, String> {
+    let rows = batch.num_rows();
+    if rows == 0 || batch.num_columns() != 3 {
+        return Err("invalid batch dimensions".into());
+    }
+    let ids = batch
+        .column(0)
+        .as_any()
+        .downcast_ref::<UInt32Array>()
+        .ok_or("invalid layout column")?;
+    if ids.null_count() != 0 {
+        return Err("invalid layout nulls".into());
+    }
+    let (time_offsets, times) = list_values(batch.column(1))?;
+    let (value_offsets, values) = list_values(batch.column(2))?;
+    let mut raw = 0usize;
+    let mut blocks = Vec::with_capacity(rows);
+    for row in 0..rows {
+        let layout = ids.value(row) as usize;
+        let width = layouts.get(layout).ok_or("invalid layout index")?.len();
+        let timestamps = row_values(time_offsets, times, row)?;
+        let values = row_values(value_offsets, values, row)?;
+        if timestamps.is_empty()
+            || timestamps.len() > MAX_ROWS
+            || timestamps.len().checked_mul(width) != Some(values.len())
+        {
+            return Err("invalid block dimensions".into());
+        }
+        raw = raw.saturating_add(timestamps.len() + values.len());
+        blocks.push(Block {
+            layout,
+            timestamps,
+            values,
+        });
+    }
+    if raw
+        .checked_mul(8)
+        .is_none_or(|bytes| bytes > MAX_RECORD_BYTES)
     {
-        return Err("invalid matrix dimensions or raw byte limit".into());
+        return Err("batch exceeds the raw byte limit".into());
     }
-    Ok([arrays[0], arrays[1]])
+    Ok(blocks)
+}
+
+fn list_values(column: &ArrayRef) -> Result<(&[i32], &[u64]), String> {
+    let list = column
+        .as_any()
+        .downcast_ref::<ListArray>()
+        .ok_or("invalid list type")?;
+    let values = list
+        .values()
+        .as_any()
+        .downcast_ref::<UInt64Array>()
+        .ok_or("invalid child type")?;
+    let offsets = list.value_offsets();
+    // Rows cover the child values exactly, from the first value to the last.
+    if list.null_count() != 0
+        || values.null_count() != 0
+        || offsets.first() != Some(&0)
+        || offsets.last().and_then(|&end| usize::try_from(end).ok()) != Some(values.len())
+    {
+        return Err("invalid list offsets or nulls".into());
+    }
+    Ok((offsets, values.values()))
+}
+
+fn row_values<'a>(offsets: &[i32], values: &'a [u64], row: usize) -> Result<&'a [u64], String> {
+    let start = usize::try_from(offsets[row]).map_err(|e| e.to_string())?;
+    let end = usize::try_from(offsets[row + 1]).map_err(|e| e.to_string())?;
+    values
+        .get(start..end)
+        .ok_or_else(|| "invalid list offsets".into())
+}
+
+/// Reuse an array's allocation once Arrow has released every other reference.
+/// The contents are kept; callers clear or overwrite them.
+pub(super) fn reclaim<T: arrow_array::ArrowPrimitiveType>(
+    array: arrow_array::PrimitiveArray<T>,
+) -> Vec<T::Native> {
+    array
+        .into_parts()
+        .1
+        .into_inner()
+        .into_vec()
+        .unwrap_or_default()
 }
 
 pub(super) struct Counted<R> {
@@ -272,7 +367,6 @@ fn complete_message(
     len: u64,
     position: u64,
     schema: bool,
-    counters: usize,
 ) -> Result<bool, ArrowError> {
     file.seek(SeekFrom::Start(position))?;
     let mut word = [0; 4];
@@ -316,47 +410,44 @@ fn complete_message(
             .ok_or_else(|| ArrowError::IpcError("expected IPC record batch".into()))?;
         let nodes = batch
             .nodes()
-            .ok_or_else(|| ArrowError::IpcError("missing matrix nodes".into()))?;
+            .ok_or_else(|| ArrowError::IpcError("missing block nodes".into()))?;
         let buffers = batch
             .buffers()
-            .ok_or_else(|| ArrowError::IpcError("missing matrix buffers".into()))?;
-        if batch.length() != 1 || nodes.len() != 4 || buffers.len() != 8 {
+            .ok_or_else(|| ArrowError::IpcError("missing block buffers".into()))?;
+        if nodes.len() != 5 || buffers.len() != 10 {
             return Err(ArrowError::IpcError("invalid IPC batch dimensions".into()));
         }
-        let rows = usize::try_from(nodes.get(1).length()).unwrap_or(usize::MAX);
+        // Nodes: layout, timestamps list and child, values list and child.
+        let length = |node: usize| usize::try_from(nodes.get(node).length()).unwrap_or(usize::MAX);
+        let (rows, times, values) = (length(0), length(2), length(4));
         if rows == 0
-            || rows > MAX_ROWS
-            || counters
-                .checked_add(1)
-                .and_then(|n| n.checked_mul(rows))
+            || rows > MAX_LAYOUTS
+            || usize::try_from(batch.length()).ok() != Some(rows)
+            || length(1) != rows
+            || length(3) != rows
+            || nodes.iter().any(|node| node.null_count() != 0)
+            || times
+                .checked_add(values)
                 .and_then(|n| n.checked_mul(8))
                 .is_none_or(|n| n > MAX_RECORD_BYTES)
-            || nodes.iter().enumerate().any(|(i, n)| {
-                n.null_count() != 0
-                    || usize::try_from(n.length()).ok()
-                        != Some(match i {
-                            0 | 2 => 1,
-                            1 => rows,
-                            _ => counters * rows,
-                        })
-            })
         {
             return Err(ArrowError::IpcError(
-                "invalid IPC matrix nodes/raw byte limit".into(),
+                "invalid IPC block nodes/raw byte limit".into(),
             ));
         }
-        // The raw cap covers u64 data, not Arrow's validity bitmaps or offsets.
-        // Budget each buffer from the validated nodes: at most 128 MiB of data,
-        // ceil(T/8) + ceil(C*T/8) child validity bytes, two one-byte list validity
-        // buffers and 16 offset bytes. Slack cannot fund an oversized bitmap.
-        let values = counters * rows;
+        // The raw cap covers u64 data, not Arrow's validity bitmaps, layout ids or
+        // offsets. Budget each buffer from the validated nodes, so slack in one
+        // cannot fund an oversized bitmap in another.
+        let offsets = (rows + 1) * 4;
         let raw_limits = [
-            1,
-            8,
             rows.div_ceil(8),
-            rows * 8,
-            1,
-            8,
+            rows * 4,
+            rows.div_ceil(8),
+            offsets,
+            times.div_ceil(8),
+            times * 8,
+            rows.div_ceil(8),
+            offsets,
             values.div_ceil(8),
             values * 8,
         ];
@@ -410,8 +501,11 @@ pub(super) fn scan(path: &Path) -> Result<Recovery, String> {
     let len = probe.metadata().map_err(|e| e.to_string())?.len();
     let input = File::open(path).map_err(|e| e.to_string())?;
     let mut records = 0;
-    let boundary = scan_readers(probe, input, len, |_, arrays| {
-        records += arrays[0].len() as u64;
+    let boundary = scan_readers(probe, input, len, |_, blocks| {
+        records += blocks
+            .iter()
+            .map(|b| b.timestamps.len() as u64)
+            .sum::<u64>();
         Ok(())
     })?;
     Ok(Recovery { boundary, records })
@@ -434,9 +528,9 @@ fn scan_readers(
     mut probe: impl Read + Seek,
     input: impl Read,
     len: u64,
-    mut visit: impl FnMut(&[Series], [&UInt64Array; 2]) -> Result<(), String>,
+    mut visit: impl FnMut(&[Vec<Series>], &[Block<'_>]) -> Result<(), String>,
 ) -> Result<u64, String> {
-    let complete = match complete_message(&mut probe, len, 0, true, 0) {
+    let complete = match complete_message(&mut probe, len, 0, true) {
         Ok(complete) => complete,
         Err(ArrowError::IoError(_, error)) if error.kind() == io::ErrorKind::UnexpectedEof => false,
         Err(error) => return Err(error.to_string()),
@@ -449,10 +543,10 @@ fn scan_readers(
         position: 0,
     };
     let mut reader = StreamReader::try_new(input, None).map_err(|e| e.to_string())?;
-    let names = validate_schema(&reader.schema())?;
+    let layouts = validate_schema(&reader.schema())?;
     let mut boundary = reader.get_ref().position;
     loop {
-        match complete_message(&mut probe, len, boundary, false, names.len()) {
+        match complete_message(&mut probe, len, boundary, false) {
             Ok(true) => (),
             Ok(false) => break,
             Err(reason) => {
@@ -465,11 +559,11 @@ fn scan_readers(
         }
         match reader.next() {
             Some(Ok(batch)) => {
-                let arrays = match validate_batch(&batch, names.len()) {
-                    Ok(arrays) => arrays,
+                let blocks = match validate_batch(&batch, &layouts) {
+                    Ok(blocks) => blocks,
                     Err(_) => break,
                 };
-                visit(&names, arrays)?;
+                visit(&layouts, &blocks)?;
                 boundary = reader.get_ref().position;
             }
             Some(Err(reason)) if operational_io_error(&reason) => return Err(reason.to_string()),
@@ -479,9 +573,10 @@ fn scan_readers(
     Ok(boundary)
 }
 
-/// Read raw samples in record/stat order, stopping at an incomplete/invalid tail.
-/// Never modifies the file. Operational I/O and visitor errors are returned.
-/// Empty records emit no samples; standard Arrow StreamReader exposes their lists.
+/// Read raw samples block by block, in record/stat order within each block,
+/// stopping at an incomplete/invalid tail. Never modifies the file.
+/// Operational I/O and visitor errors are returned. Empty records emit no
+/// samples; standard Arrow StreamReader exposes their timestamps.
 #[allow(dead_code)]
 pub fn read_shard(
     path: &Path,
@@ -490,26 +585,29 @@ pub fn read_shard(
     let input = File::open(path).map_err(|e| e.to_string())?;
     let len = input.metadata().map_err(|e| e.to_string())?.len();
     let probe = File::open(path).map_err(|e| e.to_string())?;
-    scan_readers(probe, input, len, |names, columns| {
-        let rows = columns[0].len();
-        for row in 0..rows {
-            for (
-                i,
-                Series {
-                    object_name,
-                    type_name,
-                    stat_name,
-                },
-            ) in names.iter().enumerate()
-            {
-                visit(DecodedSample {
-                    stat_index: i as u32,
-                    object_name: Arc::clone(object_name),
-                    type_name: Arc::clone(type_name),
-                    stat_name: Arc::clone(stat_name),
-                    observation_time: columns[0].value(row),
-                    value: columns[1].value(i * rows + row),
-                })?;
+    scan_readers(probe, input, len, |layouts, blocks| {
+        for block in blocks {
+            let rows = block.timestamps.len();
+            for (row, &observation_time) in block.timestamps.iter().enumerate() {
+                for (
+                    i,
+                    Series {
+                        object_name,
+                        type_name,
+                        stat_name,
+                    },
+                ) in layouts[block.layout].iter().enumerate()
+                {
+                    visit(DecodedSample {
+                        layout: block.layout as u32,
+                        stat_index: i as u32,
+                        object_name: Arc::clone(object_name),
+                        type_name: Arc::clone(type_name),
+                        stat_name: Arc::clone(stat_name),
+                        observation_time,
+                        value: block.values[i * rows + row],
+                    })?;
+                }
             }
         }
         Ok(())
@@ -517,10 +615,45 @@ pub fn read_shard(
     Ok(())
 }
 
+/// A schema whose layouts are built from the given records.
+#[cfg(test)]
+pub(super) fn test_schema(layouts: &[&[crate::message::saistats::SAIStat]]) -> SchemaRef {
+    let layouts: Vec<_> = layouts
+        .iter()
+        .map(|stats| Layout::new(SAIStatsView::Owned(stats)).unwrap().json)
+        .collect();
+    schema(format!("[{}]", layouts.join(",")))
+}
+
+/// A batch of `(layout, timestamps, series-major values)` blocks.
+#[cfg(test)]
+pub(super) fn test_batch(schema: &SchemaRef, blocks: &[(u32, &[u64], &[u64])]) -> RecordBatch {
+    let mut ids = Vec::new();
+    let (mut times, mut values) = (Vec::new(), Vec::new());
+    let (mut time_offsets, mut value_offsets) = (vec![0], vec![0]);
+    for (layout, block_times, block_values) in blocks {
+        ids.push(*layout);
+        times.extend_from_slice(block_times);
+        values.extend_from_slice(block_values);
+        time_offsets.push(times.len() as i32);
+        value_offsets.push(values.len() as i32);
+    }
+    RecordBatch::try_new(
+        Arc::clone(schema),
+        vec![
+            Arc::new(UInt32Array::from(ids)),
+            list(times.into(), time_offsets),
+            list(values.into(), value_offsets),
+        ],
+    )
+    .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::message::saistats::SAIStat;
+    use arrow_array::types::UInt64Type;
     use arrow_ipc::writer::StreamWriter;
 
     struct ReadFailure {
@@ -548,21 +681,23 @@ mod tests {
         }
     }
 
+    fn compressed_writer(schema: &SchemaRef) -> StreamWriter<Vec<u8>> {
+        use arrow_ipc::{CompressionType, writer::IpcWriteOptions};
+        let options = IpcWriteOptions::default()
+            .try_with_compression(Some(CompressionType::ZSTD))
+            .unwrap();
+        StreamWriter::try_new_with_options(Vec::new(), schema, options).unwrap()
+    }
+
     #[test]
     fn reader_io_errors_abort_scan_without_modifying_partial() {
-        let layout = Layout::new(SAIStatsView::Owned(&[])).unwrap();
-        let mut writer = StreamWriter::try_new(Vec::new(), &layout.schema).unwrap();
+        let schema = test_schema(&[&[]]);
+        let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
         let mut boundaries = Vec::new();
         for _ in 0..2 {
-            let batch = RecordBatch::try_new(
-                Arc::clone(&layout.schema),
-                vec![
-                    list(UInt64Array::from(vec![u64::MAX])),
-                    list(UInt64Array::from(Vec::<u64>::new())),
-                ],
-            )
-            .unwrap();
-            writer.write(&batch).unwrap();
+            writer
+                .write(&test_batch(&schema, &[(0, &[u64::MAX], &[])]))
+                .unwrap();
             boundaries.push(writer.get_ref().len() as u64);
         }
         writer.finish().unwrap();
@@ -623,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn series_metadata_limits_use_actual_json_bytes_and_explicit_counter_limit() {
+    fn layouts_metadata_limits_use_actual_json_bytes_and_explicit_counter_limit() {
         let stats = vec![SAIStat::new("", 1, 0, 0); MAX_COUNTERS + 1];
         assert!(
             Layout::new(SAIStatsView::Owned(&stats))
@@ -631,28 +766,28 @@ mod tests {
                 .unwrap()
                 .contains("65536")
         );
+        // The file's `layouts` array adds two brackets around a single layout.
         let empty = Layout::new(SAIStatsView::Owned(&stats[..1])).unwrap();
-        let overhead = empty.schema.metadata()["series"].len();
-        let name = "x".repeat(MAX_SCHEMA_BYTES - overhead);
+        let name = "x".repeat(MAX_SCHEMA_BYTES - empty.json.len() - 2);
         let layout =
             Layout::new(SAIStatsView::Owned(&[SAIStat::new(name.as_str(), 1, 0, 0)])).unwrap();
-        assert_eq!(layout.schema.metadata()["series"].len(), MAX_SCHEMA_BYTES);
+        let layouts = schema(format!("[{}]", layout.json));
+        assert_eq!(layouts.metadata()["layouts"].len(), MAX_SCHEMA_BYTES);
         assert_eq!(
-            validate_schema(&layout.schema).unwrap()[0]
+            validate_schema(&layouts).unwrap()[0][0]
                 .object_name
                 .as_ref(),
             name
         );
-        drop(layout);
-        assert!(
-            Layout::new(SAIStatsView::Owned(&[SAIStat::new(
-                format!("{name}x").as_str(),
-                1,
-                0,
-                0
-            )]))
-            .is_err()
-        );
+        let longer = format!("{name}x");
+        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new(
+            longer.as_str(),
+            1,
+            0,
+            0,
+        )]))
+        .unwrap();
+        assert!(validate_schema(&schema(format!("[{}]", layout.json))).is_err());
         // JSON escaping, rather than source string size, controls admission.
         let escaped = "\0".repeat(MAX_SCHEMA_BYTES / 6 + 1);
         assert!(
@@ -667,32 +802,17 @@ mod tests {
     }
 
     #[test]
-    fn foreign_three_field_stream_is_rejected_and_unchanged() {
-        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
-        let metadata = layout.schema.metadata().clone();
-        let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
-        fields.insert(
-            1,
-            Arc::new(Field::new(
-                "record_seq",
-                fields[0].data_type().clone(),
-                false,
-            )),
-        );
-        let schema = Schema::new_with_metadata(fields, metadata);
+    fn foreign_stream_fields_are_rejected_and_unchanged() {
+        let valid = test_schema(&[&[SAIStat::new("a", 1, 0, 0)]]);
+        let fields: Vec<_> = ["timestamps_ns", "record_seq", "values"]
+            .into_iter()
+            .map(|name| Field::new(name, DataType::List(item()), false))
+            .collect();
+        let schema = Arc::new(Schema::new_with_metadata(fields, valid.metadata().clone()));
         let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
+        let column = || list(vec![42].into(), vec![0, 1]);
         writer
-            .write(
-                &RecordBatch::try_new(
-                    Arc::new(schema),
-                    vec![
-                        list(vec![42].into()),
-                        list(vec![0].into()),
-                        list(vec![u64::MAX].into()),
-                    ],
-                )
-                .unwrap(),
-            )
+            .write(&RecordBatch::try_new(schema, vec![column(), column(), column()]).unwrap())
             .unwrap();
         writer.finish().unwrap();
         let bytes = writer.into_inner().unwrap();
@@ -701,17 +821,17 @@ mod tests {
         std::fs::write(&path, &bytes).unwrap();
         assert_eq!(
             read_shard(&path, |_| panic!("a foreign schema must not emit samples")),
-            Err("invalid Arrow storage schema".into())
+            Err("invalid Arrow storage fields".into())
         );
         assert_eq!(std::fs::read(path).unwrap(), bytes);
     }
 
     #[test]
-    fn rejects_nullable_fields_extra_fields_and_invalid_series() {
-        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
-        assert!(validate_schema(&layout.schema).is_ok());
-        for (column, nullable_child) in [(0, false), (1, false), (0, true), (1, true)] {
-            let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
+    fn rejects_nullable_fields_extra_fields_and_invalid_layouts() {
+        let valid = test_schema(&[&[SAIStat::new("a", 1, 0, 0)]]);
+        assert!(validate_schema(&valid).is_ok());
+        for (column, nullable_child) in [(0, false), (1, false), (2, false), (1, true), (2, true)] {
+            let mut fields: Vec<_> = valid.fields().iter().cloned().collect();
             let field = fields[column].as_ref().clone();
             fields[column] = Arc::new(if nullable_child {
                 let DataType::List(child) = field.data_type() else {
@@ -723,26 +843,32 @@ mod tests {
             } else {
                 field.with_nullable(true)
             });
-            let schema = Schema::new_with_metadata(fields, layout.schema.metadata().clone());
+            let schema = Schema::new_with_metadata(fields, valid.metadata().clone());
             assert_eq!(
                 validate_schema(&schema).err().unwrap(),
-                "expected two non-null List<UInt64> fields",
+                "invalid Arrow storage fields",
                 "column={column}, nullable_child={nullable_child}",
             );
         }
+        let mut fields: Vec<_> = valid.fields().iter().cloned().collect();
+        fields.swap(1, 2);
+        assert!(
+            validate_schema(&Schema::new_with_metadata(fields, valid.metadata().clone())).is_err()
+        );
         for (key, value) in [
             ("matrix_order", "time-major"),
             ("timestamp_unit", "ms"),
-            ("series", "{}"),
-            ("series", "[{}]"),
+            ("layouts", "{}"),
+            ("layouts", "[{}]"),
+            ("layouts", "[[{}]]"),
             (
-                "series",
-                r#"[{"object_name":"a","type_name":"b","stat_name":"c","stat_index":0}]"#,
+                "layouts",
+                r#"[[{"object_name":"a","type_name":"b","stat_name":"c","stat_index":0}]]"#,
             ),
         ] {
-            let mut metadata = layout.schema.metadata().clone();
+            let mut metadata = valid.metadata().clone();
             metadata.insert(key.into(), value.into());
-            let schema = Schema::new_with_metadata(layout.schema.fields().clone(), metadata);
+            let schema = Schema::new_with_metadata(valid.fields().clone(), metadata);
             assert!(validate_schema(&schema).is_err(), "{key}={value}");
             let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
             writer.finish().unwrap();
@@ -757,100 +883,116 @@ mod tests {
                 .is_err()
             );
         }
-        let mut fields: Vec<_> = layout.schema.fields().iter().cloned().collect();
+        let mut fields: Vec<_> = valid.fields().iter().cloned().collect();
         fields.push(Arc::new(Field::new("extra", DataType::UInt64, false)));
         assert!(
-            validate_schema(&Schema::new_with_metadata(
-                fields,
-                layout.schema.metadata().clone()
-            ))
-            .is_err()
+            validate_schema(&Schema::new_with_metadata(fields, valid.metadata().clone())).is_err()
         );
-        let mut metadata = layout.schema.metadata().clone();
-        metadata.insert(
-            "series".into(),
-            format!("[{}null]", "null,".repeat(MAX_COUNTERS)),
-        );
-        assert!(
-            validate_schema(&Schema::new_with_metadata(
-                layout.schema.fields().clone(),
-                metadata
-            ))
-            .err()
-            .unwrap()
-            .contains("65536")
-        );
+        for (layouts, limit) in [
+            (
+                format!("[[{}null]]", "null,".repeat(MAX_COUNTERS)),
+                "65536 counter",
+            ),
+            (format!("[{}[]]", "[],".repeat(MAX_LAYOUTS)), "65536 limit"),
+        ] {
+            let mut metadata = valid.metadata().clone();
+            metadata.insert("layouts".into(), layouts);
+            assert!(
+                validate_schema(&Schema::new_with_metadata(valid.fields().clone(), metadata))
+                    .err()
+                    .unwrap()
+                    .contains(limit)
+            );
+        }
     }
 
     #[test]
-    fn matrix_validation_checks_dimensions_offsets_and_nulls() {
-        let layout = Layout::new(SAIStatsView::Owned(&[SAIStat::new("a", 1, 0, 0)])).unwrap();
-        for (times, values) in [
-            (vec![], vec![]),
-            (vec![1, 2], vec![3]),
-            (vec![1], vec![3, 4]),
+    fn block_validation_checks_layouts_dimensions_offsets_and_nulls() {
+        let schema = test_schema(&[
+            &[SAIStat::new("a", 1, 0, 0)],
+            &[SAIStat::new("a", 1, 0, 0), SAIStat::new("b", 1, 0, 0)],
+        ]);
+        let layouts = validate_schema(&schema).unwrap();
+        let batch = test_batch(&schema, &[(1, &[2, 3], &[1, 2, 3, 4]), (0, &[1], &[5])]);
+        let blocks = validate_batch(&batch, &layouts).unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(
+            (blocks[0].layout, blocks[0].timestamps, blocks[0].values),
+            (1, &[2, 3][..], &[1, 2, 3, 4][..])
+        );
+        assert_eq!(
+            (blocks[1].layout, blocks[1].timestamps, blocks[1].values),
+            (0, &[1][..], &[5][..])
+        );
+        let too_many_rows = vec![0; MAX_ROWS + 1];
+        for blocks in [
+            &[][..],
+            &[(0, &[][..], &[][..])][..],
+            &[(0, &[1, 2][..], &[3][..])][..],
+            &[(0, &[1][..], &[3, 4][..])][..],
+            &[(1, &[1][..], &[3][..])][..],
+            &[(2, &[1][..], &[3][..])][..],
+            &[(0, &too_many_rows[..], &too_many_rows[..])][..],
         ] {
-            let batch = RecordBatch::try_new(
-                Arc::clone(&layout.schema),
-                vec![list(times.into()), list(values.into())],
-            )
-            .unwrap();
-            assert!(validate_batch(&batch, 1).is_err());
+            let batch = test_batch(&schema, blocks);
+            assert!(validate_batch(&batch, &layouts).is_err(), "{blocks:?}");
         }
-        let offsets = Int32Array::from(vec![1, 2]);
-        let data = list(vec![1, 2].into())
-            .to_data()
-            .into_builder()
-            .buffers(vec![offsets.values().inner().clone()])
-            .build()
-            .unwrap();
-        let batch = RecordBatch::try_new(
-            Arc::clone(&layout.schema),
-            vec![Arc::new(ListArray::from(data)), list(vec![3].into())],
-        )
-        .unwrap();
-        assert!(validate_batch(&batch, 1).is_err());
-        use arrow_array::types::UInt64Type;
-        for column in [
-            ListArray::from_iter_primitive::<UInt64Type, _, _>([None::<Vec<Option<u64>>>]),
-            ListArray::from_iter_primitive::<UInt64Type, _, _>([Some(vec![None])]),
+        // Rows must cover the child values exactly.
+        let batch = test_batch(&schema, &[(0, &[1], &[3])]);
+        let shifted = list(vec![1, 2].into(), vec![1, 2]);
+        let columns = vec![
+            Arc::clone(batch.column(0)),
+            shifted,
+            Arc::clone(batch.column(2)),
+        ];
+        let batch = RecordBatch::try_new(Arc::clone(&schema), columns).unwrap();
+        assert!(validate_batch(&batch, &layouts).is_err());
+        for [layout, timestamps, values] in [
+            [
+                Arc::new(UInt32Array::from(vec![None])) as ArrayRef,
+                list(vec![1].into(), vec![0, 1]),
+                list(vec![3].into(), vec![0, 1]),
+            ],
+            [
+                Arc::new(UInt32Array::from(vec![0])) as ArrayRef,
+                Arc::new(ListArray::from_iter_primitive::<UInt64Type, _, _>([
+                    None::<Vec<Option<u64>>>,
+                ])),
+                list(vec![3].into(), vec![0, 1]),
+            ],
+            [
+                Arc::new(UInt32Array::from(vec![0])) as ArrayRef,
+                list(vec![1].into(), vec![0, 1]),
+                Arc::new(ListArray::from_iter_primitive::<UInt64Type, _, _>([Some(
+                    vec![None],
+                )])),
+            ],
         ] {
-            let batch = RecordBatch::try_from_iter(vec![
-                ("timestamps_ns", Arc::new(column) as ArrayRef),
-                ("values", list(vec![3].into())),
+            let batch = RecordBatch::try_from_iter([
+                ("layout", layout),
+                ("timestamps_ns", timestamps),
+                ("values", values),
             ])
             .unwrap();
-            assert!(validate_batch(&batch, 1).is_err());
+            assert!(validate_batch(&batch, &layouts).is_err());
         }
     }
 
     #[test]
     fn compressed_raw_limit_block_keeps_valid_suffix() {
-        use arrow_ipc::{CompressionType, writer::IpcWriteOptions};
         let counters = 4095;
         assert_eq!((counters + 1) * MAX_ROWS * 8, MAX_RECORD_BYTES);
-        let layout = Layout::new(SAIStatsView::Owned(&vec![
-            SAIStat::new("a", 1, 0, 0);
-            counters
-        ]))
-        .unwrap();
-        let options = IpcWriteOptions::default()
-            .try_with_compression(Some(CompressionType::ZSTD))
-            .unwrap();
-        let mut writer =
-            StreamWriter::try_new_with_options(Vec::new(), &layout.schema, options).unwrap();
+        let schema = test_schema(&[&vec![SAIStat::new("a", 1, 0, 0); counters]]);
+        let layouts = validate_schema(&schema).unwrap();
+        let mut writer = compressed_writer(&schema);
         let mut starts = Vec::new();
         for (block, rows) in [1, MAX_ROWS, 1].into_iter().enumerate() {
             starts.push(writer.get_ref().len());
-            let batch = RecordBatch::try_new(
-                Arc::clone(&layout.schema),
-                vec![
-                    list(vec![block as u64; rows].into()),
-                    list(vec![42; counters * rows].into()),
-                ],
-            )
-            .unwrap();
-            writer.write(&batch).unwrap();
+            let times = vec![block as u64; rows];
+            let values = vec![42; counters * rows];
+            writer
+                .write(&test_batch(&schema, &[(0, &times, &values)]))
+                .unwrap();
         }
         writer.finish().unwrap();
         let mut bytes = writer.into_inner().unwrap();
@@ -861,23 +1003,28 @@ mod tests {
                     bytes.len() as u64,
                     start as u64,
                     false,
-                    counters,
                 )
                 .unwrap()
             );
         }
         let mut arrow_count = 0;
-        let mut blocks = 0;
+        let mut batches = 0;
         for batch in StreamReader::try_new(io::Cursor::new(&bytes), None).unwrap() {
             let batch = batch.unwrap();
-            let [times, values] = validate_batch(&batch, counters).unwrap();
-            assert_eq!(times.len(), [1, MAX_ROWS, 1][blocks]);
-            assert!(times.values().iter().all(|&time| time == blocks as u64));
-            assert!(values.values().iter().all(|&value| value == 42));
-            arrow_count += values.len();
-            blocks += 1;
+            let blocks = validate_batch(&batch, &layouts).unwrap();
+            assert_eq!(blocks.len(), 1);
+            assert_eq!(blocks[0].timestamps.len(), [1, MAX_ROWS, 1][batches]);
+            assert!(
+                blocks[0]
+                    .timestamps
+                    .iter()
+                    .all(|&time| time == batches as u64)
+            );
+            assert!(blocks[0].values.iter().all(|&value| value == 42));
+            arrow_count += blocks[0].values.len();
+            batches += 1;
         }
-        assert_eq!(blocks, 3);
+        assert_eq!(batches, 3);
         assert_eq!(arrow_count, 16_781_310);
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("raw-limit.arrow.partial");
@@ -907,11 +1054,11 @@ mod tests {
         let size = i32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap()) as usize;
         let message = arrow_ipc::root_as_message(&bytes[start + 8..start + 8 + size]).unwrap();
         let buffers = message.header_as_record_batch().unwrap().buffers().unwrap();
-        assert_eq!(buffers.len(), 8);
+        assert_eq!(buffers.len(), 10);
         assert!(buffers.iter().all(|buffer| buffer.length() >= 8));
         let body = start + 8 + size;
-        let value_start = body + buffers.get(7).offset() as usize;
-        let bitmap_start = body + buffers.get(6).offset() as usize;
+        let value_start = body + buffers.get(9).offset() as usize;
+        let bitmap_start = body + buffers.get(8).offset() as usize;
         let value_bytes = (counters * MAX_ROWS * 8) as i64;
         assert_eq!(
             i64::from_le_bytes(bytes[value_start..value_start + 8].try_into().unwrap()),
@@ -930,7 +1077,6 @@ mod tests {
                 bytes.len() as u64,
                 start as u64,
                 false,
-                counters,
             )
             .unwrap_err();
             assert!(error.to_string().contains("node byte limit"));
@@ -939,43 +1085,36 @@ mod tests {
     }
 
     #[test]
-    fn standard_matrix_has_eight_buffers_and_rejects_oversized_expansion() {
-        use arrow_ipc::{CompressionType, writer::IpcWriteOptions};
+    fn standard_blocks_have_ten_buffers_and_reject_oversized_expansion() {
         for width in [0, 500, 8000] {
             let stats = vec![SAIStat::new("a", 1, 0, 0); width];
-            let layout = Layout::new(SAIStatsView::Owned(&stats)).unwrap();
-            let options = IpcWriteOptions::default()
-                .try_with_compression(Some(CompressionType::ZSTD))
-                .unwrap();
-            let mut writer =
-                StreamWriter::try_new_with_options(Vec::new(), &layout.schema, options).unwrap();
+            let schema = test_schema(&[&stats[..], &stats[..width / 2]]);
+            let mut writer = compressed_writer(&schema);
             let start = writer.get_ref().len();
-            let batch = RecordBatch::try_new(
-                Arc::clone(&layout.schema),
-                vec![
-                    list(vec![u64::MAX, 0].into()),
-                    list((0..width * 2).map(|i| i as u64).collect::<Vec<_>>().into()),
-                ],
-            )
-            .unwrap();
-            writer.write(&batch).unwrap();
+            let values: Vec<_> = (0..width * 2).map(|i| i as u64).collect();
+            let half = &values[..width / 2 * 2];
+            writer
+                .write(&test_batch(
+                    &schema,
+                    &[(0, &[u64::MAX, 0], &values), (1, &[1, 2], half)],
+                ))
+                .unwrap();
             writer.finish().unwrap();
             let mut bytes = writer.into_inner().unwrap();
             let size = i32::from_le_bytes(bytes[start + 4..start + 8].try_into().unwrap()) as usize;
             let message = arrow_ipc::root_as_message(&bytes[start + 8..start + 8 + size]).unwrap();
             let header = message.header_as_record_batch().unwrap();
-            assert_eq!(header.length(), 1);
-            assert_eq!(header.nodes().unwrap().len(), 4);
-            assert_eq!(header.buffers().unwrap().len(), 8);
+            assert_eq!(header.length(), 2);
+            assert_eq!(header.nodes().unwrap().len(), 5);
+            assert_eq!(header.buffers().unwrap().len(), 10);
             let timestamp_buffer =
-                start + 8 + size + header.buffers().unwrap().get(3).offset() as usize;
+                start + 8 + size + header.buffers().unwrap().get(5).offset() as usize;
             assert!(
                 complete_message(
                     &mut io::Cursor::new(&bytes),
                     bytes.len() as u64,
                     start as u64,
                     false,
-                    width
                 )
                 .unwrap()
             );
@@ -987,7 +1126,6 @@ mod tests {
                     bytes.len() as u64,
                     start as u64,
                     false,
-                    width
                 )
                 .is_err()
             );

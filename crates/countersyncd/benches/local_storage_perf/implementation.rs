@@ -8,7 +8,7 @@
 //! UDP packets or standalone batches inside timing without replaying a pool. All modes
 //! time enqueue/send through reducer/writer join and final publish fsync.
 //! Default segments add finalization cost, not uninterrupted streaming throughput.
-//! Standard Arrow IPC shards retain exactly two raw UInt64 lists,
+//! Standard Arrow IPC shards hold a UInt32 layout index and two raw UInt64 lists,
 //! timestamps_ns and series-major values; defaults rotate at
 //! 100 MB of compressed IPC bytes or 1800 s maximum age, after complete batches.
 //! Each physical IPC row is one matrix block; reported rows remain logical source
@@ -97,7 +97,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use arrow_array::{Array, ListArray, UInt64Array};
+use arrow_array::{Array, ListArray, UInt32Array, UInt64Array};
 use arrow_ipc::reader::StreamReader;
 use arrow_schema::DataType;
 use byteorder::{ByteOrder, NetworkEndian};
@@ -677,13 +677,21 @@ fn verify(
         // Proof of self-contained IPC: no application decoder or sidecar schema.
         let reader = StreamReader::try_new(file, None)?;
         let schema = reader.schema();
-        if schema.fields().len() != 2
+        if schema.fields().len() != 3
             || schema.metadata().get("timestamp_unit").map(String::as_str) != Some("ns")
             || schema.metadata().get("matrix_order").map(String::as_str) != Some("series-major")
         {
             return Err("unexpected independent Arrow schema".into());
         }
-        for (field, name) in schema.fields().iter().zip(["timestamps_ns", "values"]) {
+        let layout = schema.field(0);
+        if layout.name() != "layout"
+            || layout.is_nullable()
+            || layout.data_type() != &DataType::UInt32
+            || !layout.metadata().is_empty()
+        {
+            return Err("expected a non-null UInt32 layout field".into());
+        }
+        for (field, name) in schema.fields()[1..].iter().zip(["timestamps_ns", "values"]) {
             if field.name() != name
                 || field.is_nullable()
                 || !field.metadata().is_empty()
@@ -694,15 +702,19 @@ fn verify(
                 return Err("expected two non-null raw List<UInt64> fields".into());
             }
         }
-        let series_json = schema
+        let layouts_json = schema
             .metadata()
-            .get("series")
-            .ok_or("missing series metadata")?;
-        if series_json.len() > 16 * 1024 * 1024 {
-            return Err("series metadata exceeds 16 MiB".into());
+            .get("layouts")
+            .ok_or("missing layouts metadata")?;
+        if layouts_json.len() > 16 * 1024 * 1024 {
+            return Err("layouts metadata exceeds 16 MiB".into());
         }
-        let series: serde_json::Value = serde_json::from_str(series_json)?;
-        let series = series.as_array().ok_or("series metadata is not an array")?;
+        let layouts: serde_json::Value = serde_json::from_str(layouts_json)?;
+        // The generated input uses one template, so every file has one layout.
+        let series = match layouts.as_array().map(Vec::as_slice) {
+            Some([series]) => series.as_array().ok_or("layout metadata is not an array")?,
+            _ => return Err("expected exactly one independent Arrow layout".into()),
+        };
         if series.len() != args.counters {
             return Err("incorrect independent Arrow series count".into());
         }
@@ -717,11 +729,18 @@ fn verify(
         }
         for batch in reader {
             let batch = batch?;
-            if batch.num_rows() != 1 || batch.num_columns() != 2 {
+            if batch.num_rows() != 1 || batch.num_columns() != 3 {
                 return Err("expected one physical IPC row per matrix block".into());
             }
-            let columns = batch
-                .columns()
+            let layout = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .ok_or("non-UInt32 layout column")?;
+            if layout.null_count() != 0 || layout.value(0) != 0 {
+                return Err("invalid layout index".into());
+            }
+            let columns = batch.columns()[1..]
                 .iter()
                 .map(|column| {
                     let list = column

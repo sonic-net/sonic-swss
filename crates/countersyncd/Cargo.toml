@@ -73,6 +73,7 @@ swss-common = { workspace = true }
 # a 4-byte compressed length prefix there. arrow-ipc 60 fixes it but needs Rust 1.88.
 [target.'cfg(not(target_arch = "arm"))'.dependencies]
 arrow-array = { workspace = true }
+arrow-buffer = { workspace = true }
 arrow-schema = { workspace = true }
 arrow-ipc = { workspace = true }
 serde_json = { workspace = true }

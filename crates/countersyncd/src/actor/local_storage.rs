@@ -10,7 +10,10 @@
 //! an Arrow IPC file/Feather file or Parquet file. Schema metadata contains:
 //! - `timestamp_unit = ns` (the source observation time, not writer wall time)
 //! - `matrix_order = series-major`
-//! - `series`: an ordered JSON array of `{object_name, type_name, stat_name}`.
+//! - `layouts`: a JSON array of layouts. A layout is the ordered JSON array of
+//!   `{object_name, type_name, stat_name}` series of one record shape, normally
+//!   one IPFIX template: a MIXED-mode session has one template for all of its
+//!   groups, otherwise each group of each session has its own.
 //!
 //! Known identities use full SAI names, e.g. `Ethernet0`, `SAI_OBJECT_TYPE_PORT`,
 //! `SAI_PORT_STAT_IF_IN_OCTETS`; unknown IDs use explicit numeric-suffix names.
@@ -19,20 +22,27 @@
 //! Object type is not a counter/gauge classification. Units, clock epoch and
 //! counter/reset semantics are source-specific, not inferred by this format.
 //!
-//! Every record batch has **one row**, containing two non-null `List<UInt64>`
-//! fields with non-null elements:
-//! - `timestamps_ns[0]`: T observation timestamps, shared by all C series.
-//! - `values[0]`: C*T raw values, with series c / observation t at `c*T + t`.
+//! Each record batch row is one **block** of consecutive records of one layout,
+//! in three non-null fields:
+//! - `layout`: UInt32 index into `layouts`.
+//! - `timestamps_ns`: `List<UInt64>` of T observation timestamps, shared by the
+//!   layout's C series.
+//! - `values`: `List<UInt64>` of C*T raw values, series c / observation t at
+//!   `c*T + t`.
 //!
-//! C is the length of `series`; T can vary between batches. For example:
+//! A batch has one block per layout that received records since the previous
+//! batch, and T varies between blocks. For example, with two templates:
 //! ```text
-//! series = [Ethernet0/IF_IN_OCTETS, Ethernet8/IF_IN_OCTETS]
-//! timestamps_ns[0] = [1000000, 1100000, 1200000]
-//! values[0]        = [10, 12, 12, 40, 40, 45]
-//!                     Ethernet0    Ethernet8
+//! layouts = [[Ethernet0/IF_IN_OCTETS, Ethernet8/IF_IN_OCTETS],
+//!            [Ethernet0|3/SAI_QUEUE_STAT_PACKETS]]
+//! row 0: layout = 0, timestamps_ns = [1000000, 1100000], values = [10, 12, 40, 45]
+//!                                                                   Ethernet0  Ethernet8
+//! row 1: layout = 1, timestamps_ns = [1050000],          values = [7]
 //! ```
-//! Thus Ethernet8 has value 45 at 1200000 ns. Empty input records are represented
-//! by timestamps with C=0 and an empty values list. No stored record sequence,
+//! Thus Ethernet8 has value 45 at 1100000 ns. Empty input records form blocks of
+//! a layout with C=0 and an empty values list. Blocks of one layout keep input
+//! order across batches and files; blocks of different layouts are not ordered
+//! by arrival, so correlate layouts by timestamp. No stored record sequence,
 //! application delta encoding, rounding, aggregation or resampling is applied.
 //! Duplicate/regressing timestamps and decreasing values remain in input order.
 //!
@@ -50,15 +60,16 @@
 //!     meta = reader.schema.metadata
 //!     assert meta[b"timestamp_unit"] == b"ns"
 //!     assert meta[b"matrix_order"] == b"series-major"
-//!     series = json.loads(meta[b"series"].decode("utf-8"))
+//!     layouts = json.loads(meta[b"layouts"].decode("utf-8"))
 //!     for batch in reader:
-//!         assert batch.num_rows == 1
-//!         times = batch.column(0)[0].values
-//!         values = batch.column(1)[0].values
-//!         assert len(values) == len(series) * len(times)
-//!         for c, identity in enumerate(series):
-//!             samples = values.slice(c * len(times), len(times))
-//!             # Process identity, times and samples here, one block at a time.
+//!         for row in range(batch.num_rows):
+//!             series = layouts[batch.column("layout")[row].as_py()]
+//!             times = batch.column("timestamps_ns")[row].values
+//!             values = batch.column("values")[row].values
+//!             assert len(values) == len(series) * len(times)
+//!             for c, identity in enumerate(series):
+//!                 samples = values.slice(c * len(times), len(times))
+//!                 # Process identity, times and samples here, one block at a time.
 //! ```
 //! Keep timestamps and values as unsigned integers/Python ints, not floats or
 //! JavaScript Numbers. Compute differences with signed/widened arithmetic to
@@ -68,15 +79,20 @@
 //! # Publication, limits and lifetime
 //!
 //! One blocking storage worker consumes a bounded generic IPFIX recipient with
-//! backpressure. Blocks target 16 MiB of raw data and at most 4096 observations;
-//! partial blocks are due for flush after 100 ms. Encoding and I/O can delay this.
-//! Each block is flushed and fsynced. A layout change, shutdown, maximum age or
-//! encoded-byte target closes the stream, writes EOS, fsyncs and atomically moves
+//! backpressure. Records are buffered per layout. A batch is written when the
+//! buffered records reach 16 MiB of raw data or a layout reaches 4096 records,
+//! and at most 100 ms after the oldest buffered record arrived; encoding and I/O
+//! can delay this. Each batch is flushed and fsynced. Shutdown, maximum age, the
+//! encoded-byte target, or a layout missing from the stream's schema closes the
+//! stream, writes EOS, fsyncs and atomically moves
 //! `.staging/<time_ns>-<pid>-<file_sequence>.arrow.partial` to `shards/*.arrow`.
-//! The default target is 100,000,000 bytes / 30 minutes, checked after full blocks.
-//! Files can exceed the size target by a block; earlier closure yields smaller
-//! files. Within one known writer run, order files by numeric file_sequence, not
-//! wall time (which can regress). Filenames alone do not identify runs globally.
+//! A new stream lists the layouts with buffered records and those that wrote to
+//! the previous stream, so a layout that stops receiving records is listed by at
+//! most one more file. The default target is 100,000,000 bytes / 30 minutes,
+//! checked after complete batches. Files can exceed the size target by a batch;
+//! earlier closure yields smaller files. Within one known writer run, order
+//! files by numeric file_sequence, not wall time (which can regress). Filenames
+//! alone do not identify runs globally.
 //!
 //! Writers never repair abandoned partials. After the writer stops, `read_shard`
 //! can return the completely decoded prefix of an interrupted stream; an invalid
@@ -100,14 +116,15 @@
 
 use crate::message::{
     local_storage::LocalStorageStatus,
-    saistats::{SAIStatsBatchMessage, SAIStatsRef},
+    saistats::{SAIStatMetadata, SAIStatsBatchMessage, SAIStatsRef, SAIStatsView},
 };
-use arrow_array::{RecordBatch, UInt64Array};
+use ahash::{HashMap, HashMapExt};
+use arrow_array::{RecordBatch, UInt32Array, UInt64Array};
 use arrow_ipc::{
     CompressionType,
     writer::{IpcWriteOptions, StreamWriter},
 };
-use arrow_schema::ArrowError;
+use arrow_schema::{ArrowError, SchemaRef};
 use log::{error, info};
 use std::{
     ffi::CString,
@@ -124,23 +141,27 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tokio::{sync::mpsc::Receiver, time::MissedTickBehavior};
+use tokio::sync::mpsc::Receiver;
 
 mod codec;
 #[allow(unused_imports)]
 pub use codec::{DecodedSample, read_shard};
 
 const LOCK_FILE: &str = ".writer.lock";
+/// Buffered raw bytes (timestamps and values) that trigger a batch.
 const BATCH_TARGET_BYTES: usize = 16 * 1024 * 1024;
+/// Records per block.
 const MAX_ROWS: usize = 4096;
+/// Longest time a buffered record waits for its batch.
 const FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_RECORD_BYTES: usize = 128 * 1024 * 1024;
 const BATCH_RESERVE_BYTES: u64 = 64 * 1024 * 1024;
-// Writer rows fit the raw target; even the conservative IPC bound fits
-// the fixed reservation. Keep reader limits independent of these writer bounds.
+// One record fits a batch, and even the conservative IPC bound of a batch with a
+// block per layout fits the fixed reservation. Keep reader limits independent
+// of these writer bounds.
 const _: () = assert!((codec::MAX_COUNTERS + 1) * 8 <= BATCH_TARGET_BYTES);
 const _: () = assert!(
-    2 * BATCH_TARGET_BYTES as u64 + (codec::MAX_COUNTERS as u64 + 1) * 256 + 8 * 1024 * 1024
+    2 * BATCH_TARGET_BYTES as u64 + (codec::MAX_LAYOUTS as u64) * 256 + 8 * 1024 * 1024
         <= BATCH_RESERVE_BYTES
 );
 const FILESYSTEM_RESERVE_BYTES: u64 = 512 * 1024 * 1024;
@@ -254,6 +275,7 @@ struct ActiveStream {
     writer: StreamWriter<CappedFile>,
     path: PathBuf,
     started: Instant,
+    schema: SchemaRef,
 }
 
 impl ActiveStream {
@@ -280,16 +302,61 @@ impl ActiveStream {
     }
 }
 
+/// Buffered records of one layout, normally one IPFIX template.
+struct Lane {
+    layout: codec::Layout,
+    /// Template metadata of the latest shared record, matched by address.
+    /// Holding it keeps another template from reusing that address.
+    template: Option<Arc<[SAIStatMetadata]>>,
+    /// Pending records, row-major: the timestamp, then one value per series.
+    rows: Vec<u64>,
+    /// Position in the active stream's `layouts`.
+    index: Option<u32>,
+    /// Stream generation that last received this lane's records.
+    written: Option<u64>,
+}
+
+impl Lane {
+    fn stride(&self) -> usize {
+        self.layout.width() + 1
+    }
+
+    fn holds(&self, stats: SAIStatsView<'_>) -> bool {
+        match stats {
+            SAIStatsView::Shared { metadata, .. } => self
+                .template
+                .as_ref()
+                .is_some_and(|template| Arc::ptr_eq(template, metadata)),
+            SAIStatsView::Owned(_) => self.layout.matches(stats),
+        }
+    }
+}
+
+fn template_key(metadata: &Arc<[SAIStatMetadata]>) -> usize {
+    Arc::as_ptr(metadata).cast::<u8>() as usize
+}
+
 struct Store {
     config: LocalStorageConfig,
-    layout: Option<codec::Layout>,
-    columns: Vec<Vec<u64>>,
-    // At most 16 MiB of original columns plus 16 MiB of reusable series-major
-    // concatenation, excluding Arrow's bounded IPC/compression working buffers.
-    matrix: Vec<u64>,
+    lanes: Vec<Lane>,
+    /// Lane index by template address, for records of many interleaved templates.
+    templates: HashMap<usize, usize>,
+    /// Lane of the previous record; consecutive records usually share it.
+    last_lane: usize,
+    /// Raw bytes of the pending records of all lanes.
+    pending_bytes: usize,
+    /// Arrival of the oldest pending record.
+    pending_since: Option<Instant>,
     active: Option<ActiveStream>,
+    /// A lane created after the active stream opened is missing from its schema.
+    schema_stale: bool,
+    /// Streams opened so far.
+    generation: u64,
+    // Reusable batch columns, at most one batch of pending records.
+    layout_ids: Vec<u32>,
+    timestamps: Vec<u64>,
+    values: Vec<u64>,
     file_sequence: u64,
-    batch_started: Option<Instant>,
     // Includes all files and directory blocks, including active staging data.
     used_bytes: u64,
     directory_blocks: u64,
@@ -302,12 +369,18 @@ impl Store {
         let directory_blocks = directory_overhead(&config.root)?;
         Ok(Self {
             config,
-            layout: None,
-            columns: Vec::new(),
-            matrix: Vec::new(),
+            lanes: Vec::new(),
+            templates: HashMap::new(),
+            last_lane: 0,
+            pending_bytes: 0,
+            pending_since: None,
             active: None,
+            schema_stale: false,
+            generation: 0,
+            layout_ids: Vec::new(),
+            timestamps: Vec::new(),
+            values: Vec::new(),
             file_sequence: 0,
-            batch_started: None,
             used_bytes,
             directory_blocks,
             _storage_lock: lock,
@@ -332,9 +405,28 @@ impl Store {
         Ok(())
     }
 
+    /// Open a stream that lists every lane with pending records or records in
+    /// the previous stream. Other lanes are retired.
     fn open_stream(&mut self) -> Result<(), String> {
         self.reserve(BATCH_RESERVE_BYTES)?;
-        let layout = self.layout.as_ref().ok_or("missing layout")?;
+        let previous = self.generation;
+        self.lanes
+            .retain(|lane| !lane.rows.is_empty() || lane.written == Some(previous));
+        self.templates.clear();
+        self.last_lane = 0;
+        let mut layouts = String::from("[");
+        for (index, lane) in self.lanes.iter_mut().enumerate() {
+            if index > 0 {
+                layouts.push(',');
+            }
+            layouts.push_str(&lane.layout.json);
+            lane.index = Some(index as u32);
+            if let Some(template) = &lane.template {
+                self.templates.insert(template_key(template), index);
+            }
+        }
+        layouts.push(']');
+        let schema = codec::schema(layouts);
         let options = IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
             .map_err(|e| e.to_string())?;
@@ -378,7 +470,7 @@ impl Store {
                 remaining: BATCH_RESERVE_BYTES,
                 bytes_written: 0,
             },
-            &layout.schema,
+            &schema,
             options,
         )
         .context("write schema to", &path)?;
@@ -388,10 +480,13 @@ impl Store {
             .allocated_bytes()
             .context("inspect", &path)?;
         self.used_bytes = self.used_bytes.saturating_add(allocated);
+        self.generation += 1;
+        self.schema_stale = false;
         self.active = Some(ActiveStream {
             writer,
             path,
             started: Instant::now(),
+            schema,
         });
         self.refresh_directory_blocks()?;
         sync_directory(&staging).context("sync", &staging)?;
@@ -409,91 +504,193 @@ impl Store {
     }
 
     fn add_record(&mut self, record: SAIStatsRef<'_>) -> Result<(), String> {
-        self.tick()?;
-        if !self.layout.as_ref().is_some_and(|l| l.matches(record)) {
-            self.finish_stream()?;
-            self.layout = None;
-            self.columns.clear();
-            self.matrix = Vec::new();
-            let layout = codec::Layout::new(record.stats)?;
-            self.columns = (0..record.stats.len() + 1)
-                .map(|_| Vec::with_capacity(layout.batch_rows))
-                .collect();
-            self.matrix = Vec::with_capacity(record.stats.len() * layout.batch_rows);
-            self.layout = Some(layout);
+        let row_bytes = record.stats.len().saturating_add(1).saturating_mul(8);
+        if self.pending_bytes.saturating_add(row_bytes) > BATCH_TARGET_BYTES {
+            self.flush()?;
         }
-        if self.active.is_none() {
-            self.open_stream()?;
+        let index = match self.lane_for(record.stats) {
+            Ok(index) => index,
+            Err(reason) => {
+                // Persist the accepted records before rejecting this layout.
+                self.finish_stream()?;
+                return Err(reason);
+            }
+        };
+        let lane = &mut self.lanes[index];
+        let stride = lane.stride();
+        if lane.rows.capacity() - lane.rows.len() < stride {
+            // Grow geometrically, but never past one batch of this layout.
+            let batch = (BATCH_TARGET_BYTES / (stride * 8)).clamp(1, MAX_ROWS) * stride;
+            let wanted = (lane.rows.capacity() * 2)
+                .min(batch)
+                .max(lane.rows.len() + stride);
+            lane.rows.reserve_exact(wanted - lane.rows.len());
         }
-        self.batch_started.get_or_insert_with(Instant::now);
-        self.columns[0].push(record.observation_time);
-        for (column, stat) in self.columns[1..].iter_mut().zip(record.stats) {
-            column.push(stat.counter);
+        lane.rows.push(record.observation_time);
+        match record.stats {
+            SAIStatsView::Shared { values, .. } => lane.rows.extend_from_slice(values),
+            SAIStatsView::Owned(stats) => lane.rows.extend(stats.iter().map(|stat| stat.counter)),
         }
-        let layout = self.layout.as_ref().unwrap();
-        if self.columns[0].len() >= layout.batch_rows {
-            self.flush_batch()?;
+        let full = lane.rows.len() / stride >= MAX_ROWS;
+        self.pending_bytes += row_bytes;
+        self.pending_since.get_or_insert_with(Instant::now);
+        // Write a full batch now rather than when the next record arrives.
+        if full || self.pending_bytes + row_bytes > BATCH_TARGET_BYTES {
+            self.flush()?;
         }
         Ok(())
     }
 
-    fn flush_batch(&mut self) -> Result<(), String> {
-        if self.batch_started.is_none() {
+    /// The lane for a record's layout: by template address for shared IPFIX
+    /// records, else by identities (also for a reinstalled template), else new.
+    fn lane_for(&mut self, stats: SAIStatsView<'_>) -> Result<usize, String> {
+        if self
+            .lanes
+            .get(self.last_lane)
+            .is_some_and(|lane| lane.holds(stats))
+        {
+            return Ok(self.last_lane);
+        }
+        let template = match stats {
+            SAIStatsView::Shared { metadata, .. } => Some(metadata),
+            SAIStatsView::Owned(_) => None,
+        };
+        let found = template
+            .and_then(|template| self.templates.get(&template_key(template)).copied())
+            .or_else(|| {
+                self.lanes
+                    .iter()
+                    .position(|lane| lane.layout.matches(stats))
+            });
+        let index = match found {
+            Some(index) => index,
+            None => self.add_lane(stats)?,
+        };
+        if let Some(template) = template {
+            let lane = &mut self.lanes[index];
+            if !lane.holds(stats) {
+                if let Some(previous) = lane.template.replace(Arc::clone(template)) {
+                    self.templates.remove(&template_key(&previous));
+                }
+                self.templates.insert(template_key(template), index);
+            }
+        }
+        self.last_lane = index;
+        Ok(index)
+    }
+
+    fn add_lane(&mut self, stats: SAIStatsView<'_>) -> Result<usize, String> {
+        let layout = codec::Layout::new(stats)?;
+        // The next stream lists the new lane and every lane its rotation keeps.
+        let (count, bytes) = self
+            .lanes
+            .iter()
+            .filter(|lane| !lane.rows.is_empty() || lane.written == Some(self.generation))
+            .fold((1, layout.json.len() + 2), |(count, bytes), lane| {
+                (count + 1, bytes + lane.layout.json.len() + 1)
+            });
+        if count > codec::MAX_LAYOUTS || bytes > codec::MAX_SCHEMA_BYTES {
+            return Err(format!(
+                "{count} concurrent layouts exceed the stream schema limits"
+            ));
+        }
+        self.schema_stale |= self.active.is_some();
+        self.lanes.push(Lane {
+            layout,
+            template: None,
+            rows: Vec::new(),
+            index: None,
+            written: None,
+        });
+        Ok(self.lanes.len() - 1)
+    }
+
+    /// Write every lane's pending records as one batch, a block per layout.
+    fn flush(&mut self) -> Result<(), String> {
+        if self.pending_since.is_none() {
             return Ok(());
         }
-        let layout = self.layout.as_ref().ok_or("missing batch layout")?;
-        let schema = Arc::clone(&layout.schema);
-        self.reserve(BATCH_RESERVE_BYTES)?;
-        for column in &mut self.columns[1..] {
-            self.matrix.extend_from_slice(column);
-            column.clear();
+        if self.schema_stale {
+            self.publish_stream()?;
         }
-        let arrays = [
-            UInt64Array::from(std::mem::take(&mut self.columns[0])),
-            UInt64Array::from(std::mem::take(&mut self.matrix)),
-        ];
+        if self.active.is_none() {
+            self.open_stream()?;
+        }
+        self.reserve(BATCH_RESERVE_BYTES)?;
+        let (blocks, rows, values) = self.lanes.iter().filter(|lane| !lane.rows.is_empty()).fold(
+            (0, 0, 0),
+            |(blocks, rows, values), lane| {
+                let records = lane.rows.len() / lane.stride();
+                let series = records * lane.layout.width();
+                (blocks + 1, rows + records, values + series)
+            },
+        );
+        // Size the reused columns exactly; doubling could exceed one batch.
+        // Blocks overwrite values in place, so only growth is zero-filled.
+        self.layout_ids.clear();
+        self.layout_ids.reserve_exact(blocks);
+        self.timestamps.clear();
+        self.timestamps.reserve_exact(rows);
+        self.values
+            .reserve_exact(values.saturating_sub(self.values.len()));
+        self.values.resize(values, 0);
+        let mut offset = 0;
+        let mut time_offsets = Vec::with_capacity(blocks + 1);
+        let mut value_offsets = Vec::with_capacity(blocks + 1);
+        time_offsets.push(0);
+        value_offsets.push(0);
+        for lane in &mut self.lanes {
+            if lane.rows.is_empty() {
+                continue;
+            }
+            let stride = lane.stride();
+            let index = lane.index.ok_or("layout missing from the stream schema")?;
+            self.layout_ids.push(index);
+            self.timestamps.extend(lane.rows.iter().step_by(stride));
+            let block = lane.rows.len() / stride * (stride - 1);
+            transpose(&lane.rows, stride, &mut self.values[offset..offset + block]);
+            offset += block;
+            time_offsets.push(list_offset(self.timestamps.len())?);
+            value_offsets.push(list_offset(offset)?);
+            // Keep capacity for similar batches, but release a past burst.
+            let used = lane.rows.len();
+            lane.rows.clear();
+            if lane.rows.capacity() > 4 * used {
+                lane.rows.shrink_to(2 * used);
+            }
+            lane.written = Some(self.generation);
+        }
+        let layout_ids = UInt32Array::from(std::mem::take(&mut self.layout_ids));
+        let timestamps = UInt64Array::from(std::mem::take(&mut self.timestamps));
+        let values = UInt64Array::from(std::mem::take(&mut self.values));
+        let active = self.active.as_mut().ok_or("missing batch stream")?;
         let batch = RecordBatch::try_new(
-            schema,
-            arrays.iter().map(|a| codec::list(a.clone())).collect(),
+            Arc::clone(&active.schema),
+            vec![
+                Arc::new(layout_ids.clone()),
+                codec::list(timestamps.clone(), time_offsets),
+                codec::list(values.clone(), value_offsets),
+            ],
         )
         .map_err(|e| e.to_string())?;
-        let active = self.active.as_mut().ok_or("missing batch stream")?;
         let allocated = active.write_synced(BATCH_RESERVE_BYTES, |writer| writer.write(&batch))?;
+        let rotate = active.writer.get_ref().bytes_written >= self.config.file_target_bytes;
         self.used_bytes = self.used_bytes.saturating_add(allocated);
         drop(batch);
-        let rows = self.layout.as_ref().unwrap().batch_rows;
-        // Reclaim the original Vec allocations after Arrow releases its references.
-        let matrix_capacity = (self.columns.len() - 1) * rows;
-        for (i, array) in arrays.into_iter().enumerate() {
-            let c = if i == 0 {
-                &mut self.columns[i]
-            } else {
-                &mut self.matrix
-            };
-            *c = array
-                .into_parts()
-                .1
-                .into_inner()
-                .into_vec::<u64>()
-                .unwrap_or_else(|_| {
-                    Vec::with_capacity(if i == 0 { rows } else { matrix_capacity })
-                });
-            c.clear();
-        }
-        self.batch_started = None;
+        self.layout_ids = codec::reclaim(layout_ids);
+        self.timestamps = codec::reclaim(timestamps);
+        self.values = codec::reclaim(values);
+        self.pending_bytes = 0;
+        self.pending_since = None;
         // Include schema/framing, but always persist a batch before size rotation.
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|a| a.writer.get_ref().bytes_written >= self.config.file_target_bytes)
-        {
+        if rotate {
             self.publish_stream()?;
         }
         Ok(())
     }
 
     fn finish_stream(&mut self) -> Result<(), String> {
-        self.flush_batch()?;
+        self.flush()?;
         self.publish_stream()
     }
 
@@ -508,21 +705,63 @@ impl Store {
         Ok(())
     }
 
-    fn tick(&mut self) -> Result<(), String> {
+    /// When `poll` next has work: a due batch or the stream's maximum age.
+    fn next_deadline(&self) -> Option<Instant> {
+        let flush = self
+            .pending_since
+            .and_then(|since| since.checked_add(FLUSH_INTERVAL));
+        let rotate = self
+            .active
+            .as_ref()
+            .and_then(|active| active.started.checked_add(self.config.shard_interval));
+        match (flush, rotate) {
+            (Some(flush), Some(rotate)) => Some(flush.min(rotate)),
+            (flush, rotate) => flush.or(rotate),
+        }
+    }
+
+    fn poll(&mut self, now: Instant) -> Result<(), String> {
+        let interval = self.config.shard_interval;
         if self
             .active
             .as_ref()
-            .is_some_and(|a| a.started.elapsed() >= self.config.shard_interval)
+            .is_some_and(|active| now.saturating_duration_since(active.started) >= interval)
         {
-            self.finish_stream()?;
-        } else if self
-            .batch_started
-            .is_some_and(|t| t.elapsed() >= FLUSH_INTERVAL)
+            if self.schema_stale && self.pending_since.is_some() {
+                // Adding the missing layout starts a new stream anyway.
+                return self.flush();
+            }
+            return self.finish_stream();
+        }
+        if self
+            .pending_since
+            .is_some_and(|since| now.saturating_duration_since(since) >= FLUSH_INTERVAL)
         {
-            self.flush_batch()?;
+            self.flush()?;
         }
         Ok(())
     }
+}
+
+/// Copy row-major records (timestamp, then one value per series) into a
+/// series-major block. Wide records are copied in tiles of 8 records, whose
+/// rows stay in L1 while every series is visited; narrow ones in one tile.
+fn transpose(rows: &[u64], stride: usize, block: &mut [u64]) {
+    let records = rows.len() / stride;
+    let tile = if stride > 16 { 8 } else { records.max(1) };
+    for first in (0..records).step_by(tile) {
+        let last = (first + tile).min(records);
+        for series in 1..stride {
+            let values = &mut block[(series - 1) * records..][first..last];
+            for (record, value) in (first..last).zip(values) {
+                *value = rows[record * stride + series];
+            }
+        }
+    }
+}
+
+fn list_offset(len: usize) -> Result<i32, String> {
+    i32::try_from(len).map_err(|_| "batch exceeds list offset range".into())
 }
 
 pub struct LocalStorageActor {
@@ -557,17 +796,23 @@ impl LocalStorageActor {
             .map_err(|e| e.to_string())
             .and_then(|runtime| {
                 runtime.block_on(async {
-                    let mut tick = tokio::time::interval(FLUSH_INTERVAL);
-                    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
-                    while !self.status.failed() {
+                    loop {
                         if self.status.shutdown_requested() {
                             self.receiver.close();
                         }
+                        // Wake for the next batch or rotation, and at least every
+                        // FLUSH_INTERVAL to observe a shutdown request.
+                        let now = Instant::now();
+                        let wake = self
+                            .store
+                            .next_deadline()
+                            .map_or(now + FLUSH_INTERVAL, |deadline| {
+                                deadline.min(now + FLUSH_INTERVAL)
+                            });
                         tokio::select! {
                             biased;
-                            _ = tick.tick() => {
-                                self.store.tick()?;
-                                self.store.flush_batch()?;
+                            _ = tokio::time::sleep_until(wake.into()) => {
+                                self.store.poll(Instant::now())?;
                             }
                             message = self.receiver.recv() => {
                                 let Some(message) = message else { break; };
@@ -816,11 +1061,10 @@ fn tmpfs_available_bytes(free: u64, meminfo: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::saistats::{
-        SAIStat, SAIStatMetadata, SAIStatRef, SAIStatsBatch, SAIStatsView,
-    };
+    use crate::message::saistats::{SAIStat, SAIStatRef, SAIStatsBatch};
     use arrow_array::{Array, ListArray};
     use arrow_ipc::reader::StreamReader;
+    use arrow_schema::{DataType, Field};
     use std::{
         process::{Command, Stdio},
         sync::mpsc,
@@ -875,6 +1119,12 @@ mod tests {
         samples
     }
 
+    fn layout_ids(batch: &RecordBatch) -> Vec<u32> {
+        let ids = batch.column(0).as_any().downcast_ref::<UInt32Array>();
+        ids.unwrap().values().to_vec()
+    }
+
+    /// Values of every block of a list column: 1 is timestamps_ns, 2 is values.
     fn child(batch: &RecordBatch, column: usize) -> &UInt64Array {
         batch
             .column(column)
@@ -887,22 +1137,41 @@ mod tests {
             .unwrap()
     }
 
+    /// Samples in reader order: the blocks of each layout in order of first
+    /// appearance, keeping input order within a layout.
     fn expected(batch: &SAIStatsBatch) -> Vec<DecodedSample> {
-        batch
+        type Identities = Vec<(Arc<str>, u32, u32)>;
+        let mut layouts: Vec<(Identities, Vec<SAIStatsRef<'_>>)> = Vec::new();
+        for record in batch.iter() {
+            let identities: Vec<_> = record
+                .stats
+                .iter()
+                .map(|stat| (Arc::clone(stat.object_name), stat.type_id, stat.stat_id))
+                .collect();
+            match layouts.iter_mut().find(|(known, _)| *known == identities) {
+                Some((_, records)) => records.push(record),
+                None => layouts.push((identities, vec![record])),
+            }
+        }
+        layouts
             .iter()
-            .flat_map(|record| {
-                record
-                    .stats
-                    .iter()
-                    .enumerate()
-                    .map(move |(i, stat)| DecodedSample {
-                        stat_index: i as u32,
-                        object_name: Arc::clone(stat.object_name),
-                        type_name: Arc::from(stat.type_name_or_id()),
-                        stat_name: Arc::from(stat.stat_name_or_id()),
-                        observation_time: record.observation_time,
-                        value: stat.counter,
-                    })
+            .enumerate()
+            .flat_map(|(layout, (_, records))| {
+                records.iter().flat_map(move |record| {
+                    record
+                        .stats
+                        .iter()
+                        .enumerate()
+                        .map(move |(i, stat)| DecodedSample {
+                            layout: layout as u32,
+                            stat_index: i as u32,
+                            object_name: Arc::clone(stat.object_name),
+                            type_name: Arc::from(stat.type_name_or_id()),
+                            stat_name: Arc::from(stat.stat_name_or_id()),
+                            observation_time: record.observation_time,
+                            value: stat.counter,
+                        })
+                })
             })
             .collect()
     }
@@ -911,20 +1180,29 @@ mod tests {
         let temp = private_tempdir();
         let mut store = store(temp.path());
         for record in batch.iter() {
-            let stable_schema = store
-                .layout
-                .as_ref()
-                .filter(|layout| layout.matches(record))
-                .map(|layout| Arc::clone(&layout.schema));
             store.add_record(record).unwrap();
-            if let Some(schema) = stable_schema {
-                assert!(Arc::ptr_eq(&schema, &store.layout.as_ref().unwrap().schema));
-            }
         }
         store.finish_stream().unwrap();
         assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
         let paths = paths(temp.path(), "shards");
         (temp, paths)
+    }
+
+    fn template(prefix: &str, width: usize) -> Arc<[SAIStatMetadata]> {
+        (0..width)
+            .map(|i| SAIStatMetadata::new(format!("{prefix}{i}"), 1, i as u32))
+            .collect()
+    }
+
+    fn layout_widths(path: &Path) -> Vec<usize> {
+        let reader = StreamReader::try_new(File::open(path).unwrap(), None).unwrap();
+        let layouts: serde_json::Value =
+            serde_json::from_str(&reader.schema().metadata()["layouts"]).unwrap();
+        let layouts = layouts.as_array().unwrap();
+        layouts
+            .iter()
+            .map(|l| l.as_array().unwrap().len())
+            .collect()
     }
 
     fn representations(owned: SAIStatsBatch) -> [SAIStatsBatch; 3] {
@@ -995,29 +1273,27 @@ mod tests {
             assert_eq!(files.len(), 1);
             assert_eq!(decoded(&files[0]), expected(&batch));
             let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
-            assert_eq!(reader.schema().fields().len(), 2);
-            assert_eq!(reader.schema().field(0).name(), "timestamps_ns");
-            assert_eq!(reader.schema().field(1).name(), "values");
-            for field in reader.schema().fields() {
+            let schema = reader.schema();
+            let names: Vec<_> = schema.fields().iter().map(|f| f.name().as_str()).collect();
+            assert_eq!(names, ["layout", "timestamps_ns", "values"]);
+            assert_eq!(schema.field(0).data_type(), &DataType::UInt32);
+            for field in schema.fields() {
                 assert!(!field.is_nullable());
+            }
+            for field in &schema.fields()[1..] {
                 assert_eq!(
                     field.data_type(),
-                    &arrow_schema::DataType::List(Arc::new(arrow_schema::Field::new(
-                        "item",
-                        arrow_schema::DataType::UInt64,
-                        false
-                    )))
+                    &DataType::List(Arc::new(Field::new("item", DataType::UInt64, false)))
                 );
             }
             let batches: Vec<_> = reader.map(Result::unwrap).collect();
             assert_eq!(
-                batches.iter().map(|b| child(b, 0).len()).sum::<usize>(),
+                batches.iter().map(|b| child(b, 1).len()).sum::<usize>(),
                 9000
             );
             for b in batches {
-                assert_eq!(b.num_rows(), 1);
+                assert_eq!(layout_ids(&b), [0]);
                 for c in b.columns() {
-                    assert!(matches!(c.data_type(), arrow_schema::DataType::List(_)));
                     assert_eq!(c.null_count(), 0);
                 }
             }
@@ -1039,42 +1315,171 @@ mod tests {
         batch.push_record(0, []);
         for batch in representations(batch) {
             let (_temp, files) = encode(&batch);
-            assert_eq!(files.len(), 8);
+            // Layout changes share one stream, with a block per layout.
+            assert_eq!(files.len(), 1);
+            assert_eq!(decoded(&files[0]), expected(&batch));
+            assert_eq!(layout_widths(&files[0]), [0, 2, 2, 2, 2, 2, 2]);
+            let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
+            let batches: Vec<_> = reader.map(Result::unwrap).collect();
+            assert_eq!(batches.len(), 1);
+            assert_eq!(layout_ids(&batches[0]), [0, 1, 2, 3, 4, 5, 6]);
+            // Timestamps keep input order within each layout.
             assert_eq!(
-                files.iter().flat_map(|p| decoded(p)).collect::<Vec<_>>(),
-                expected(&batch)
-            );
-            let rows: Vec<u64> = files
-                .iter()
-                .flat_map(|p| {
-                    StreamReader::try_new(File::open(p).unwrap(), None)
-                        .unwrap()
-                        .flat_map(|b| {
-                            let b = b.unwrap();
-                            child(&b, 0).values().to_vec()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect();
-            assert_eq!(
-                rows,
-                batch.iter().map(|r| r.observation_time).collect::<Vec<_>>()
+                child(&batches[0], 1).values().to_vec(),
+                [u64::MAX, 0, 0, 2, 2, 1, 1, 0, 0, 0]
             );
             assert_eq!(
-                read_shard(&files[1], |_| Err("visitor stopped".into())),
+                read_shard(&files[0], |_| Err("visitor stopped".into())),
                 Err("visitor stopped".into())
             );
         }
     }
 
     #[test]
+    fn interleaved_templates_share_one_stream() {
+        let templates = [
+            template("Ethernet", 2),
+            template("Queue", 3),
+            template("", 0),
+        ];
+        let mut batch = SAIStatsBatch::default();
+        for time in 0..300u64 {
+            let template = &templates[time as usize % 3];
+            let values = (0..template.len() as u64).map(|i| time * 10 + i);
+            batch.push_shared_record(time, Arc::clone(template), values);
+        }
+        // An owned record with a template's identities joins that template's layout.
+        batch.push_record(
+            300,
+            [
+                SAIStat::new("Ethernet0", 1, 0, 7),
+                SAIStat::new("Ethernet1", 1, 1, 8),
+            ],
+        );
+        let (_temp, files) = encode(&batch);
+        assert_eq!(files.len(), 1);
+        assert_eq!(decoded(&files[0]), expected(&batch));
+        assert_eq!(layout_widths(&files[0]), [2, 3, 0]);
+        let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
+        let batches: Vec<_> = reader.map(Result::unwrap).collect();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(layout_ids(&batches[0]), [0, 1, 2]);
+        assert_eq!(child(&batches[0], 1).len(), 301);
+        assert_eq!(child(&batches[0], 2).len(), 101 * 2 + 100 * 3);
+    }
+
+    #[test]
+    fn reinstalled_template_keeps_its_layout() {
+        let temp = private_tempdir();
+        let mut store = store(temp.path());
+        let [first, second] = [template("Ethernet", 2), template("Ethernet", 2)];
+        for (time, template) in [&first, &second, &first, &second].into_iter().enumerate() {
+            let record = SAIStatsRef {
+                observation_time: time as u64,
+                stats: SAIStatsView::Shared {
+                    metadata: template,
+                    values: &[1, 2],
+                },
+            };
+            store.add_record(record).unwrap();
+            assert_eq!(store.lanes.len(), 1);
+            let lane = store.lanes[0].template.as_ref().unwrap();
+            assert!(Arc::ptr_eq(lane, template));
+            assert_eq!(store.templates.len(), 1);
+        }
+        store.finish_stream().unwrap();
+        let files = paths(temp.path(), "shards");
+        assert_eq!(files.len(), 1);
+        assert_eq!(layout_widths(&files[0]), [2]);
+        assert_eq!(decoded(&files[0]).len(), 8);
+    }
+
+    #[test]
+    fn new_template_rotates_once_and_idle_templates_retire() {
+        let temp = private_tempdir();
+        let mut store = store(temp.path());
+        let [a, b, c] = [template("a", 1), template("b", 2), template("c", 3)];
+        let add = |store: &mut Store, template: &Arc<[SAIStatMetadata]>, time| {
+            let values: Vec<_> = (0..template.len() as u64).collect();
+            let stats = SAIStatsView::Shared {
+                metadata: template,
+                values: &values,
+            };
+            store
+                .add_record(SAIStatsRef {
+                    observation_time: time,
+                    stats,
+                })
+                .unwrap();
+        };
+        add(&mut store, &a, 0);
+        add(&mut store, &b, 0);
+        store.flush().unwrap();
+        add(&mut store, &a, 1);
+        store.flush().unwrap();
+        // Known templates keep the stream.
+        assert_eq!(store.generation, 1);
+        add(&mut store, &c, 2);
+        store.flush().unwrap();
+        // A new template rotates once, keeping templates of the previous stream.
+        assert_eq!(store.generation, 2);
+        add(&mut store, &c, 3);
+        store.finish_stream().unwrap();
+        add(&mut store, &c, 4);
+        store.finish_stream().unwrap();
+        let files = paths(temp.path(), "shards");
+        let widths: Vec<_> = files.iter().map(|path| layout_widths(path)).collect();
+        assert_eq!(widths, [vec![1, 2], vec![1, 2, 3], vec![3]]);
+        let samples: Vec<_> = files.iter().map(|path| decoded(path).len()).collect();
+        assert_eq!(samples, [4, 6, 3]);
+        assert_eq!(store.lanes.len(), 1);
+        assert_eq!(store.templates.len(), 1);
+    }
+
+    #[test]
+    fn thousands_of_single_counter_templates_share_one_batch() {
+        let templates: Vec<_> = (0..4096).map(|i| template(&format!("t{i}-"), 1)).collect();
+        let mut batch = SAIStatsBatch::default();
+        for round in 0..2u64 {
+            for (i, template) in templates.iter().enumerate() {
+                batch.push_shared_record(round, Arc::clone(template), [round + i as u64]);
+            }
+        }
+        let (_temp, files) = encode(&batch);
+        assert_eq!(files.len(), 1);
+        assert_eq!(decoded(&files[0]), expected(&batch));
+        let reader = StreamReader::try_new(File::open(&files[0]).unwrap(), None).unwrap();
+        let batches: Vec<_> = reader.map(Result::unwrap).collect();
+        assert_eq!(batches.len(), 1);
+        assert_eq!(batches[0].num_rows(), 4096);
+    }
+
+    #[test]
+    fn transpose_matches_naive_series_major_order() {
+        for stride in [1, 2, 9, 16, 17, 18, 501] {
+            for records in [0, 1, 7, 8, 9, 17] {
+                let rows: Vec<u64> = (0..(stride * records) as u64).collect();
+                let mut block = vec![u64::MAX; records * (stride - 1)];
+                transpose(&rows, stride, &mut block);
+                let naive: Vec<u64> = (1..stride)
+                    .flat_map(|series| {
+                        (0..records).map(move |record| (record * stride + series) as u64)
+                    })
+                    .collect();
+                assert_eq!(block, naive, "stride={stride}, records={records}");
+            }
+        }
+    }
+
+    #[test]
     fn wide_layout_batch_budget_and_buffer_reuse() {
-        for (width, expected_rows) in [
+        for (width, rows) in [
             (0, 4096),
             (500, 4096),
             (8000, 262),
             (codec::MAX_COUNTERS, 31),
         ] {
+            assert_eq!(rows, (BATCH_TARGET_BYTES / ((width + 1) * 8)).min(MAX_ROWS));
             let temp = private_tempdir();
             let mut store = store(temp.path());
             let stats: Vec<_> = (0..width).map(|i| stat("port", i as u64)).collect();
@@ -1082,69 +1487,51 @@ mod tests {
                 observation_time: u64::MAX,
                 stats: SAIStatsView::Owned(&stats),
             };
-            store.add_record(record).unwrap();
-            let layout = store.layout.as_ref().unwrap();
-            assert_eq!(
-                layout.batch_rows,
-                (BATCH_TARGET_BYTES / ((width + 1) * 8)).min(MAX_ROWS)
-            );
-            assert_eq!(layout.batch_rows, expected_rows);
-            assert!(layout.batch_rows * (width + 1) * 8 <= BATCH_TARGET_BYTES);
-            let pointers: Vec<_> = store.columns.iter().map(|c| c.as_ptr()).collect();
-            let matrix_pointer = store.matrix.as_ptr();
-            store.flush_batch().unwrap();
-            assert_eq!(
-                pointers,
-                store.columns.iter().map(|c| c.as_ptr()).collect::<Vec<_>>()
-            );
-            assert_eq!(matrix_pointer, store.matrix.as_ptr());
-            assert!(
-                store
-                    .columns
-                    .iter()
-                    .map(|c| c.capacity() * 8)
-                    .sum::<usize>()
-                    <= BATCH_TARGET_BYTES
-            );
-            assert!(store.matrix.capacity() * 8 <= BATCH_TARGET_BYTES);
-            store.add_record(record).unwrap();
-            store.flush_batch().unwrap();
-            assert_eq!(matrix_pointer, store.matrix.as_ptr());
+            let mut buffers = None;
+            for _ in 0..2 {
+                for row in 0..rows {
+                    assert_eq!(store.pending_since.is_some(), row > 0);
+                    store.add_record(record).unwrap();
+                }
+                // A full batch is written without waiting for its deadline.
+                assert!(store.pending_since.is_none());
+                let lane = &store.lanes[0];
+                assert!(lane.rows.capacity() * 8 <= BATCH_TARGET_BYTES);
+                assert!(store.values.capacity() * 8 <= BATCH_TARGET_BYTES);
+                // The next batch reuses both buffers.
+                let current = (lane.rows.as_ptr(), store.values.as_ptr());
+                assert_eq!(*buffers.get_or_insert(current), current);
+            }
             assert_eq!(store.used_bytes, directory_bytes(temp.path()).unwrap());
             store.finish_stream().unwrap();
-            assert_eq!(decoded(&paths(temp.path(), "shards")[0]).len(), width * 2);
+            let samples = decoded(&paths(temp.path(), "shards")[0]).len();
+            assert_eq!(samples, width * rows * 2);
         }
     }
 
     fn small_stream() -> (Vec<u8>, Vec<(usize, u64)>, Vec<DecodedSample>) {
-        let layout = codec::Layout::new(SAIStatsView::Owned(&[stat("a", 0)])).unwrap();
+        let stats = [stat("a", 0)];
+        let schema = codec::test_schema(&[&stats]);
         let options = IpcWriteOptions::default()
             .try_with_compression(Some(CompressionType::ZSTD))
             .unwrap();
-        let mut writer =
-            StreamWriter::try_new_with_options(Vec::new(), &layout.schema, options).unwrap();
+        let mut writer = StreamWriter::try_new_with_options(Vec::new(), &schema, options).unwrap();
         let mut boundaries = vec![(writer.get_ref().len(), 0)];
         let mut expected = Vec::new();
+        let source = SAIStatRef::from(&stats[0]);
         for i in 0..3u64 {
-            let batch = RecordBatch::try_new(
-                Arc::clone(&layout.schema),
-                vec![
-                    codec::list(UInt64Array::from(vec![u64::MAX - i])),
-                    codec::list(UInt64Array::from(vec![[u64::MAX, 0, 1 << 63][i as usize]])),
-                ],
-            )
-            .unwrap();
+            let value = [u64::MAX, 0, 1 << 63][i as usize];
+            let batch = codec::test_batch(&schema, &[(0, &[u64::MAX - i], &[value])]);
             writer.write(&batch).unwrap();
             boundaries.push((writer.get_ref().len(), i + 1));
-            let source = stat("a", 0);
-            let source = SAIStatRef::from(&source);
             expected.push(DecodedSample {
+                layout: 0,
                 stat_index: 0,
                 object_name: "a".into(),
                 type_name: Arc::from(source.type_name_or_id()),
                 stat_name: Arc::from(source.stat_name_or_id()),
                 observation_time: u64::MAX - i,
-                value: [u64::MAX, 0, 1 << 63][i as usize],
+                value,
             });
         }
         writer.finish().unwrap();
@@ -1198,6 +1585,7 @@ mod tests {
                         stats: SAIStatsView::Owned(&[]),
                     })
                     .unwrap();
+                writer.flush().unwrap();
                 assert_ne!(writer.active.as_ref().unwrap().path, partial);
                 writer.finish_stream().unwrap();
                 assert_eq!(decoded(&partial), expected);
@@ -1213,11 +1601,10 @@ mod tests {
         drop(prepare_storage(&config(temp.path())).unwrap());
         let partial = temp.path().join(".staging/bad.arrow.partial");
         for bytes in [b"not an Arrow stream".to_vec(), {
-            let layout = codec::Layout::new(SAIStatsView::Owned(&[stat("a", 0)])).unwrap();
-            let mut metadata = layout.schema.metadata().clone();
+            let valid = codec::test_schema(&[&[stat("a", 0)]]);
+            let mut metadata = valid.metadata().clone();
             metadata.insert("matrix_order".into(), "time-major".into());
-            let schema =
-                arrow_schema::Schema::new_with_metadata(layout.schema.fields().clone(), metadata);
+            let schema = arrow_schema::Schema::new_with_metadata(valid.fields().clone(), metadata);
             let mut writer = StreamWriter::try_new(Vec::new(), &schema).unwrap();
             writer.finish().unwrap();
             writer.into_inner().unwrap()
@@ -1248,14 +1635,13 @@ mod tests {
         let mut writer = store(temp.path());
         assert_eq!(writer.used_bytes, directory_bytes(temp.path()).unwrap());
         writer.config.max_bytes = writer.used_bytes + BATCH_RESERVE_BYTES - 1;
-        assert!(
-            writer
-                .add_record(SAIStatsRef {
-                    observation_time: 0,
-                    stats: SAIStatsView::Owned(&[])
-                })
-                .is_err()
-        );
+        writer
+            .add_record(SAIStatsRef {
+                observation_time: 0,
+                stats: SAIStatsView::Owned(&[]),
+            })
+            .unwrap();
+        assert!(writer.flush().is_err());
         for (path, data) in files {
             assert_eq!(fs::read(temp.path().join(path)).unwrap(), data);
         }
@@ -1313,6 +1699,7 @@ mod tests {
                 stats: SAIStatsView::Owned(&[stat("a", 7)]),
             })
             .unwrap();
+        actor.store.flush().unwrap();
         let partial = actor.store.active.as_ref().unwrap().path.clone();
         assert_eq!(fs::metadata(partial).unwrap().mode() & 0o777, 0o600);
         actor.store.finish_stream().unwrap();
@@ -1458,10 +1845,10 @@ mod tests {
         let first = paths(temp.path(), "shards")[0].clone();
         let bytes = fs::read(&first).unwrap();
         store.add_record(record).unwrap();
-        store.flush_batch().unwrap();
+        store.flush().unwrap();
         store.add_record(record).unwrap();
         store.config.max_bytes = store.used_bytes + BATCH_RESERVE_BYTES - 1;
-        assert!(store.flush_batch().is_err());
+        assert!(store.flush().is_err());
         assert_eq!(fs::read(&first).unwrap(), bytes);
         drop(store);
         drop(prepare_storage(&config(temp.path())).unwrap());
@@ -1526,7 +1913,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(u64::MAX, u64::MAX), (0, 0), (1 << 63, 1 << 63)]
         );
-        assert!(store.batch_started.is_none());
+        assert!(store.pending_since.is_none());
     }
 
     #[test]
@@ -1657,11 +2044,12 @@ mod tests {
     }
 
     #[test]
-    fn size_rotation_waits_for_complete_batch_and_preserves_records() {
+    fn size_rotation_waits_for_complete_batches_and_preserves_records() {
         for schema_exceeds_target in [true, false] {
+            let target = if schema_exceeds_target { 1 } else { u64::MAX };
             let temp = private_tempdir();
             let mut store = store(temp.path());
-            store.config.file_target_bytes = if schema_exceeds_target { 1 } else { u64::MAX };
+            store.config.file_target_bytes = target;
             let stats = [stat(&"a".repeat(4096), u64::MAX)];
             let record = SAIStatsRef {
                 observation_time: 0,
@@ -1669,26 +2057,30 @@ mod tests {
             };
             for seq in 0..3 {
                 store.add_record(record).unwrap();
-                let active = store.active.as_ref().unwrap();
-                let schema_bytes = active.writer.get_ref().bytes_written;
-                if schema_exceeds_target {
-                    assert!(schema_bytes >= store.config.file_target_bytes);
-                } else {
-                    // Schema is below target; the complete batch must cross it.
-                    store.config.file_target_bytes = schema_bytes + 1;
+                store.flush().unwrap();
+                if !schema_exceeds_target {
+                    // Below the target, the stream stays open; the next complete
+                    // batch crosses it.
+                    let active = store.active.as_ref().unwrap();
+                    let bytes = active.writer.get_ref().bytes_written;
+                    assert_eq!(bytes, fs::metadata(&active.path).unwrap().len());
+                    assert_eq!(paths(temp.path(), "shards").len(), seq);
+                    store.config.file_target_bytes = bytes + 1;
+                    store.add_record(record).unwrap();
+                    store.flush().unwrap();
+                    store.config.file_target_bytes = target;
                 }
-                assert_eq!(schema_bytes, fs::metadata(&active.path).unwrap().len());
-                assert_eq!(paths(temp.path(), "shards").len(), seq);
-                store.flush_batch().unwrap();
                 assert!(store.active.is_none());
-                assert!(store.batch_started.is_none());
+                assert!(store.pending_since.is_none());
                 let files = paths(temp.path(), "shards");
                 assert_eq!(files.len(), seq + 1);
-                assert!(fs::metadata(&files[seq]).unwrap().len() > schema_bytes + 8);
                 let samples = decoded(&files[seq]);
-                assert_eq!(samples.len(), 1);
-                assert_eq!(samples[0].observation_time, 0);
-                assert_eq!(samples[0].value, u64::MAX);
+                assert_eq!(samples.len(), if schema_exceeds_target { 1 } else { 2 });
+                assert!(
+                    samples
+                        .iter()
+                        .all(|s| s.observation_time == 0 && s.value == u64::MAX)
+                );
             }
             store.finish_stream().unwrap();
             assert_eq!(paths(temp.path(), "shards").len(), 3);
@@ -1713,22 +2105,15 @@ mod tests {
                 })
                 .unwrap();
         }
-        store.flush_batch().unwrap();
+        store.flush().unwrap();
         assert!(paths(temp.path(), "shards").is_empty());
         let active = store.active.as_ref().unwrap();
         let bytes = active.writer.get_ref().bytes_written;
         assert_eq!(bytes, fs::metadata(&active.path).unwrap().len());
         assert!(bytes < store.config.file_target_bytes);
         assert_eq!(store.file_sequence, 1);
-        assert!(
-            store
-                .columns
-                .iter()
-                .map(|c| c.capacity() * 8)
-                .sum::<usize>()
-                <= BATCH_TARGET_BYTES
-        );
-        assert!(store.matrix.capacity() * 8 <= BATCH_TARGET_BYTES);
+        assert!(store.lanes[0].rows.capacity() * 8 <= BATCH_TARGET_BYTES);
+        assert!(store.values.capacity() * 8 <= BATCH_TARGET_BYTES);
         store.finish_stream().unwrap();
         let files = paths(temp.path(), "shards");
         assert_eq!(files.len(), 1);
@@ -1737,11 +2122,11 @@ mod tests {
         let mut read_records = 0;
         for batch in reader {
             let batch = batch.unwrap();
-            let timestamps = child(&batch, 0);
+            let timestamps = child(&batch, 1);
             assert!(timestamps.values().iter().all(|&value| value == 0));
             read_records += timestamps.len();
-            assert_eq!(child(&batch, 1).len(), stats.len() * timestamps.len());
-            assert!(child(&batch, 1).values().iter().all(|&value| value == 0));
+            assert_eq!(child(&batch, 2).len(), stats.len() * timestamps.len());
+            assert!(child(&batch, 2).values().iter().all(|&value| value == 0));
         }
         assert_eq!(read_records, records);
     }
@@ -1750,17 +2135,17 @@ mod tests {
     fn max_age_rotation_is_independent_of_source_timestamps() {
         let temp = private_tempdir();
         let mut store = store(temp.path());
+        let empty = |time| SAIStatsRef {
+            observation_time: time,
+            stats: SAIStatsView::Owned(&[]),
+        };
         for time in [0, u64::MAX, 0] {
-            store
-                .add_record(SAIStatsRef {
-                    observation_time: time,
-                    stats: SAIStatsView::Owned(&[]),
-                })
-                .unwrap();
+            store.add_record(empty(time)).unwrap();
         }
+        store.flush().unwrap();
         assert!(paths(temp.path(), "shards").is_empty());
         store.active.as_mut().unwrap().started = Instant::now() - store.config.shard_interval;
-        store.tick().unwrap();
+        store.poll(Instant::now()).unwrap();
         assert_eq!(paths(temp.path(), "shards").len(), 1);
         assert!(store.active.is_none());
         assert_eq!(
@@ -1769,20 +2154,11 @@ mod tests {
                 .records,
             3
         );
-        store
-            .add_record(SAIStatsRef {
-                observation_time: 0,
-                stats: SAIStatsView::Owned(&[]),
-            })
-            .unwrap();
-        assert!(store.active.is_some());
+        store.add_record(empty(0)).unwrap();
+        // Streams open with their first batch.
+        assert!(store.active.is_none());
         assert_eq!(paths(temp.path(), "shards").len(), 1);
-        store
-            .add_record(SAIStatsRef {
-                observation_time: 0,
-                stats: SAIStatsView::Owned(&[]),
-            })
-            .unwrap();
+        store.add_record(empty(0)).unwrap();
         store.finish_stream().unwrap();
         assert_eq!(paths(temp.path(), "shards").len(), 2);
         assert_eq!(
@@ -1792,6 +2168,35 @@ mod tests {
                 .sum::<u64>(),
             5
         );
+    }
+
+    #[test]
+    fn deadlines_follow_the_oldest_record_and_stream_age() {
+        let temp = private_tempdir();
+        let mut store = store(temp.path());
+        assert_eq!(store.next_deadline(), None);
+        let record = SAIStatsRef {
+            observation_time: 0,
+            stats: SAIStatsView::Owned(&[]),
+        };
+        store.add_record(record).unwrap();
+        let since = store.pending_since.unwrap();
+        store.add_record(record).unwrap();
+        assert_eq!(store.next_deadline(), Some(since + FLUSH_INTERVAL));
+        store.poll(since + FLUSH_INTERVAL / 2).unwrap();
+        assert_eq!(store.pending_since, Some(since));
+        store.poll(since + FLUSH_INTERVAL).unwrap();
+        assert!(store.pending_since.is_none());
+        let started = store.active.as_ref().unwrap().started;
+        assert_eq!(
+            store.next_deadline(),
+            Some(started + store.config.shard_interval)
+        );
+        // An unrepresentable maximum age never rotates, rather than overflowing.
+        store.config.shard_interval = Duration::from_secs(u64::MAX);
+        assert_eq!(store.next_deadline(), None);
+        store.poll(Instant::now()).unwrap();
+        assert!(store.active.is_some());
     }
 
     #[test]
@@ -1805,8 +2210,7 @@ mod tests {
             SAIStat::new("x", u32::MAX, 7, 0),
         ];
         let layout = codec::Layout::new(SAIStatsView::Owned(&stats)).unwrap();
-        let series: serde_json::Value =
-            serde_json::from_str(&layout.schema.metadata()["series"]).unwrap();
+        let series: serde_json::Value = serde_json::from_str(&layout.json).unwrap();
         let names: Vec<_> = series
             .as_array()
             .unwrap()
@@ -1877,15 +2281,18 @@ mod tests {
                     .unwrap();
                 time += 1;
             }
-            store.flush_batch().unwrap();
+            store.flush().unwrap();
         }
         store.finish_stream().unwrap();
         let path = &paths(temp.path(), "shards")[0];
         let reader = StreamReader::try_new(File::open(path).unwrap(), None).unwrap();
         let schema = reader.schema();
-        assert_eq!(schema.fields().len(), 2);
+        assert_eq!(schema.fields().len(), 3);
         assert_eq!(schema.metadata()["matrix_order"], "series-major");
-        let series: serde_json::Value = serde_json::from_str(&schema.metadata()["series"]).unwrap();
+        let layouts: serde_json::Value =
+            serde_json::from_str(&schema.metadata()["layouts"]).unwrap();
+        assert_eq!(layouts.as_array().unwrap().len(), 1);
+        let series = &layouts[0];
         assert_eq!(series.as_array().unwrap().len(), 2);
         assert_eq!(series[0], series[1]);
         assert_eq!(series[0].as_object().unwrap().len(), 3);
@@ -1893,9 +2300,9 @@ mod tests {
         let mut record_index = 0;
         for (batch, rows) in reader.zip([3, 1, 5]) {
             let batch = batch.unwrap();
-            assert_eq!(batch.num_rows(), 1);
-            let timestamps = child(&batch, 0);
-            let values = child(&batch, 1);
+            assert_eq!(layout_ids(&batch), [0]);
+            let timestamps = child(&batch, 1);
+            let values = child(&batch, 2);
             let t = timestamps.len();
             assert_eq!(t, rows);
             assert_eq!(values.len(), series.as_array().unwrap().len() * t);
@@ -1919,16 +2326,9 @@ mod tests {
                 stats: SAIStatsView::Owned(&[stat("a", u64::MAX)]),
             })
             .unwrap();
-        store.flush_batch().unwrap();
-        let layout = &store.layout.as_ref().unwrap().schema;
-        let batch = RecordBatch::try_new(
-            Arc::clone(layout),
-            vec![
-                codec::list(UInt64Array::from(vec![0])),
-                codec::list(UInt64Array::from(vec![0])),
-            ],
-        )
-        .unwrap();
+        store.flush().unwrap();
+        let schema = Arc::clone(&store.active.as_ref().unwrap().schema);
+        let batch = codec::test_batch(&schema, &[(0, &[0], &[0])]);
         let active = store.active.as_mut().unwrap();
         active.writer.get_mut().remaining = 8;
         assert!(active.writer.write(&batch).is_err());
@@ -1992,7 +2392,7 @@ mod tests {
                     stats: SAIStatsView::Owned(&[stat("a", value)]),
                 })
                 .unwrap();
-            store.flush_batch().unwrap();
+            store.flush().unwrap();
         }
         // An accepted in-memory row is deliberately not promised durable.
         store
