@@ -5216,9 +5216,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         updatePortStatePoll(p, PORT_STATE_POLL_LT, pCfg.link_training.value);
 
                         // Restore serdes attributes when LT is transitioned from ON to OFF
-                        if (!p.m_link_training && serdes_attr.empty())
+                        if (!p.m_link_training && serdes_attr.empty() && !p.m_serdes_attrs.empty())
                         {
-                            serdes_attr = p.m_serdes_attrs;
+                            if (!programSerdes(p, p.m_port_id, gSwitchId, p.m_serdes_attrs))
+                            {
+                                SWSS_LOG_ERROR("Failed to restore serdes for %s after LT off", p.m_alias.c_str());
+                                it++;
+                                continue;
+                            }
                         }
 
                         SWSS_LOG_NOTICE(
