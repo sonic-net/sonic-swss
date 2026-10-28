@@ -177,4 +177,126 @@ namespace policerorch_test
         doPolicerConfig(policer, DEL_COMMAND, {});
         EXPECT_EQ(m_policerMock->removed_oid, kPolicerOid);
     }
+
+    TEST_F(PolicerOrchTest, PolicerMalformedFieldsAreDropped)
+    {
+        // Only the valid policer may reach SAI. The malformed entries sort
+        // ahead of it in m_toSync, so if any of them threw out of doTask() or
+        // were left pending, the valid one would never be created.
+        EXPECT_CALL(*mock_sai_policer_api, create_policer)
+            .Times(1)
+            .WillOnce(Invoke(m_policerMock.get(), &PolicerSaiMock::handleCreate));
+        EXPECT_CALL(*mock_sai_policer_api, set_policer_attribute).Times(0);
+        EXPECT_CALL(*mock_sai_policer_api, remove_policer).Times(0);
+
+        auto *policerConsumer = dynamic_cast<Consumer *>(
+            static_cast<Orch *>(gPolicerOrch)->getExecutor(CFG_POLICER_TABLE_NAME));
+        ASSERT_NE(policerConsumer, nullptr);
+
+        deque<KeyOpFieldsValuesTuple> entries;
+        // Non-numeric rate.
+        entries.push_back({"BAD_CIR", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "sr_tcm"},
+                               {"cir", "abc"},
+                               {"cbs", "600"},
+                           }});
+        // Trailing garbage: stoul() used to silently accept this as 600.
+        entries.push_back({"BAD_CIR_TRAILING", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "sr_tcm"},
+                               {"cir", "600kbps"},
+                               {"cbs", "600"},
+                           }});
+        // Float.
+        entries.push_back({"BAD_CBS", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "sr_tcm"},
+                               {"cir", "600"},
+                               {"cbs", "600.5"},
+                           }});
+        // Empty.
+        entries.push_back({"BAD_PIR", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "tr_tcm"},
+                               {"cir", "600"},
+                               {"cbs", "600"},
+                               {"pir", ""},
+                               {"pbs", "600"},
+                           }});
+        // Overflows uint64.
+        entries.push_back({"BAD_PBS", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "tr_tcm"},
+                               {"cir", "600"},
+                               {"cbs", "600"},
+                               {"pir", "600"},
+                               {"pbs", "99999999999999999999"},
+                           }});
+        // Unknown enum values: map::at() throws std::out_of_range.
+        entries.push_back({"BAD_METER_TYPE", SET_COMMAND,
+                           {
+                               {"meter_type", "furlongs"},
+                               {"mode", "sr_tcm"},
+                               {"cir", "600"},
+                               {"cbs", "600"},
+                           }});
+        entries.push_back({"BAD_MODE", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "hyperspace"},
+                               {"cir", "600"},
+                               {"cbs", "600"},
+                           }});
+        entries.push_back({"GOOD", SET_COMMAND,
+                           {
+                               {"meter_type", "packets"},
+                               {"mode", "sr_tcm"},
+                               {"cir", "600"},
+                               {"cbs", "600"},
+                               {"red_packet_action", "drop"},
+                           }});
+        policerConsumer->addToSync(entries);
+        entries.clear();
+
+        // Storm control is served by the same orch; a malformed kbps must be
+        // dropped as well (it fails before any SAI call is made).
+        auto *stormConsumer = dynamic_cast<Consumer *>(
+            static_cast<Orch *>(gPolicerOrch)->getExecutor(CFG_PORT_STORM_CONTROL_TABLE_NAME));
+        ASSERT_NE(stormConsumer, nullptr);
+        entries.push_back({"Ethernet0|broadcast", SET_COMMAND, {{"kbps", "abc"}}});
+        stormConsumer->addToSync(entries);
+        entries.clear();
+
+        // Drain through the production path (Orch::doTask -> Consumer::drain).
+        static_cast<Orch *>(gPolicerOrch)->doTask();
+
+        vector<string> pending;
+        static_cast<Orch *>(gPolicerOrch)->dumpPendingTasks(pending);
+        EXPECT_TRUE(pending.empty());
+
+        // The one create carries GOOD's five attributes.
+        ASSERT_EQ(m_policerMock->create_attrs.size(), 5U);
+        sai_attribute_value_t v;
+        ASSERT_TRUE(m_policerMock->findCreateAttr(SAI_POLICER_ATTR_METER_TYPE, v));
+        EXPECT_EQ(v.s32, SAI_METER_TYPE_PACKETS);
+        ASSERT_TRUE(m_policerMock->findCreateAttr(SAI_POLICER_ATTR_CIR, v));
+        EXPECT_EQ(v.u64, 600U);
+
+        // A malformed update of the existing policer is dropped without
+        // touching it: set_policer_attribute stays at Times(0).
+        entries.push_back({"GOOD", SET_COMMAND, {{"cir", "abc"}}});
+        policerConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPolicerOrch)->doTask();
+
+        pending.clear();
+        static_cast<Orch *>(gPolicerOrch)->dumpPendingTasks(pending);
+        EXPECT_TRUE(pending.empty());
+    }
 }
