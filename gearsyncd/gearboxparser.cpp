@@ -102,6 +102,12 @@ bool GearboxParser::parse()
             val = phy["lib_name"];
             attr = std::make_pair("lib_name", std::string(val.get<std::string>()));
             attrs.push_back(attr);
+            if (phy.find("phy_access_lib_name") != phy.end())
+            {
+                val = phy["phy_access_lib_name"];
+                attr = std::make_pair("phy_access_lib_name", std::string(val.get<std::string>()));
+                attrs.push_back(attr);
+            }
             if (phy.find("firmware_path") == phy.end()) 
             {
                 SWSS_LOG_ERROR("missing 'firmware_path' field in 'phys' item %d in gearbox configuration", iter);
