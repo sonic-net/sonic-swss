@@ -707,22 +707,33 @@ fn publish(root: &Path, path: &Path) -> Result<(), String> {
 }
 
 fn rename_noreplace(from: &Path, to: &Path) -> io::Result<()> {
-    let from = CString::new(from.as_os_str().as_bytes())?;
-    let to = CString::new(to.as_os_str().as_bytes())?;
+    let c_from = CString::new(from.as_os_str().as_bytes())?;
+    let c_to = CString::new(to.as_os_str().as_bytes())?;
     // SAFETY: both arguments are NUL-terminated paths that outlive the call.
     let result = unsafe {
         libc::renameat2(
             libc::AT_FDCWD,
-            from.as_ptr(),
+            c_from.as_ptr(),
             libc::AT_FDCWD,
-            to.as_ptr(),
+            c_to.as_ptr(),
             libc::RENAME_NOREPLACE,
         )
     };
-    if result != 0 {
-        return Err(io::Error::last_os_error());
+    if result == 0 {
+        return Ok(());
     }
-    Ok(())
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        // NFS and some FUSE filesystems reject renameat2 flags.
+        Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP) => link_noreplace(from, to),
+        _ => Err(error),
+    }
+}
+
+/// Publish by hard link, which also refuses to replace an existing file.
+fn link_noreplace(from: &Path, to: &Path) -> io::Result<()> {
+    fs::hard_link(from, to)?;
+    fs::remove_file(from)
 }
 
 fn directory_bytes(path: &Path) -> io::Result<u64> {
@@ -1467,6 +1478,24 @@ mod tests {
         assert!(publish(temp.path(), &collision).is_err());
         assert_eq!(fs::read(&first).unwrap(), bytes);
         assert!(collision.exists());
+    }
+
+    #[test]
+    fn link_fallback_publishes_without_replacing() {
+        let temp = private_tempdir();
+        let from = temp.path().join("stream.arrow.partial");
+        let to = temp.path().join("stream.arrow");
+        fs::write(&from, b"first").unwrap();
+        link_noreplace(&from, &to).unwrap();
+        assert!(!from.exists());
+        assert_eq!(fs::read(&to).unwrap(), b"first");
+        fs::write(&from, b"second").unwrap();
+        assert_eq!(
+            link_noreplace(&from, &to).unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(&to).unwrap(), b"first");
+        assert_eq!(fs::read(&from).unwrap(), b"second");
     }
 
     #[test]
