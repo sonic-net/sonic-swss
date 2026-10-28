@@ -442,6 +442,7 @@ private:
     void removePortFromPortListMap(sai_object_id_t port_id);
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
+    void cleanDefaultVlanAndBridgeForPorts(const std::vector<sai_object_id_t> &port_ids);
 
     bool initializePorts(std::vector<Port>& ports);
     void initializePriorityGroupsBulk(std::vector<Port>& ports);
