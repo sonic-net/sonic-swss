@@ -19,6 +19,32 @@
 
 using namespace swss;
 
+namespace
+{
+constexpr uint32_t MAX_VNI = (1U << 24) - 1;
+
+bool canonicalizeVni(const string& raw_vni, uint32_t& vni, string& canonical_vni)
+{
+    try
+    {
+        size_t parsed = 0;
+        const auto value = stoul(raw_vni, &parsed);
+        if ((parsed != raw_vni.size()) || (value > MAX_VNI))
+        {
+            return false;
+        }
+
+        vni = static_cast<uint32_t>(value);
+        canonical_vni = to_string(vni);
+        return true;
+    }
+    catch (const exception&)
+    {
+        return false;
+    }
+}
+}
+
 VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_appVrfTableProducer(appDb, APP_VRF_TABLE_NAME),
@@ -241,17 +267,17 @@ void VrfMgr::doTask(Consumer &consumer)
                 const string tunnel_name = vrfName.substr(0, delimiter_pos);
                 if (op == SET_COMMAND)
                 {
-                    string vni;
+                    string raw_vni;
                     for (const auto& field_value : kfvFieldsValues(t))
                     {
                         if (fvField(field_value) == "vni")
                         {
-                            vni = fvValue(field_value);
+                            raw_vni = fvValue(field_value);
                             break;
                         }
                     }
 
-                    if (vni.empty())
+                    if (raw_vni.empty())
                     {
                         /*
                          * CONFIG_DB notifications can contain only the fields
@@ -266,25 +292,30 @@ void VrfMgr::doTask(Consumer &consumer)
                             {
                                 if (fvField(field_value) == "vni")
                                 {
-                                    vni = fvValue(field_value);
+                                    raw_vni = fvValue(field_value);
                                     break;
                                 }
                             }
                         }
                     }
 
-                    if (vni.empty())
+                    uint32_t parsed_vni = 0;
+                    string vni;
+                    const bool valid_vni = !raw_vni.empty() &&
+                                           canonicalizeVni(raw_vni, parsed_vni, vni);
+                    if (!valid_vni)
                     {
                         VxlanTunnelMapCacheEntry old_entry;
                         if (removeVxlanTunnelMapFromCache(vrfName, old_entry))
                         {
-                            SWSS_LOG_NOTICE("VXLAN tunnel map %s no longer has a VNI; withdrawing cached dependency",
+                            SWSS_LOG_NOTICE("VXLAN tunnel map %s has no valid VNI; withdrawing cached dependency",
                                             vrfName.c_str());
                             syncVrfVxlanTableForVni(old_entry.tunnel_name, old_entry.vni);
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("VXLAN tunnel map %s has no VNI", vrfName.c_str());
+                            SWSS_LOG_ERROR("VXLAN tunnel map %s has invalid VNI '%s'",
+                                           vrfName.c_str(), raw_vni.c_str());
                         }
                     }
                     else
@@ -422,6 +453,17 @@ void VrfMgr::doTask(Consumer &consumer)
                         SWSS_LOG_ERROR("Rejected VRF VNI configuration for %s", vrfName.c_str());
                         it = consumer.m_toSync.erase(it);
                         continue;
+                    }
+                    if (!validated_s_vni.empty())
+                    {
+                        for (auto& field_value : kfvFieldsValues(effective_t))
+                        {
+                            if (fvField(field_value) == "vni")
+                            {
+                                fvValue(field_value) = validated_s_vni;
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -594,7 +636,6 @@ bool VrfMgr::doVrfEvpnNvoDelTask(const KeyOpFieldsValuesTuple & t)
 
 bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vni, string& s_vni)
 {
-    constexpr uint32_t MAX_VNI = (1U << 24) - 1;
     const string& vrf_name = kfvKey(t);
     vni = 0;
     s_vni.clear();
@@ -606,21 +647,10 @@ bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vn
             continue;
         }
 
-        s_vni = fvValue(field_value);
-        try
+        const string raw_vni = fvValue(field_value);
+        if (!canonicalizeVni(raw_vni, vni, s_vni))
         {
-            size_t parsed = 0;
-            const auto value = stoul(s_vni, &parsed);
-            if ((parsed != s_vni.size()) || (value > MAX_VNI))
-            {
-                SWSS_LOG_ERROR("Invalid VNI '%s' for VRF %s", s_vni.c_str(), vrf_name.c_str());
-                return false;
-            }
-            vni = static_cast<uint32_t>(value);
-        }
-        catch (const exception& e)
-        {
-            SWSS_LOG_ERROR("Invalid VNI '%s' for VRF %s: %s", s_vni.c_str(), vrf_name.c_str(), e.what());
+            SWSS_LOG_ERROR("Invalid VNI '%s' for VRF %s", raw_vni.c_str(), vrf_name.c_str());
             return false;
         }
         break;
