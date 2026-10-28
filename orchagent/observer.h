@@ -24,7 +24,13 @@ enum SubjectType
     SUBJECT_TYPE_MLAG_INTF_CHANGE,
     SUBJECT_TYPE_MLAG_ISL_CHANGE,
     SUBJECT_TYPE_FDB_FLUSH_CHANGE,
-    SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE
+    SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE,
+    /*
+     * NeighborUpdate: add == false - a neighbor DEL is blocked because its next hop is still
+     * referenced; observers holding an optional reference (ACL redirect) may release it.
+     * add == true - such a pending DEL was cancelled because the neighbor was learned again.
+     */
+    SUBJECT_TYPE_NEIGH_REMOVAL_PENDING
 };
 
 class Observer
