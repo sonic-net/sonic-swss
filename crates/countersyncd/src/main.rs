@@ -94,6 +94,33 @@ struct SupervisorExit {
     message: String,
 }
 
+/// Below supervisord's default stopwaitsecs (10 s), after which it sends SIGKILL.
+#[cfg(not(target_arch = "arm"))]
+const LOCAL_STORAGE_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// SIGINT and SIGTERM, handled only to drain local storage before exiting.
+struct ShutdownSignals {
+    interrupt: tokio::signal::unix::Signal,
+    terminate: tokio::signal::unix::Signal,
+}
+
+impl ShutdownSignals {
+    fn install() -> std::io::Result<Self> {
+        use tokio::signal::unix::{signal, SignalKind};
+        Ok(Self {
+            interrupt: signal(SignalKind::interrupt())?,
+            terminate: signal(SignalKind::terminate())?,
+        })
+    }
+
+    async fn recv(&mut self) -> &'static str {
+        tokio::select! {
+            _ = self.interrupt.recv() => "SIGINT",
+            _ = self.terminate.recv() => "SIGTERM",
+        }
+    }
+}
+
 fn describe_join_error(e: tokio::task::JoinError) -> String {
     if e.is_panic() {
         format!("task panicked: {}", e)
@@ -524,12 +551,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         storage
     });
 
-    // Keep default SIGINT/SIGTERM termination during critical startup: synchronous
+    // Handle SIGINT/SIGTERM only to drain local storage; otherwise keep the
+    // default termination. Install after critical startup: synchronous
     // initialization (notably SwssActor's Redis connection) can block indefinitely.
-    let mut interrupt_signal =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-    let mut terminate_signal =
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    #[cfg(not(target_arch = "arm"))]
+    let drain_on_signal = local_storage.is_some();
+    #[cfg(target_arch = "arm")]
+    let drain_on_signal = false;
+    let mut signals = if drain_on_signal {
+        Some(ShutdownSignals::install()?)
+    } else {
+        None
+    };
 
     info!("Starting actor tasks...");
 
@@ -623,13 +656,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         res = async { otel_handle.as_mut().unwrap().await }, if otel_handle.is_some() => {
             classify_otel_join("OpenTelemetry", res)
         }
-        _ = interrupt_signal.recv() => SupervisorExit {
-            actor_name: "SIGINT",
-            exit_code: 0,
-            message: "shutdown requested".to_string(),
-        },
-        _ = terminate_signal.recv() => SupervisorExit {
-            actor_name: "SIGTERM",
+        signal = async { signals.as_mut().unwrap().recv().await }, if signals.is_some() => SupervisorExit {
+            actor_name: signal,
             exit_code: 0,
             message: "shutdown requested".to_string(),
         },
@@ -662,7 +690,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // IPFIX held the only storage sender, so its abort lets storage drain.
     #[cfg(not(target_arch = "arm"))]
     if let Some(local_storage) = local_storage {
-        local_storage.shutdown(Duration::from_secs(10)).await;
+        local_storage.shutdown(LOCAL_STORAGE_DRAIN_TIMEOUT).await;
     }
 
     // Do not let a blocked filesystem operation hold Tokio runtime teardown open.
