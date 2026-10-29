@@ -559,7 +559,7 @@ TEST_F(MacSyncTest, LocalMacDeleteReachesZebraAfterThePortIsGone)
 /*
  * orchagent can also refresh the entry once the port is gone. The refresh cannot be
  * sent, so zebra still holds the MAC on the ifindex it last heard, whichever port
- * the refresh names, and the delete must go there.
+ * the refresh names, and the delete must go there, even once that port resolves.
  */
 TEST_F(MacSyncTest, LocalMacRefreshAfterThePortIsGoneKeepsItsIfindex)
 {
@@ -577,6 +577,7 @@ TEST_F(MacSyncTest, LocalMacRefreshAfterThePortIsGoneKeepsItsIfindex)
     m_macSync->processStateFdbEntry(moved);
     EXPECT_EQ(fpm.count(), 1u);
 
+    m_macSync->m_ifNameToIndex = [](const std::string& port) { return port == "Ethernet4" ? 88u : 0u; };
     KeyOpFieldsValuesTuple del{TEST_KEY, DEL_COMMAND, {}};
     m_macSync->processStateFdbEntry(del);
 
@@ -691,6 +692,46 @@ TEST_F(MacSyncTest, UnspecifiedVtepOnNonEsPortIsSkipped)
 
     std::vector<FieldValueTuple> values;
     EXPECT_FALSE(getEntry(TEST_KEY, values));
+}
+
+/*
+ * A VTEP is 4 or 16 bytes. A destination of any other size is malformed, not "no
+ * VTEP": on an Ethernet Segment port it would replace the MAC's row with that port,
+ * so the message is dropped and the row left as it was.
+ */
+TEST_F(MacSyncTest, RemoteMacWithMalformedVtepIsDropped)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("lo", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+
+    MacMsg add;
+    buildMacMsg(add, RTM_NEWNEIGH, NUD_REACHABLE);
+    add.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(add, TEST_VLAN);
+    addSrcVni(add, TEST_VNI);
+    addVtep(add, "10.1.1.1");
+    feed(add);
+
+    const uint8_t partial[5] = {10, 2, 2, 2, 2};
+    const size_t lengths[] = {2, 5};
+    for (size_t len : lengths)
+    {
+        MacMsg req;
+        buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE | NUD_NOARP);
+        req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+        addVlan(req, TEST_VLAN);
+        addSrcVni(req, TEST_VNI);
+        addAttr(req, NDA_DST, partial, len);
+        feed(req);
+    }
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "10.1.1.1");
+    EXPECT_EQ(fieldValue(values, "ifname"), "");
+    EXPECT_EQ(fieldValue(values, "type"), "dynamic");
+
+    cfgEs.del("lo");
 }
 
 /*

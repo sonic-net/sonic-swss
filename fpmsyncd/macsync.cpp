@@ -230,15 +230,21 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
         return;
     }
 
-    unsigned int ifindex = m_ifNameToIndex(local.port);
-    if (ifindex == 0 && !add && local.ifindex)
-    {
-        /* The port can be torn down before its FDB deletes are processed. */
-        ifindex = local.ifindex;
-    }
+    /* A delete withdraws the MAC where zebra last heard it, whatever port the
+     * entry names by then: the port can be torn down before its FDB deletes are
+     * processed, and a refresh naming a port that did not resolve was not sent. */
+    unsigned int ifindex = add ? m_ifNameToIndex(local.port) : local.ifindex;
     if (ifindex == 0)
     {
-        SWSS_LOG_ERROR("MacSync: cannot resolve ifindex for port %s", local.port.c_str());
+        if (add)
+        {
+            SWSS_LOG_ERROR("MacSync: cannot resolve ifindex for port %s", local.port.c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("MacSync: local MAC %s:%s was never sent to zebra, nothing to withdraw",
+                          vlanName.c_str(), mac.c_str());
+        }
         return;
     }
 
@@ -312,9 +318,9 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
     }
     local.ifindex = ifindex;
 
-    SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s%s",
+    SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s ifindex %u%s",
                   add ? "add" : "del", vlanName.c_str(), mac.c_str(), local.port.c_str(),
-                  local.isStatic ? " (static, sticky)" : "");
+                  ifindex, local.isStatic ? " (static, sticky)" : "");
 }
 
 void MacSync::onMacMsg(struct nlmsghdr *h, int len)
@@ -348,13 +354,17 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     uint32_t nhid = 0;
     uint32_t srcVni = 0;
     uint32_t vxlanVni = 0;
+    size_t dstLen = tb[NDA_DST] ? RTA_PAYLOAD(tb[NDA_DST]) : 0;
 
+    /* A VTEP is 4 or 16 bytes. Any other NDA_DST is not "no VTEP": on an
+     * Ethernet Segment port it would replace the MAC's row with that port. */
     if ((tb[NDA_VLAN] && !getAttr(tb[NDA_VLAN], vid)) ||
         (tb[NDA_NH_ID] && !getAttr(tb[NDA_NH_ID], nhid)) ||
         (tb[NDA_SRC_VNI] && !getAttr(tb[NDA_SRC_VNI], srcVni)) ||
-        (tb[NDA_VNI] && !getAttr(tb[NDA_VNI], vxlanVni)))
+        (tb[NDA_VNI] && !getAttr(tb[NDA_VNI], vxlanVni)) ||
+        (tb[NDA_DST] && dstLen != sizeof(struct in_addr) && dstLen != sizeof(struct in6_addr)))
     {
-        SWSS_LOG_ERROR("MacSync: dropping inbound MAC message with a truncated attribute");
+        SWSS_LOG_ERROR("MacSync: dropping inbound MAC message with an attribute of the wrong size");
         return;
     }
 
@@ -421,13 +431,12 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
 
     if (nexthopGroup.empty())
     {
-        size_t dstLen = tb[NDA_DST] ? RTA_PAYLOAD(tb[NDA_DST]) : 0;
         bool haveDst = false;
 
         /* zebra emits NDA_DST even when there is no VTEP, sized from the address
-         * family it guessed rather than from what it holds, so an unusable or
-         * all-zero destination means "no VTEP" and not 0.0.0.0. */
-        if (dstLen == sizeof(struct in_addr) || dstLen == sizeof(struct in6_addr))
+         * family it guessed rather than from what it holds, so an all-zero
+         * destination means "no VTEP" and not 0.0.0.0. */
+        if (dstLen)
         {
             const uint8_t *dst = (const uint8_t *)RTA_DATA(tb[NDA_DST]);
             haveDst = std::any_of(dst, dst + dstLen, [](uint8_t b) { return b != 0; });

@@ -62,8 +62,8 @@ private:
     {
         std::string port;
         bool isStatic;
-        /* The ifindex zebra last heard for this MAC, so a delete still reaches
-         * zebra once the port is gone. */
+        /* The ifindex zebra last heard for this MAC, 0 until it is sent. The
+         * delete goes there, whatever port the entry names by then. */
         unsigned int ifindex;
     };
 
