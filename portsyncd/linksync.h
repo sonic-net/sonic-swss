@@ -16,6 +16,8 @@ public:
 
     LinkSync(DBConnector *appl_db, DBConnector *state_db);
 
+    void updatePortSet();
+
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
