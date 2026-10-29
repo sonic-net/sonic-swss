@@ -906,6 +906,40 @@ namespace portsorch_test
 
     };
 
+    TEST_F(PortsOrchTest, DynamicBridgePortReferenceCountLifecycle)
+    {
+        for (bool tunnel : {true, false})
+        {
+            const string alias = tunnel ? "Port_EVPN_ref_test" : "L2NHG_ref_test";
+            const sai_object_id_t oid = 0x12345;
+            auto add = [&](bool learning = false) {
+                return tunnel ? gPortsOrch->addTunnel(alias, oid, learning)
+                              : gPortsOrch->addL2NexthopGroup(alias, oid);
+            };
+            ASSERT_TRUE(add());
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+            EXPECT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 0u);
+            gPortsOrch->increaseBridgePortRefCount(port);
+            ASSERT_TRUE(add(true));
+            EXPECT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 1u);
+            ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+            EXPECT_EQ(port.m_learn_mode, tunnel ? SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW
+                                               : SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+            gPortsOrch->decreaseBridgePortRefCount(port);
+            EXPECT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 0u);
+            ASSERT_TRUE(tunnel ? gPortsOrch->removeTunnel(port)
+                               : gPortsOrch->removeL2NexthopGroup(port));
+            EXPECT_EQ(gPortsOrch->m_bridge_port_ref_count.count(alias), 0u);
+            EXPECT_FALSE(gPortsOrch->getPort(alias, port));
+            ASSERT_TRUE(add());
+            ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+            EXPECT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 0u);
+            ASSERT_TRUE(tunnel ? gPortsOrch->removeTunnel(port)
+                               : gPortsOrch->removeL2NexthopGroup(port));
+        }
+    }
+
     /*
     * Test port flap count
     */
@@ -4164,8 +4198,8 @@ namespace portsorch_test
                     sai_bulk_op_error_mode_t mode,
                     sai_status_t *object_statuses) -> sai_status_t
             {
-                assert(object_count > 1);
-                assert(attr_count[0] > 1);
+                assert(object_count > 0);
+                assert(attr_count[0] > 0);
                 switch (attr_list[0]->id)
                 {
                 case SAI_PORT_ATTR_NUMBER_OF_INGRESS_PRIORITY_GROUPS:

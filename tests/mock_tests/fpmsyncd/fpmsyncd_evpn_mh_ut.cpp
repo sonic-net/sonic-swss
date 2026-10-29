@@ -22,6 +22,10 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <net/if.h>
+#include <climits>
+#include <fstream>
+#include "mock_table.h"
+#include "lib/fpm_protection_ids.h"
 
 #define private public
 #include "fpmsyncd/routesync.h"
@@ -422,7 +426,7 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEsBackupNhgAdd)
                                       sizeof(evpn_backup_nhg_msg));
 
     evpn_backup_nhg_msg* backup_msg = reinterpret_cast<evpn_backup_nhg_msg*>(NLMSG_DATA(nl_hdr));
-    backup_msg->ebnm_ifindex = 0;         // Ethernet100
+    backup_msg->ebnm_ifindex = 21;         // Ethernet100
     backup_msg->ebnm_backup_nhg_id = 5000;  // Backup NHG ID
 
     int len = static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg)));
@@ -430,7 +434,7 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEsBackupNhgAdd)
     m_pipeline->flush();
 
     std::vector<FieldValueTuple> values;
-    bool found = getTableEntry("EVPN_ES_BACKUP_NHG_TABLE", "unknown", values);
+    bool found = getTableEntry("EVPN_ES_BACKUP_NHG_TABLE", "Ethernet0", values);
 
     EXPECT_TRUE(found);
     if (found) {
@@ -458,14 +462,14 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEsBackupNhgDelete)
                                       sizeof(evpn_backup_nhg_msg));
 
     evpn_backup_nhg_msg* backup_msg = reinterpret_cast<evpn_backup_nhg_msg*>(NLMSG_DATA(nl_hdr));
-    backup_msg->ebnm_ifindex = 0;
+    backup_msg->ebnm_ifindex = 21;
     backup_msg->ebnm_backup_nhg_id = 5000;  // Value doesn't matter for delete
 
     int len = static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg)));
     m_routeSync->onEvpnEsBackupNhgMsg(nl_hdr, len);
     m_pipeline->flush();
 
-    EXPECT_TRUE(isKeyDeleted("EVPN_ES_BACKUP_NHG_TABLE", "unknown"));
+    EXPECT_TRUE(isKeyDeleted("EVPN_ES_BACKUP_NHG_TABLE", "Ethernet0"));
 }
 
 
@@ -552,7 +556,7 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEsBackupNhgMultiple)
                                           sizeof(evpn_backup_nhg_msg));
 
         evpn_backup_nhg_msg* backup_msg = reinterpret_cast<evpn_backup_nhg_msg*>(NLMSG_DATA(nl_hdr));
-        backup_msg->ebnm_ifindex = 0;
+        backup_msg->ebnm_ifindex = 21;
         backup_msg->ebnm_backup_nhg_id = 5001;
 
         int len = static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg)));
@@ -570,7 +574,7 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEsBackupNhgMultiple)
                                           sizeof(evpn_backup_nhg_msg));
 
         evpn_backup_nhg_msg* backup_msg = reinterpret_cast<evpn_backup_nhg_msg*>(NLMSG_DATA(nl_hdr));
-        backup_msg->ebnm_ifindex = 0;
+        backup_msg->ebnm_ifindex = 20;
         backup_msg->ebnm_backup_nhg_id = 5002;
 
         int len = static_cast<int>(nl_hdr->nlmsg_len - NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg)));
@@ -579,17 +583,19 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnEsBackupNhgMultiple)
     }
 
     // Verify both entries exist
-    // Note: Since both use ifindex=0 -> "unknown", the second one will overwrite the first
-    // So we'll only see one entry with NHG ID 5002
+    // Distinct resolved interfaces must retain independent bindings.
     std::vector<FieldValueTuple> values;
-    bool found = getTableEntry("EVPN_ES_BACKUP_NHG_TABLE", "unknown", values);
+    bool found = getTableEntry("EVPN_ES_BACKUP_NHG_TABLE", "Brvxlan100", values);
 
+    std::vector<FieldValueTuple> first;
+    ASSERT_TRUE(getTableEntry("EVPN_ES_BACKUP_NHG_TABLE", "Ethernet0", first));
+    EXPECT_EQ(fvValue(first.front()), "5001");
     EXPECT_TRUE(found);
     if (found) {
         auto nhg = swss::fvsGetValue(values, "nexthop_group", true);
         EXPECT_TRUE(nhg.has_value());
         if (nhg.has_value()) {
-            // Last write wins - should be 5002
+            // Second interface retains its own group
             EXPECT_EQ(*nhg, "5002");
         }
     }
@@ -726,5 +732,481 @@ TEST_F(FpmsyncdEvpnMhTest, EvpnDfRoleChange)
         if (df.has_value()) {
             EXPECT_EQ(*df, "false");
         }
+    }
+}
+
+// Binding tests resolve a controllable kernel interface snapshot, including
+// removal/reuse, without relying on the runner's network namespace.
+void resetMockWarmStartHelper();
+bool getMockWarmStartHelperRefreshEntry(const std::string &, const std::string &,
+                                       swss::KeyOpFieldsValuesTuple &);
+
+class BindingRouteSync : public RouteSync
+{
+public:
+    using RouteSync::RouteSync;
+    std::map<int, std::string> names{{40, "PortChannel0"}, {41, "PortChannel1"}};
+    bool getIfName(int index, char *name, size_t size) override
+    {
+        auto it = names.find(index);
+        if (it == names.end()) return false;
+        snprintf(name, size, "%s", it->second.c_str());
+        return true;
+    }
+};
+
+class FpmBindingTest : public ::testing::Test
+{
+protected:
+    DBConnector db{"APPL_DB", 0};
+    RedisPipeline pipeline{&db};
+    std::unique_ptr<BindingRouteSync> sync;
+    struct Frame { nlmsghdr header; evpn_backup_nhg_msg binding; };
+    void SetUp() override
+    {
+        testing_db::reset();
+        resetMockWarmStartHelper();
+        sync = std::make_unique<BindingRouteSync>(&pipeline);
+    }
+    void TearDown() override { resetMockWarmStartHelper(); testing_db::reset(); }
+    Frame frame(int index = 40, uint32_t group = 5000, bool deleting = false)
+    {
+        Frame f{};
+        f.header.nlmsg_len = NLMSG_LENGTH(sizeof(f.binding));
+        f.header.nlmsg_type = deleting ? RTM_FPM_DEL_EVPN_ES_BACKUP_NHG : RTM_FPM_ADD_EVPN_ES_BACKUP_NHG;
+        f.binding = {index, group};
+        return f;
+    }
+    void send(Frame f) { sync->onMsgRaw(&f.header); pipeline.flush(); }
+    bool entry(const std::string &key, const std::string &group)
+    {
+        Table table(&db, "EVPN_ES_BACKUP_NHG_TABLE");
+        std::vector<FieldValueTuple> values;
+        return table.get(key, values) && values == std::vector<FieldValueTuple>{{"nexthop_group", group}};
+    }
+    bool absent(const std::string &key)
+    {
+        Table table(&db, "EVPN_ES_BACKUP_NHG_TABLE");
+        std::vector<FieldValueTuple> values;
+        return !table.get(key, values);
+    }
+};
+
+TEST_F(FpmBindingTest, CreateReplaceDuplicateAndIndependentKeys)
+{
+    send(frame()); send(frame());
+    ASSERT_TRUE(entry("PortChannel0", "5000"));
+    sync->names[INT_MAX] = "PortChannel9999";
+    send(frame(INT_MAX, 1)); EXPECT_TRUE(entry("PortChannel9999", "1"));
+    send(frame(INT_MAX, 0, true)); EXPECT_TRUE(absent("PortChannel9999"));
+    send(frame(41, 6000)); send(frame(40, INT_MAX));
+    EXPECT_TRUE(entry("PortChannel0", std::to_string(INT_MAX)));
+    EXPECT_TRUE(entry("PortChannel1", "6000"));
+    send(frame(40, 0, true)); send(frame(40, -1, true));
+    EXPECT_TRUE(absent("PortChannel0"));
+    EXPECT_TRUE(entry("PortChannel1", "6000"));
+}
+
+TEST_F(FpmBindingTest, UnsignedGroupIdsPreserveAllBits)
+{
+    for (uint32_t group : {0x80000000u, 0x80000001u, UINT32_MAX})
+    {
+        send(frame(40, group));
+        EXPECT_TRUE(entry("PortChannel0", std::to_string(group)));
+        send(frame(40, group, true));
+        EXPECT_TRUE(absent("PortChannel0"));
+    }
+}
+
+TEST_F(FpmBindingTest, RejectInvalidInterfaceAndZeroGroupAtomically)
+{
+    send(frame());
+    for (auto pair : std::vector<std::pair<int, uint32_t>>{{0, 1}, {-1, 1}, {40, 0}})
+        send(frame(pair.first, pair.second));
+    send(frame(0, 0, true)); send(frame(-1, 0, true));
+    EXPECT_TRUE(entry("PortChannel0", "5000"));
+    EXPECT_TRUE(absent("unknown"));
+    EXPECT_EQ(sync->m_evpnBackupNhgInterfaces.size(), 1u);
+}
+
+TEST_F(FpmBindingTest, RejectUnknownInterfaceUntilReplayed)
+{
+    send(frame(99));
+    EXPECT_TRUE(absent("unknown"));
+    EXPECT_TRUE(sync->m_evpnBackupNhgInterfaces.empty());
+    sync->names[99] = "PortChannel99";
+    send(frame(99));
+    EXPECT_TRUE(entry("PortChannel99", "5000"));
+    send(frame(100, 0, true));
+    EXPECT_TRUE(absent("unknown"));
+}
+
+TEST_F(FpmBindingTest, DeleteAfterInterfaceRemovalAndRepeat)
+{
+    send(frame()); sync->names.erase(40);
+    send(frame(40, 0, true)); send(frame(40, 0, true));
+    EXPECT_TRUE(absent("PortChannel0"));
+    EXPECT_TRUE(absent("unknown"));
+    EXPECT_TRUE(sync->m_evpnBackupNhgInterfaces.empty());
+}
+
+TEST_F(FpmBindingTest, WithdrawalAfterReuseTargetsAcceptedIdentity)
+{
+    send(frame()); sync->names[40] = "PortChannel2";
+    send(frame(40, 0, true));
+    EXPECT_TRUE(absent("PortChannel0"));
+    EXPECT_TRUE(absent("PortChannel2"));
+}
+
+TEST_F(FpmBindingTest, NewAddAfterReuseRemovesOldIdentity)
+{
+    send(frame()); sync->names[40] = "PortChannel2";
+    send(frame(40, 7000));
+    EXPECT_TRUE(absent("PortChannel0"));
+    EXPECT_TRUE(entry("PortChannel2", "7000"));
+    send(frame(40, 0, true)); EXPECT_TRUE(absent("PortChannel2"));
+}
+
+TEST_F(FpmBindingTest, RecreatedNameRejectsOldIndexWithdrawal)
+{
+    send(frame());
+    sync->names[42] = "PortChannel0";
+    send(frame(42, 7000));
+    EXPECT_EQ(sync->m_evpnBackupNhgInterfaces.count(40), 0u);
+    // Even a stale interface-cache name must not let the old DEL erase it.
+    send(frame(40, 0, true));
+    EXPECT_TRUE(entry("PortChannel0", "7000"));
+    send(frame(42, 0, true)); EXPECT_TRUE(absent("PortChannel0"));
+}
+
+TEST_F(FpmBindingTest, UnresolvedUpdateKeepsAcceptedIdentity)
+{
+    send(frame()); sync->names.erase(40); send(frame(40, 7000));
+    EXPECT_TRUE(entry("PortChannel0", "5000"));
+    send(frame(40, 0, true)); EXPECT_TRUE(absent("PortChannel0"));
+}
+
+TEST_F(FpmBindingTest, MalformedFramesAndWrongDirectTypeHaveNoWrites)
+{
+    send(frame());
+    for (unsigned length : {0u, 15u, 16u, 23u, 25u, UINT_MAX})
+    {
+        auto f = frame(); f.header.nlmsg_len = length;
+        sync->onEvpnEsBackupNhgMsg(&f.header, 0);
+        if (length <= 25) sync->onMsgRaw(&f.header);
+    }
+    auto f = frame(); sync->onEvpnEsBackupNhgMsg(&f.header, 1);
+    sync->onEvpnEsBackupNhgMsg(&f.header, -1);
+    f.header.nlmsg_type = RTM_FPM_ADD_EVPN_DF;
+    sync->onEvpnEsBackupNhgMsg(&f.header, 0);
+    EXPECT_TRUE(entry("PortChannel0", "5000"));
+}
+
+TEST_F(FpmBindingTest, ReconnectFlushesBindingsAndRebuildsFromReplay)
+{
+    send(frame()); send(frame(41, 6000));
+    sync->onFpmDisconnected();
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    EXPECT_TRUE(absent("PortChannel0")); EXPECT_TRUE(absent("PortChannel1"));
+    // Old accepted-name caches must not permit a withdrawal on a vanished port.
+    sync->names.erase(40);
+    Table bindings(&db, "EVPN_ES_BACKUP_NHG_TABLE");
+    bindings.set("PortChannel0", {{"nexthop_group", "7000"}});
+    send(frame(40, 0, true)); EXPECT_TRUE(entry("PortChannel0", "7000"));
+    sync->names[40] = "PortChannel2";
+    send(frame(40, 0x80000001u));
+    EXPECT_TRUE(entry("PortChannel2", "2147483649"));
+    send(frame(40, 0, true)); EXPECT_TRUE(absent("PortChannel2"));
+}
+
+TEST_F(FpmBindingTest, ProcessRestartClearsPersistedBindingsOnlyAndIsIdempotent)
+{
+    send(frame());
+    Table bindings(&db, "EVPN_ES_BACKUP_NHG_TABLE");
+    bindings.set("PortChannel99", {{"nexthop_group", "5000"}});
+    DBConnector config{"CONFIG_DB", 0};
+    Table policy(&config, "BRIDGE_PORT_PROTECTION");
+    policy.set("PortChannel0", {{"admin_mode", "auto"}});
+    Table neighbors(&db, "NEIGH_TABLE");
+    neighbors.set("Vlan100:10.0.0.1", {{"neigh", "00:11:22:33:44:55"}});
+    sync = std::make_unique<BindingRouteSync>(&pipeline);
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    EXPECT_TRUE(absent("PortChannel0")); EXPECT_TRUE(absent("PortChannel99"));
+    std::vector<FieldValueTuple> fields;
+    EXPECT_TRUE(policy.get("PortChannel0", fields));
+    EXPECT_EQ(fields, (std::vector<FieldValueTuple>{{"admin_mode", "auto"}}));
+    EXPECT_TRUE(neighbors.get("Vlan100:10.0.0.1", fields));
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    EXPECT_TRUE(absent("PortChannel0"));
+    send(frame()); EXPECT_TRUE(entry("PortChannel0", "5000"));
+}
+
+TEST_F(FpmBindingTest, ProtectionReplayBypassesWarmRouteReconciliation)
+{
+    sync->getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    send(frame());
+    EXPECT_TRUE(entry("PortChannel0", "5000"));
+    KeyOpFieldsValuesTuple kfv;
+    EXPECT_FALSE(getMockWarmStartHelperRefreshEntry("EVPN_ES_BACKUP_NHG_TABLE", "PortChannel0", kfv));
+    EXPECT_FALSE(getMockWarmStartHelperRefreshEntry("ROUTE_TABLE", "PortChannel0", kfv));
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    EXPECT_TRUE(absent("PortChannel0"));
+    send(frame(40, UINT32_MAX)); EXPECT_TRUE(entry("PortChannel0", "4294967295"));
+    sync->names[40] = "PortChannel2"; send(frame(40, 7000));
+    EXPECT_TRUE(absent("PortChannel0")); EXPECT_TRUE(entry("PortChannel2", "7000"));
+    send(frame(40, 0, true)); EXPECT_TRUE(absent("PortChannel2"));
+    EXPECT_FALSE(getMockWarmStartHelperRefreshEntry("EVPN_ES_BACKUP_NHG_TABLE", "PortChannel2", kfv));
+}
+
+TEST_F(FpmBindingTest, ActualProducerFramesThroughFpmLink)
+{
+    const char *path = getenv("SONIC_FPM_BINDING_FIXTURES");
+    if (!path) GTEST_SKIP() << "Run tests/integration/run_fpm_binding_roundtrip.py for actual producer fixtures";
+    std::ifstream input(path, std::ios::binary);
+    ASSERT_TRUE(input.good());
+    FpmLink link(sync.get(), 0);
+    for (uint32_t group : {5000u, static_cast<uint32_t>(INT_MAX), 0x80000001u, UINT32_MAX, 0u, 0u})
+    {
+        alignas(nlmsghdr) unsigned char buffer[28]{};
+        ASSERT_TRUE(input.read(reinterpret_cast<char *>(buffer), sizeof(buffer)));
+        auto *fpm = reinterpret_cast<fpm_msg_hdr_t *>(buffer);
+        EXPECT_EQ(fpm->version, FPM_PROTO_VERSION);
+        EXPECT_EQ(fpm_msg_len(fpm), sizeof(buffer));
+        link.processFpmMessage(fpm); pipeline.flush();
+        if (group > 0) EXPECT_TRUE(entry("PortChannel0", std::to_string(group)));
+        else EXPECT_TRUE(absent("PortChannel0"));
+    }
+    EXPECT_EQ(input.peek(), std::ifstream::traits_type::eof());
+}
+
+TEST_F(FpmBindingTest, FpmPayloadBoundaryRejectsTruncatedBinding)
+{
+    struct { fpm_msg_hdr_t fpm; Frame netlink; } message{};
+    message.fpm.version = FPM_PROTO_VERSION;
+    message.fpm.msg_type = FPM_MSG_TYPE_NETLINK;
+    message.netlink = frame();
+    FpmLink link(sync.get(), 0);
+    message.fpm.msg_len = htons(24); // Only 20 payload bytes; netlink needs 24.
+    link.processFpmMessage(&message.fpm);
+    EXPECT_TRUE(absent("PortChannel0"));
+    message.fpm.msg_len = htons(0);
+    link.processFpmMessage(&message.fpm);
+    EXPECT_TRUE(absent("PortChannel0"));
+}
+TEST_F(FpmBindingTest, MemberValidationAndReplacement)
+{
+    struct { nlmsghdr h; l2_nhg_member_msg m; } f{};
+    f.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP;
+    f.h.nlmsg_len = NLMSG_LENGTH(sizeof(f.m));
+    f.m.l2nm_nh_id = 0x40000007u; f.m.l2nm_type = 1; f.m.l2nm_family = AF_INET;
+    inet_pton(AF_INET, "10.0.0.2", &f.m.l2nm_remote_vtep);
+    f.m.l2nm_router_mac[0] = 2; f.m.l2nm_router_mac[5] = 3;
+    Table table(&db, "L2_NEXTHOP_GROUP_TABLE");
+    std::vector<FieldValueTuple> fields;
+    auto sendMember = [&] { sync->onMsgRaw(&f.h); pipeline.flush(); };
+    sendMember(); ASSERT_TRUE(table.get("1073741831", fields));
+    std::string value; EXPECT_TRUE(table.hget("1073741831", "router_mac", value)); EXPECT_EQ(value, "02:00:00:00:00:03");
+    auto good = f;
+    for (int fault = 0; fault < 7; ++fault) {
+        f = good;
+        if (fault == 0) f.h.nlmsg_len--;
+        if (fault == 1) f.h.nlmsg_len++;
+        if (fault == 2) f.m.l2nm_type = 2;
+        if (fault == 3) f.m.l2nm_family = 0;
+        if (fault == 4) memset(f.m.l2nm_router_mac, 0, 6);
+        if (fault == 5) f.m.l2nm_router_mac[0] = 1;
+        if (fault == 6) f.m.l2nm_nh_id = 0;
+        sendMember(); std::vector<FieldValueTuple> after;
+        ASSERT_TRUE(table.get("1073741831", after)); EXPECT_EQ(fields, after);
+    }
+    f.h.nlmsg_type = RTM_FPM_ADD_EVPN_DF; sync->onL2ProtectionMsg(&f.h);
+    f.h.nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP_GROUP + 1; sync->onL2ProtectionMsg(&f.h);
+    f = good; f.m.l2nm_family = AF_INET6;
+    inet_pton(AF_INET6, "2001:db8::2", &f.m.l2nm_remote_vtep); sendMember();
+    EXPECT_TRUE(table.hget("1073741831", "remote_vtep", value)); EXPECT_EQ(value, "2001:db8::2");
+    f.m.l2nm_type = 0; sendMember();
+    EXPECT_TRUE(table.hget("1073741831", "router_mac", value)); EXPECT_TRUE(value.empty());
+    f.h.nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP; f.m.l2nm_type = 255; sendMember(); sendMember();
+    EXPECT_FALSE(table.get("1073741831", fields));
+}
+
+TEST_F(FpmBindingTest, GroupValidationOwnershipAndRestartCleanup)
+{
+    struct { nlmsghdr h; uint32_t id; uint32_t count; uint32_t ids[3]; } f{};
+    f.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP_GROUP;
+    f.id = 0x80000001u; f.count = 2; f.ids[0] = 0x40000007u; f.ids[1] = UINT32_MAX;
+    f.h.nlmsg_len = NLMSG_LENGTH(8 + 8);
+    auto sendGroup = [&] { sync->onMsgRaw(&f.h); pipeline.flush(); };
+    Table table(&db, "L2_NEXTHOP_GROUP_TABLE"); std::string value;
+    sendGroup(); EXPECT_TRUE(table.hget("2147483649", "nexthop_group", value)); EXPECT_EQ(value,"1073741831,4294967295");
+    auto good = f;
+    for (int fault = 0; fault < 6; ++fault) {
+        f = good;
+        if (fault == 0) f.count = UINT32_MAX;
+        if (fault == 1) f.h.nlmsg_len = NLMSG_LENGTH(7);
+        if (fault == 2) f.h.nlmsg_len++;
+        if (fault == 3) f.ids[0] = 0;
+        if (fault == 4) f.ids[1] = f.ids[0];
+        if (fault == 5) f.id = 0;
+        sendGroup(); EXPECT_TRUE(table.hget("2147483649", "nexthop_group", value)); EXPECT_EQ(value,"1073741831,4294967295");
+    }
+    f = good; f.count = 0; f.h.nlmsg_len = NLMSG_LENGTH(8); sendGroup();
+    EXPECT_TRUE(table.hget("2147483649", "nexthop_group", value)); EXPECT_TRUE(value.empty());
+    table.set("17", {{"remote_vtep", "10.0.0.7"}});
+    f.id = 17; sendGroup(); f.h.nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP_GROUP; sendGroup();
+    EXPECT_TRUE(table.hget("17", "remote_vtep", value));
+    Table accepted(&db, FPM_PROTECTION_ID_TABLE);
+    table.set("18", {{"remote_vtep", "10.0.0.8"}});
+    table.set("19", {{"type", "l3"}, {"remote_vtep", "10.0.0.9"}});
+    table.set("20", {{"nexthop_group", ""}});
+    accepted.set("19", {{"NULL", "NULL"}}); accepted.set("20", {{"NULL", "NULL"}});
+    f.id = 18; sendGroup();
+    table.set("22", {{"nexthop_group", ""}});
+    accepted.set("22", {{"NULL", "invalid"}}); f.id = 22; sendGroup();
+    f.id = 19; sendGroup(); EXPECT_TRUE(table.hget("19", "type", value)); EXPECT_EQ(value, "l3");
+    send(frame()); sync = std::make_unique<BindingRouteSync>(&pipeline);
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    std::vector<FieldValueTuple> fields;
+    EXPECT_FALSE(table.get("2147483649", fields)); EXPECT_FALSE(table.get("19", fields)); EXPECT_FALSE(table.get("20", fields));
+    EXPECT_TRUE(table.get("17", fields)); EXPECT_TRUE(table.get("18", fields)); EXPECT_TRUE(absent("PortChannel0"));
+    f.id = 21; sendGroup(); sendGroup();
+    f.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP_GROUP; sendGroup();
+    f.h.nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP_GROUP; sendGroup(); EXPECT_FALSE(table.get("21", fields));
+}
+
+TEST_F(FpmBindingTest, ActualL2SerializersThroughFpmLink)
+{
+    const char *path = getenv("SONIC_FPM_L2_FIXTURES");
+    if (!path) GTEST_SKIP() << "Run integration/run_fpm_l2_roundtrip.py for C serializer fixtures";
+    std::ifstream input(path, std::ios::binary); ASSERT_TRUE(input.good());
+    FpmLink link(sync.get(), 0);
+    Table table(&db, "L2_NEXTHOP_GROUP_TABLE");
+    for (int i=0; i<4; ++i) {
+        alignas(nlmsghdr) unsigned char buffer[64]{};
+        ASSERT_TRUE(input.read(reinterpret_cast<char *>(buffer), 4));
+        auto *fpm = reinterpret_cast<fpm_msg_hdr_t *>(buffer);
+        const size_t length = fpm_msg_len(fpm);
+        ASSERT_LE(length, sizeof(buffer)); ASSERT_GE(length, 4u);
+        ASSERT_TRUE(input.read(reinterpret_cast<char *>(buffer+4), length-4));
+        link.processFpmMessage(fpm); pipeline.flush();
+        std::string value;
+        if (i==0) { EXPECT_TRUE(table.hget("1073741831", "router_mac", value)); EXPECT_EQ(value,"02:00:00:00:00:03"); }
+        if (i==1) { EXPECT_TRUE(table.hget("2147483649", "nexthop_group", value)); EXPECT_EQ(value,"1073741831,1073741832"); }
+        if (i==2) { EXPECT_FALSE(table.hget("2147483649", "nexthop_group", value)); }
+        if (i==3) { EXPECT_FALSE(table.hget("1073741831", "remote_vtep", value)); }
+    }
+    EXPECT_EQ(input.peek(), std::ifstream::traits_type::eof());
+}
+
+TEST_F(FpmBindingTest, ResetRequiresAcceptedKeyAndUnambiguousRow)
+{
+    Table objects(&db, "L2_NEXTHOP_GROUP_TABLE"), accepted(&db, FPM_PROTECTION_ID_TABLE);
+    const std::vector<std::vector<FieldValueTuple>> preserved = {
+        {{"remote_vtep", "10.0.0.1"}}, {{"nexthop_group", "1,2"}},
+        {{"remote_vtep", "10.0.0.2"}, {"type", "l3"}},
+        {{"nexthop_group", ""}},
+        {{"nexthop_group", "1,2"}, {"type", "l3"}},
+        {{"remote_vtep", "10.0.0.3"}, {"type", "invalid"}},
+        {{"unexpected", "invalid"}}, {{"remote_vtep", "10.0.0.4"}}
+    };
+    for (size_t i = 0; i < preserved.size(); ++i)
+        objects.set(std::to_string(i + 1), preserved[i]);
+    accepted.set("4", {{"NULL", "invalid"}});
+    for (const auto *id : {"5", "6", "7", "8", "100", "101", "102"})
+        accepted.set(id, {{"NULL", "NULL"}});
+    objects.set("100", {{"type", "l2"}, {"remote_vtep", "10.0.0.5"}});
+    objects.set("101", {{"nexthop_group", "999999"}}); // Missing Member is immaterial.
+    // 102 simulates a crash after indexing and before publishing its object.
+    testing_db::resetOperationCounters();
+    for (int repetition = 0; repetition < 2; ++repetition)
+    {
+        sync->resetFpmProtectionState(db); pipeline.flush();
+        std::vector<FieldValueTuple> row;
+        EXPECT_FALSE(objects.get("100", row)); EXPECT_FALSE(objects.get("101", row));
+        EXPECT_FALSE(accepted.get("100", row)); EXPECT_FALSE(accepted.get("101", row));
+        EXPECT_FALSE(accepted.get("102", row));
+        for (size_t i = 0; i < preserved.size(); ++i)
+        {
+            ASSERT_TRUE(objects.get(std::to_string(i + 1), row)); EXPECT_EQ(row, preserved[i]);
+        }
+        EXPECT_EQ(testing_db::getProducerDelCount("L2_NEXTHOP_GROUP_TABLE"), 3u);
+    }
+}
+
+TEST_F(FpmBindingTest, HldRowsAndAcceptedIdsPersistAcrossOrphanGroupRestart)
+{
+    struct { nlmsghdr h; uint32_t id, count, member; } f{};
+    f.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP_GROUP; f.h.nlmsg_len = NLMSG_LENGTH(12);
+    f.id = UINT32_MAX; f.count = 1; f.member = 0x40000007u;
+    sync->onMsgRaw(&f.h); pipeline.flush();
+    Table objects(&db, "L2_NEXTHOP_GROUP_TABLE"), accepted(&db, FPM_PROTECTION_ID_TABLE);
+    std::vector<FieldValueTuple> row;
+    ASSERT_TRUE(objects.get("4294967295", row));
+    EXPECT_EQ(row, (std::vector<FieldValueTuple>{{"nexthop_group", "1073741831"}}));
+    EXPECT_TRUE(hasFpmProtectionId(accepted, "4294967295"));
+    EXPECT_FALSE(objects.get("1073741831", row));
+    objects.set("200", {{"nexthop_group", "300"}}); // Unindexed kernel/orphan Group.
+    Table queuedBindings(&db, "_EVPN_ES_BACKUP_NHG_TABLE");
+    queuedBindings.set("PortChannel9", {{"nexthop_group","4294967295"}});
+    sync = std::make_unique<BindingRouteSync>(&pipeline);
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    EXPECT_FALSE(objects.get("4294967295", row)); EXPECT_FALSE(accepted.get("4294967295", row));
+    EXPECT_FALSE(queuedBindings.get("PortChannel9", row));
+    ASSERT_TRUE(objects.get("200", row)); EXPECT_EQ(row, (std::vector<FieldValueTuple>{{"nexthop_group", "300"}}));
+}
+
+TEST_F(FpmBindingTest, PendingObjectsAreIsolatedAndCanceledBeforeReplay)
+{
+    Table pending(&db, "_L2_NEXTHOP_GROUP_TABLE"), objects(&db, "L2_NEXTHOP_GROUP_TABLE");
+    Table accepted(&db, FPM_PROTECTION_ID_TABLE);
+    pending.set("200", {{"remote_vtep","10.0.0.1"}});
+    pending.set("201", {{"nexthop_group","200"}});
+    pending.set("202", {{"nexthop_group",""}}); accepted.set("202", {{"NULL","NULL"}});
+    // A different-kind pending update wins over an old committed snapshot.
+    objects.set("203", {{"nexthop_group",""}});
+    pending.set("203", {{"type","l3"},{"remote_vtep","10.0.0.2"}});
+    accepted.set("203", {{"NULL","NULL"}});
+    struct { nlmsghdr h; uint32_t id, count; } f{};
+    f.h.nlmsg_type=RTM_FPM_ADD_L2_NEXTHOP_GROUP; f.h.nlmsg_len=NLMSG_LENGTH(8);
+    for (uint32_t id : {200u,201u,203u})
+    {
+        f.id=id; sync->onMsgRaw(&f.h); pipeline.flush();
+        if (id==203) EXPECT_TRUE(hasFpmProtectionId(accepted,"203"));
+        else EXPECT_FALSE(hasFpmProtectionId(accepted,std::to_string(id))) << id;
+    }
+    sync=std::make_unique<BindingRouteSync>(&pipeline);
+    sync->resetFpmProtectionState(db); pipeline.flush();
+    std::vector<FieldValueTuple> row;
+    EXPECT_TRUE(pending.get("200",row)); EXPECT_TRUE(pending.get("201",row));
+    for (const auto *id : {"202","203"})
+    {
+        EXPECT_FALSE(pending.get(id,row)); EXPECT_FALSE(objects.get(id,row));
+        EXPECT_FALSE(accepted.get(id,row));
+    }
+    f.id=203; sync->onMsgRaw(&f.h); pipeline.flush();
+    ASSERT_TRUE(objects.get("203",row)); EXPECT_EQ(row,(std::vector<FieldValueTuple>{{"nexthop_group",""}}));
+}
+
+TEST_F(FpmBindingTest, AcceptedKeyCannotAuthorizeAmbiguousLegacyOrWrongKindWrites)
+{
+    Table objects(&db, "L2_NEXTHOP_GROUP_TABLE"), accepted(&db, FPM_PROTECTION_ID_TABLE);
+    const std::vector<std::vector<FieldValueTuple>> rows = {
+        {{"remote_vtep", "10.0.0.1"}},
+        {{"type", "invalid"}, {"remote_vtep", "10.0.0.2"}},
+        {{"type", "l3"}, {"nexthop_group", "1"}},
+        {{"nexthop_group", "1"}}
+    };
+    struct { nlmsghdr h; l2_nhg_member_msg member; } f{};
+    f.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP; f.h.nlmsg_len = NLMSG_LENGTH(sizeof(f.member));
+    f.member.l2nm_type = 1; f.member.l2nm_family = AF_INET;
+    inet_pton(AF_INET, "10.0.0.3", &f.member.l2nm_remote_vtep);
+    f.member.l2nm_router_mac[0] = 2; f.member.l2nm_router_mac[5] = 3;
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        auto key = std::to_string(i+1); objects.set(key, rows[i]); accepted.set(key, {{"NULL","NULL"}});
+        f.member.l2nm_nh_id = static_cast<uint32_t>(i+1);
+        f.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP; sync->onMsgRaw(&f.h); pipeline.flush();
+        f.h.nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP; sync->onMsgRaw(&f.h); pipeline.flush();
+        std::vector<FieldValueTuple> actual; ASSERT_TRUE(objects.get(key, actual)); EXPECT_EQ(actual, rows[i]);
     }
 }
