@@ -17,7 +17,7 @@ enum class TeamdStartResult
 
 struct TeamdStartTimeouts
 {
-    std::chrono::milliseconds launcher{30000};
+    std::chrono::milliseconds launcher{60000};
     std::chrono::milliseconds terminate{5000};
     std::chrono::milliseconds kill{5000};
     std::chrono::milliseconds cleanup{5000};
