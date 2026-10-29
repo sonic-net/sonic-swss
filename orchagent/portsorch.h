@@ -89,6 +89,16 @@ struct PortUpdate
 {
     Port port;
     bool add;
+    sai_object_id_t removedBridgePortId = SAI_NULL_OBJECT_ID;
+    uint64_t removedBridgePortGeneration = 0;
+};
+
+// Observers may set ready=false to defer removal. They must not reset a veto.
+// Sent before admin-down, FDB flushing, STP cleanup or SAI removal.
+struct BridgePortRemovalUpdate
+{
+    Port port;
+    bool ready = true;
 };
 
 struct PortOperStateUpdate
@@ -408,6 +418,8 @@ private:
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
     set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
     map<string, uint32_t> m_bridge_port_ref_count;
+    uint64_t m_nextBridgePortGeneration = 0;
+    set<string> m_bridgePortRemovalPending;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
     NotificationConsumer* m_portHostTxReadyNotificationConsumer;

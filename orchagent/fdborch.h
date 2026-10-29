@@ -147,6 +147,7 @@ public:
                             sai_object_id_t vlan_oid);
     void flushFdbByVlan(const string &);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
+    void flushProtectedPortOnWithdraw(const std::string &ifname);
 
     MacMoveGuard* getMacMoveGuard() { return m_macMoveGuard.get(); }
 
