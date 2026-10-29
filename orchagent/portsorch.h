@@ -269,6 +269,7 @@ public:
     bool removeBridgePort(Port &port);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");
     bool removeVlanMember(Port &vlan, Port &port, string end_point_ip = "");
+    bool setVlanMemberTaggingMode(Port &vlan, Port &port, const string& tagging_mode);
     bool isVlanMember(Port &vlan, Port &port, string end_point_ip = "");
     bool addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip);
     bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
