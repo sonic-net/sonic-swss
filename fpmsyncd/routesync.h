@@ -320,6 +320,7 @@ private:
     ProducerStateTable m_fpmL2Table;
     swss::Table m_fpmL2Pending;
     bool readFpmL2Row(const string &key, vector<swss::FieldValueTuple> &fields);
+    bool canWriteFpmL2Object(uint32_t id, bool group);
     // Accepted binding identity survives interface removal and FPM reconnect.
     map<int, string> m_evpnBackupNhgInterfaces;
     map<string, int> m_evpnBackupNhgIndexes;

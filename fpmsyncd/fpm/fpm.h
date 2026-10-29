@@ -52,6 +52,7 @@
 
 #ifndef _FPM_H
 #define _FPM_H
+#include <assert.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <netinet/in.h>
@@ -145,106 +146,7 @@ typedef enum fpm_msg_type_e_ {
  */
 #define FPM_MSG_ALIGNTO 4
 
-/* FPM-specific extension values, for messages and attributes */
-
-typedef enum {
-  /*
-  * Ideally, this should be set to (RTM_MAX + 1) but as
-  * FRR and SWSS build with slightly different kernel headers
-  * RTM_MAX differs between them...
-  */
-  RTM_FPM_FIRST = 140,
-  /* Ask FPM server to send encap info */
-  RTM_FPM_GETENCAPS = RTM_FPM_FIRST,
-  /* Notification about new or updated encap */
-  RTM_FPM_ADDENCAP,
-  /* Notification about deleted encap */
-  RTM_FPM_DELENCAP,
-  /* Notify FPM about a new Split Horizon List for a given port */
-  RTM_FPM_ADD_EVPN_SHL,
-  /* Notify FPM about a Split Horizon List is being deleted from a given port */
-  RTM_FPM_DEL_EVPN_SHL,
-  /* Notify FPM about an add/update of DF role information for a given port */
-  RTM_FPM_ADD_EVPN_DF,
-  /* Notify FPM about a delete of DF role information */
-  RTM_FPM_DEL_EVPN_DF,
-  /* Notify FPM about a backup NHG for a port */
-  RTM_FPM_ADD_EVPN_ES_BACKUP_NHG,
-  /* Notify FPM about a delete of a backup NHG */
-  RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
-  RTM_FPM_ADD_L2_NEXTHOP = 149,
-  RTM_FPM_DEL_L2_NEXTHOP = 150,
-  RTM_FPM_ADD_L2_NEXTHOP_GROUP = 151,
-  RTM_FPM_DEL_L2_NEXTHOP_GROUP = 152,
-  RTM_FPM_LAST = RTM_FPM_DEL_L2_NEXTHOP_GROUP,
-  RTM_FPM_MAX = RTM_FPM_LAST
-} rtm_fpm_msg_types_et;
-
-struct evpn_shl_msg {
-  int esm_ifindex;
-  uint16_t esm_vid;
-};
-
-#define FPM_EVPN_SHL_RTA(r) ((struct rtattr *)(void *)(((char *)(r)) + NLMSG_ALIGN(sizeof(struct evpn_shl_msg))))
-
-struct evpn_df_msg {
-  int edm_ifindex;
-  uint16_t edm_vid;
-  int edm_non_df;
-};
-
-
-/* Proposed private wire assignments 149..152; coordinate with FRR before deployment. */
-#define L2_NHG_MAX_MEMBERS 4096u
-struct __attribute__((packed)) l2_nhg_member_msg {
-  uint32_t l2nm_nh_id;
-  uint8_t l2nm_type;
-  uint8_t l2nm_family;
-  union { struct in_addr ip4; struct in6_addr ip6; } l2nm_remote_vtep;
-  uint8_t l2nm_router_mac[6];
-};
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpacked"
-struct __attribute__((packed)) l2_nhg_group_msg {
-  uint32_t l2ng_nhg_id;
-  uint32_t l2ng_count;
-  uint32_t l2ng_nh_ids[];
-};
-#pragma GCC diagnostic pop
-#ifdef __cplusplus
-static_assert(sizeof(l2_nhg_member_msg) == 28, "FPM member layout");
-static_assert(offsetof(l2_nhg_group_msg, l2ng_nh_ids) == 8, "FPM group layout");
-#else
-_Static_assert(sizeof(struct l2_nhg_member_msg) == 28, "FPM member layout");
-_Static_assert(offsetof(struct l2_nhg_group_msg, l2ng_nh_ids) == 8, "FPM group layout");
-#endif
-
-struct evpn_backup_nhg_msg {
-  int ebnm_ifindex;
-  uint32_t ebnm_backup_nhg_id;
-};
-
-/* Signed interface index, unsigned NHG ID; no packing/endian change. */
-#ifdef __cplusplus
-static_assert(sizeof(int) == 4 && sizeof(evpn_backup_nhg_msg) == 8,
-              "FPM binding ABI requires two native 32-bit integers");
-static_assert(RTM_FPM_ADD_EVPN_ES_BACKUP_NHG == 147 && RTM_FPM_DEL_EVPN_ES_BACKUP_NHG == 148,
-              "FPM binding message types must remain fixed");
-#else
-_Static_assert(sizeof(int) == 4 && sizeof(struct evpn_backup_nhg_msg) == 8,
-               "FPM binding ABI requires two native 32-bit integers");
-_Static_assert(RTM_FPM_ADD_EVPN_ES_BACKUP_NHG == 147 && RTM_FPM_DEL_EVPN_ES_BACKUP_NHG == 148,
-               "FPM binding message types must remain fixed");
-#endif
-
-/* Attribute IDs for SHL Updates */
-#define FPM_SHL_IPV4_ADDR   1
-#define FPM_SHL_IPV6_ADDR   2
-#define FPM_SHL_LAST    FPM_SHL_IPV6_ADDR
-
-#define FPM_SHL_MAX     FPM_SHL_LAST
-
-/* End of FPM extensions */
+#include "fpm_protection.h"
 
 /*
  * fpm_msg_align

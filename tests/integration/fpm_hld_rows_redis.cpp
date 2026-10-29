@@ -4,6 +4,7 @@
 #include "lib/fpm_protection_ids.h"
 #include "dbconnector.h"
 #include "consumerstatetable.h"
+#include "logger.h"
 #include <arpa/inet.h>
 #include <cassert>
 #include <iostream>
@@ -23,11 +24,17 @@ void member(RouteSync &sync, RedisPipeline &pipeline, uint32_t id)
 }
 void group(RouteSync &sync, RedisPipeline &pipeline, uint32_t id, uint32_t nh = 0)
 {
-    struct { nlmsghdr h; uint32_t id, count, member; } frame{};
-    frame.h.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP_GROUP;
-    frame.h.nlmsg_len = NLMSG_LENGTH(nh ? 12 : 8);
-    frame.id = id; frame.count = nh ? 1 : 0; frame.member = nh;
-    sync.onMsgRaw(&frame.h); pipeline.flush();
+    l2_nhg_group_msg body{}; body.l2ng_nhg_id=id; body.l2ng_count=nh ? 1 : 0;
+    l2_nhg_member_msg entry{}; entry.l2nm_nh_id=nh; entry.l2nm_type=1; entry.l2nm_family=AF_INET;
+    assert(inet_pton(AF_INET,"10.0.0.3",&entry.l2nm_remote_vtep)==1);
+    entry.l2nm_router_mac[0]=2; entry.l2nm_router_mac[5]=3;
+    alignas(nlmsghdr) unsigned char bytes[NLMSG_SPACE(sizeof(body)+sizeof(entry))]{};
+    auto *header=reinterpret_cast<nlmsghdr *>(bytes);
+    header->nlmsg_type=RTM_FPM_ADD_L2_NEXTHOP_GROUP;
+    header->nlmsg_len=NLMSG_LENGTH(sizeof(body)+(nh ? sizeof(entry) : 0));
+    memcpy(NLMSG_DATA(header),&body,sizeof(body));
+    if (nh) memcpy(bytes+NLMSG_HDRLEN+sizeof(body),&entry,sizeof(entry));
+    sync.onMsgRaw(header); pipeline.flush();
 }
 std::map<std::string,std::string> read(Table &table, const std::string &key)
 {
@@ -41,6 +48,8 @@ std::map<std::string,std::string> read(Table &table, const std::string &key)
 int main(int argc, char **argv)
 {
     assert(argc == 2); SonicDBConfig::initialize(argv[1]);
+    Logger::setMinPrio(Logger::SWSS_INFO);
+    Logger::swssOutputNotify("fpm-hld-redis", "STDERR");
     DBConnector db{"APPL_DB", 0}; RedisPipeline pipeline{&db};
     Table objects{&db, APP_L2_NEXTHOP_GROUP_TABLE_NAME}, ids{&db, FPM_PROTECTION_ID_TABLE};
     Table pending{&db, "_" + std::string(APP_L2_NEXTHOP_GROUP_TABLE_NAME)};
@@ -54,7 +63,7 @@ int main(int argc, char **argv)
     const auto kernelMember = read(objects, "200"), kernelGroup = read(objects, "201");
     auto sync = std::make_unique<RouteSync>(&pipeline);
     member(*sync, pipeline, 0x40001001u); group(*sync, pipeline, 0x80001001u, 0x40001001u);
-    group(*sync, pipeline, UINT32_MAX, 0x40001002u); // Orphan: Member never arrived.
+    group(*sync, pipeline, 0x8fffffffu, 0x40001002u); // Full snapshot supplies the Member.
     group(*sync, pipeline, 0x80001002u); // Empty: no Members to infer type from.
     assert(read(pending, "1073745921").at("type") == "l3");
     group(*sync, pipeline, 0x40001001u); // Wrong-kind SET before consumer POP.
@@ -63,7 +72,7 @@ int main(int argc, char **argv)
     assert((read(objects, "1073745921") == std::map<std::string,std::string>{
         {"type", "l3"}, {"remote_vtep", "10.0.0.3"}, {"router_mac", "02:00:00:00:00:03"}}));
     assert((read(objects, "2147487745") == std::map<std::string,std::string>{{"nexthop_group", "1073745921"}}));
-    for (const auto *id : {"1073745921", "2147487745", "4294967295", "2147487746"})
+    for (const auto *id : {"1073745921", "1073745922", "2147487745", "2415919103", "2147487746"})
         assert(hasFpmProtectionId(ids, id));
     // Exact-key collision rejection never registers a kernel key.
     member(*sync, pipeline, 200); group(*sync, pipeline, 201);
@@ -80,7 +89,7 @@ int main(int argc, char **argv)
     sync.reset(); sync = std::make_unique<RouteSync>(&pipeline);
     sync->resetFpmProtectionState(db); pipeline.flush();
     std::vector<FieldValueTuple> fields;
-    for (const auto *id : {"1073745921", "2147487745", "4294967295", "2147487746", "2147487747", "1234"})
+    for (const auto *id : {"1073745921", "1073745922", "2147487745", "2415919103", "2147487746", "2147487747", "1234"})
     {
         assert(!objects.get(id, fields)); assert(!pending.get(id, fields)); assert(!ids.get(id, fields));
     }

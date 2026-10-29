@@ -114,9 +114,16 @@ def member_frame(identifier, ip, mac='02:00:00:00:00:02', kind=1, deleting=False
     return frame(150 if deleting else 149, struct.pack('=IBB',identifier,kind,family)+address+bytes.fromhex(mac.replace(':','')))
 
 
-def group_frame(identifier, members, deleting=False, count=None):
+def group_frame(identifier, members, deleting=False, count=None, esi=bytes(range(10))):
+    if len(esi) != 10:
+        raise ValueError('Group ESI must contain exactly ten bytes')
     count = len(members) if count is None else count
-    return frame(152 if deleting else 151, struct.pack('=II',identifier,count)+b''.join(struct.pack('=I',m) for m in members))
+    records = []
+    for item in members:
+        identifier_and_context = item if isinstance(item, tuple) else (item, '10.10.10.2', '02:00:00:00:00:02')
+        records.append(member_frame(*identifier_and_context)[20:])
+    return frame(152 if deleting else 151, struct.pack('=II',identifier,count)+esi+b''.join(records))
+
 
 
 class InstrumentedDVS:

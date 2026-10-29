@@ -29,6 +29,25 @@ namespace {
 const string fpmGroupField = "nexthop_group";
 const string fpmTypeField = "type";
 const vector<FieldValueTuple> fpmIdRecord{{"NULL", "NULL"}};
+bool protectionIdType(uint32_t id, fpm_nhg_type type)
+{
+    return NHG_ID_TYPE(id) == static_cast<uint32_t>(type);
+}
+
+bool protectionMemberFields(const l2_nhg_member_msg &msg, vector<FieldValueTuple> &fields)
+{
+    // L2 Members and Groups belong to kernel netlink/fdbsyncd, never FPM.
+    if (!protectionIdType(msg.l2nm_nh_id, NHG_TYPE_L3_BPP_NH) || msg.l2nm_type != 1 ||
+        (msg.l2nm_family != AF_INET && msg.l2nm_family != AF_INET6)) return false;
+    const bool missingMac = all_of(begin(msg.l2nm_router_mac), end(msg.l2nm_router_mac),
+                                  [](uint8_t b) { return b == 0; });
+    if (missingMac || (msg.l2nm_router_mac[0] & 1)) return false;
+    char address[INET6_ADDRSTRLEN];
+    if (!inet_ntop(msg.l2nm_family, &msg.l2nm_remote_vtep, address, sizeof(address))) return false;
+    const MacAddress mac(msg.l2nm_router_mac);
+    fields = {{"remote_vtep", address}, {"type", "l3"}, {"router_mac", mac.to_string()}};
+    return true;
+}
 enum class FpmRowKind { Invalid, Member, Group };
 FpmRowKind fpmRowKind(const vector<FieldValueTuple> &row)
 {
@@ -2581,6 +2600,13 @@ void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
                        binding.ebnm_backup_nhg_id);
         return;
     }
+    // Zero remains the unbind sentinel. Never retag or truncate an FRR ID.
+    if (binding.ebnm_backup_nhg_id != 0 &&
+        !protectionIdType(binding.ebnm_backup_nhg_id, NHG_TYPE_L3_BPP))
+    {
+        SWSS_LOG_WARN("Reject FPM binding with non-protection Group id=%u", binding.ebnm_backup_nhg_id);
+        return;
+    }
 
     // DEL must target the name used by the accepted ADD, even after removal
     // or reuse of its ifindex. New ADDs must resolve a current interface.
@@ -2648,13 +2674,10 @@ bool RouteSync::readFpmL2Row(const string &key, vector<FieldValueTuple> &fields)
     return m_fpmL2Pending.get(key, fields) || m_fpmL2Rows.get(key, fields);
 }
 
-bool RouteSync::writeFpmL2Object(uint32_t id, bool group, bool deleting,
-                                 const vector<FieldValueTuple> &fields)
+bool RouteSync::canWriteFpmL2Object(uint32_t id, bool group)
 {
     const string key = to_string(id);
     vector<FieldValueTuple> existing;
-    // Resolve ownership against preceding writes before publishing another update.
-    m_fpmProtectionPipeline->flush();
     if (readFpmL2Row(key, existing))
     {
         const auto kind = fpmRowKind(existing);
@@ -2665,7 +2688,17 @@ bool RouteSync::writeFpmL2Object(uint32_t id, bool group, bool deleting,
             return false;
         }
     }
-    else if (deleting)
+    return true;
+}
+
+bool RouteSync::writeFpmL2Object(uint32_t id, bool group, bool deleting,
+                                 const vector<FieldValueTuple> &fields)
+{
+    const string key = to_string(id);
+    m_fpmProtectionPipeline->flush();
+    if (!canWriteFpmL2Object(id, group)) return false;
+    vector<FieldValueTuple> existing;
+    if (deleting && !readFpmL2Row(key, existing))
     {
         m_fpmL2Ids.del(key);
         return true;
@@ -2693,7 +2726,8 @@ void RouteSync::onL2ProtectionMsg(struct nlmsghdr *h)
     const bool member = h->nlmsg_type == RTM_FPM_ADD_L2_NEXTHOP || h->nlmsg_type == RTM_FPM_DEL_L2_NEXTHOP;
     const bool deleting = h->nlmsg_type == RTM_FPM_DEL_L2_NEXTHOP || h->nlmsg_type == RTM_FPM_DEL_L2_NEXTHOP_GROUP;
     const size_t payload = member ? sizeof(l2_nhg_member_msg) : sizeof(l2_nhg_group_msg);
-    if (h->nlmsg_len < NLMSG_LENGTH(payload))
+    if (h->nlmsg_len < NLMSG_LENGTH(payload) ||
+        h->nlmsg_len > FPM_MAX_MSG_LEN - FPM_MSG_HDR_LEN)
     {
         SWSS_LOG_ERROR("Truncated FPM L2 protection object");
         return;
@@ -2707,48 +2741,56 @@ void RouteSync::onL2ProtectionMsg(struct nlmsghdr *h)
             SWSS_LOG_ERROR("Invalid FPM member length");
             return;
         }
+        if (!protectionIdType(msg.l2nm_nh_id, NHG_TYPE_L3_BPP_NH))
+        {
+            SWSS_LOG_WARN("Reject FPM Member with wrong ID type id=%u", msg.l2nm_nh_id);
+            return;
+        }
+        // Withdrawals need only the valid Member ID, even after a rejected ADD.
         if (deleting) { writeFpmL2Object(msg.l2nm_nh_id, false, true, {}); return; }
-        if (!msg.l2nm_nh_id || msg.l2nm_type > 1 ||
-            (msg.l2nm_family != AF_INET && msg.l2nm_family != AF_INET6))
+        vector<FieldValueTuple> fields;
+        if (!protectionMemberFields(msg, fields))
         {
-            SWSS_LOG_WARN("Invalid FPM member id/type/family");
+            SWSS_LOG_WARN("Invalid FPM L3 Member id=%u", msg.l2nm_nh_id);
             return;
         }
-        const bool missingMac = all_of(begin(msg.l2nm_router_mac), end(msg.l2nm_router_mac), [](uint8_t b) { return b == 0; });
-        if (msg.l2nm_type == 1 && (missingMac || (msg.l2nm_router_mac[0] & 1)))
-        {
-            SWSS_LOG_WARN("Invalid FPM L3 member RMAC");
-            return;
-        }
-        char address[INET6_ADDRSTRLEN];
-        inet_ntop(msg.l2nm_family, &msg.l2nm_remote_vtep, address, sizeof(address));
-        MacAddress mac(msg.l2nm_router_mac);
-        writeFpmL2Object(msg.l2nm_nh_id, false, false,
-                        {{"remote_vtep", address}, {"type", msg.l2nm_type == 1 ? "l3" : "l2"},
-                         {"router_mac", msg.l2nm_type == 1 ? mac.to_string() : ""}});
+        writeFpmL2Object(msg.l2nm_nh_id, false, false, fields);
         return;
     }
     l2_nhg_group_msg header;
     memcpy(&header, NLMSG_DATA(h), sizeof(header));
     if (header.l2ng_count > L2_NHG_MAX_MEMBERS ||
-        h->nlmsg_len != NLMSG_LENGTH(sizeof(header) + header.l2ng_count * sizeof(uint32_t)))
+        h->nlmsg_len != NLMSG_LENGTH(sizeof(header) + header.l2ng_count * sizeof(l2_nhg_member_msg)))
     {
         SWSS_LOG_ERROR("Invalid FPM group count/length");
         return;
     }
+    if (!protectionIdType(header.l2ng_nhg_id, NHG_TYPE_L3_BPP))
+    { SWSS_LOG_WARN("Reject FPM Group with wrong ID type id=%u", header.l2ng_nhg_id); return; }
     if (deleting) { writeFpmL2Object(header.l2ng_nhg_id, true, true, {}); return; }
-    if (!header.l2ng_nhg_id) { SWSS_LOG_WARN("Invalid FPM group ID"); return; }
+    vector<pair<uint32_t, vector<FieldValueTuple>>> staged;
     string list;
     uint32_t previous = 0;
     for (uint32_t i = 0; i < header.l2ng_count; ++i)
     {
-        uint32_t id;
-        memcpy(&id, static_cast<const char*>(NLMSG_DATA(h)) + sizeof(header) + i * sizeof(id), sizeof(id));
-        if (!id || id <= previous) { SWSS_LOG_WARN("FPM group IDs must be unique and unsigned sorted"); return; }
+        l2_nhg_member_msg entry;
+        memcpy(&entry, static_cast<const char*>(NLMSG_DATA(h)) + sizeof(header) + i * sizeof(entry), sizeof(entry));
+        vector<FieldValueTuple> fields;
+        if (entry.l2nm_nh_id <= previous || !protectionMemberFields(entry, fields))
+        { SWSS_LOG_WARN("Invalid FPM Group Member id=%u", entry.l2nm_nh_id); return; }
         if (i) list += ",";
-        list += to_string(id);
-        previous = id;
+        list += to_string(entry.l2nm_nh_id);
+        previous = entry.l2nm_nh_id;
+        staged.emplace_back(static_cast<uint32_t>(entry.l2nm_nh_id), std::move(fields));
     }
+    // Validate the entire snapshot before publishing any Member or Group row.
+    // ESI is opaque wire context; APPL_DB still joins solely on the supplied ID.
+    m_fpmProtectionPipeline->flush();
+    if (!canWriteFpmL2Object(header.l2ng_nhg_id, true)) return;
+    for (const auto &entry : staged)
+        if (!canWriteFpmL2Object(entry.first, false)) return;
+    for (const auto &entry : staged)
+        if (!writeFpmL2Object(entry.first, false, false, entry.second)) return;
     writeFpmL2Object(header.l2ng_nhg_id, true, false, {{"nexthop_group", list}});
 }
 
@@ -2773,6 +2815,17 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     }
 
+    if (h->nlmsg_type == RTM_FPM_EVPN_MH_REPLAY_DONE)
+    {
+        if (h->nlmsg_len != NLMSG_LENGTH(0))
+            SWSS_LOG_ERROR("Invalid FPM protection replay-done length %u", h->nlmsg_len);
+        else
+        {
+            m_fpmProtectionPipeline->flush();
+            SWSS_LOG_NOTICE("Received FPM protection replay-done; SAI readiness remains independent");
+        }
+        return;
+    }
     if (h->nlmsg_type >= RTM_FPM_ADD_L2_NEXTHOP && h->nlmsg_type <= RTM_FPM_DEL_L2_NEXTHOP_GROUP)
     {
         onL2ProtectionMsg(h);
