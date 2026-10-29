@@ -4,6 +4,7 @@
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
+#include "pfcwdcounters.h"
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
@@ -96,6 +97,32 @@ public:
     virtual task_process_status deleteEntry(const string& name);
     PfcWdAction getPfcDlrPacketAction() { return m_pfcDlrPacketAction; }
     void setPfcDlrPacketAction(PfcWdAction action) { m_pfcDlrPacketAction = action; }
+
+    // Read this queue's watchdog counters from COUNTERS_DB. A missing field or
+    // entry reads as zero and operational.
+    static PfcWdQueueStats getQueueStats(const shared_ptr<Table>& countersTable,
+                                         const string& queueIdStr);
+
+    // Persist this queue's watchdog counters to COUNTERS_DB.
+    static void updateQueueStats(const shared_ptr<Table>& countersTable,
+                                 const string& queueIdStr,
+                                 const PfcWdQueueStats& stats);
+
+    // Record the start of a storm. A storm already in progress
+    // (detectCount > restoreCount) is treated as the same storm.
+    static void beginStormCounters(const shared_ptr<Table>& countersTable,
+                                   const string& queueIdStr,
+                                   PfcWdHwStats hwStats,
+                                   PfcWdHwStats& baseline);
+
+    // Fold the traffic seen since `baseline` into this queue's counters.
+    // periodic=false ends the storm; baselineValid=false skips the deltas.
+    static void accumulateStormCounters(const shared_ptr<Table>& countersTable,
+                                        const string& queueIdStr,
+                                        PfcWdHwStats hwStats,
+                                        PfcWdHwStats& baseline,
+                                        bool periodic,
+                                        bool baselineValid = true);
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
