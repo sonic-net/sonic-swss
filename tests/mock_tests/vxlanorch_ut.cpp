@@ -534,10 +534,7 @@ namespace vxlanorch_test
                         Return(SAI_STATUS_FAILURE)
                         ));
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+            .Times(0); // Tunnel removal failed: retain its mapper dependencies.
 
         EXPECT_NO_THROW({
                 bool result1 = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
@@ -545,6 +542,8 @@ namespace vxlanorch_test
                 bool result2 = vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
                 EXPECT_TRUE(result2);
                 });
+        EXPECT_TRUE(tunnel->isActive());
+        EXPECT_EQ(tunnel->getTunnelId(), vxlan_tunnel_oid);
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
 
@@ -869,3 +868,178 @@ namespace vxlanorch_test
     }
 
 } // namespace vxlanorch_test
+namespace vxlanorch_test
+{
+    namespace {
+    sai_status_t protectionSetStatus = SAI_STATUS_SUCCESS;
+    sai_status_t protectionGetStatus = SAI_STATUS_SUCCESS;
+    std::vector<swss::MacAddress> protectionWrites;
+    sai_status_t recordProtectionRmac(sai_object_id_t oid, const sai_attribute_t *attr)
+    {
+        EXPECT_EQ(oid, vxlan_tunnel_oid);
+        EXPECT_EQ(attr->id, SAI_TUNNEL_ATTR_VXLAN_TUNNEL_MAC);
+        protectionWrites.emplace_back(attr->value.mac);
+        return protectionSetStatus;
+    }
+    sai_status_t getProtectionDefault(sai_object_id_t, uint32_t count, sai_attribute_t *attr)
+    {
+        EXPECT_EQ(count, 1u);
+        EXPECT_EQ(attr->id, SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC);
+        swss::MacAddress mac("02:00:00:00:00:aa");
+        memcpy(attr->value.mac, mac.getMac(), sizeof(sai_mac_t));
+        return protectionGetStatus;
+    }
+    struct ProtectionRmacHooks {
+        decltype(sai_tunnel_api->set_tunnel_attribute) set = sai_tunnel_api->set_tunnel_attribute;
+        decltype(sai_switch_api->get_switch_attribute) get = sai_switch_api->get_switch_attribute;
+        ProtectionRmacHooks() {
+            protectionSetStatus = protectionGetStatus = SAI_STATUS_SUCCESS;
+            protectionWrites.clear();
+            sai_tunnel_api->set_tunnel_attribute = recordProtectionRmac;
+            sai_switch_api->get_switch_attribute = getProtectionDefault;
+        }
+        ~ProtectionRmacHooks() {
+            sai_tunnel_api->set_tunnel_attribute = set;
+            sai_switch_api->get_switch_attribute = get;
+        }
+    };
+    }
+
+    TEST_F(VxlanOrchTest, ProtectionRmacSharingConflictAndLastRelease)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel tunnel("protection", IpAddress("10.0.0.1"), IpAddress("10.0.0.2"), TNL_CREATION_SRC_CLI);
+        tunnel.active_ = true; tunnel.ids_.tunnel_id = vxlan_tunnel_oid;
+        tunnel.src_creation_ = TNL_CREATION_SRC_EVPN;
+        ProtectionRmacHooks hooks;
+        MacAddress mac("02:00:00:00:00:01"), changed("02:00:00:00:00:02");
+        ASSERT_TRUE(tunnel.setProtectionRmac(1, mac)); EXPECT_TRUE(tunnel.setProtectionRmac(1, mac));
+        EXPECT_TRUE(tunnel.setProtectionRmac(2, mac)); EXPECT_EQ(protectionWrites.size(), 1u);
+        EXPECT_FALSE(tunnel.setProtectionRmac(3, changed)); EXPECT_FALSE(tunnel.setProtectionRmac(1, changed));
+        EXPECT_FALSE(tunnel.deleteTunnelHw(0, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP));
+        EXPECT_TRUE(tunnel.releaseProtectionRmac(2)); EXPECT_EQ(protectionWrites.size(), 1u);
+        EXPECT_TRUE(tunnel.setProtectionRmac(1, changed)); EXPECT_EQ(protectionWrites.back(), changed);
+        EXPECT_TRUE(tunnel.releaseProtectionRmac(1));
+        EXPECT_EQ(protectionWrites.back(), MacAddress("02:00:00:00:00:aa"));
+        EXPECT_EQ(tunnel.ids_.tunnel_id, vxlan_tunnel_oid); EXPECT_TRUE(tunnel.protection_rmac_users_.empty());
+        EXPECT_TRUE(tunnel.releaseProtectionRmac(1));
+    }
+
+    TEST_F(VxlanOrchTest, ProtectionRmacFailureRetainsOwnershipForRetry)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel tunnel("protection", IpAddress("10.0.0.1"), IpAddress("10.0.0.2"), TNL_CREATION_SRC_CLI);
+        tunnel.active_ = true; tunnel.ids_.tunnel_id = vxlan_tunnel_oid;
+        tunnel.src_creation_ = TNL_CREATION_SRC_EVPN;
+        ProtectionRmacHooks hooks;
+        MacAddress mac("02:00:00:00:00:01"), changed("02:00:00:00:00:02");
+        protectionSetStatus = SAI_STATUS_FAILURE;
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, mac)); EXPECT_TRUE(tunnel.protection_rmac_users_.empty());
+        protectionSetStatus = SAI_STATUS_SUCCESS; ASSERT_TRUE(tunnel.setProtectionRmac(1, mac));
+        protectionSetStatus = SAI_STATUS_FAILURE; EXPECT_FALSE(tunnel.setProtectionRmac(1, changed));
+        EXPECT_EQ(tunnel.protection_rmac_users_.at(1), mac);
+        EXPECT_FALSE(tunnel.releaseProtectionRmac(1)); EXPECT_EQ(tunnel.protection_rmac_users_.size(), 1u);
+        protectionSetStatus = SAI_STATUS_SUCCESS; protectionGetStatus = SAI_STATUS_FAILURE;
+        EXPECT_FALSE(tunnel.releaseProtectionRmac(1)); EXPECT_EQ(tunnel.protection_rmac_users_.size(), 1u);
+        protectionGetStatus = SAI_STATUS_SUCCESS; EXPECT_TRUE(tunnel.releaseProtectionRmac(1));
+    }
+
+    TEST_F(VxlanOrchTest, ProtectionRmacRequiresLiveP2PTunnelAndValidUnicastMac)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel tunnel("protection", IpAddress("10.0.0.1"), IpAddress("10.0.0.2"), TNL_CREATION_SRC_CLI);
+        ProtectionRmacHooks hooks;
+        MacAddress mac("02:00:00:00:00:01");
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, mac));
+        tunnel.active_ = true; EXPECT_FALSE(tunnel.setProtectionRmac(1, mac));
+        tunnel.ids_.tunnel_id = vxlan_tunnel_oid; EXPECT_FALSE(tunnel.setProtectionRmac(0, mac));
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, mac)); // CLI/DIP alone is not P2P.
+        tunnel.src_creation_ = TNL_CREATION_SRC_EVPN;
+        tunnel.dst_ip_ = IpAddress("0.0.0.0"); EXPECT_FALSE(tunnel.setProtectionRmac(1, mac));
+        tunnel.dst_ip_ = IpAddress("10.0.0.2");
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, MacAddress("00:00:00:00:00:00")));
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, MacAddress("01:00:00:00:00:01")));
+        EXPECT_TRUE(protectionWrites.empty()); EXPECT_TRUE(tunnel.protection_rmac_users_.empty());
+    }
+}
+
+namespace vxlanorch_test
+{
+    TEST_F(VxlanOrchTest, ProtectionRmacBlocksObjectDeletionAndPreservesRetryCount)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel parent("parent", IpAddress("10.0.0.1"), IpAddress("0.0.0.0"), TNL_CREATION_SRC_CLI);
+        const std::string dip("10.0.0.2"); std::string name;
+        m_vxlan_tunnel_orch->getTunnelNameFromDIP(dip, name);
+        auto child = new VxlanTunnel(name, IpAddress("10.0.0.1"), IpAddress(dip), TNL_CREATION_SRC_EVPN);
+        child->active_ = true; child->ids_.tunnel_id = vxlan_tunnel_oid;
+        m_vxlan_tunnel_orch->addTunnel(name, child);
+        parent.tnl_users_[dip] = {0, 0, 1, 0, 0, 0};
+        ProtectionRmacHooks hooks;
+        ASSERT_TRUE(child->setProtectionRmac(1, MacAddress("02:00:00:00:00:01")));
+        EXPECT_FALSE(parent.deleteDynamicDIPTunnel(dip, TUNNEL_USER_IP));
+        EXPECT_EQ(parent.tnl_users_.at(dip).ip_refcnt, 1u);
+        EXPECT_EQ(m_vxlan_tunnel_orch->getVxlanTunnel(name), child);
+        VxlanTunnelRequest request;
+        KeyOpFieldsValuesTuple deletion{name, DEL_COMMAND, {}};
+        request.parse(deletion);
+        EXPECT_FALSE(m_vxlan_tunnel_orch->delOperation(request));
+        EXPECT_TRUE(child->releaseProtectionRmac(1));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(vxlan_tunnel_oid)).WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_TRUE(parent.deleteDynamicDIPTunnel(dip, TUNNEL_USER_IP));
+        EXPECT_EQ(parent.tnl_users_.count(dip), 0u);
+        EXPECT_FALSE(m_vxlan_tunnel_orch->isTunnelExists(name));
+        EXPECT_TRUE(m_vxlan_tunnel_orch->delOperation(request)); // Already removed.
+        auto unowned = new VxlanTunnel(name, IpAddress("10.0.0.1"), IpAddress(dip), TNL_CREATION_SRC_EVPN);
+        m_vxlan_tunnel_orch->addTunnel(name, unowned);
+        unowned->del_tnl_hw_pending = true;
+        EXPECT_FALSE(m_vxlan_tunnel_orch->delOperation(request));
+        unowned->del_tnl_hw_pending = false;
+        EXPECT_TRUE(m_vxlan_tunnel_orch->delOperation(request));
+        EXPECT_FALSE(m_vxlan_tunnel_orch->isTunnelExists(name));
+    }
+}
+namespace vxlanorch_test
+{
+TEST_F(VxlanOrchTest, ProtectionRmacBatchRequiresExactOwnerSetAndCommitsTogether)
+{
+    initSwitchOrch(); initVxlanOrch();
+    VxlanTunnel tunnel("protection",IpAddress("10.0.0.1"),IpAddress("10.0.0.2"),TNL_CREATION_SRC_CLI);
+    tunnel.src_creation_=TNL_CREATION_SRC_EVPN; tunnel.active_=true; tunnel.ids_.tunnel_id=vxlan_tunnel_oid; ProtectionRmacHooks hooks;
+    const MacAddress old("02:00:00:00:00:01"), changed("02:00:00:00:00:22");
+    ASSERT_TRUE(tunnel.setProtectionRmac(1,old)); ASSERT_TRUE(tunnel.setProtectionRmac(2,old));
+    EXPECT_FALSE(tunnel.updateProtectionRmac({},changed)); EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed));
+    EXPECT_FALSE(tunnel.updateProtectionRmac({1,3},changed)); EXPECT_EQ(protectionWrites.size(),1u);
+    ASSERT_TRUE(tunnel.updateProtectionRmac({1,2},changed)); EXPECT_EQ(protectionWrites.size(),2u);
+    EXPECT_EQ(tunnel.protection_rmac_users_.at(1),changed); EXPECT_EQ(tunnel.protection_rmac_users_.at(2),changed);
+    ASSERT_TRUE(tunnel.updateProtectionRmac({1,2},changed)); EXPECT_EQ(protectionWrites.size(),2u);
+}
+TEST_F(VxlanOrchTest, ProtectionRmacBatchFailureRetainsEveryOwnerAndCanRetry)
+{
+    initSwitchOrch(); initVxlanOrch();
+    VxlanTunnel tunnel("protection",IpAddress("10.0.0.1"),IpAddress("10.0.0.2"),TNL_CREATION_SRC_CLI);
+    tunnel.src_creation_=TNL_CREATION_SRC_EVPN; tunnel.active_=true; tunnel.ids_.tunnel_id=vxlan_tunnel_oid; ProtectionRmacHooks hooks;
+    const MacAddress old("02:00:00:00:00:01"), changed("02:00:00:00:00:22");
+    ASSERT_TRUE(tunnel.setProtectionRmac(1,old)); ASSERT_TRUE(tunnel.setProtectionRmac(2,old));
+    const sai_status_t statuses[]={SAI_STATUS_FAILURE,SAI_STATUS_NOT_SUPPORTED,SAI_STATUS_NOT_IMPLEMENTED};
+    for (const auto status : statuses) {
+        protectionSetStatus=status; EXPECT_FALSE(tunnel.updateProtectionRmac({1,2},changed));
+        EXPECT_EQ(tunnel.protection_rmac_users_.at(1),old); EXPECT_EQ(tunnel.protection_rmac_users_.at(2),old);
+    }
+    protectionSetStatus=SAI_STATUS_SUCCESS; ASSERT_TRUE(tunnel.updateProtectionRmac({1,2},changed));
+    EXPECT_EQ(tunnel.protection_rmac_users_.at(1),changed); EXPECT_EQ(tunnel.protection_rmac_users_.at(2),changed);
+}
+TEST_F(VxlanOrchTest, ProtectionRmacBatchRequiresLiveEvpnTunnelAndUnicastMac)
+{
+    initSwitchOrch(); initVxlanOrch();
+    VxlanTunnel tunnel("protection",IpAddress("10.0.0.1"),IpAddress("10.0.0.2"),TNL_CREATION_SRC_CLI);
+    tunnel.src_creation_=TNL_CREATION_SRC_EVPN; tunnel.active_=true; tunnel.ids_.tunnel_id=vxlan_tunnel_oid; ProtectionRmacHooks hooks;
+    const MacAddress old("02:00:00:00:00:01"), changed("02:00:00:00:00:22"); ASSERT_TRUE(tunnel.setProtectionRmac(1,old));
+    tunnel.active_=false; EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.active_=true;
+    tunnel.ids_.tunnel_id=SAI_NULL_OBJECT_ID; EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.ids_.tunnel_id=vxlan_tunnel_oid;
+    tunnel.src_creation_=TNL_CREATION_SRC_CLI; EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.src_creation_=TNL_CREATION_SRC_EVPN;
+    tunnel.dst_ip_=IpAddress("0.0.0.0"); EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.dst_ip_=IpAddress("10.0.0.2");
+    EXPECT_FALSE(tunnel.updateProtectionRmac({1},MacAddress())); EXPECT_FALSE(tunnel.updateProtectionRmac({1},MacAddress("01:00:00:00:00:01")));
+    EXPECT_EQ(protectionWrites.size(),1u); EXPECT_EQ(tunnel.protection_rmac_users_.at(1),old);
+}
+}

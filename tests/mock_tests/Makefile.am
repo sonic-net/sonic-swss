@@ -29,6 +29,8 @@ LDADD_GTEST = -L/usr/src/gtest
 tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
 
 tests_SOURCES = aclorch_ut.cpp \
+                bpprotorch_ut.cpp \
+                l2nhgprotection_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
@@ -127,6 +129,13 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/nhgbase.cpp \
                 $(top_srcdir)/orchagent/nhgorch.cpp \
                 $(top_srcdir)/orchagent/l2nhgorch.cpp \
+                $(top_srcdir)/orchagent/l2nhgprotection.cpp \
+                $(top_srcdir)/orchagent/l2nhgref.cpp \
+                $(top_srcdir)/orchagent/bpprotorch.cpp \
+                $(top_srcdir)/orchagent/bpprotfdb.cpp \
+                $(top_srcdir)/orchagent/bpprotattachment.cpp \
+                $(top_srcdir)/orchagent/bpprotevents.cpp \
+                $(top_srcdir)/orchagent/bpprotfsm.cpp \
                 $(top_srcdir)/orchagent/cbf/cbfnhgorch.cpp \
                 $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
@@ -329,6 +338,10 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fpmsyncd/fpmsyncd_evpn_mh_ut.cpp \
+                         fpmsyncd/fpm_fdbsyncd_ownership_ut.cpp \
+                         fdbsyncd/fake_warmstartassist.cpp \
+                         fdbsyncd/fake_subscriberstatetable.cpp \
+                         common/mock_shell_command.cpp \
                          fake_netlink.cpp \
                          fake_warmstarthelper.cpp \
                          fake_producerstatetable.cpp \
@@ -340,6 +353,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp \
                          $(top_srcdir)/fpmsyncd/routesendcoalescer.cpp
+
+tests_fpmsyncd_SOURCES += $(top_srcdir)/fdbsyncd/fdbsync.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
 tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name
