@@ -265,7 +265,13 @@ uint64_t FpmLink::readData()
 
 void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
 {
-    size_t msg_len = fpm_msg_len(hdr);
+    if (!fpm_msg_hdr_ok(hdr))
+    {
+        SWSS_LOG_ERROR("Malformed FPM message header");
+        return;
+    }
+    // NLMSG_OK must be bounded by the payload, excluding the FPM header.
+    size_t msg_len = fpm_msg_data_len(hdr);
 
     if (hdr->msg_type != FPM_MSG_TYPE_NETLINK)
     {
@@ -317,6 +323,10 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
             NetDispatcher::getInstance().onNetlinkMessage(msg);
         }
         nlmsg_free(msg);
+    }
+    if (msg_len != 0)
+    {
+        SWSS_LOG_WARN("Truncated netlink payload in FPM message: %zu bytes remain", msg_len);
     }
 }
 

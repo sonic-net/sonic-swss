@@ -52,6 +52,9 @@
 
 #ifndef _FPM_H
 #define _FPM_H
+#include <stdint.h>
+#include <stddef.h>
+#include <netinet/in.h>
 
 /*
  * The Forwarding Plane Manager (FPM) is an optional component that
@@ -169,7 +172,11 @@ typedef enum {
   RTM_FPM_ADD_EVPN_ES_BACKUP_NHG,
   /* Notify FPM about a delete of a backup NHG */
   RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
-  RTM_FPM_LAST = RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
+  RTM_FPM_ADD_L2_NEXTHOP = 149,
+  RTM_FPM_DEL_L2_NEXTHOP = 150,
+  RTM_FPM_ADD_L2_NEXTHOP_GROUP = 151,
+  RTM_FPM_DEL_L2_NEXTHOP_GROUP = 152,
+  RTM_FPM_LAST = RTM_FPM_DEL_L2_NEXTHOP_GROUP,
   RTM_FPM_MAX = RTM_FPM_LAST
 } rtm_fpm_msg_types_et;
 
@@ -186,10 +193,49 @@ struct evpn_df_msg {
   int edm_non_df;
 };
 
+
+/* Proposed private wire assignments 149..152; coordinate with FRR before deployment. */
+#define L2_NHG_MAX_MEMBERS 4096u
+struct __attribute__((packed)) l2_nhg_member_msg {
+  uint32_t l2nm_nh_id;
+  uint8_t l2nm_type;
+  uint8_t l2nm_family;
+  union { struct in_addr ip4; struct in6_addr ip6; } l2nm_remote_vtep;
+  uint8_t l2nm_router_mac[6];
+};
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpacked"
+struct __attribute__((packed)) l2_nhg_group_msg {
+  uint32_t l2ng_nhg_id;
+  uint32_t l2ng_count;
+  uint32_t l2ng_nh_ids[];
+};
+#pragma GCC diagnostic pop
+#ifdef __cplusplus
+static_assert(sizeof(l2_nhg_member_msg) == 28, "FPM member layout");
+static_assert(offsetof(l2_nhg_group_msg, l2ng_nh_ids) == 8, "FPM group layout");
+#else
+_Static_assert(sizeof(struct l2_nhg_member_msg) == 28, "FPM member layout");
+_Static_assert(offsetof(struct l2_nhg_group_msg, l2ng_nh_ids) == 8, "FPM group layout");
+#endif
+
 struct evpn_backup_nhg_msg {
   int ebnm_ifindex;
-  int ebnm_backup_nhg_id;
+  uint32_t ebnm_backup_nhg_id;
 };
+
+/* Signed interface index, unsigned NHG ID; no packing/endian change. */
+#ifdef __cplusplus
+static_assert(sizeof(int) == 4 && sizeof(evpn_backup_nhg_msg) == 8,
+              "FPM binding ABI requires two native 32-bit integers");
+static_assert(RTM_FPM_ADD_EVPN_ES_BACKUP_NHG == 147 && RTM_FPM_DEL_EVPN_ES_BACKUP_NHG == 148,
+              "FPM binding message types must remain fixed");
+#else
+_Static_assert(sizeof(int) == 4 && sizeof(struct evpn_backup_nhg_msg) == 8,
+               "FPM binding ABI requires two native 32-bit integers");
+_Static_assert(RTM_FPM_ADD_EVPN_ES_BACKUP_NHG == 147 && RTM_FPM_DEL_EVPN_ES_BACKUP_NHG == 148,
+               "FPM binding message types must remain fixed");
+#endif
 
 /* Attribute IDs for SHL Updates */
 #define FPM_SHL_IPV4_ADDR   1

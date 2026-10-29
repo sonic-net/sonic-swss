@@ -7,6 +7,7 @@
 #include "ipprefix.h"
 #include "dbconnector.h"
 #include "lib/orch_zmq_config.h"
+#include "lib/fpm_protection_ids.h"
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -23,6 +24,27 @@
 
 using namespace std;
 using namespace swss;
+
+namespace {
+const string fpmGroupField = "nexthop_group";
+const string fpmTypeField = "type";
+const vector<FieldValueTuple> fpmIdRecord{{"NULL", "NULL"}};
+enum class FpmRowKind { Invalid, Member, Group };
+FpmRowKind fpmRowKind(const vector<FieldValueTuple> &row)
+{
+    bool group = false, typed = false, member = false;
+    for (const auto &field : row)
+    {
+        if (fvField(field) == fpmGroupField) group = true;
+        if (fvField(field) == fpmTypeField)
+        {
+            typed = true; member = fvValue(field) == "l3" || fvValue(field) == "l2";
+        }
+    }
+    if (group) return typed ? FpmRowKind::Invalid : FpmRowKind::Group;
+    return member ? FpmRowKind::Member : FpmRowKind::Invalid;
+}
+}
 
 #if BYTE_ORDER == LITTLE_ENDIAN
 #define ntohll(x) (((uint64_t)ntohl((x)&0xFFFFFFFF) << 32) | ntohl((uint32_t)(((x)>>32) & 0xFFFFFFFFU)))
@@ -178,6 +200,11 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_evpn_shlTable(pipeline, "EVPN_SPLIT_HORIZON_TABLE", true),
     m_evpn_dfTable(pipeline, "EVPN_DF_TABLE", true),
     m_evpn_esBackupNhgTable(pipeline, "EVPN_ES_BACKUP_NHG_TABLE", true),
+    m_fpmProtectionPipeline(pipeline),
+    m_fpmL2Rows(pipeline->getDBConnector(), APP_L2_NEXTHOP_GROUP_TABLE_NAME),
+    m_fpmL2Ids(pipeline->getDBConnector(), FPM_PROTECTION_ID_TABLE),
+    m_fpmL2Table(pipeline, APP_L2_NEXTHOP_GROUP_TABLE_NAME, true),
+    m_fpmL2Pending(pipeline->getDBConnector(), m_fpmL2Table.getStateHashPrefix() + APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_warmStartHelper(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_srv6MySidTable(pipeline, APP_SRV6_MY_SID_TABLE_NAME, true),
     m_srv6SidListTable(pipeline, APP_SRV6_SID_LIST_TABLE_NAME, true),
@@ -2465,72 +2492,264 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
     }
 }
 
+void RouteSync::resetFpmProtectionState(DBConnector& db)
+{
+    m_fpmProtectionPipeline->flush();
+    // This table is exclusively FPM-owned. Read persisted keys as well as the
+    // process cache so restart after a crash cannot retain recycled NHG IDs.
+    Table bindings(&db, "EVPN_ES_BACKUP_NHG_TABLE");
+    Table pendingBindings(&db, m_evpn_esBackupNhgTable.getStateHashPrefix() + "EVPN_ES_BACKUP_NHG_TABLE");
+    vector<string> keys;
+    bindings.getKeys(keys);
+    set<string> stale(keys.begin(), keys.end());
+    pendingBindings.getKeys(keys); stale.insert(keys.begin(), keys.end());
+    for (const auto &binding : m_evpnBackupNhgIndexes)
+        stale.insert(binding.first);
+    for (const auto &key : stale)
+        m_evpn_esBackupNhgTable.del(key);
+    m_fpmProtectionPipeline->flush();
+    for (const auto &key : stale)
+    {
+        bindings.del(key); pendingBindings.del(key);
+    }
+    m_evpnBackupNhgInterfaces.clear();
+    m_evpnBackupNhgIndexes.clear();
+    vector<string> objects;
+    // Enumerate only keys this producer accepted. Row shape determines kind;
+    // neither Member type nor an unconfirmed FRR mask identifies every orphan
+    // Group after a crash. Kernel/fdbsyncd keys never enter this private index.
+    m_fpmL2Ids.getKeys(objects);
+    const bool kinds[] = {true, false}; // Groups before Members.
+    for (bool groupKind : kinds)
+    {
+        vector<string> withdrawn;
+        for (const auto &key : objects)
+        {
+            if (!hasFpmProtectionId(m_fpmL2Ids, key)) continue;
+            vector<FieldValueTuple> row;
+            if (!readFpmL2Row(key, row))
+            {
+                // Cancel any queued publication before forgetting a record
+                // left by a crash between recording the ID and SET.
+                m_fpmL2Table.del(key); withdrawn.push_back(key); continue;
+            }
+            const auto kind = fpmRowKind(row);
+            if (kind == FpmRowKind::Invalid)
+            {
+                SWSS_LOG_ERROR("Preserve inconsistent FPM object id=%s during reset", key.c_str());
+                continue;
+            }
+            if ((kind == FpmRowKind::Group) == groupKind)
+            {
+                m_fpmL2Table.del(key); withdrawn.push_back(key);
+            }
+        }
+        // Make withdrawal durable before dropping the accepted-key record.
+        // A crash at any point leaves either a retryable key or no object.
+        m_fpmProtectionPipeline->flush();
+        for (const auto &key : withdrawn)
+        {
+            // ProducerStateTable DEL is staged until consumer POP. Remove the
+            // exact owned hash too: replay must not see an old committed row.
+            // The queued DEL still notifies SWSS to retire cached SAI objects.
+            m_fpmL2Rows.del(key); m_fpmL2Pending.del(key); m_fpmL2Ids.del(key);
+        }
+    }
+    SWSS_LOG_NOTICE("Reset FPM protection bindings before session: %zu rows", stale.size());
+}
+
 void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
 {
-    char if_name[IFNAMSIZ] = "0";
-    /*
-     * ES Backup NHG keys are: "ifname"if_id
-     */
-    char backup_nhg_entry_key[IFNAMSIZ];
-    struct evpn_backup_nhg_msg *backup_nhg_msg = (struct evpn_backup_nhg_msg *)NLMSG_DATA(h);
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
-
-    assert(h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG || h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG);
-
-    if (!getIfName(backup_nhg_msg->ebnm_ifindex, if_name, IFNAMSIZ))
+    SWSS_LOG_ENTER();
+    if (h->nlmsg_type != RTM_FPM_ADD_EVPN_ES_BACKUP_NHG &&
+        h->nlmsg_type != RTM_FPM_DEL_EVPN_ES_BACKUP_NHG)
     {
-        strcpy(if_name, ifname_unknown);
+        SWSS_LOG_ERROR("Unexpected FPM backup binding type %u", h->nlmsg_type);
+        return;
+    }
+    if (h->nlmsg_len != NLMSG_LENGTH(sizeof(evpn_backup_nhg_msg)) || len != 0)
+    {
+        SWSS_LOG_ERROR("Malformed FPM backup binding length %u (extra %d)", h->nlmsg_len, len);
+        return;
+    }
+    evpn_backup_nhg_msg binding;
+    memcpy(&binding, NLMSG_DATA(h), sizeof(binding));
+    const bool deleting = h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG;
+    if (binding.ebnm_ifindex <= 0 || (!deleting && binding.ebnm_backup_nhg_id == 0))
+    {
+        SWSS_LOG_ERROR("Invalid FPM backup binding ifindex=%d nhg=%u", binding.ebnm_ifindex,
+                       binding.ebnm_backup_nhg_id);
+        return;
     }
 
-    snprintf(backup_nhg_entry_key, sizeof(backup_nhg_entry_key),
-             "%s",
-             if_name);
-
-    if (h->nlmsg_type == RTM_FPM_DEL_EVPN_ES_BACKUP_NHG)
+    // DEL must target the name used by the accepted ADD, even after removal
+    // or reuse of its ifindex. New ADDs must resolve a current interface.
+    const auto previous = m_evpnBackupNhgInterfaces.find(binding.ebnm_ifindex);
+    char ifName[IFNAMSIZ] = {};
+    string key;
+    if (deleting && previous != m_evpnBackupNhgInterfaces.end())
     {
-        if (!warmRestartInProgress)
-        {
-            SWSS_LOG_INFO("Deleting entry: %s",
-                          backup_nhg_entry_key);
-            m_evpn_esBackupNhgTable.del(backup_nhg_entry_key);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
-                          backup_nhg_entry_key);
+        key = previous->second;
+    }
+    else if (getIfName(binding.ebnm_ifindex, ifName, sizeof(ifName)))
+    {
+        key = ifName;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Rejecting unresolved FPM backup binding ifindex=%d type=%u; replay required",
+                      binding.ebnm_ifindex, h->nlmsg_type);
+        return;
+    }
+    const auto owner = m_evpnBackupNhgIndexes.find(key);
+    if (deleting && owner != m_evpnBackupNhgIndexes.end() && owner->second != binding.ebnm_ifindex)
+    {
+        SWSS_LOG_WARN("Rejecting stale FPM backup withdrawal for %s: ifindex=%d owner=%d",
+                      key.c_str(), binding.ebnm_ifindex, owner->second);
+        return;
+    }
 
-            vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
-                                                               DEL_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+    auto erase = [&](const string &name) {
+        m_evpn_esBackupNhgTable.del(name);
+        SWSS_LOG_NOTICE("FPM backup binding DEL interface=%s", name.c_str());
+    };
+    if (deleting)
+    {
+        erase(key);
+        m_evpnBackupNhgInterfaces.erase(binding.ebnm_ifindex);
+        m_evpnBackupNhgIndexes.erase(key);
+        return;
+    }
+    if (previous != m_evpnBackupNhgInterfaces.end() && previous->second != key)
+    {
+        SWSS_LOG_NOTICE("FPM backup binding ifindex=%d reused: %s -> %s", binding.ebnm_ifindex,
+                        previous->second.c_str(), key.c_str());
+        erase(previous->second);
+        m_evpnBackupNhgIndexes.erase(previous->second);
+    }
+    // A recreated interface may keep its name while receiving a new ifindex.
+    // Forget the previous index so its later DEL cannot erase the new row.
+    if (owner != m_evpnBackupNhgIndexes.end() && owner->second != binding.ebnm_ifindex)
+    {
+        m_evpnBackupNhgInterfaces.erase(owner->second);
+    }
+    vector<FieldValueTuple> fields{{"nexthop_group", to_string(binding.ebnm_backup_nhg_id)}};
+    m_evpn_esBackupNhgTable.set(key, fields);
+    m_evpnBackupNhgInterfaces[binding.ebnm_ifindex] = key;
+    m_evpnBackupNhgIndexes[key] = binding.ebnm_ifindex;
+    SWSS_LOG_NOTICE("FPM backup binding SET interface=%s nhg=%u", key.c_str(),
+                    binding.ebnm_backup_nhg_id);
+}
+
+bool RouteSync::readFpmL2Row(const string &key, vector<FieldValueTuple> &fields)
+{
+    // A producer SET is stored under the state prefix until consumer POP.
+    // Prefer the latest staged complete object; retain the committed fallback.
+    return m_fpmL2Pending.get(key, fields) || m_fpmL2Rows.get(key, fields);
+}
+
+bool RouteSync::writeFpmL2Object(uint32_t id, bool group, bool deleting,
+                                 const vector<FieldValueTuple> &fields)
+{
+    const string key = to_string(id);
+    vector<FieldValueTuple> existing;
+    // Resolve ownership against preceding writes before publishing another update.
+    m_fpmProtectionPipeline->flush();
+    if (readFpmL2Row(key, existing))
+    {
+        const auto kind = fpmRowKind(existing);
+        if (!hasFpmProtectionId(m_fpmL2Ids, key) || kind == FpmRowKind::Invalid ||
+            (kind == FpmRowKind::Group) != group)
+        {
+            SWSS_LOG_WARN("Reject FPM L2 %s id=%u: key belongs to another object/producer", group ? "group" : "member", id);
+            return false;
         }
     }
-    else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG)
+    else if (deleting)
     {
-        vector<FieldValueTuple> fvVector;
-        string backup_nhg_id = std::to_string(backup_nhg_msg->ebnm_backup_nhg_id);
-
-        FieldValueTuple nexthop_group("nexthop_group", backup_nhg_id);
-
-        fvVector.push_back(nexthop_group);
-
-        if (!warmRestartInProgress)
-        {
-            m_evpn_esBackupNhgTable.set(backup_nhg_entry_key, fvVector);
-            SWSS_LOG_DEBUG("EVPN_ES_BACKUP_NHG_TABLE Set Msg: %s, Backup NHG ID:%s",
-                           backup_nhg_entry_key, backup_nhg_id.c_str());
-        }
-        else
-        {
-            SWSS_LOG_INFO("Warm-Restart mode: EVPN_ES_BACKUP_NHG_TABLE set msg: %s, Backup NHG ID:%s",
-                          backup_nhg_entry_key, backup_nhg_id.c_str());
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
-                                                               SET_COMMAND,
-                                                               fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
-        }
+        m_fpmL2Ids.del(key);
+        return true;
     }
+    if (deleting)
+    {
+        m_fpmL2Table.del(key);
+        m_fpmProtectionPipeline->flush();
+        m_fpmL2Rows.del(key); m_fpmL2Pending.del(key); m_fpmL2Ids.del(key);
+    }
+    else
+    {
+        // Record before publishing: a crash can leave an empty index entry,
+        // never an untracked successfully published Group. HLD row fields only.
+        m_fpmL2Ids.set(key, fpmIdRecord);
+        m_fpmL2Table.set(key, fields);
+    }
+    return true;
+}
+
+void RouteSync::onL2ProtectionMsg(struct nlmsghdr *h)
+{
+    if (h->nlmsg_type < RTM_FPM_ADD_L2_NEXTHOP || h->nlmsg_type > RTM_FPM_DEL_L2_NEXTHOP_GROUP)
+    { SWSS_LOG_WARN("Invalid FPM L2 object operation"); return; }
+    const bool member = h->nlmsg_type == RTM_FPM_ADD_L2_NEXTHOP || h->nlmsg_type == RTM_FPM_DEL_L2_NEXTHOP;
+    const bool deleting = h->nlmsg_type == RTM_FPM_DEL_L2_NEXTHOP || h->nlmsg_type == RTM_FPM_DEL_L2_NEXTHOP_GROUP;
+    const size_t payload = member ? sizeof(l2_nhg_member_msg) : sizeof(l2_nhg_group_msg);
+    if (h->nlmsg_len < NLMSG_LENGTH(payload))
+    {
+        SWSS_LOG_ERROR("Truncated FPM L2 protection object");
+        return;
+    }
+    if (member)
+    {
+        l2_nhg_member_msg msg;
+        memcpy(&msg, NLMSG_DATA(h), sizeof(msg));
+        if (h->nlmsg_len != NLMSG_LENGTH(sizeof(msg)))
+        {
+            SWSS_LOG_ERROR("Invalid FPM member length");
+            return;
+        }
+        if (deleting) { writeFpmL2Object(msg.l2nm_nh_id, false, true, {}); return; }
+        if (!msg.l2nm_nh_id || msg.l2nm_type > 1 ||
+            (msg.l2nm_family != AF_INET && msg.l2nm_family != AF_INET6))
+        {
+            SWSS_LOG_WARN("Invalid FPM member id/type/family");
+            return;
+        }
+        const bool missingMac = all_of(begin(msg.l2nm_router_mac), end(msg.l2nm_router_mac), [](uint8_t b) { return b == 0; });
+        if (msg.l2nm_type == 1 && (missingMac || (msg.l2nm_router_mac[0] & 1)))
+        {
+            SWSS_LOG_WARN("Invalid FPM L3 member RMAC");
+            return;
+        }
+        char address[INET6_ADDRSTRLEN];
+        inet_ntop(msg.l2nm_family, &msg.l2nm_remote_vtep, address, sizeof(address));
+        MacAddress mac(msg.l2nm_router_mac);
+        writeFpmL2Object(msg.l2nm_nh_id, false, false,
+                        {{"remote_vtep", address}, {"type", msg.l2nm_type == 1 ? "l3" : "l2"},
+                         {"router_mac", msg.l2nm_type == 1 ? mac.to_string() : ""}});
+        return;
+    }
+    l2_nhg_group_msg header;
+    memcpy(&header, NLMSG_DATA(h), sizeof(header));
+    if (header.l2ng_count > L2_NHG_MAX_MEMBERS ||
+        h->nlmsg_len != NLMSG_LENGTH(sizeof(header) + header.l2ng_count * sizeof(uint32_t)))
+    {
+        SWSS_LOG_ERROR("Invalid FPM group count/length");
+        return;
+    }
+    if (deleting) { writeFpmL2Object(header.l2ng_nhg_id, true, true, {}); return; }
+    if (!header.l2ng_nhg_id) { SWSS_LOG_WARN("Invalid FPM group ID"); return; }
+    string list;
+    uint32_t previous = 0;
+    for (uint32_t i = 0; i < header.l2ng_count; ++i)
+    {
+        uint32_t id;
+        memcpy(&id, static_cast<const char*>(NLMSG_DATA(h)) + sizeof(header) + i * sizeof(id), sizeof(id));
+        if (!id || id <= previous) { SWSS_LOG_WARN("FPM group IDs must be unique and unsigned sorted"); return; }
+        if (i) list += ",";
+        list += to_string(id);
+        previous = id;
+    }
+    writeFpmL2Object(header.l2ng_nhg_id, true, false, {{"nexthop_group", list}});
 }
 
 void RouteSync::onMsgRaw(struct nlmsghdr *h)
@@ -2551,6 +2770,12 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELTFILTER)
         && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST))
     {
+        return;
+    }
+
+    if (h->nlmsg_type >= RTM_FPM_ADD_L2_NEXTHOP && h->nlmsg_type <= RTM_FPM_DEL_L2_NEXTHOP_GROUP)
+    {
+        onL2ProtectionMsg(h);
         return;
     }
 
