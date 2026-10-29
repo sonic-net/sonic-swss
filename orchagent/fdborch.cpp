@@ -19,6 +19,7 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
+#include "bpprotorch.h"
 
 #define VLAN_PREFIX         "Vlan"
 
@@ -31,6 +32,7 @@ extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
 extern L2NhgOrch*       gL2NhgOrch;
 extern FdbOrch*         gFdbOrch;
+extern BpProtOrch*      gBpProtOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -1751,6 +1753,12 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
             return;
         }
 
+        if (gBpProtOrch && gBpProtOrch->isProtectedBridgePort(p.m_alias) != BpProtectionStatus::NONE)
+        {
+            SWSS_LOG_NOTICE("Ignoring fdb/ARP flush on protected or pending port:%s", p.m_alias.c_str());
+            return;
+        }
+
         if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
             flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -1774,6 +1782,17 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
 
     }
     return;
+}
+
+void FdbOrch::flushProtectedPortOnWithdraw(const std::string &ifname)
+{
+    PortOperStateUpdate update;
+    if (!m_portsOrch->getPort(ifname, update.port)) return;
+    if (update.port.m_oper_status != SAI_PORT_OPER_STATUS_DOWN) return;
+    // Use current oper/bridge identity and recheck MLAG/protection at dispatch.
+    // Preserve the existing normal-flush SAI and observer behavior.
+    update.operStatus = SAI_PORT_OPER_STATUS_DOWN;
+    updatePortOperState(update);
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)

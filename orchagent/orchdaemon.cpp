@@ -18,6 +18,7 @@
 #include "chassisorch.h"
 #include "notificationconsumerstatsorch.h"
 #include "stporch.h"
+#include "bpprotorch.h"
 
 using namespace std;
 using namespace swss;
@@ -78,6 +79,7 @@ HFTelOrch *gHFTOrch;
 ShlOrch *gShlOrch;
 EvpnMhOrch *gEvpnMhOrch;
 L2NhgOrch *gL2NhgOrch;
+BpProtOrch *gBpProtOrch;
 
 NameLabelMapper *gLabelMapper;
 bool gIsNatSupported = false;
@@ -536,6 +538,7 @@ bool OrchDaemon::init()
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
     gL2NhgOrch = new L2NhgOrch(m_applDb, APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+    gBpProtOrch = new BpProtOrch(m_configDb, m_stateDb, m_applDb, gPortsOrch, gL2NhgOrch);
 
     /*
      * The order of the orch list is important for state restore of warm start and
@@ -546,6 +549,7 @@ bool OrchDaemon::init()
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
     m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch, gNotifConsumerStatsOrch};
+    m_orchList.push_back(gBpProtOrch);
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {

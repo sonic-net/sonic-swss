@@ -66,6 +66,13 @@ orchagent_SOURCES = \
             intfsorch.cpp \
             evpnmhorch.cpp \
             l2nhgorch.cpp \
+                l2nhgprotection.cpp \
+                l2nhgref.cpp \
+            bpprotorch.cpp \
+            bpprotfdb.cpp \
+            bpprotattachment.cpp \
+            bpprotevents.cpp \
+            bpprotfsm.cpp \
             port/port_capabilities.cpp \
             port/porthlpr.cpp \
             portsorch.cpp \
