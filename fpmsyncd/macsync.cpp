@@ -215,6 +215,9 @@ void MacSync::processStateFdbEntry(const KeyOpFieldsValuesTuple& entry)
     }
 
     LocalMac& stored = m_localMacs[key];
+    /* A refresh whose port no longer resolves is not sent, so zebra still holds
+     * the MAC on the ifindex it last heard, and the delete must go there. */
+    local.ifindex = stored.ifindex;
     stored = local;
     sendLocalMac(vlanName, mac, stored, true);
 }
@@ -238,7 +241,6 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
         SWSS_LOG_ERROR("MacSync: cannot resolve ifindex for port %s", local.port.c_str());
         return;
     }
-    local.ifindex = ifindex;
 
     if (vlanName.compare(0, 4, "Vlan") != 0)
     {
@@ -308,6 +310,7 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
                        vlanName.c_str(), mac.c_str());
         return;
     }
+    local.ifindex = ifindex;
 
     SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s%s",
                   add ? "add" : "del", vlanName.c_str(), mac.c_str(), local.port.c_str(),

@@ -556,6 +556,36 @@ TEST_F(MacSyncTest, LocalMacDeleteReachesZebraAfterThePortIsGone)
     EXPECT_EQ(m_macSync->m_localMacs.count(TEST_KEY), 0u);
 }
 
+/*
+ * orchagent can also refresh the entry once the port is gone. The refresh cannot be
+ * sent, so zebra still holds the MAC on the ifindex it last heard, whichever port
+ * the refresh names, and the delete must go there.
+ */
+TEST_F(MacSyncTest, LocalMacRefreshAfterThePortIsGoneKeepsItsIfindex)
+{
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+
+    KeyOpFieldsValuesTuple add{TEST_KEY, SET_COMMAND, {{"port", "Ethernet0"}, {"type", "dynamic"}}};
+    m_macSync->m_ifNameToIndex = [](const std::string&) { return 77u; };
+    m_macSync->processStateFdbEntry(add);
+    ASSERT_EQ(fpm.count(), 1u);
+
+    m_macSync->m_ifNameToIndex = [](const std::string&) { return 0u; };
+    m_macSync->processStateFdbEntry(add);
+    KeyOpFieldsValuesTuple moved{TEST_KEY, SET_COMMAND, {{"port", "Ethernet4"}, {"type", "dynamic"}}};
+    m_macSync->processStateFdbEntry(moved);
+    EXPECT_EQ(fpm.count(), 1u);
+
+    KeyOpFieldsValuesTuple del{TEST_KEY, DEL_COMMAND, {}};
+    m_macSync->processStateFdbEntry(del);
+
+    ASSERT_EQ(fpm.count(), 2u);
+    EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_DELNEIGH);
+    const struct ndmsg *ndm = (const struct ndmsg *)NLMSG_DATA(fpm.at(1));
+    EXPECT_EQ(ndm->ndm_ifindex, 77);
+}
+
 /* A MAC whose port never resolved was never sent, so there is nothing to withdraw. */
 TEST_F(MacSyncTest, LocalMacOnAnUnresolvedPortSendsNothing)
 {
