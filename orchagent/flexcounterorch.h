@@ -59,6 +59,7 @@ public:
     bool getWredQueueCountersState() const;
     bool getWredPortCountersState() const;
     bool isCreateOnlyConfigDbBuffers() const;
+    bool getLlrPortCountersState() const {return m_llr_port_counter_enabled;}
     bool bake() override;
 
 private:
@@ -76,6 +77,7 @@ private:
     bool m_delayTimerExpired = false;
     bool m_wred_queue_counter_enabled = false;
     bool m_wred_port_counter_enabled = false;
+    bool m_llr_port_counter_enabled = false;
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
     Table m_deviceMetadataConfigTable;
