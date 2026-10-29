@@ -49,9 +49,34 @@ protected:
 public:
     // PFC deadlock notification callback
     void doTask(NotificationConsumer &consumer) override;
+
+    // Periodic refresh of the watchdog counters for queues in storm
+    void doTask(SelectableTimer &timer) override;
     void onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data);
 
 private:
+    // The counter types and the COUNTERS_DB access are shared with the software
+    // watchdog; see pfcwdcounters.h.
+    PfcWdQueueStats getQueueStats(const string &queueIdStr)
+    {
+        return PfcWdBaseOrch::getQueueStats(getCountersTable(), queueIdStr);
+    }
+
+    void updateQueueStats(const string &queueIdStr, const PfcWdQueueStats &stats)
+    {
+        PfcWdBaseOrch::updateQueueStats(getCountersTable(), queueIdStr, stats);
+    }
+
+    // Read the hardware counters FlexCounter publishes for a queue. False when
+    // the sample cannot be used as a baseline.
+    bool readHwCounters(sai_object_id_t queueId, PfcWdHwStats& counters);
+
+    // Baseline the counters when a storm is detected
+    void initQueueCounters(const string& queueIdStr, sai_object_id_t queueId);
+
+    // Commit the counters periodically and on recovery
+    void updateQueueCounters(const string& queueIdStr, sai_object_id_t queueId, bool periodic);
+
     // Hardware-specific methods
     bool configureHwWatchdog(const Port& port, uint32_t detectionTime,
                             uint32_t restorationTime, PfcWdAction action);
@@ -108,6 +133,8 @@ private:
                                     uint32_t detectionTime, uint32_t restorationTime,
                                     const function<bool(const string&)>& handleFailure);
     void mapQueuesToPort(const Port& port, const set<uint8_t>& losslessTc);
+    void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
+    void clearQueueCounterState(sai_object_id_t queueId);
     bool disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId);
 
 
@@ -124,6 +151,9 @@ private:
 
     // Queues currently reported in storm by the hardware deadlock notification.
     std::set<sai_object_id_t> m_stormedQueues;
+
+    // Queue ID to the hardware counters sampled when its storm began
+    std::unordered_map<sai_object_id_t, PfcWdHwStats> m_queueBaselineStats;
 };
 
 #endif

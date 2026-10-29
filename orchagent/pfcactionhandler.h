@@ -5,6 +5,7 @@
 #include <memory>
 #include "aclorch.h"
 #include "table.h"
+#include "pfcwdcounters.h"
 
 extern "C" {
 #include "sai.h"
@@ -12,14 +13,6 @@ extern "C" {
 
 using namespace std;
 using namespace swss;
-
-struct PfcWdHwStats
-{
-    uint64_t txPkt;
-    uint64_t txDropPkt;
-    uint64_t rxPkt;
-    uint64_t rxDropPkt;
-};
 
 // PFC queue interface class
 // It resembles RAII behavior - pause storm is mitigated (queue is locked) on creation,
@@ -54,24 +47,6 @@ class PfcWdActionHandler
         bool getHwCounters(PfcWdHwStats& counters);
 
     private:
-        struct PfcWdQueueStats
-        {
-            uint64_t detectCount;
-            uint64_t restoreCount;
-            uint64_t txPkt;
-            uint64_t txDropPkt;
-            uint64_t rxPkt;
-            uint64_t rxDropPkt;
-            uint64_t txPktLast;
-            uint64_t txDropPktLast;
-            uint64_t rxPktLast;
-            uint64_t rxDropPktLast;
-            bool     operational;
-        };
-
-        static PfcWdQueueStats getQueueStats(shared_ptr<Table> countersTable, const string &queueIdStr);
-        void updateWdCounters(const string& queueIdStr, const PfcWdQueueStats& stats);
-
         sai_object_id_t m_port = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;

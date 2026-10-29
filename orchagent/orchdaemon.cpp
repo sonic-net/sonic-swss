@@ -812,6 +812,15 @@ bool OrchDaemon::init()
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 
+        // Only the hardware watchdog scores a storm by queue drops. The software
+        // watchdog's detect plugin never reads them, so they are not polled for it.
+        static const vector<sai_queue_stat_t> hwQueueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_DROPPED_PACKETS,
+            SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+        };
+
         static const vector<sai_queue_attr_t> queueAttrIds =
         {
             SAI_QUEUE_ATTR_PAUSE_STATUS,
@@ -849,12 +858,16 @@ bool OrchDaemon::init()
         if (pfcWdMode == PfcWdRecoveryMode::Hardware)
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            // Only the software detect plugin reads SAI_QUEUE_ATTR_PAUSE_STATUS,
+            // so the hardware watchdog does not poll any queue attribute.
+            static const vector<sai_queue_attr_t> hwQueueAttrIds = {};
+
             m_orchList.push_back(new PfcWdHwOrch(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
-                        queueStatIds,
-                        queueAttrIds));
+                        hwQueueStatIds,
+                        hwQueueAttrIds));
         }
         else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {
