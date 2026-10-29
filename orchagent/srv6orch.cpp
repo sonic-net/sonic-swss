@@ -1660,8 +1660,8 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     sai_status_t status = SAI_STATUS_SUCCESS;
     if (!mySidExists(my_sid_string))
     {
-        SWSS_LOG_ERROR("My_sid_entry doesn't exist for %s", my_sid_string.c_str());
-        return false;
+        SWSS_LOG_INFO("My_sid_entry already absent for %s", my_sid_string.c_str());
+        return true;
     }
     sai_my_sid_entry_t my_sid_entry = srv6_my_sid_table_[my_sid_string].entry;
     sai_object_id_t& counter = srv6_my_sid_table_[my_sid_string].counter;
@@ -2202,6 +2202,36 @@ bool Srv6Orch::deleteSrv6Vpn(const std::string &endpoint, const std::string &sid
     return true;
 }
 
+void Srv6Orch::cancelPendingMysidEntry(const string& my_sid_string)
+{
+    // A SID may have pending requests under different neighbors after updates.
+    // Cancel only this SID, preserving other requests sharing those neighbors.
+    for (auto next_hop = m_pendingSRv6MySIDEntries.begin();
+         next_hop != m_pendingSRv6MySIDEntries.end();)
+    {
+        auto& entries = next_hop->second;
+        for (auto entry = entries.begin(); entry != entries.end();)
+        {
+            if (get<0>(*entry) == my_sid_string)
+            {
+                entry = entries.erase(entry);
+            }
+            else
+            {
+                ++entry;
+            }
+        }
+        if (entries.empty())
+        {
+            next_hop = m_pendingSRv6MySIDEntries.erase(next_hop);
+        }
+        else
+        {
+            ++next_hop;
+        }
+    }
+}
+
 void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
 {
     SWSS_LOG_ENTER();
@@ -2228,6 +2258,10 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
     }
     if (op == SET_COMMAND)
     {
+        // Only the latest application request may be retried on neighbor ADD.
+        // Do this here, not in createUpdateMysidEntry: neighbor replay iterates
+        // the pending set and must not invalidate its own iterators.
+        cancelPendingMysidEntry(keyString);
         if(!createUpdateMysidEntry(keyString, dt_vrf, adj, end_action))
         {
           SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", keyString.c_str());
@@ -2236,6 +2270,7 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
     }
     else if(op == DEL_COMMAND)
     {
+        cancelPendingMysidEntry(keyString);
         if(!deleteMysidEntry(keyString))
         {
           SWSS_LOG_ERROR("Failed to delete my_sid entry for sid %s", keyString.c_str());

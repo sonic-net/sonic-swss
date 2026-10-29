@@ -188,6 +188,7 @@ class Srv6Orch : public Orch, public Observer
         bool srv6NexthopExists(const NextHopKey &nh);
         bool createUpdateMysidEntry(string my_sid_string, const string vrf, const string adj, const string end_action);
         bool deleteMysidEntry(const string my_sid_string);
+        void cancelPendingMysidEntry(const string& my_sid_string);
         bool sidEntryEndpointBehavior(const string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                       sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor);
         MySidLocatorCfg getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const;
