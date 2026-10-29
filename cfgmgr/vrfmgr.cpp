@@ -748,7 +748,7 @@ bool VrfMgr::doVrfVxlanTableUpdate(const string& vrf_name, const string& vni, bo
     if (tunnels.empty())
     {
         SWSS_LOG_INFO("No VXLAN tunnels found with VNI %s for VRF %s", vni.c_str(), vrf_name.c_str());
-        return false;
+        return !add;
     }
 
     std::vector<FieldValueTuple> fvVector;
