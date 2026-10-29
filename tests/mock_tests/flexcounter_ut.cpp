@@ -570,6 +570,7 @@ namespace flexcounter_test
                                           }));
 
         // Invalid factors must not replace the PORT group's startup default.
+        setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, "0");
         setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, "invalid");
         setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, "2147483648");
         setFlexCounterGroupSecondaryPollFactor(
