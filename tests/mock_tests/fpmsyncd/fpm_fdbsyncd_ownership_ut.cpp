@@ -128,11 +128,18 @@ protected:
     }
     void group(uint32_t id, bool deleting = false)
     {
-        struct { nlmsghdr header; uint32_t id, count, member; } frame{};
-        frame.header.nlmsg_type = deleting ? RTM_FPM_DEL_L2_NEXTHOP_GROUP : RTM_FPM_ADD_L2_NEXTHOP_GROUP;
-        frame.header.nlmsg_len = NLMSG_LENGTH(12);
-        frame.id = id; frame.count = 1; frame.member = fpmMember;
-        fpm->onMsgRaw(&frame.header); pipeline.flush();
+        l2_nhg_group_msg body{}; body.l2ng_nhg_id = id; body.l2ng_count = 1;
+        l2_nhg_member_msg member{}; member.l2nm_nh_id = fpmMember;
+        member.l2nm_type = 1; member.l2nm_family = AF_INET;
+        inet_pton(AF_INET, "10.0.0.3", &member.l2nm_remote_vtep);
+        member.l2nm_router_mac[0] = 2; member.l2nm_router_mac[5] = 3;
+        alignas(nlmsghdr) unsigned char bytes[NLMSG_SPACE(sizeof(body)+sizeof(member))]{};
+        auto *header = reinterpret_cast<nlmsghdr *>(bytes);
+        header->nlmsg_type = deleting ? RTM_FPM_DEL_L2_NEXTHOP_GROUP : RTM_FPM_ADD_L2_NEXTHOP_GROUP;
+        header->nlmsg_len = NLMSG_LENGTH(sizeof(body)+sizeof(member));
+        memcpy(NLMSG_DATA(header), &body, sizeof(body));
+        memcpy(bytes + NLMSG_HDRLEN + sizeof(body), &member, sizeof(member));
+        fpm->onMsgRaw(header); pipeline.flush();
     }
     void seedFpm()
     {

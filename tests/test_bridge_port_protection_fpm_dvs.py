@@ -1,6 +1,6 @@
 """TCP FPM-to-real-fpmsyncd integration.
 
-Synthetic peer uses the actual C serializers where stated; it does not claim
+Synthetic peer uses the shared-header reference encoder where stated; it does not claim
 that the companion zebra dispatcher/getters have been integrated.
 """
 import struct
@@ -28,11 +28,11 @@ def assert_fpm_path(bpp,expected):
     assert state['reconciliation_state']=='STEADY'
 
 
-@pytest.mark.parametrize('identifier',[1,0x80000001,0xffffffff])
-@pytest.mark.parametrize('producer',['crafted','actual_c'])
+@pytest.mark.parametrize('identifier',[0x80000000,0x80000001,0x8fffffff])
+@pytest.mark.parametrize('producer',['crafted','reference_cpp'])
 def test_binding_uint32_add_update_duplicate_and_delete(bpp,bpp_fpm,identifier,producer):
     index=bpp_fpm.ifindex()
-    data=(bpp_fpm.encode('binding',index,'add',identifier) if producer=='actual_c'
+    data=(bpp_fpm.encode('binding',index,'add',identifier) if producer=='reference_cpp'
           else binding_frame(index,identifier))
     bpp_fpm.send(data)
     exact(bpp,BINDING,bpp.po,{'nexthop_group':str(identifier)})
@@ -40,7 +40,7 @@ def test_binding_uint32_add_update_duplicate_and_delete(bpp,bpp_fpm,identifier,p
     exact(bpp,BINDING,bpp.po,{'nexthop_group':str(identifier)})
     bpp_fpm.send(binding_frame(index,bpp.group_id))
     exact(bpp,BINDING,bpp.po,{'nexthop_group':str(bpp.group_id)})
-    data=(bpp_fpm.encode('binding',index,'del',0) if producer=='actual_c'
+    data=(bpp_fpm.encode('binding',index,'del',0) if producer=='reference_cpp'
           else binding_frame(index,0,deleting=True))
     bpp_fpm.send(data); bpp.app_db.wait_for_deleted_entry(BINDING,bpp.po)
     bpp_fpm.send(data); assert not bpp.app_db.get_entry(BINDING,bpp.po)
@@ -95,21 +95,27 @@ def assert_dummy_binding(bpp,name,identifier):
 
 @pytest.mark.parametrize('ip',['10.10.10.2','2001:db8::2'])
 @pytest.mark.parametrize('kind',[0,1])
-@pytest.mark.parametrize('producer',['crafted','actual_c'])
+@pytest.mark.parametrize('producer',['crafted','reference_cpp'])
 def test_member_ipv4_ipv6_and_type_roundtrip_exact_rows(bpp,bpp_fpm,ip,kind,producer):
-    identifier=0xffffffff
-    data=(bpp_fpm.encode('member',identifier,'add',kind,ip,bpp.mac) if producer=='actual_c'
+    identifier=0x4fffffff
+    data=(bpp_fpm.encode('member',identifier,'add',kind,ip,bpp.mac) if producer=='reference_cpp'
           else member_frame(identifier,ip,kind=kind))
     bpp_fpm.send(data)
-    exact(bpp,OBJECTS,str(identifier),member_row(ip,kind='l3' if kind else 'l2'))
-    assert 'vni' not in bpp.app_db.get_entry(OBJECTS,str(identifier))
-    assert bpp.app_db.get_entry(FPM_IDS,str(identifier))=={'NULL':'NULL'}
-    # Replacement L3 -> L2 must actively empty the merged Redis RMAC field.
+    if kind == 0:
+        bpp_fpm.barrier()
+        assert not bpp.app_db.get_entry(OBJECTS,str(identifier))
+    else:
+        exact(bpp,OBJECTS,str(identifier),member_row(ip))
+        assert 'vni' not in bpp.app_db.get_entry(OBJECTS,str(identifier))
+        assert bpp.app_db.get_entry(FPM_IDS,str(identifier))=={'NULL':'NULL'}
     bpp_fpm.send(member_frame(identifier,ip,kind=1))
     exact(bpp,OBJECTS,str(identifier),member_row(ip))
+    # L2 over FPM must not replace an accepted routed Member.
     bpp_fpm.send(member_frame(identifier,ip,kind=0))
-    exact(bpp,OBJECTS,str(identifier),member_row(ip,kind='l2'))
-    data=(bpp_fpm.encode('member',identifier,'del',kind,ip,bpp.mac) if producer=='actual_c'
+    bpp_fpm.barrier()
+    stable(lambda: assert_object_unchanged(bpp,identifier,member_row(ip)))
+
+    data=(bpp_fpm.encode('member',identifier,'del',kind,ip,bpp.mac) if producer=='reference_cpp'
           else member_frame(identifier,ip,kind=kind,deleting=True))
     bpp_fpm.send(data); bpp.app_db.wait_for_deleted_entry(OBJECTS,str(identifier))
     bpp_fpm.send(data)
@@ -140,16 +146,16 @@ def assert_object_unchanged(bpp,identifier,expected):
     assert bpp.app_db.get_entry(OBJECTS,str(identifier))==expected
 
 
-@pytest.mark.parametrize('producer',['crafted','actual_c'])
+@pytest.mark.parametrize('producer',['crafted','reference_cpp'])
 def test_group_unsigned_sort_empty_replacement_and_delete_roundtrip(bpp,bpp_fpm,producer):
-    members=[1,0x80000001,0xffffffff]
-    data=(bpp_fpm.encode('group',bpp.group_id,'add',*reversed(members)) if producer=='actual_c'
+    members=[0x40000001,0x40000007,0x4fffffff]
+    data=(bpp_fpm.encode('group',bpp.group_id,'add',*reversed(members)) if producer=='reference_cpp'
           else group_frame(bpp.group_id,members))
     bpp_fpm.send(data)
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':','.join(map(str,members))})
     bpp_fpm.send(group_frame(bpp.group_id,[]))
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':''})
-    data=(bpp_fpm.encode('group',bpp.group_id,'del') if producer=='actual_c'
+    data=(bpp_fpm.encode('group',bpp.group_id,'del') if producer=='reference_cpp'
           else group_frame(bpp.group_id,[],deleting=True))
     bpp_fpm.send(data); bpp.app_db.wait_for_deleted_entry(OBJECTS,str(bpp.group_id))
     bpp_fpm.send(data)
@@ -162,17 +168,17 @@ def test_group_invalid_count_length_or_ids_preserve_row(bpp,bpp_fpm,invalid):
     exact(bpp,OBJECTS,str(bpp.group_id),expected)
     data={
         'truncated_header':frame(151,struct.pack('=I',bpp.group_id)),
-        'truncated_members':group_frame(bpp.group_id,[1],count=2),
-        'extra':group_frame(bpp.group_id,[1],count=0),
+        'truncated_members':group_frame(bpp.group_id,[0x40000001],count=2),
+        'extra':group_frame(bpp.group_id,[0x40000001],count=0),
         'over_count':group_frame(bpp.group_id,[],count=4097),
-        'zero_id':group_frame(0,[1]),'zero_member':group_frame(bpp.group_id,[0]),
-        'duplicate':group_frame(bpp.group_id,[1,1]),'unsorted':group_frame(bpp.group_id,[0xffffffff,1]),
+        'zero_id':group_frame(0,[0x40000001]),'zero_member':group_frame(bpp.group_id,[0]),
+        'duplicate':group_frame(bpp.group_id,[0x40000001,0x40000001]),'unsorted':group_frame(bpp.group_id,[0x4fffffff,0x40000001]),
     }[invalid]
     bpp_fpm.send(data); bpp_fpm.barrier()
     stable(lambda: assert_object_unchanged(bpp,bpp.group_id,expected))
     assert not bpp.app_db.get_entry(OBJECTS,'0')
-    bpp_fpm.send(group_frame(bpp.group_id,[1,0xffffffff]))
-    exact(bpp,OBJECTS,str(bpp.group_id),dict(expected,nexthop_group='1,4294967295'))
+    bpp_fpm.send(group_frame(bpp.group_id,[0x40000001,0x4fffffff]))
+    exact(bpp,OBJECTS,str(bpp.group_id),dict(expected,nexthop_group='1073741825,1342177279'))
 
 
 @pytest.mark.parametrize('row_kind',['member','group'])
@@ -266,10 +272,10 @@ def test_cli_through_fpm_and_swss_show_reports_confirmed_readback(bpp,bpp_fpm):
 
 
 def test_largest_transport_sized_group_is_decoded_without_count_wrap(bpp,bpp_fpm):
-    # 4-byte FPM + 16-byte nlmsghdr + 8-byte Group + 4089 * 4 = 16384.
-    # 4096 is the payload decoder cap, not a usable single FPM frame size.
-    members=list(range(1,4090)); data=group_frame(bpp.group_id,members)
-    assert len(data)==16384
+    # FPM(4) + aligned netlink/Group header(36) + 28 bytes per Member.
+    members=[0x40000001+i for i in range(583)]
+    data=group_frame(bpp.group_id,members)
+    assert len(data)==16364 and len(data)<=16384
     bpp_fpm.send(data)
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':','.join(map(str,members))})
 
@@ -280,8 +286,8 @@ def test_malformed_delete_cannot_withdraw_an_accepted_object(bpp,bpp_fpm,object_
         identifier=bpp.member_id; data=member_frame(identifier,bpp.ip)
         expected=member_row(bpp.ip); malformed=frame(150,data[20:-1])
     else:
-        identifier=bpp.group_id; data=group_frame(identifier,[1])
-        expected={'nexthop_group':'1'}
+        identifier=bpp.group_id; data=group_frame(identifier,[0x40000001])
+        expected={'nexthop_group':'1073741825'}
         malformed=group_frame(identifier,[],deleting=True,count=1)
     bpp_fpm.send(data); exact(bpp,OBJECTS,str(identifier),expected)
     bpp_fpm.send(malformed); bpp_fpm.barrier()
@@ -365,3 +371,25 @@ def test_hld_empty_or_orphan_group_flushes_after_fpm_crash_without_row_markers(b
     bpp.app_db.wait_for_deleted_entry(FPM_IDS,str(bpp.group_id))
     poll(lambda: True if set(bpp.asic.get_keys(NHG))==before else None)
     assert bpp.config.get_entry(CONFIG,bpp.po)['admin_mode']=='AUTO'
+
+
+def test_replay_done_is_informational_and_keeps_confirmed_path(bpp,bpp_fpm):
+    bpp.policy(); replay(bpp,bpp_fpm); bpp.path('PRIMARY')
+    before=bpp.asic.get_entry(BP,bpp.bridge_oid())[GROUP_ATTR]
+    bpp_fpm.send(frame(153,b'')); bpp_fpm.send(frame(153,b''))
+    bpp_fpm.barrier(); assert_fpm_path(bpp,'PRIMARY')
+    assert bpp.asic.get_entry(BP,bpp.bridge_oid())[GROUP_ATTR]==before
+    bpp_fpm.send(frame(153,b'\x00'*4)); bpp_fpm.barrier()
+    assert_fpm_path(bpp,'PRIMARY')
+
+
+def test_group_with_invalid_last_member_publishes_no_partial_snapshot(bpp,bpp_fpm):
+    first,second=0x40002001,0x40002002
+    valid=group_frame(bpp.group_id,[first,second])
+    # Last Member RMAC is invalid; the earlier Member must not be published.
+    payload=valid[20:20+18+2*28]
+    bpp_fpm.send(frame(151,payload[:-6]+b'\x00'*6)); bpp_fpm.barrier()
+    for identifier in (first,second,bpp.group_id):
+        assert not bpp.app_db.get_entry(OBJECTS,str(identifier))
+    bpp_fpm.send(valid)
+    exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':str(first)+','+str(second)})
