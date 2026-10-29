@@ -1041,9 +1041,15 @@ void setFlexCounterGroupSecondaryPollFactor(const std::string &group,
     try
     {
         // syncd currently parses this field with stoi(), so keep the value in
-        // that parser's non-negative range and reject input that could terminate
+        // that parser's positive range and reject input that could terminate
         // flex-counter processing there.
-        if (std::stoull(secondary_poll_factor) >
+        auto factor = std::stoull(secondary_poll_factor);
+        if (factor == 0)
+        {
+            SWSS_LOG_ERROR("Secondary poll factor must be greater than zero");
+            return;
+        }
+        if (factor >
             static_cast<unsigned long long>(std::numeric_limits<int>::max()))
         {
             SWSS_LOG_ERROR("Secondary poll factor '%s' is out of range", secondary_poll_factor.c_str());
