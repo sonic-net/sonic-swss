@@ -127,15 +127,11 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 void TeamSync::addLag(const LagId &lagId, bool admin_state, bool oper_state, unsigned int mtu)
 {
     const string &lagName = lagId.first;
-    shared_ptr<TeamPortSync> tsync;
     auto lag = m_teamSelectables.find(lagId);
-    if (lag != m_teamSelectables.end())
-    {
-        if (lag->first != lagId)
-            removeLag(lag->first);
-        else
-            tsync = lag->second;
-    }
+    if (lag != m_teamSelectables.end() && lag->first != lagId)
+        removeLag(lag->first);
+
+    auto &tsync = m_teamSelectables[lagId];
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
@@ -183,7 +179,6 @@ void TeamSync::addLag(const LagId &lagId, bool admin_state, bool oper_state, uns
         }
         catch (const system_error& e)
         {
-            m_teamSelectables.emplace(lagId, nullptr);
             SWSS_LOG_ERROR("addLag: Failed to initialize team handler for LAG %s "
                            "(ifindex %d): %d:%s. Waiting for next RTM_NEWLINK.",
                            lagName.c_str(), lagId.second, e.code().value(), e.what());
@@ -195,7 +190,7 @@ void TeamSync::addLag(const LagId &lagId, bool admin_state, bool oper_state, uns
         sync->mtu = mtu;
         sync->onChange();
         m_stateLagTable.set(lagName, fvVector);
-        m_teamSelectables[lagId] = sync;
+        tsync = sync;
         m_selectablesToAdd.insert(sync);
 
         SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
