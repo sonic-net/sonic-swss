@@ -129,10 +129,10 @@ public:
         return (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
     }
 
-    void feed(MacMsg& req)
+    void feed(MacMsg& req, MacSync *macSync = nullptr)
     {
         int len = (int)(req.n.nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
-        m_macSync->onMacMsg(&req.n, len);
+        (macSync ? macSync : m_macSync.get())->onMacMsg(&req.n, len);
     }
 
     /* Delivers through RouteSync so the message-type filter is exercised. */
@@ -733,18 +733,18 @@ TEST_F(MacSyncTest, FpmModeCoexistsWithEvpnMultihoming)
 {
     Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
     cfgEs.set("PortChannel121", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+    Table fdbSync(m_cfgDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    fdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "fpm"}});
 
-    m_macSync->setMacSyncMode("kernel");
-    m_macSync->setMacSyncMode("fpm");
-
-    EXPECT_TRUE(m_macSync->isFpmMode());
+    MacSync macSync(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+    EXPECT_TRUE(macSync.isFpmMode());
 
     MacMsg req;
     buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
     addVlan(req, TEST_VLAN);
     addSrcVni(req, TEST_VNI);
     addNhgId(req, 4242);
-    feed(req);
+    feed(req, &macSync);
 
     std::vector<FieldValueTuple> values;
     ASSERT_TRUE(getEntry(TEST_KEY, values));
@@ -767,10 +767,36 @@ TEST_F(MacSyncTest, L3EvpnMhRunsFpmModeWhateverFdbSyncSays)
     MacSync l3EvpnMh(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
     EXPECT_TRUE(l3EvpnMh.isFpmMode());
 
-    l3EvpnMh.setMacSyncMode("kernel");
-    EXPECT_TRUE(l3EvpnMh.isFpmMode());
-    l3EvpnMh.setMacSyncMode("");
-    EXPECT_TRUE(l3EvpnMh.isFpmMode());
+    /* fdbsyncd follows the mode fpmsyncd runs, not the one configured. */
+    std::string published;
+    ASSERT_TRUE(Table(m_stateDb.get(), STATE_FDB_SYNC_TABLE_NAME).hget("global", "mac_sync_mode", published));
+    EXPECT_EQ(published, "fpm");
+}
+
+/*
+ * The mode is read once, at startup, as zebra reads --kernel-mac-ext-learn, so a
+ * change to FDB_SYNC applies on the next bgp restart and never splits the two ends
+ * of the FPM channel. It is published for fdbsyncd, which runs in the swss container
+ * and so is not restarted with bgp.
+ */
+TEST_F(MacSyncTest, MacSyncModeIsReadAtStartupAndPublished)
+{
+    Table stateFdbSync(m_stateDb.get(), STATE_FDB_SYNC_TABLE_NAME);
+    std::string published;
+
+    MacSync unset(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+    EXPECT_FALSE(unset.isFpmMode());
+    ASSERT_TRUE(stateFdbSync.hget("global", "mac_sync_mode", published));
+    EXPECT_EQ(published, "kernel");
+
+    Table fdbSync(m_cfgDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    fdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "fpm"}});
+
+    MacSync fpm(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+    EXPECT_TRUE(fpm.isFpmMode());
+    EXPECT_FALSE(unset.isFpmMode());
+    ASSERT_TRUE(stateFdbSync.hget("global", "mac_sync_mode", published));
+    EXPECT_EQ(published, "fpm");
 }
 
 /*
@@ -843,19 +869,15 @@ TEST_F(MacSyncTest, RemoteMacWithUnpaddedLastAttributeIsAccepted)
 }
 
 /*
- * Rows already in APP_VXLAN_FDB_TABLE when fpm mode starts, from an earlier
- * fpmsyncd or from fdbsyncd in kernel mode, stay withdrawable: zebra's delete
- * used to be ignored for a MAC this instance had not written.
+ * zebra withdraws and moves a MAC by key, whoever wrote its row: an earlier
+ * fpmsyncd, or fdbsyncd in kernel mode, can leave one this instance never wrote.
  */
-TEST_F(MacSyncTest, FpmModeTakesOverRemoteMacsInAppDb)
+TEST_F(MacSyncTest, RemoteMacWithdrawalRemovesARowItDidNotWrite)
 {
     Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
     appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"},
                                                       {"type", "dynamic"},
                                                       {"vni", std::to_string(TEST_VNI)}});
-
-    m_macSync->setMacSyncMode("kernel");
-    m_macSync->setMacSyncMode("fpm");
 
     MacMsg del;
     buildMacMsg(del, RTM_DELNEIGH, NUD_REACHABLE);
@@ -867,27 +889,22 @@ TEST_F(MacSyncTest, FpmModeTakesOverRemoteMacsInAppDb)
     EXPECT_FALSE(getEntry(TEST_KEY, values));
 }
 
-/*
- * A MAC learnt while fdbsyncd owned the kernel path reaches zebra when fpm mode
- * starts, and so does its ageout: MacSync discarded its STATE_DB update in
- * kernel mode.
- */
-TEST_F(MacSyncTest, FpmModeAdvertisesLocalMacsLearntInKernelMode)
+TEST_F(MacSyncTest, RemoteMacDestinationChangeReplacesARowItDidNotWrite)
 {
-    RecordingFpm fpm;
-    m_macSync->onFpmConnected(fpm);
-    m_macSync->setMacSyncMode("kernel");
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"},
+                                                      {"type", "dynamic"},
+                                                      {"vni", std::to_string(TEST_VNI)}});
 
-    /* "lo" because sendLocalMac() resolves the port with if_nametoindex(). */
-    Table stateFdb(m_stateDb.get(), STATE_FDB_TABLE_NAME);
-    stateFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"port", "lo"}, {"type", "dynamic"}});
+    MacMsg nhg;
+    buildMacMsg(nhg, RTM_NEWNEIGH, NUD_REACHABLE);
+    addVlan(nhg, TEST_VLAN);
+    addSrcVni(nhg, TEST_VNI);
+    addNhgId(nhg, 4242);
+    feed(nhg);
 
-    m_macSync->setMacSyncMode("fpm");
-    ASSERT_EQ(fpm.count(), 1u);
-    EXPECT_EQ(fpm.at(0)->nlmsg_type, RTM_NEWNEIGH);
-
-    stateFdb.del(TEST_KEY);
-    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
-    ASSERT_EQ(fpm.count(), 2u);
-    EXPECT_EQ(fpm.at(1)->nlmsg_type, RTM_DELNEIGH);
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "nexthop_group"), "4242");
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
 }

@@ -5,7 +5,7 @@
 #include <linux/neighbour.h>
 
 #include <functional>
-#include <set>
+#include <map>
 #include <string>
 
 #include "dbconnector.h"
@@ -19,6 +19,11 @@
 #define CFG_FDB_SYNC_TABLE_NAME "FDB_SYNC"
 #endif
 
+/* The mode fpmsyncd runs, which fdbsyncd follows. */
+#ifndef STATE_FDB_SYNC_TABLE_NAME
+#define STATE_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
+
 namespace swss {
 
 /*
@@ -27,9 +32,11 @@ namespace swss {
  * Local direction : STATE_DB FDB_TABLE -> AF_BRIDGE RTM_NEWNEIGH/RTM_DELNEIGH -> zebra.
  * Remote direction: AF_BRIDGE RTM_NEWNEIGH/RTM_DELNEIGH from zebra -> APP_VXLAN_FDB_TABLE.
  *
- * Active only while CONFIG_DB FDB_SYNC|global mac_sync_mode is "fpm"; in "kernel"
- * mode every entry point is a no-op so behaviour is identical to fdbsyncd's
- * netlink path.
+ * Active only when CONFIG_DB FDB_SYNC|global mac_sync_mode is "fpm" at startup. The
+ * mode is read once, as zebra reads --kernel-mac-ext-learn, so a change applies on
+ * the next bgp restart, and is published in STATE_DB FDB_SYNC|global for fdbsyncd to
+ * follow. In "kernel" mode every entry point is a no-op so behaviour is identical to
+ * fdbsyncd's netlink path.
  */
 class MacSync
 {
@@ -37,10 +44,6 @@ public:
     MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb);
 
     SubscriberStateTable *getStateFdbTable() { return &m_stateFdbTable; }
-    SubscriberStateTable *getCfgFdbSyncTable() { return &m_cfgFdbSyncTable; }
-
-    /* CONFIG_DB FDB_SYNC|global updates. */
-    void processCfgFdbSync();
 
     /* STATE_DB FDB_TABLE updates: local MACs toward zebra. */
     void processStateFdb();
@@ -64,18 +67,14 @@ private:
     };
 
     void readCfgFdbSyncMode();
-    void setMacSyncMode(const std::string& mode);
-    void loadLocalMacs();
     bool isEthernetSegmentInterface(const std::string& ifname);
     void processStateFdbEntry(const KeyOpFieldsValuesTuple& entry);
     void sendLocalMac(const std::string& vlanName, const std::string& mac,
                       LocalMac& local, bool add);
 
     ProducerStateTable m_vxlanFdbTable;
-    Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
-    Table m_stateFdbTableRead;
-    SubscriberStateTable m_cfgFdbSyncTable;
+    Table m_stateFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
     Table m_cfgEvpnEsTable;
 
@@ -89,11 +88,6 @@ private:
     std::function<unsigned int(const std::string&)> m_ifNameToIndex;
 
     std::map<std::string, LocalMac> m_localMacs;
-
-    /* Remote MACs in APPL_DB that this daemon owns: the ones it wrote, and in
-     * fpm mode the ones already there when it took over. A withdrawal removes
-     * only these. */
-    std::set<std::string> m_remoteMacs;
 };
 
 }

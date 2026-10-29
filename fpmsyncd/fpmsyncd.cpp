@@ -153,7 +153,6 @@ int main(int argc, char **argv)
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
             s.addSelectable(macsync.getStateFdbTable());
-            s.addSelectable(macsync.getCfgFdbSyncTable());
 
             if (sync.isSuppressionEnabled())
             {
@@ -206,20 +205,14 @@ int main(int argc, char **argv)
 
                 /*
                  * Wait on every selectable: the FPM connection (whose "readMe" reads the
-                 * FPM messages), netlink, and MacSync's two tables, STATE_DB FDB_TABLE for
-                 * the local MACs to send to zebra and CONFIG_DB FDB_SYNC for the mode.
+                 * FPM messages), netlink, and MacSync's STATE_DB FDB_TABLE for the local
+                 * MACs to send to zebra.
                  */
                 s.select(&temps, gSelectTimeout);
 
                 if (temps == (Selectable *)macsync.getStateFdbTable())
                 {
                     macsync.processStateFdb();
-                    continue;
-                }
-
-                if (temps == (Selectable *)macsync.getCfgFdbSyncTable())
-                {
-                    macsync.processCfgFdbSync();
                     continue;
                 }
 

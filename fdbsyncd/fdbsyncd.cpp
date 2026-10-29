@@ -98,7 +98,7 @@ int main(int argc, char **argv)
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());
             s.addSelectable(sync.getCfgEvpnNvoTable());
-            s.addSelectable(sync.getCfgFdbSyncTable());
+            s.addSelectable(sync.getStateFdbSyncTable());
             while (true)
             {
                 s.select(&temps);
@@ -115,9 +115,9 @@ int main(int argc, char **argv)
                 {
                     sync.processCfgEvpnNvo();
                 }
-                else if (temps == (Selectable *)sync.getCfgFdbSyncTable())
+                else if (temps == (Selectable *)sync.getStateFdbSyncTable())
                 {
-                    sync.processCfgFdbSync();
+                    sync.processStateFdbSync();
                 }
                 else if (temps == &replayCheckTimer)
                 {

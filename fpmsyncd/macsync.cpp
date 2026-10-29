@@ -24,10 +24,11 @@ using namespace swss;
 #define NDA_NH_ID 13
 #endif
 
-#define MAC_SYNC_MODE_FIELD "mac_sync_mode"
-#define MAC_SYNC_MODE_FPM   "fpm"
-#define FDB_SYNC_GLOBAL_KEY "global"
-#define L3_EVPN_MH_SUBTYPE  "L3EvpnMH"
+#define MAC_SYNC_MODE_FIELD  "mac_sync_mode"
+#define MAC_SYNC_MODE_FPM    "fpm"
+#define MAC_SYNC_MODE_KERNEL "kernel"
+#define FDB_SYNC_GLOBAL_KEY  "global"
+#define L3_EVPN_MH_SUBTYPE   "L3EvpnMH"
 
 /* Same buffer shape zebra uses for AF_BRIDGE FDB messages. */
 struct MacNlRequest
@@ -91,10 +92,8 @@ static bool getAttr(const struct rtattr *rta, T& value)
 
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
-    m_vxlanFdbTableRead(pipeline, APP_VXLAN_FDB_TABLE_NAME, false),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
-    m_stateFdbTableRead(stateDb, STATE_FDB_TABLE_NAME),
-    m_cfgFdbSyncTable(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
+    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
     m_ifNameToIndex([](const string& name) { return if_nametoindex(name.c_str()); })
@@ -106,12 +105,22 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     readCfgFdbSyncMode();
 }
 
+/*
+ * Read once, at startup: zebra takes --kernel-mac-ext-learn from the same key when
+ * the bgp container starts, so the two ends of the FPM channel always agree and a
+ * mode change applies on the next bgp restart. fdbsyncd runs in the swss container,
+ * which a bgp restart leaves running, so the mode is published for it to follow.
+ */
 void MacSync::readCfgFdbSyncMode()
 {
     string mode;
 
     m_cfgFdbSyncTableRead.hget(FDB_SYNC_GLOBAL_KEY, MAC_SYNC_MODE_FIELD, mode);
-    setMacSyncMode(mode);
+    m_fpmMode = m_l3EvpnMh || (mode == MAC_SYNC_MODE_FPM);
+    m_stateFdbSyncTable.hset(FDB_SYNC_GLOBAL_KEY, MAC_SYNC_MODE_FIELD,
+                             m_fpmMode ? MAC_SYNC_MODE_FPM : MAC_SYNC_MODE_KERNEL);
+    SWSS_LOG_NOTICE("MacSync: mac_sync_mode is %s%s", m_fpmMode ? "fpm" : "kernel",
+                    m_l3EvpnMh ? ", fixed by the L3EvpnMH subtype" : "");
 }
 
 /* The Ethernet Segment table is keyed by the interface the ESI is bound to, so
@@ -121,96 +130,6 @@ bool MacSync::isEthernetSegmentInterface(const string& ifname)
     std::vector<FieldValueTuple> values;
 
     return m_cfgEvpnEsTable.get(ifname, values);
-}
-
-void MacSync::setMacSyncMode(const string& mode)
-{
-    bool fpmMode = m_l3EvpnMh || (mode == MAC_SYNC_MODE_FPM);
-
-    if (fpmMode == m_fpmMode)
-    {
-        return;
-    }
-
-    m_fpmMode = fpmMode;
-    SWSS_LOG_NOTICE("MacSync: mac_sync_mode is now %s%s", m_fpmMode ? "fpm" : "kernel",
-                    m_l3EvpnMh ? ", fixed by the L3EvpnMH subtype" : "");
-
-    if (!m_fpmMode)
-    {
-        /* processStateFdb() discards updates while fdbsyncd owns the kernel
-         * path, so the local cache would only go stale. */
-        m_localMacs.clear();
-        /* fdbsyncd writes APP_VXLAN_FDB_TABLE in this mode. */
-        m_remoteMacs.clear();
-        return;
-    }
-
-    /* Take over the remote MACs already in APPL_DB, written by an earlier
-     * fpmsyncd or by fdbsyncd in kernel mode, so zebra can still withdraw them. */
-    std::vector<string> keys;
-    m_vxlanFdbTableRead.getKeys(keys);
-    m_remoteMacs.insert(keys.begin(), keys.end());
-    SWSS_LOG_NOTICE("MacSync: took over %zu remote MACs from APPL_DB", keys.size());
-
-    loadLocalMacs();
-}
-
-/*
- * The local MACs already in STATE_DB. processStateFdb() discarded their updates
- * while fdbsyncd owned the kernel path, so on a switch to fpm mode they would
- * reach zebra only on their next change, and their deletes would be ignored.
- * At startup the subscriber's initial read delivers them again once the first
- * connection is up.
- */
-void MacSync::loadLocalMacs()
-{
-    std::vector<string> keys;
-    size_t loaded = 0;
-
-    m_stateFdbTableRead.getKeys(keys);
-
-    for (const auto& key : keys)
-    {
-        std::vector<FieldValueTuple> values;
-        if (!m_stateFdbTableRead.get(key, values))
-        {
-            continue;
-        }
-        processStateFdbEntry(KeyOpFieldsValuesTuple{key, SET_COMMAND, values});
-        loaded++;
-    }
-
-    SWSS_LOG_NOTICE("MacSync: took over %zu local MACs from STATE_DB", loaded);
-}
-
-void MacSync::processCfgFdbSync()
-{
-    std::deque<KeyOpFieldsValuesTuple> entries;
-
-    m_cfgFdbSyncTable.pops(entries);
-
-    for (auto& entry : entries)
-    {
-        if (kfvKey(entry) != FDB_SYNC_GLOBAL_KEY)
-        {
-            continue;
-        }
-
-        if (kfvOp(entry) != SET_COMMAND)
-        {
-            setMacSyncMode("");
-            continue;
-        }
-
-        for (auto& fv : kfvFieldsValues(entry))
-        {
-            if (fvField(fv) == MAC_SYNC_MODE_FIELD)
-            {
-                setMacSyncMode(fvValue(fv));
-            }
-        }
-    }
 }
 
 /*
@@ -476,11 +395,10 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
 
     if (remove)
     {
-        if (m_remoteMacs.erase(key))
-        {
-            m_vxlanFdbTable.del(key);
-            SWSS_LOG_INFO("MacSync: removed remote MAC %s", key.c_str());
-        }
+        /* By key, whoever wrote the row: one an earlier fpmsyncd or fdbsyncd in
+         * kernel mode left behind is still zebra's to withdraw. */
+        m_vxlanFdbTable.del(key);
+        SWSS_LOG_INFO("MacSync: removed remote MAC %s", key.c_str());
         return;
     }
 
@@ -557,13 +475,11 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
 
-    /* set() merges fields, so a MAC whose destination changes would keep the old one. */
-    if (m_remoteMacs.count(key))
-    {
-        m_vxlanFdbTable.del(key);
-    }
+    /* set() merges fields, so a MAC whose destination changes would keep the old
+     * one. The row is deleted first, whoever wrote it; when both reach orchagent
+     * in one pop, it sees only the new row. */
+    m_vxlanFdbTable.del(key);
     m_vxlanFdbTable.set(key, fvVector);
-    m_remoteMacs.insert(key);
 
     string dest = !nexthopGroup.empty() ? ("nexthop_group " + nexthopGroup)
                 : !esInterface.empty()  ? ("ifname " + esInterface)

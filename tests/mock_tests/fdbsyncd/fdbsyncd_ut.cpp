@@ -2412,11 +2412,6 @@ TEST_F(FdbSyncdEvpnMhTest, MacSyncModeTogglesOwnership)
 
     m_mockFdbSync.setMacSyncMode("fpm");
     EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
-
-    /* A removed CONFIG_DB row arrives as an empty mode and must hand ownership
-     * back to the kernel path rather than leaving it with fpmsyncd. */
-    m_mockFdbSync.setMacSyncMode("");
-    EXPECT_FALSE(m_mockFdbSync.isFpmMacSync());
 }
 
 TEST_F(FdbSyncdEvpnMhTest, L3EvpnMhKeepsFpmMacSyncWhateverFdbSyncSays)
@@ -2437,6 +2432,47 @@ TEST_F(FdbSyncdEvpnMhTest, L3EvpnMhKeepsFpmMacSyncWhateverFdbSyncSays)
     /* The next test's m_mockFdbSync reads CONFIG_DB before SetUp() resets it. */
     deviceMetadata.del("localhost");
     fdbSync.del("global");
+}
+
+/*
+ * fdbsyncd runs in the swss container, which a bgp restart leaves running, so it
+ * follows the mode fpmsyncd publishes in STATE_DB, the one zebra runs too, and
+ * switches when the bgp container restarts rather than when CONFIG_DB changes.
+ */
+TEST_F(FdbSyncdEvpnMhTest, MacSyncModeFollowsTheModeFpmsyncdRuns)
+{
+    Table cfgFdbSync(m_configDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    cfgFdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "fpm"}});
+    Table stateFdbSync(m_stateDb.get(), STATE_FDB_SYNC_TABLE_NAME);
+    stateFdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "kernel"}});
+
+    /* Configured, but bgp has not restarted yet. */
+    MockFdbSyncEvpnMh sync(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    EXPECT_FALSE(sync.isFpmMacSync());
+
+    sync.processStateFdbSyncEntry(KeyOpFieldsValuesTuple{"global", SET_COMMAND, {{"mac_sync_mode", "fpm"}}});
+    EXPECT_TRUE(sync.isFpmMacSync());
+
+    /* Without a published mode, the last one fpmsyncd ran still applies. */
+    sync.processStateFdbSyncEntry(KeyOpFieldsValuesTuple{"global", DEL_COMMAND, {}});
+    EXPECT_TRUE(sync.isFpmMacSync());
+
+    /* The next test's m_mockFdbSync reads both before SetUp() resets them. */
+    stateFdbSync.del("global");
+    cfgFdbSync.del("global");
+}
+
+/* Before fpmsyncd has published a mode, at boot, the configured one applies: it is
+ * the one fpmsyncd will run. */
+TEST_F(FdbSyncdEvpnMhTest, MacSyncModeIsTheConfiguredOneUntilFpmsyncdPublishesOne)
+{
+    Table cfgFdbSync(m_configDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    cfgFdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "fpm"}});
+
+    MockFdbSyncEvpnMh sync(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    EXPECT_TRUE(sync.isFpmMacSync());
+
+    cfgFdbSync.del("global");
 }
 
 TEST_F(FdbSyncdEvpnMhTest, LocalMacNotProgrammedIntoKernelInFpmMode)
@@ -2512,6 +2548,34 @@ TEST_F(FdbSyncdEvpnMhTest, KernelModeTakesOverRemoteMacsInAppDb)
     m_mockFdbSync.onMsgRaw(nlmsg);
     free(nlmsg);
     EXPECT_FALSE(getFdbTable().get(key, values));
+}
+
+/*
+ * A MAC fpmsyncd programmed against a local Ethernet Segment port has no producer
+ * in kernel mode, so nothing would withdraw it: fdbsyncd removes it rather than
+ * taking it over. Every other row is taken over against its own VLAN's device.
+ */
+TEST_F(FdbSyncdEvpnMhTest, KernelModeRemovesMacsOnLocalEthernetSegmentPorts)
+{
+    const std::string esKey = "Vlan100:dd:ee:ff:00:11:88";
+    const std::string vtepKey = "Vlan200:dd:ee:ff:00:11:99";
+    std::vector<FieldValueTuple> values;
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    /* As fpmsyncd writes them. */
+    getFdbTable().set(esKey, std::vector<FieldValueTuple>{{"ifname", "PortChannel1"},
+                                                          {"type", "static"},
+                                                          {"vni", "10100"}});
+    getFdbTable().set(vtepKey, std::vector<FieldValueTuple>{{"remote_vtep", "192.168.1.78"},
+                                                            {"type", "dynamic"},
+                                                            {"vni", "10200"}});
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    EXPECT_FALSE(getFdbTable().get(esKey, values));
+    EXPECT_EQ(m_mockFdbSync.m_mac.count(esKey), 0u);
+    ASSERT_EQ(m_mockFdbSync.m_mac.count(vtepKey), 1u);
+    EXPECT_EQ(m_mockFdbSync.m_mac[vtepKey].nhtype, FdbDest::VTEP);
+    EXPECT_EQ(m_mockFdbSync.m_mac[vtepKey].ifname, "Vxlan-200");
 }
 
 /*

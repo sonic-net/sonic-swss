@@ -18,6 +18,11 @@
 #define CFG_FDB_SYNC_TABLE_NAME "FDB_SYNC"
 #endif
 
+/* The mode fpmsyncd runs, which fdbsyncd follows. */
+#ifndef STATE_FDB_SYNC_TABLE_NAME
+#define STATE_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
+
 /*
  * Default timer interval for fdbsyncd reconcillation
  */
@@ -84,9 +89,9 @@ public:
         return &m_cfgEvpnNvoTable;
     }
 
-    SubscriberStateTable *getCfgFdbSyncTable()
+    SubscriberStateTable *getStateFdbSyncTable()
     {
-        return &m_cfgFdbSyncTable;
+        return &m_stateFdbSyncTable;
     }
 
     void processStateFdb();
@@ -95,7 +100,7 @@ public:
 
     void processCfgEvpnNvo();
 
-    void processCfgFdbSync();
+    void processStateFdbSync();
 
     /* True when fpmsyncd owns MAC synchronization over the FPM channel. */
     bool isFpmMacSync() const
@@ -120,7 +125,8 @@ private:
         const KeyOpFieldsValuesTuple &entry,
         bool remote
     );
-    void readCfgFdbSyncMode();
+    void readMacSyncMode();
+    void processStateFdbSyncEntry(const KeyOpFieldsValuesTuple& entry);
     void setMacSyncMode(const std::string& mode);
     void adoptRemoteMacs();
 
@@ -138,7 +144,8 @@ private:
     SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist = nullptr;
     SubscriberStateTable m_cfgEvpnNvoTable;
-    SubscriberStateTable m_cfgFdbSyncTable;
+    SubscriberStateTable m_stateFdbSyncTable;
+    Table m_stateFdbSyncTableRead;
     Table m_cfgFdbSyncTableRead;
 
     struct m_local_fdb_info

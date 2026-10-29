@@ -107,14 +107,15 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
     m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
-    m_cfgFdbSyncTable(config_db, CFG_FDB_SYNC_TABLE_NAME),
+    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
+    m_stateFdbSyncTableRead(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(config_db, CFG_FDB_SYNC_TABLE_NAME)
 {
     string subtype;
     Table deviceMetadata(config_db, CFG_DEVICE_METADATA_TABLE_NAME);
 
     m_l3EvpnMh = deviceMetadata.hget("localhost", "subtype", subtype) && subtype == "L3EvpnMH";
-    readCfgFdbSyncMode();
+    readMacSyncMode();
 
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -133,11 +134,20 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     }
 }
 
-void FdbSync::readCfgFdbSyncMode()
+/*
+ * fdbsyncd runs in the swss container, which a bgp restart leaves running, so it
+ * follows the mode fpmsyncd publishes when it starts: the mode zebra and fpmsyncd
+ * run, which changes when the bgp container restarts. Before fpmsyncd has published
+ * one, at boot, the configured mode applies, which is the one fpmsyncd will run.
+ */
+void FdbSync::readMacSyncMode()
 {
     string mode;
 
-    m_cfgFdbSyncTableRead.hget("global", "mac_sync_mode", mode);
+    if (!m_stateFdbSyncTableRead.hget("global", "mac_sync_mode", mode))
+    {
+        m_cfgFdbSyncTableRead.hget("global", "mac_sync_mode", mode);
+    }
     setMacSyncMode(mode);
 }
 
@@ -193,12 +203,26 @@ void FdbSync::applyPendingMacSyncMode()
 /*
  * Take over the remote MACs fpmsyncd wrote to APP_VXLAN_FDB_TABLE in fpm mode,
  * so a kernel withdrawal still removes them. The VxLAN device of a MAC with a
- * VTEP or a nexthop group is the one named <tunnel>-<VLAN id>, when known.
+ * VTEP or a nexthop group is the one named <tunnel>-<VLAN id>, when known. A MAC
+ * fpmsyncd programmed against a local Ethernet Segment port has no producer in
+ * kernel mode, so no kernel event would refresh or withdraw it: it is removed.
  */
 void FdbSync::adoptRemoteMacs()
 {
     std::vector<std::string> keys;
+    std::unordered_map<std::string, std::string> vlanDevice;
     size_t adopted = 0;
+    size_t removed = 0;
+
+    for (const auto &intf : m_intf_info)
+    {
+        const std::string &name = intf.second.ifname;
+        auto dash = name.rfind('-');
+        if (dash != std::string::npos && dash + 1 < name.size())
+        {
+            vlanDevice.emplace("Vlan" + name.substr(dash + 1), name);
+        }
+    }
 
     m_mac.clear();
     m_fdbTableRead.getKeys(keys);
@@ -244,8 +268,9 @@ void FdbSync::adoptRemoteMacs()
 
         if (info.nhtype == FdbDest::UNKNOWN && !info.ifname.empty())
         {
-            info.nhtype = FdbDest::IFNAME;
-            info.nexthop_value = info.ifname;
+            m_fdbTable.del(key);
+            removed++;
+            continue;
         }
         if (info.nhtype == FdbDest::UNKNOWN)
         {
@@ -253,55 +278,45 @@ void FdbSync::adoptRemoteMacs()
             continue;
         }
 
-        auto colon = key.find(':');
-        if (info.nhtype != FdbDest::IFNAME && key.compare(0, 4, "Vlan") == 0 &&
-            colon != std::string::npos && colon > 4)
+        auto device = vlanDevice.find(key.substr(0, key.find(':')));
+        if (device != vlanDevice.end())
         {
-            std::string suffix = "-" + key.substr(4, colon - 4);
-            for (const auto &intf : m_intf_info)
-            {
-                const std::string &name = intf.second.ifname;
-                if (name.size() > suffix.size() &&
-                    name.compare(name.size() - suffix.size(), suffix.size(), suffix) == 0)
-                {
-                    info.ifname = name;
-                    break;
-                }
-            }
+            info.ifname = device->second;
         }
 
         m_mac[key] = info;
         adopted++;
     }
 
-    SWSS_LOG_NOTICE("FdbSync: took over %zu remote MACs from APPL_DB", adopted);
+    SWSS_LOG_NOTICE("FdbSync: took over %zu remote MACs from APPL_DB, removed %zu on local Ethernet Segment ports",
+                    adopted, removed);
 }
 
-void FdbSync::processCfgFdbSync()
+void FdbSync::processStateFdbSync()
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
 
-    m_cfgFdbSyncTable.pops(entries);
+    m_stateFdbSyncTable.pops(entries);
 
     for (auto& entry : entries)
     {
-        if (kfvKey(entry) != "global")
-        {
-            continue;
-        }
+        processStateFdbSyncEntry(entry);
+    }
+}
 
-        if (kfvOp(entry) != SET_COMMAND)
-        {
-            setMacSyncMode("");
-            continue;
-        }
+void FdbSync::processStateFdbSyncEntry(const KeyOpFieldsValuesTuple& entry)
+{
+    /* Without a published mode, the last one fpmsyncd ran still applies. */
+    if (kfvKey(entry) != "global" || kfvOp(entry) != SET_COMMAND)
+    {
+        return;
+    }
 
-        for (auto& fv : kfvFieldsValues(entry))
+    for (auto& fv : kfvFieldsValues(entry))
+    {
+        if (fvField(fv) == "mac_sync_mode")
         {
-            if (fvField(fv) == "mac_sync_mode")
-            {
-                setMacSyncMode(fvValue(fv));
-            }
+            setMacSyncMode(fvValue(fv));
         }
     }
 }
