@@ -89,6 +89,7 @@ private:
     /* Store selectables needed to be updated in doSelectableTask function */
     std::set<std::shared_ptr<TeamPortSync>> m_selectablesToAdd;
     std::set<std::shared_ptr<TeamPortSync>> m_selectablesToRemove;
+    /* A null value retains the latest LagId after handler construction fails. */
     std::map<LagId, std::shared_ptr<TeamPortSync>, LagNameCompare> m_teamSelectables;
 };
 

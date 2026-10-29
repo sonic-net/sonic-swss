@@ -183,6 +183,7 @@ void TeamSync::addLag(const LagId &lagId, bool admin_state, bool oper_state, uns
         }
         catch (const system_error& e)
         {
+            m_teamSelectables.emplace(lagId, nullptr);
             SWSS_LOG_ERROR("addLag: Failed to initialize team handler for LAG %s "
                            "(ifindex %d): %d:%s. Waiting for next RTM_NEWLINK.",
                            lagName.c_str(), lagId.second, e.code().value(), e.what());
@@ -194,7 +195,7 @@ void TeamSync::addLag(const LagId &lagId, bool admin_state, bool oper_state, uns
         sync->mtu = mtu;
         sync->onChange();
         m_stateLagTable.set(lagName, fvVector);
-        m_teamSelectables.emplace(lagId, sync);
+        m_teamSelectables[lagId] = sync;
         m_selectablesToAdd.insert(sync);
 
         SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
@@ -218,7 +219,7 @@ void TeamSync::removeLag(LagId lagId)
         return;
     }
 
-    if (lag != m_teamSelectables.end())
+    if (lag != m_teamSelectables.end() && lag->second)
     {
         auto sync = lag->second;
         /* Select may still dispatch this object in the current poll batch. */
@@ -235,8 +236,10 @@ void TeamSync::removeLag(LagId lagId)
         {
             m_selectablesToRemove.insert(sync);
         }
-        m_teamSelectables.erase(lag);
     }
+
+    if (lag != m_teamSelectables.end())
+        m_teamSelectables.erase(lag);
 
     /* Preserved rows must also be invalidated when no handler was tracked. */
     m_lagTable.del(lagName);

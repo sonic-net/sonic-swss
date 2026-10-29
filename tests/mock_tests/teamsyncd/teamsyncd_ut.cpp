@@ -252,7 +252,9 @@ namespace teamsyncd_ut
 
         // Zero is an invalid ifindex, so the real team_init must fail.
         linkEvent(sync, RTM_NEWLINK, 0);
-        EXPECT_TRUE(sync.m_teamSelectables.empty());
+        ASSERT_EQ(sync.m_teamSelectables.size(), 1u);
+        EXPECT_EQ(sync.m_teamSelectables.begin()->first.second, 0);
+        EXPECT_EQ(sync.m_teamSelectables.begin()->second, nullptr);
         expectState(true);
         linkEvent(sync, RTM_DELLINK, 0);
         sync.periodic();
@@ -260,17 +262,27 @@ namespace teamsyncd_ut
         expectState(false);
     }
 
-    TEST_F(TeamSyncdTest, FailedRegistrationRetriesOnNextNewLink)
+    TEST_F(TeamSyncdTest, FailedReplacementIgnoresOldDeleteAndRetriesOnNextNewLink)
     {
         swss::Select select;
         swss::TeamSync sync(m_app_db.get(), m_state_db.get(), &select);
+        linkEvent(sync, RTM_NEWLINK, 10);
         teamsync_test::resetTeamSyncMocks();
 
         linkEvent(sync, RTM_NEWLINK, 0);
-        EXPECT_TRUE(sync.m_teamSelectables.empty());
+        ASSERT_EQ(sync.m_teamSelectables.size(), 1u);
+        EXPECT_EQ(sync.m_teamSelectables.begin()->first.second, 0);
+        EXPECT_EQ(sync.m_teamSelectables.begin()->second, nullptr);
         swss::Table app(m_app_db.get(), APP_LAG_TABLE_NAME);
         swss::Table state(m_state_db.get(), STATE_LAG_TABLE_NAME);
         std::string value;
+        EXPECT_TRUE(app.hget("PortChannel1", "state", value));
+        EXPECT_FALSE(state.hget("PortChannel1", "state", value));
+
+        linkEvent(sync, RTM_DELLINK, 10);
+        ASSERT_EQ(sync.m_teamSelectables.size(), 1u);
+        EXPECT_EQ(sync.m_teamSelectables.begin()->first.second, 0);
+        EXPECT_EQ(sync.m_teamSelectables.begin()->second, nullptr);
         EXPECT_TRUE(app.hget("PortChannel1", "state", value));
         EXPECT_FALSE(state.hget("PortChannel1", "state", value));
 
@@ -327,6 +339,8 @@ namespace teamsyncd_ut
         linkEvent(sync, RTM_NEWLINK, 10);
         sync.addLag({"PortChannel2", 20}, true, true, 1500);
         sync.periodic();
+        teamsync_test::resetTeamSyncMocks();
+        sync.addLag({"PortChannel3", 0}, true, true, 1500);
         sync.cleanTeamSync();
         sync.periodic();
         EXPECT_TRUE(sync.m_teamSelectables.empty());
