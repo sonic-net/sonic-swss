@@ -864,6 +864,10 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
             string gbportRateLuaScript = swss::loadLuaScript(portRatePluginName);
             gbPortRateSha = swss::loadRedisScript(m_gb_counter_db.get(), gbportRateLuaScript);
 
+            setFlexCounterGroupSecondaryPollFactor(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                                  PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR,
+                                                  true);
+
             // Register plugin for gearbox flex counter group
             setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                         PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
