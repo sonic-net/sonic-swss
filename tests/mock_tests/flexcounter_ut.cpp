@@ -800,6 +800,27 @@ namespace flexcounter_test
                                               {FLEX_COUNTER_STATUS_FIELD, "enable"},
                                               {PORT_PLUGIN_FIELD, ""}
                                           }));
+
+        // Removing the factor from the PORT row restores the startup default.
+        std::deque<KeyOpFieldsValuesTuple> factorRemovalEntries;
+        factorRemovalEntries.push_back({
+            "PORT",
+            SET_COMMAND,
+            {{FLEX_COUNTER_STATUS_FIELD, "enable"}}
+        });
+        auto flexCounterConsumer = dynamic_cast<Consumer *>(
+            flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
+        flexCounterConsumer->addToSync(factorRemovalEntries);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+        ASSERT_TRUE(checkFlexCounterGroup(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                          {
+                                              {POLL_INTERVAL_FIELD, "1000"},
+                                              {SECONDARY_POLL_FACTOR_FIELD, PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR},
+                                              {STATS_MODE_FIELD, STATS_MODE_READ},
+                                              {FLEX_COUNTER_STATUS_FIELD, "enable"},
+                                              {PORT_PLUGIN_FIELD, ""}
+                                          }));
+
         ASSERT_TRUE(checkFlexCounterGroup(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP,
                                           {
                                               {POLL_INTERVAL_FIELD, "10000"},
