@@ -7809,7 +7809,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         /* TODO: Use proper attribute once its available in SAI */
         sai_attribute_t df_attr;
         df_attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
+        df_attr.value.booldata = gEvpnMhOrch->isTunnelTermBumDropped(port.m_alias, vlan.m_vlan_info.vlan_id);
 
         sai_status_t df_status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &df_attr);
         if (isDfAttrUnsupported(df_status))
