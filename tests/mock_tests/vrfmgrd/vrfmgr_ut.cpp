@@ -134,6 +134,37 @@ TEST_F(VrfMgrTest, UnrelatedTunnelMapDoesNotDeleteUnpublishedVrfMap)
     EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 0u);
 }
 
+TEST_F(VrfMgrTest, VniRemovalWithoutTunnelDependencyIsSuccessfulNoOp)
+{
+    addDefaultVrf("5000");
+
+    Table config_vrf(m_config_db.get(), CFG_VRF_TABLE_NAME);
+    config_vrf.hdel("default", "vni");
+    config_vrf.hset("default", "v4", "false");
+
+    testing_db::resetOperationCounters();
+    process(CFG_VRF_TABLE_NAME, "default", SET_COMMAND, {{"v4", "false"}});
+
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_VRF_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 0u);
+
+    Table app_vrf(m_app_db.get(), APP_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    ASSERT_TRUE(app_vrf.get("default", values));
+    const auto default_vni = fvsGetValue(values, "vni", true);
+    ASSERT_TRUE(default_vni);
+    EXPECT_EQ(default_vni.get(), "0");
+
+    // Removing an unpublished mapping must release VNI ownership so the same
+    // VNI can be assigned to a different VRF without a tunnel dependency.
+    addVrf("VrfTenant", "5000");
+    values.clear();
+    ASSERT_TRUE(app_vrf.get("VrfTenant", values));
+    const auto tenant_vni = fvsGetValue(values, "vni", true);
+    ASSERT_TRUE(tenant_vni);
+    EXPECT_EQ(tenant_vni.get(), "5000");
+}
+
 TEST_F(VrfMgrTest, VniFieldRemovalDoesNotLeaveStaleAppDbVni)
 {
     addNvo("tunnel0");

@@ -523,6 +523,36 @@ TEST_F(VrfOrchTest, VxlanVrfMapRejectsDuplicateDefaultAndVniOwnership)
     EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(first_map));
 }
 
+TEST_F(VrfOrchTest, VxlanVrfMapSameKeyReplayIsIdempotent)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    const string map_key = "EVPN_2.2.2.2:map_default_5050";
+    const deque<KeyOpFieldsValuesTuple> entry = {
+        {map_key, "SET", {{"vni", "5050"}, {"vrf", "default"}}},
+    };
+
+    consumer->addToSync(entry);
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
+    ASSERT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+
+    // The exact same APP_DB key is handled by the initial existence check.
+    // It must not reach duplicate-default validation or create another pair
+    // of encap/decap references.
+    consumer->addToSync(entry);
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+}
+
 TEST_F(VrfOrchTest, VxlanVrfMapDeleteUsesStoredDefaultVrfName)
 {
     provisionEvpnVtep();

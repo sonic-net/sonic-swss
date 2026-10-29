@@ -611,12 +611,25 @@ class TestVrf(object):
         app_db.wait_for_field_match(
             "VRF_TABLE", tenant_first, {"vni": "5300"})
         app_db.wait_for_entry("VXLAN_VRF_TABLE", tenant_map_key)
+        marker = dvs.add_log_marker()
         self.create_entry_tbl(
             self.cdb, "VRF", "default", [("vni", "5300")])
         # A baseline image may retain a logical default-VRF placeholder with
         # no VNI. Rejecting this conflict must preserve that pre-existing row,
         # not require the whole APP_DB key to be absent.
-        time.sleep(2)
+        def default_conflict_rejected():
+            _, output = dvs.runcmd([
+                "sh", "-c",
+                "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | "
+                "grep -c 'VNI 5300 is already mapped to VRF {}'".format(
+                    marker, tenant_first),
+            ])
+            return int(output.strip()) >= 1, output
+
+        wait_for_result(
+            default_conflict_rejected,
+            failure_message="vrfmgrd did not reject the duplicate VNI owner",
+        )
         assert app_db.get_entry("VRF_TABLE", "default") == initial_default_vrf
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_5300_key)
         (status, _) = dvs.runcmd("ip link show dev default")
@@ -749,7 +762,10 @@ class TestVrf(object):
             vxlan.create_vxlan_tunnel_map(
                 dvs, tunnel_name, "map-unrelated-5910",
                 unrelated_vni, unrelated_vlan)
-            time.sleep(2)
+            app_db.wait_for_field_match(
+                "VXLAN_TUNNEL_MAP_TABLE",
+                "%s:map-unrelated-5910" % tunnel_name,
+                {"vni": unrelated_vni, "vlan": unrelated_vlan})
 
             # Once the matching dependency arrives, the newest desired state
             # is present and both SAI mapper directions must remain present.
@@ -758,11 +774,19 @@ class TestVrf(object):
             app_db.wait_for_field_match(
                 "VXLAN_VRF_TABLE", map_key,
                 {"vni": vni, "vrf": "default"})
-            time.sleep(2)
-            assert self.vrf_tunnel_map_types(vni) == sorted([
+            expected_map_types = sorted([
                 "SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI",
                 "SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID",
             ])
+
+            def mapper_directions_converged():
+                map_types = self.vrf_tunnel_map_types(vni)
+                return map_types == expected_map_types, map_types
+
+            wait_for_result(
+                mapper_directions_converged,
+                failure_message="VRF tunnel-map directions did not converge",
+            )
         finally:
             self.delete_entry_tbl(self.cdb, "VRF", "default")
             vxlan.remove_vxlan_tunnel_map(
@@ -807,7 +831,8 @@ class TestVrf(object):
 
             config_db.delete_field("VRF", "default", "vni")
             app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
-            time.sleep(2)
+            app_db.wait_for_field_match(
+                "VRF_TABLE", "default", {"vni": "0"})
 
             app_vrf = app_db.get_entry("VRF_TABLE", "default")
             assert app_vrf.get("vni") == "0", \

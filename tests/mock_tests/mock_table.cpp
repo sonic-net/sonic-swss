@@ -101,7 +101,7 @@ namespace swss
 
     bool Table::get(const std::string &key, std::vector<FieldValueTuple> &ovalues)
     {
-        ++gTableGetCounts[getTableName()];
+        ++testing_db::gTableGetCounts[getTableName()];
         auto table = gDB[m_pipe->getDbId()][getTableName()];
         if (table.find(key) == table.end())
         {
@@ -145,7 +145,7 @@ namespace swss
 
     void Table::getKeys(std::vector<std::string> &keys)
     {
-        ++gTableGetKeysCounts[getTableName()];
+        ++testing_db::gTableGetKeysCounts[getTableName()];
         keys.clear();
         auto table = gDB[m_pipe->getDbId()][getTableName()];
         for (const auto &it : table)
