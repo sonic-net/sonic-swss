@@ -218,45 +218,45 @@ enum fpm_nhg_type {
 #define NHG_ID_TYPE(id) (((uint32_t)(id) & NHG_ID_TYPE_MASK) >> NHG_ID_TYPE_POS)
 #define L2_NHG_MAX_MEMBERS 4096u
 #define L2_NHG_ESI_LEN 10u
-struct __attribute__((packed)) l2_nhg_member_msg {
+/* Use the same native C ABI convention as the existing FPM extensions.
+ * FRR and SWSS must agree on sizes/offsets, including alignment padding.
+ */
+struct l2_nhg_member_msg {
   uint32_t l2nm_nh_id;
   uint8_t l2nm_type;
   uint8_t l2nm_family;
   union { struct in_addr ip4; struct in6_addr ip6; } l2nm_remote_vtep;
   uint8_t l2nm_router_mac[6];
 };
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wpacked"
-struct __attribute__((packed)) l2_nhg_group_msg {
+struct l2_nhg_group_msg {
   uint32_t l2ng_nhg_id;
   uint32_t l2ng_count;
   /* Opaque ES identity; it does not replace the Group ID as the DB key. */
   uint8_t l2ng_esi[L2_NHG_ESI_LEN];
   struct l2_nhg_member_msg l2ng_members[];
 };
-#pragma GCC diagnostic pop
 #ifdef __cplusplus
 static_assert(NHG_ID_TYPE_POS == 28 && NHG_ID_TYPE_MASK == UINT32_C(0xf0000000), "FPM ID type layout");
-static_assert(sizeof(l2_nhg_member_msg) == 28 &&
+static_assert(sizeof(l2_nhg_member_msg) == 32 &&
               offsetof(l2_nhg_member_msg, l2nm_type) == 4 &&
               offsetof(l2_nhg_member_msg, l2nm_family) == 5 &&
-              offsetof(l2_nhg_member_msg, l2nm_remote_vtep) == 6 &&
-              offsetof(l2_nhg_member_msg, l2nm_router_mac) == 22, "FPM member layout");
-static_assert(sizeof(l2_nhg_group_msg) == 18 &&
+              offsetof(l2_nhg_member_msg, l2nm_remote_vtep) == 8 &&
+              offsetof(l2_nhg_member_msg, l2nm_router_mac) == 24, "FPM member layout");
+static_assert(sizeof(l2_nhg_group_msg) == 20 &&
               offsetof(l2_nhg_group_msg, l2ng_count) == 4 &&
               offsetof(l2_nhg_group_msg, l2ng_esi) == 8 &&
-              offsetof(l2_nhg_group_msg, l2ng_members) == 18, "FPM group layout");
+              offsetof(l2_nhg_group_msg, l2ng_members) == 20, "FPM group layout");
 #else
 _Static_assert(NHG_ID_TYPE_POS == 28 && NHG_ID_TYPE_MASK == UINT32_C(0xf0000000), "FPM ID type layout");
-_Static_assert(sizeof(struct l2_nhg_member_msg) == 28 &&
+_Static_assert(sizeof(struct l2_nhg_member_msg) == 32 &&
                offsetof(struct l2_nhg_member_msg, l2nm_type) == 4 &&
                offsetof(struct l2_nhg_member_msg, l2nm_family) == 5 &&
-               offsetof(struct l2_nhg_member_msg, l2nm_remote_vtep) == 6 &&
-               offsetof(struct l2_nhg_member_msg, l2nm_router_mac) == 22, "FPM member layout");
-_Static_assert(sizeof(struct l2_nhg_group_msg) == 18 &&
+               offsetof(struct l2_nhg_member_msg, l2nm_remote_vtep) == 8 &&
+               offsetof(struct l2_nhg_member_msg, l2nm_router_mac) == 24, "FPM member layout");
+_Static_assert(sizeof(struct l2_nhg_group_msg) == 20 &&
                offsetof(struct l2_nhg_group_msg, l2ng_count) == 4 &&
                offsetof(struct l2_nhg_group_msg, l2ng_esi) == 8 &&
-               offsetof(struct l2_nhg_group_msg, l2ng_members) == 18, "FPM group layout");
+               offsetof(struct l2_nhg_group_msg, l2ng_members) == 20, "FPM group layout");
 #endif
 
 struct evpn_backup_nhg_msg {

@@ -111,7 +111,7 @@ def member_frame(identifier, ip, mac='02:00:00:00:00:02', kind=1, deleting=False
     family = 10 if ':' in ip else 2
     import socket
     address = socket.inet_pton(family, ip).ljust(16,b'\x00')
-    return frame(150 if deleting else 149, struct.pack('=IBB',identifier,kind,family)+address+bytes.fromhex(mac.replace(':','')))
+    return frame(150 if deleting else 149, struct.pack('=IBB2x16s6s2x',identifier,kind,family,address,bytes.fromhex(mac.replace(':',''))))
 
 
 def group_frame(identifier, members, deleting=False, count=None, esi=bytes(range(10))):
@@ -122,7 +122,7 @@ def group_frame(identifier, members, deleting=False, count=None, esi=bytes(range
     for item in members:
         identifier_and_context = item if isinstance(item, tuple) else (item, '10.10.10.2', '02:00:00:00:00:02')
         records.append(member_frame(*identifier_and_context)[20:])
-    return frame(152 if deleting else 151, struct.pack('=II',identifier,count)+esi+b''.join(records))
+    return frame(152 if deleting else 151, struct.pack('=II10s2x',identifier,count,esi)+b''.join(records))
 
 
 
