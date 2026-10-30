@@ -29,6 +29,7 @@ using namespace swss;
 #define MAC_SYNC_MODE_KERNEL "kernel"
 #define FDB_SYNC_GLOBAL_KEY  "global"
 #define L3_EVPN_MH_SUBTYPE   "L3EvpnMH"
+#define EVPN_DF_TABLE_NAME   "EVPN_DF_TABLE"
 
 /* Same buffer shape zebra uses for AF_BRIDGE FDB messages. */
 struct MacNlRequest
@@ -133,10 +134,16 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
     m_ifIndexToName([](unsigned int ifindex) {
         char name[IF_NAMESIZE] = {0};
         return (ifindex && if_indextoname(ifindex, name)) ? string(name) : string();
-    })
+    }),
+    m_esReAddTimer(timespec{ES_READD_DELAY_MS / 1000, (ES_READD_DELAY_MS % 1000) * 1000000L})
 {
     string subtype;
     Table deviceMetadata(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    std::vector<string> dfKeys;
+
+    Table(pipeline, EVPN_DF_TABLE_NAME, false).getKeys(dfKeys);
+    m_esDfKeys.insert(dfKeys.begin(), dfKeys.end());
+    m_esDfUnconfirmed = m_esDfKeys;
 
     m_l3EvpnMh = deviceMetadata.hget("localhost", "subtype", subtype) && subtype == L3_EVPN_MH_SUBTYPE;
     readCfgFdbSyncMode();
@@ -183,6 +190,9 @@ void MacSync::onFpmConnected(FpmInterface& fpm)
 void MacSync::onFpmDisconnected()
 {
     m_fpmInterface = nullptr;
+    /* zebra sends its remote MACs again on the next connect. */
+    m_esReAddDeferred.clear();
+    m_esReAddGrace.clear();
 }
 
 /*
@@ -241,6 +251,16 @@ void MacSync::onVxlanLinkDel(const string& ifname)
     }
 
     size_t withdrawn = gone.size();
+
+    for (auto it = m_esReAddDeferred.lower_bound(prefix); it != m_esReAddDeferred.end();)
+    {
+        if (it->first.compare(0, prefix.size(), prefix) != 0)
+        {
+            break;
+        }
+        it = m_esReAddDeferred.erase(it);
+    }
+
     if (withdrawn)
     {
         SWSS_LOG_NOTICE("MacSync: %s deleted, withdrew its %zu remote MACs", ifname.c_str(), withdrawn);
@@ -401,6 +421,168 @@ void MacSync::removeRemoteMac(const string& key)
     m_staleRemoteMacs.erase(key);
 }
 
+constexpr long MacSync::ES_READD_DELAY_MS;
+
+/*
+ * When a port becomes a local Ethernet Segment port, zebra gives its MACs the
+ * ESI, and bgpd updates its routes, but bgpd does not send a route again when
+ * only the ESI changed, so the peers keep it without the ESI. The same goes for
+ * a port leaving the segment. So the port's local MACs in the VLAN are reported
+ * again: deleted, then added back ES_READD_DELAY_MS later, by which time bgpd
+ * has sent the withdrawal. A DF or peer change rewrites a row that is already
+ * there and is ignored.
+ */
+void MacSync::onEsPortVlan(const string& dfKey, bool present)
+{
+    m_esDfUnconfirmed.erase(dfKey);
+    bool known = present ? !m_esDfKeys.insert(dfKey).second : !m_esDfKeys.erase(dfKey);
+    auto sep = dfKey.find(':');
+
+    if (known || sep == string::npos || !m_fpmMode)
+    {
+        return;
+    }
+
+    string prefix = dfKey.substr(0, sep + 1);
+    string port = dfKey.substr(sep + 1);
+    auto now = std::chrono::steady_clock::now();
+    size_t count = 0;
+
+    for (auto it = m_localMacs.lower_bound(prefix); it != m_localMacs.end(); ++it)
+    {
+        if (it->first.compare(0, prefix.size(), prefix) != 0)
+        {
+            break;
+        }
+        if (it->second.port != port)
+        {
+            continue;
+        }
+
+        sendLocalMac(prefix.substr(0, sep), it->first.substr(sep + 1), it->second, false);
+        m_esReAddPending[it->first] = now + std::chrono::milliseconds(ES_READD_DELAY_MS);
+        count++;
+    }
+
+    if (count)
+    {
+        SWSS_LOG_NOTICE("MacSync: ES change on %s in %s: reporting its %zu local MACs to zebra again",
+                        port.c_str(), prefix.substr(0, sep).c_str(), count);
+        armEsReAddTimer(now);
+    }
+}
+
+void MacSync::armEsReAddTimer(std::chrono::steady_clock::time_point now)
+{
+    m_esReAddTimer.stop();
+    if (m_esReAddPending.empty())
+    {
+        return;
+    }
+
+    auto next = m_esReAddPending.begin()->second;
+    for (const auto& pending : m_esReAddPending)
+    {
+        next = std::min(next, pending.second);
+    }
+
+    long wait = std::max<long>(1000000, (long)std::chrono::duration_cast<std::chrono::nanoseconds>(next - now).count());
+    m_esReAddTimer.setInterval(timespec{wait / 1000000000, wait % 1000000000});
+    m_esReAddTimer.start();
+}
+
+void MacSync::onWarmStartEnd()
+{
+    for (const auto& key : m_esDfUnconfirmed)
+    {
+        m_esDfKeys.erase(key);
+    }
+    m_esDfUnconfirmed.clear();
+}
+
+/* The timer can fire after it was re-armed, so only the re-adds that are due run. */
+void MacSync::processEsReAdd(std::chrono::steady_clock::time_point now)
+{
+    if (!m_fpmMode)
+    {
+        m_esReAddPending.clear();
+        m_esReAddDeferred.clear();
+        m_esReAddGrace.clear();
+        m_esReAddTimer.stop();
+        return;
+    }
+
+    for (auto it = m_esReAddGrace.begin(); it != m_esReAddGrace.end();)
+    {
+        it = (it->second <= now) ? m_esReAddGrace.erase(it) : std::next(it);
+    }
+
+    for (auto it = m_esReAddPending.begin(); it != m_esReAddPending.end();)
+    {
+        auto local = m_localMacs.find(it->first);
+
+        if (it->second > now)
+        {
+            ++it;
+            continue;
+        }
+        if (local == m_localMacs.end())
+        {
+            string key = it->first;
+            it = m_esReAddPending.erase(it);
+            releaseEsReAddDeferred(key);
+            continue;
+        }
+
+        if (!m_fpmInterface)
+        {
+            /* zebra stays up across a dropped connection: send it once there is one. */
+            it->second = now + std::chrono::milliseconds(ES_READD_DELAY_MS);
+            ++it;
+            continue;
+        }
+
+        /* zebra takes the local MAC over the one it held, and sends no delete
+         * for the held one. One it sent before it read the re-add can still
+         * arrive, so such rows are dropped for ES_READD_DELAY_MS more. */
+        string key = it->first;
+        auto sep = key.find(':');
+        it = m_esReAddPending.erase(it);
+        if (sendLocalMac(key.substr(0, sep), key.substr(sep + 1), local->second, true))
+        {
+            m_esReAddDeferred.erase(key);
+            m_esReAddGrace[key] = now + std::chrono::milliseconds(ES_READD_DELAY_MS);
+        }
+        else
+        {
+            releaseEsReAddDeferred(key);
+        }
+    }
+
+    armEsReAddTimer(now);
+}
+
+/* The hardware lost the MAC before its ES re-add: zebra's held row is now right. */
+void MacSync::releaseEsReAddDeferred(const string& key)
+{
+    auto it = m_esReAddDeferred.find(key);
+
+    if (it == m_esReAddDeferred.end())
+    {
+        return;
+    }
+
+    HeldRow held = std::move(it->second);
+    m_esReAddDeferred.erase(it);
+    if (held.ifindex && m_ifIndexToName(held.ifindex).empty())
+    {
+        /* onVxlanLinkDel() withdrew what the netdev held. */
+        return;
+    }
+    writeRemoteMac(key, held.row);
+    SWSS_LOG_INFO("MacSync: wrote remote MAC %s held for its ES re-add", key.c_str());
+}
+
 void MacSync::processStateFdb()
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
@@ -436,14 +618,17 @@ void MacSync::processStateFdbEntry(const KeyOpFieldsValuesTuple& entry)
 
     if (!add)
     {
+        /* This update reaches zebra itself. */
+        m_esReAddPending.erase(key);
+        m_esReAddGrace.erase(key);
         auto it = m_localMacs.find(key);
-        if (it == m_localMacs.end())
+        if (it != m_localMacs.end())
         {
-            return;
+            LocalMac local = it->second;
+            m_localMacs.erase(it);
+            sendLocalMac(vlanName, mac, local, false);
         }
-        LocalMac local = it->second;
-        m_localMacs.erase(it);
-        sendLocalMac(vlanName, mac, local, false);
+        releaseEsReAddDeferred(key);
         return;
     }
 
@@ -467,6 +652,10 @@ void MacSync::processStateFdbEntry(const KeyOpFieldsValuesTuple& entry)
         return;
     }
 
+    m_esReAddPending.erase(key);
+    m_esReAddGrace.erase(key);
+    m_esReAddDeferred.erase(key);
+
     LocalMac& stored = m_localMacs[key];
     /* A refresh whose port no longer resolves is not sent, so zebra still holds
      * the MAC on the ifindex it last heard, and the delete must go there. */
@@ -475,12 +664,12 @@ void MacSync::processStateFdbEntry(const KeyOpFieldsValuesTuple& entry)
     sendLocalMac(vlanName, mac, stored, true);
 }
 
-void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& local,
+bool MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& local,
                            bool add)
 {
     if (!m_fpmMode || !m_fpmInterface)
     {
-        return;
+        return false;
     }
 
     /* A delete withdraws the MAC where zebra last heard it, whatever port the
@@ -498,13 +687,13 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
             SWSS_LOG_INFO("MacSync: local MAC %s:%s was never sent to zebra, nothing to withdraw",
                           vlanName.c_str(), mac.c_str());
         }
-        return;
+        return false;
     }
 
     if (vlanName.compare(0, 4, "Vlan") != 0)
     {
         SWSS_LOG_ERROR("MacSync: unexpected VLAN name %s", vlanName.c_str());
-        return;
+        return false;
     }
 
     uint16_t vlanId;
@@ -515,7 +704,7 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
     catch (const std::exception& e)
     {
         SWSS_LOG_ERROR("MacSync: cannot parse VLAN id from %s", vlanName.c_str());
-        return;
+        return false;
     }
 
     MacAddress macAddress;
@@ -526,7 +715,7 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
     catch (const std::exception& e)
     {
         SWSS_LOG_ERROR("MacSync: cannot parse MAC %s", mac.c_str());
-        return;
+        return false;
     }
 
     MacNlRequest req{};
@@ -560,20 +749,21 @@ void MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& 
     if (!addAttr(&req.n, sizeof(req), NDA_LLADDR, macAddress.getMac(), ETHER_ADDR_LEN) ||
         !addAttr(&req.n, sizeof(req), NDA_VLAN, &vlanId, sizeof(vlanId)))
     {
-        return;
+        return false;
     }
 
     if (!m_fpmInterface->send(&req.n))
     {
         SWSS_LOG_ERROR("MacSync: failed to send local MAC %s:%s to zebra",
                        vlanName.c_str(), mac.c_str());
-        return;
+        return false;
     }
     local.ifindex = ifindex;
 
     SWSS_LOG_INFO("MacSync: sent local MAC %s %s:%s port %s ifindex %u%s",
                   add ? "add" : "del", vlanName.c_str(), mac.c_str(), local.port.c_str(),
                   ifindex, local.isStatic ? " (static, sticky)" : "");
+    return true;
 }
 
 void MacSync::onMacMsg(struct nlmsghdr *h, int len)
@@ -668,6 +858,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
 
     if (remove)
     {
+        m_esReAddDeferred.erase(key);
         removeRemoteMac(key);
         SWSS_LOG_INFO("MacSync: removed remote MAC %s", key.c_str());
         return;
@@ -744,6 +935,34 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     }
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
+
+    /* zebra's answer to onEsPortVlan()'s delete while an ES peer also has the
+     * MAC: the MAC on the segment's next hop group. Written now, it would
+     * replace the hardware's local entry and the STATE_DB delete that follows
+     * would cancel the re-add. Any other row is a real move and goes through. */
+    bool esAnswer = !nexthopGroup.empty() && !(ndm->ndm_state & NUD_NOARP);
+    auto grace = m_esReAddGrace.find(key);
+
+    if (grace != m_esReAddGrace.end() && grace->second <= std::chrono::steady_clock::now())
+    {
+        m_esReAddGrace.erase(grace);
+        grace = m_esReAddGrace.end();
+    }
+    if (esAnswer && grace != m_esReAddGrace.end())
+    {
+        SWSS_LOG_INFO("MacSync: dropped remote MAC %s sent before its ES re-add", key.c_str());
+        return;
+    }
+
+    m_esReAddDeferred.erase(key);
+    if (esAnswer && m_esReAddPending.count(key))
+    {
+        /* A row already there would replace the local entry the same way. */
+        removeRemoteMac(key);
+        m_esReAddDeferred[key] = HeldRow{(unsigned int)ndm->ndm_ifindex, fvVector};
+        SWSS_LOG_INFO("MacSync: remote MAC %s held until its ES re-add", key.c_str());
+        return;
+    }
 
     auto stale = m_staleRemoteMacs.find(key);
     if (stale != m_staleRemoteMacs.end())
