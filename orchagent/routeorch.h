@@ -347,6 +347,9 @@ private:
     void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
     void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
     void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
+    bool isStandbyMuxNextHop(const NextHopGroupKey &nexthops);
+    void increaseRouteNextHopRefCount(const NextHopGroupKey &nexthops);
+    void decreaseRouteNextHopRefCount(const NextHopGroupKey &nexthops);
 };
 
 #endif /* SWSS_ROUTEORCH_H */
