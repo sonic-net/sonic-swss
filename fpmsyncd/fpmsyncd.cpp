@@ -145,6 +145,7 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
+            SelectableTimer macStaleTimer(timespec{0, 0});
            
             /*
              * Pipeline should be flushed right away to deal with state pending
@@ -169,6 +170,7 @@ int main(int argc, char **argv)
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
+            time_t macWarmRestartTimer = 0;
             if (warmStartEnabled)
             {
                 // Reconcile writes the route tables directly on this thread.
@@ -184,6 +186,7 @@ int main(int argc, char **argv)
                 {
                     warmStartTimer.setInterval(timespec{warmRestartIval, 0});
                 }
+                macWarmRestartTimer = warmRestartIval ? warmRestartIval : DEFAULT_ROUTING_RESTART_INTERVAL;
 
                 /* Execute restoration instruction and kick off warm-restart timer */
                 if (sync.getWarmStartHelper().runRestoration())
@@ -205,6 +208,16 @@ int main(int argc, char **argv)
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
             }
 
+            /* In a warm start MacSync's stale rows go at the warm restart timer,
+             * not at the EOIU hold, which waits only for the unicast EORs. */
+            time_t macStaleWait = macsync.markRemoteMacsStale(macWarmRestartTimer);
+            if (macStaleWait)
+            {
+                macStaleTimer.setInterval(timespec{macStaleWait, 0});
+                macStaleTimer.start();
+                s.addSelectable(&macStaleTimer);
+            }
+
             gSelectTimeout = INFINITE;
 
             while (true)
@@ -217,6 +230,11 @@ int main(int argc, char **argv)
                  * MACs to send to zebra.
                  */
                 s.select(&temps, gSelectTimeout);
+
+                if (temps == (Selectable *)&fpm)
+                {
+                    macsync.noteFpmMessage();
+                }
 
                 if (temps == (Selectable *)macsync.getStateFdbTable())
                 {
@@ -247,6 +265,23 @@ int main(int argc, char **argv)
                     s.removeSelectable(temps);
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (temps == &macStaleTimer)
+                {
+                    time_t wait = macsync.onStaleSweepTimer();
+
+                    if (wait)
+                    {
+                        /* start() is a no-op on a running timer, so stop() first. */
+                        macStaleTimer.stop();
+                        macStaleTimer.setInterval(timespec{wait, 0});
+                        macStaleTimer.start();
+                    }
+                    else
+                    {
+                        s.removeSelectable(&macStaleTimer);
+                        pipeline.flush();
+                    }
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
