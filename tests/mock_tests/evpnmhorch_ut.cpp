@@ -521,6 +521,79 @@ namespace evpnmhorch_test
         _unhook_sai_vlan_api();
     }
 
+    /* A platform without the DF attribute gets one attempt per update, not a retry every cycle. */
+    TEST_F(EvpnMhOrchTest, ESDFUnsupportedNotRetried)
+    {
+        _hook_sai_vlan_api();
+        ApplyDualTorConfigs();
+
+        int calls = 0;
+        auto vlanSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        vlanSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            calls++;
+            return SAI_STATUS_NOT_IMPLEMENTED;
+        });
+
+        auto consumer = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "Vlan10:Ethernet1", "SET", { { "df", "true" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(calls, 1);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(gEvpnMhOrch->isInterfaceDF("Ethernet1", 10));
+
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+        ASSERT_EQ(calls, 1);
+
+        entries.clear();
+        entries.push_back({ "Vlan10:Ethernet1", "DEL", { {} } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(calls, 2);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_FALSE(gEvpnMhOrch->isPortAndVlanAssociatedToEs("Ethernet1", 10));
+
+        _unhook_sai_vlan_api();
+    }
+
+    /* zebra's DF record for a whole port (VLAN 0) is kept, programs nothing and is not retried. */
+    TEST_F(EvpnMhOrchTest, ESDFPortLevelVlanZero)
+    {
+        _hook_sai_vlan_api();
+        ApplyDualTorConfigs();
+
+        int calls = 0;
+        auto vlanSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->set_vlan_member_attribute);
+        vlanSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t *attr) -> sai_status_t {
+            calls++;
+            return org_sai_vlan_api->set_vlan_member_attribute(oid, attr);
+        });
+
+        auto consumer = dynamic_cast<Consumer *>(gEvpnMhOrch->getExecutor("EVPN_DF_TABLE"));
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "Vlan0:Ethernet1", "SET", { { "df", "true" } } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(calls, 0);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(gEvpnMhOrch->isPortAndVlanAssociatedToEs("Ethernet1", 0));
+
+        entries.clear();
+        entries.push_back({ "Vlan0:Ethernet1", "DEL", { {} } });
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gEvpnMhOrch)->doTask();
+
+        ASSERT_EQ(calls, 0);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_FALSE(gEvpnMhOrch->isPortAndVlanAssociatedToEs("Ethernet1", 0));
+
+        _unhook_sai_vlan_api();
+    }
+
     TEST_F(EvpnMhOrchTest, ESDfAttrUnsupported)
     {
         /* A SAI that implements neither DF attribute still gets the ES port's bridge port and
