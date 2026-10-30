@@ -258,7 +258,29 @@ bool RouteSync::coalescerActive() const
 void RouteSync::setRouteWithWarmRestart(FieldValueTupleWrapperBase & fvw,
                                         ProducerStateTable & table )
 {
+    auto *rfvw = dynamic_cast<RouteTableFieldValueTupleWrapper *>(&fvw);
+    if (rfvw)
+    {
+        updateEvpnRouteFields(*rfvw);
+    }
     setTableWithWarmRestart(fvw, table, APP_ROUTE_TABLE_NAME);
+}
+
+void RouteSync::updateEvpnRouteFields(RouteTableFieldValueTupleWrapper &fvw)
+{
+    /*
+     * A SET only adds or overwrites hash fields, so vni_label and router_mac
+     * from an earlier EVPN write would survive a plain route update. Write
+     * them empty once when the route leaves the EVPN path.
+     */
+    if (!fvw.vni_label.empty())
+    {
+        m_evpnRouteKeys.insert(fvw.key);
+    }
+    else if (m_evpnRouteKeys.erase(fvw.key))
+    {
+        fvw.clearEvpnFields = true;
+    }
 }
 
 void RouteSync::setTableWithWarmRestart(FieldValueTupleWrapperBase &fvw,
@@ -310,6 +332,7 @@ void RouteSync::setTable(FieldValueTupleWrapperBase & fvw,
 void RouteSync::delWithWarmRestart(FieldValueTupleWrapperBase && fvw,
                                    ProducerStateTable & table)
 {
+    m_evpnRouteKeys.erase(fvw.key);
     delTableWithWarmRestart(std::move(fvw), table, APP_ROUTE_TABLE_NAME);
 }
 
@@ -847,8 +870,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             struct rtattr *subtb[RTA_MAX + 1];
             struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
             len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
+            uint32_t evpn_count = 0;
 
-            for (;;) 
+            for (;;)
             {
                 uint16_t encap = 0;
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
@@ -857,8 +881,17 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 }
 
                 gate = 0;
-                if (rtnh->rtnh_len > sizeof(*rtnh)) 
+                if (rtnh->rtnh_len > sizeof(*rtnh))
                 {
+                    /*
+                     * Each next hop carries its own encap. A group may mix
+                     * EVPN next hops with local ones (no encap), so nothing
+                     * may carry over from the previous next hop.
+                     */
+                    encap_value = 0;
+                    rmac.clear();
+                    vlan.clear();
+
                     memset(subtb, 0, sizeof(subtb));
 
                     netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
@@ -952,7 +985,18 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+                    if (vlan.empty() || !(vlan.compare(ifname_unknown)))
+                    {
+                        return false;
+                    }
+
+                    /*
+                     * A next hop without encap is a local member of a mixed
+                     * group. It goes out with an empty VNI and router MAC.
+                     * Any other encap must be a valid EVPN one.
+                     */
+                    bool local_nh = !subtb[RTA_ENCAP_TYPE];
+                    if (!local_nh && (encap_value == 0 || MacAddress(rmac) == MacAddress("00:00:00:00:00:00")))
                     {
                         return false;
                     }
@@ -964,7 +1008,16 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                             getEvpnNextHopSep(nexthops, vni_list, mac_list, intf_list);
                         }
 
-                        getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
+                        if (local_nh)
+                        {
+                            nexthops += nexthopaddr;
+                            intf_list += vlan;
+                        }
+                        else
+                        {
+                            getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
+                            evpn_count++;
+                        }
                         ecmp_count++;
                     }
                 }
@@ -976,7 +1029,13 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 
                 len -= NLMSG_ALIGN(rtnh->rtnh_len);
                 rtnh = RTNH_NEXT(rtnh);
-            }			
+            }
+
+            /* Without an EVPN member this is not an EVPN route */
+            if (evpn_count == 0)
+            {
+                return false;
+            }
         }
     }
     return true;
@@ -1248,10 +1307,10 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     if (nbZmqEnabled || includeEmptyFields || weight != string()) {
         fvVector.push_back(FieldValueTuple("weight", weight.c_str()));
     }
-    if (nbZmqEnabled || includeEmptyFields || vni_label != string()) {
+    if (nbZmqEnabled || includeEmptyFields || clearEvpnFields || vni_label != string()) {
         fvVector.push_back(FieldValueTuple("vni_label", vni_label.c_str()));
     }
-    if (nbZmqEnabled || includeEmptyFields || router_mac != string()) {
+    if (nbZmqEnabled || includeEmptyFields || clearEvpnFields || router_mac != string()) {
         fvVector.push_back(FieldValueTuple("router_mac", router_mac.c_str()));
     }
     if (nbZmqEnabled || includeEmptyFields || segment != string()) {

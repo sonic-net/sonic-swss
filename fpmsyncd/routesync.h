@@ -120,6 +120,8 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string segment = string();
     string seg_src = string();
     bool includeEmptyFields = false;
+    /* Write empty vni_label/router_mac to clear what an EVPN write left in the hash */
+    bool clearEvpnFields = false;
 };
 
 class LabelRouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
@@ -320,6 +322,8 @@ private:
     map<uint32_t,NextHopGroup> m_nh_groups;
     /* SID list to refcount */
     map<string, uint32_t> m_srv6_sidlist_refcnt;
+    /* ROUTE_TABLE keys last written with EVPN fields (vni_label/router_mac) */
+    unordered_set<string> m_evpnRouteKeys;
 
     WarmStartHelper  m_warmStartHelper;
 
@@ -328,6 +332,8 @@ private:
 
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
+    /* Track EVPN route keys and clear stale EVPN fields when a route leaves the EVPN path */
+    void updateEvpnRouteFields(RouteTableFieldValueTupleWrapper &fvw);
 
     /* Handle label route */
     void onLabelRouteMsg(int nlmsg_type, struct nl_object *obj);
