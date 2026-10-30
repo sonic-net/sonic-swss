@@ -86,14 +86,7 @@ int main(int argc, char **argv)
                 SWSS_LOG_ERROR("Error in RTM_GETLINK dump");
             }
 
-            netlink.dumpRequest(RTM_GETNEXTHOP);
-            ret = s.select(&temps, 1);
-            if (ret == Select::ERROR)
-            {
-                SWSS_LOG_ERROR("Error in RTM_GETNEXTHOP dump");
-            }
-
-            netlink.dumpRequest(RTM_GETNEIGH);
+            sync.dumpBridgeFdb();
 
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());
@@ -112,7 +105,14 @@ int main(int argc, char **argv)
                 }
                 else if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
-                    sync.processCfgEvpnNvo();
+                    /*
+                     * L2 next hop groups are handled only while EVPN NVO is configured, so
+                     * the kernel's are replayed once it is: at startup, and after a re-add.
+                     */
+                    if (sync.processCfgEvpnNvo())
+                    {
+                        sync.dumpL2Nhg();
+                    }
                 }
                 else if (temps == &replayCheckTimer)
                 {
