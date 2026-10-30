@@ -408,6 +408,7 @@ void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTupl
 {
     m_vxlanFdbTable.del(key);
     m_vxlanFdbTable.set(key, row);
+    m_pendingWrites = true;
     m_remoteRows[key] = RemoteRow{row};
     m_staleRemoteMacs.erase(key);
 }
@@ -417,6 +418,7 @@ void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTupl
 void MacSync::removeRemoteMac(const string& key)
 {
     m_vxlanFdbTable.del(key);
+    m_pendingWrites = true;
     m_remoteRows.erase(key);
     m_staleRemoteMacs.erase(key);
 }
