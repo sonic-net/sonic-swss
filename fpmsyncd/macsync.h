@@ -8,11 +8,13 @@
 #include <ctime>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "selectabletimer.h"
 #include "subscriberstatetable.h"
 #include "table.h"
 #include "fpmsyncd/fpminterface.h"
@@ -89,6 +91,20 @@ public:
         m_lastFpmMessage = now;
     }
 
+    /* zebra now holds a port as a local Ethernet Segment port in a VLAN, or
+     * no longer does; dfKey is that EVPN_DF_TABLE key, "Vlan<id>:<port>". */
+    void onEsPortVlan(const std::string& dfKey, bool present);
+
+    /* The warm restart window is over: the EVPN_DF_TABLE keys read at start
+     * that zebra has not sent again are taken as gone. */
+    void onWarmStartEnd();
+
+    /* Sends the local MACs whose re-add onEsPortVlan() delayed. */
+    SelectableTimer *getEsReAddTimer() { return &m_esReAddTimer; }
+    void processEsReAdd(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    static constexpr long ES_READD_DELAY_MS = 1000;
+
     bool isFpmMode() const { return m_fpmMode; }
 
 private:
@@ -105,11 +121,15 @@ private:
     void readCfgFdbSyncMode();
     bool isEthernetSegmentInterface(const std::string& ifname);
     void processStateFdbEntry(const KeyOpFieldsValuesTuple& entry);
-    void sendLocalMac(const std::string& vlanName, const std::string& mac,
+    /* False when nothing was sent. */
+    bool sendLocalMac(const std::string& vlanName, const std::string& mac,
                       LocalMac& local, bool add);
     void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row);
     void removeRemoteMac(const std::string& key);
     void withdrawStaleRemoteMacs();
+    struct HeldRow;
+    void releaseEsReAddDeferred(const std::string& key);
+    void armEsReAddTimer(std::chrono::steady_clock::time_point now);
 
     ProducerStateTable m_vxlanFdbTable;
     Table m_vxlanFdbTableRead;
@@ -158,6 +178,27 @@ private:
     /* fpmsyncd's warm start has not withdrawn its stale rows yet, so a
      * reconnect before then is part of the warm start. */
     bool m_warmSweepPending {false};
+
+    /* EVPN_DF_TABLE keys zebra holds: the VLANs of each local ES port. */
+    std::set<std::string> m_esDfKeys;
+    /* The keys found in APPL_DB at start that zebra has not sent since. */
+    std::set<std::string> m_esDfUnconfirmed;
+
+    /* Local MACs withdrawn from zebra by onEsPortVlan(), and when to add them back. */
+    std::map<std::string, std::chrono::steady_clock::time_point> m_esReAddPending;
+    SelectableTimer m_esReAddTimer;
+
+    /* A remote MAC zebra sent for a MAC with a re-add pending, written only if
+     * the hardware loses the MAC first. */
+    struct HeldRow
+    {
+        /* The netdev zebra sent it on. */
+        unsigned int ifindex;
+        std::vector<FieldValueTuple> row;
+    };
+    std::map<std::string, HeldRow> m_esReAddDeferred;
+    /* Re-added MACs, and until when zebra's earlier answer is dropped. */
+    std::map<std::string, std::chrono::steady_clock::time_point> m_esReAddGrace;
 };
 
 }

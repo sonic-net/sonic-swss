@@ -146,6 +146,7 @@ int main(int argc, char **argv)
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
             SelectableTimer macStaleTimer(timespec{0, 0});
+            SelectableTimer esDfWarmTimer(timespec{0, 0});
            
             /*
              * Pipeline should be flushed right away to deal with state pending
@@ -162,6 +163,7 @@ int main(int argc, char **argv)
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
             s.addSelectable(macsync.getStateFdbTable());
+            s.addSelectable(macsync.getEsReAddTimer());
 
             if (sync.isSuppressionEnabled())
             {
@@ -195,6 +197,14 @@ int main(int argc, char **argv)
                     s.addSelectable(&warmStartTimer);
                     SWSS_LOG_NOTICE("Warm-Restart timer started.");
                 }
+                else
+                {
+                    /* No routes to reconcile, but the EVPN_DF_TABLE keys read at
+                     * start still wait for zebra until the timer. */
+                    esDfWarmTimer.setInterval(timespec{macWarmRestartTimer, 0});
+                    esDfWarmTimer.start();
+                    s.addSelectable(&esDfWarmTimer);
+                }
 
                 // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
                 eoiuCheckTimer.setInterval(timespec{5, 0});
@@ -220,6 +230,14 @@ int main(int argc, char **argv)
 
             gSelectTimeout = INFINITE;
 
+            /* MacSync's rows wait with the routes during a warm restart. */
+            auto flushWrites = [&]() {
+                if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
+                {
+                    flushPipeline(pipeline);
+                }
+            };
+
             while (true)
             {
                 Selectable *temps;
@@ -236,9 +254,18 @@ int main(int argc, char **argv)
                     macsync.noteFpmMessage();
                 }
 
+                /* MacSync's handlers write VXLAN_FDB_TABLE too. */
                 if (temps == (Selectable *)macsync.getStateFdbTable())
                 {
                     macsync.processStateFdb();
+                    flushWrites();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getEsReAddTimer())
+                {
+                    macsync.processEsReAdd();
+                    flushWrites();
                     continue;
                 }
 
@@ -260,11 +287,17 @@ int main(int argc, char **argv)
                     }
 
                     sync.onWarmStartEnd(applStateDb);
+                    macsync.onWarmStartEnd();
 
                     // remove the one-shot timer.
                     s.removeSelectable(temps);
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (temps == &esDfWarmTimer)
+                {
+                    macsync.onWarmStartEnd();
+                    s.removeSelectable(&esDfWarmTimer);
                 }
                 else if (temps == &macStaleTimer)
                 {

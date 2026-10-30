@@ -2425,6 +2425,11 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
              df_msg->edm_vid,
              if_name);
 
+    if (m_macsync && strcmp(if_name, ifname_unknown) != 0)
+    {
+        m_macsync->onEsPortVlan(df_entry_key, h->nlmsg_type == RTM_FPM_ADD_EVPN_DF);
+    }
+
     if (h->nlmsg_type == RTM_FPM_DEL_EVPN_DF)
     {
         if (!warmRestartInProgress)
