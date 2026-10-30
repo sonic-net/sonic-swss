@@ -212,8 +212,8 @@ enum fpm_nhg_type {
   /* Namespaced aliases avoid redeclaring FRR's existing enum nhg_type. */
   FPM_NHG_TYPE_KERNEL_L2_NH = 1, /* NHG_TYPE_L2_NH; kernel netlink only */
   FPM_NHG_TYPE_KERNEL_L2 = 2,    /* NHG_TYPE_L2; kernel netlink only */
-  NHG_TYPE_L3_BPP_NH = 4,   /* FPM protection Member only */
-  NHG_TYPE_L3_BPP = 8,      /* FPM protection Group and Binding only */
+  FPM_NHG_TYPE_L3_BPP_NH = 4,   /* FPM protection Member only */
+  FPM_NHG_TYPE_L3_BPP = 8,      /* FPM protection Group and Binding only */
 };
 #define NHG_ID_TYPE(id) (((uint32_t)(id) & NHG_ID_TYPE_MASK) >> NHG_ID_TYPE_POS)
 #define L2_NHG_MAX_MEMBERS 4096u

@@ -758,7 +758,7 @@ public:
 namespace {
 uint32_t bppGroupId(uint32_t value)
 {
-    return (value & NHG_ID_VALUE_MASK) | (uint32_t(NHG_TYPE_L3_BPP) << NHG_ID_TYPE_POS);
+    return (value & NHG_ID_VALUE_MASK) | (uint32_t(FPM_NHG_TYPE_L3_BPP) << NHG_ID_TYPE_POS);
 }
 l2_nhg_member_msg bppWireMember(uint32_t id = 0x40000007u, const char *ip = "10.0.0.2")
 {
@@ -1247,7 +1247,7 @@ TEST_F(FpmBindingTest, EveryWrongIdTagIsRejectedForObjectsAndBindings)
     for (uint32_t tag = 0; tag < 16; ++tag)
     {
         const uint32_t id = (tag << NHG_ID_TYPE_POS) | 7;
-        if (tag != NHG_TYPE_L3_BPP)
+        if (tag != FPM_NHG_TYPE_L3_BPP)
         {
             auto binding = frame(); binding.binding.ebnm_backup_nhg_id = id;
             send(binding); EXPECT_TRUE(absent("PortChannel0"));
@@ -1256,7 +1256,7 @@ TEST_F(FpmBindingTest, EveryWrongIdTagIsRejectedForObjectsAndBindings)
             auto *header = reinterpret_cast<nlmsghdr *>(bytes.data());
             header->nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP_GROUP; sync->onMsgRaw(header);
         }
-        if (tag != NHG_TYPE_L3_BPP_NH)
+        if (tag != FPM_NHG_TYPE_L3_BPP_NH)
         {
             struct { nlmsghdr header; l2_nhg_member_msg member; } f{};
             f.header.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP;
