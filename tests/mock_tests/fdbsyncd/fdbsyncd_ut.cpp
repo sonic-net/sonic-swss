@@ -2389,3 +2389,111 @@ TEST_F(FdbSyncdEvpnMhTest, TestMixedNhgAndVtepMacs)
 
     ASSERT_TRUE(true);
 }
+
+static std::string g_bridgeDelOutput;
+
+/* Answers a "bridge fdb del" with exit status 255 and g_bridgeDelOutput; anything else succeeds */
+static int failBridgeDelete(const std::string &cmd, std::string &out)
+{
+    mockCallArgs.push_back(cmd);
+    if (cmd.find(" bridge fdb del ") == std::string::npos)
+    {
+        return 0;
+    }
+    out = g_bridgeDelOutput;
+    return 255;
+}
+
+/* Runs fn with swss ERROR logs sent to stdout and returns what it logged.
+   These tests log to syslog, so that is the output restored afterwards. */
+template <typename Fn>
+static std::string errorLogsOf(Fn fn)
+{
+    auto prio = swss::Logger::getMinPrio();
+    swss::Logger::swssOutputNotify("fdbsyncd", "STDOUT");
+    swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+    testing::internal::CaptureStdout();
+    fn();
+    std::string out = testing::internal::GetCapturedStdout();
+    swss::Logger::setMinPrio(prio);
+    swss::Logger::swssOutputNotify("fdbsyncd", "SYSLOG");
+    return out;
+}
+
+/* Adds a local MAC, then deletes it while "bridge fdb del" fails with the given output */
+static std::string deleteLocalMacWithBridgeOutput(MockFdbSyncEvpnMh &fdbSync, const std::string &output)
+{
+    struct m_fdb_info info;
+    info.mac = "00:aa:bb:cc:dd:ee";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    fdbSync.updateLocalMac(&info);
+
+    g_bridgeDelOutput = output;
+    callback = failBridgeDelete;
+    info.op_type = FDB_OPER_DEL;
+    return errorLogsOf([&]() { fdbSync.updateLocalMac(&info); });
+}
+
+TEST_F(FdbSyncdEvpnMhTest, LocalMacDeleteOfAbsentKernelEntryIsNotAnError)
+{
+    auto errors = deleteLocalMacWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: No such file or directory\n");
+
+    EXPECT_EQ(errors, "");
+    EXPECT_TRUE(m_mockFdbSync.m_fdb_mac.empty());
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back().rfind("LC_ALL=C bridge fdb del 00:aa:bb:cc:dd:ee dev Ethernet0 master", 0), 0u);
+    EXPECT_NE(mockCallArgs.back().find(" 2>&1"), std::string::npos);
+}
+
+TEST_F(FdbSyncdEvpnMhTest, LocalMacDeleteFailureIsAnError)
+{
+    auto errors = deleteLocalMacWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd:"), std::string::npos);
+}
+
+/* Learns a MAC locally that is known as a remote VTEP MAC, while "bridge fdb del" of its VXLAN entry fails
+   with the given output */
+static std::string learnRemoteMacLocallyWithBridgeOutput(MockFdbSyncEvpnMh &fdbSync, const std::string &output)
+{
+    const std::string mac = "00:aa:bb:cc:dd:ef";
+    const std::string key = "Vlan200:" + mac;
+    fdbSync.m_mac[key].type = "dynamic";
+    fdbSync.m_mac[key].vni = 10200;
+    fdbSync.m_mac[key].ifname = "Vxlan-200";
+    fdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
+    fdbSync.m_mac[key].nhtype = FdbDest::VTEP;
+    fdbSync.m_mac[key].nexthop_value = "10.0.0.2";
+
+    struct m_fdb_info info;
+    info.mac = mac;
+    info.vid = "Vlan200";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    g_bridgeDelOutput = output;
+    callback = failBridgeDelete;
+    return errorLogsOf([&]() { fdbSync.updateLocalMac(&info); });
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteOfAbsentKernelEntryIsNotAnError)
+{
+    auto errors = learnRemoteMacLocallyWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: No such file or directory\n");
+
+    EXPECT_EQ(errors, "");
+    EXPECT_EQ(m_mockFdbSync.m_mac.count("Vlan200:00:aa:bb:cc:dd:ef"), 0u);
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back(), "LC_ALL=C bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self 2>&1");
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteFailureIsAnError)
+{
+    auto errors = learnRemoteMacLocallyWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self"),
+              std::string::npos);
+}
