@@ -101,6 +101,7 @@ private:
     unique_ptr<Table> m_vidToRidTable;
 
     std::set<std::string> m_removingIntfses;
+    std::set<std::string> m_rifWaitingForVlanExit;
 
     std::string getRifFlexCounterTableKey(std::string s);
 

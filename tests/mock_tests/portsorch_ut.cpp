@@ -3043,6 +3043,101 @@ namespace portsorch_test
         _unhook_sai_bridge_api();
     }
 
+    /*
+     * An earlier removeVlanMember() attempt removed the SAI member and its id
+     * from m_portVlanMember, then failed before updating vlan.m_members. The
+     * retry must finish the removal rather than hand SAI a stale member id.
+     */
+    TEST_F(PortsOrchTest, removeVlanMemberCompletesWhenMemberIdIsGone)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan71", { {"admin_status", "up"}, {"mtu", "9100"} });
+        vlanMemberTable.set(
+            string("Vlan71") + vlanMemberTable.getTableNameSeparator() + "Ethernet4",
+            { {"tagging_mode", "untagged"} }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port, vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan71", vlan));
+        ASSERT_TRUE(gPortsOrch->isVlanMember(vlan, port));
+        ASSERT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 1u);
+
+        sai_object_id_t vlan_member_id;
+        ASSERT_TRUE(gPortsOrch->getVlanMember("Ethernet4", vlan, vlan_member_id));
+        ASSERT_EQ(sai_vlan_api->remove_vlan_member(vlan_member_id), SAI_STATUS_SUCCESS);
+        gPortsOrch->m_portVlanMember.erase("Ethernet4");
+
+        ASSERT_TRUE(gPortsOrch->removeVlanMember(vlan, port));
+
+        Port vlanAfter;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan71", vlanAfter));
+        ASSERT_EQ(vlanAfter.m_members.find("Ethernet4"), vlanAfter.m_members.end());
+        ASSERT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 0u);
+        ASSERT_EQ(gPortsOrch->m_portVlanMember.count("Ethernet4"), 0u);
+
+        Port portAfter;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", portAfter));
+        ASSERT_EQ(portAfter.m_port_vlan_id, DEFAULT_PORT_VLAN_ID);
+    }
+
+    /* A router port is never made a VLAN member, also when its bridge port already exists. */
+    TEST_F(PortsOrchTest, routerPortIsNotAddedToVlan)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan73", { {"admin_status", "up"}, {"mtu", "9100"} });
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port, vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet12", port));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan73", vlan));
+        ASSERT_TRUE(gPortsOrch->addBridgePort(port));
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+
+        port.m_rif_id = 1;
+        string mode = "untagged";
+        ASSERT_FALSE(gPortsOrch->addBridgePort(port));
+        ASSERT_FALSE(gPortsOrch->addVlanMember(vlan, port, mode));
+        ASSERT_FALSE(gPortsOrch->isVlanMember(vlan, port));
+        ASSERT_EQ(gPortsOrch->m_portVlanMember.count("Ethernet12"), 0u);
+
+        /* removeBridgePort() needs gStpOrch, which this fixture does not create */
+        ASSERT_EQ(sai_bridge_api->remove_bridge_port(port.m_bridge_port_id), SAI_STATUS_SUCCESS);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet12", port));
+        port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+        gPortsOrch->setPort("Ethernet12", port);
+    }
+
     TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmSuccess)
     {
         _hook_sai_port_api();

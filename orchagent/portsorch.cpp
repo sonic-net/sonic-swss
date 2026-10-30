@@ -7381,15 +7381,15 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
-    {
-        return true;
-    }
-
     if (port.m_rif_id != 0)
     {
         SWSS_LOG_NOTICE("Cannot create bridge port, interface %s is a router port", port.m_alias.c_str());
         return false;
+    }
+
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        return true;
     }
 
     sai_attribute_t attr;
@@ -7763,6 +7763,13 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
             return false;
         }
         return addVlanFloodGroups(vlan, port, end_point_ip);
+    }
+
+    // The PHY and LAG callers' addBridgePort() refuses a router port first; this covers any other caller.
+    if (port.m_rif_id != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Cannot add %s to VLAN %s, it is a router port", port.m_alias.c_str(), vlan.m_alias.c_str());
+        return false;
     }
 
     sai_attribute_t attr;
@@ -8151,8 +8158,38 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     sai_vlan_tagging_mode_t sai_tagging_mode;
     auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
 
-    /* Assert the port belongs to this VLAN */
-    assert (vlan_member != m_portVlanMember[port.m_alias].end());
+    if (vlan_member == m_portVlanMember[port.m_alias].end())
+    {
+        /* The SAI member is already gone (an earlier attempt removed it, then failed before
+         * updating vlan.m_members): finish the bookkeeping instead of removing a stale id. */
+        if (m_portVlanMember[port.m_alias].empty())
+        {
+            m_portVlanMember.erase(port.m_alias);
+        }
+        SWSS_LOG_WARN("No VLAN member id for %s in VLAN %s, completing the removal",
+                port.m_alias.c_str(), vlan.m_alias.c_str());
+
+        /* The earlier attempt may have failed on the PVID restore itself */
+        if (port.m_type != Port::TUNNEL && !port.m_rif_id &&
+            port.m_port_vlan_id == vlan.m_vlan_info.vlan_id &&
+            !setPortPvid(port, DEFAULT_PORT_VLAN_ID))
+        {
+            return false;
+        }
+
+        m_portList[port.m_alias] = port;
+        vlan.m_members.erase(port.m_alias);
+        m_portList[vlan.m_alias] = vlan;
+        if (m_bridge_port_ref_count[port.m_alias] > 0)
+        {
+            decreaseBridgePortRefCount(port);
+        }
+
+        VlanMemberUpdate update = { vlan, port, false };
+        notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
+        return true;
+    }
     sai_tagging_mode = vlan_member->second.vlan_mode;
     vlan_member_id = vlan_member->second.vlan_member_id;
 
