@@ -1,5 +1,6 @@
 #include <limits.h>
 #include <inttypes.h>
+#include <cstring>
 #include <unordered_map>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
@@ -31,6 +32,8 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_stateDb(new DBConnector("STATE_DB", 0)),
+    m_stateTable(new Table(m_stateDb.get(), PFC_WD_STATE_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
@@ -39,6 +42,7 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
         SWSS_LOG_ERROR("Platform environment variable is not defined");
         return;
     }
+
 }
 
 
@@ -57,6 +61,28 @@ bool PfcWdBaseOrch::getTimerRange(PfcWdTimerRange& range) const
     range.restorationMax = PFC_WD_RESTORATION_TIME_MAX;
 
     return true;
+}
+
+task_process_status PfcWdBaseOrch::handleStartWdOnPortFailure(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    // A port with no lossless TCs is not ready for the PFC watchdog yet, so the entry stays pending and starts once the port becomes PFC-ready.
+    set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        if (m_pfcwdPendingPorts.insert(port.m_alias).second)
+        {
+            SWSS_LOG_INFO("Deferring PFC Watchdog on port %s: no lossless TC yet", port.m_alias.c_str());
+        }
+        return task_process_status::task_need_retry;
+    }
+
+    // The port is PFC ready, so the failure is in the programming itself. The
+    // entry is kept for retry: doTask() has no case for task_failed and would
+    // drop the configuration outright, leaving CONFIG_DB and the ASIC out of sync.
+    SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
+    return task_process_status::task_need_retry;
 }
 
 bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc)
@@ -412,4 +438,197 @@ void PfcWdBaseOrch::report_pfc_restored(sai_object_id_t queueId, sai_object_id_t
         queueIndex,
         queueId,
         portId);
+}
+
+// A malformed value reads as zero instead of throwing out of the watchdog
+// timer.
+static uint64_t parseQueueStat(const string& field, const string& value)
+{
+    try
+    {
+        return stoull(value);
+    }
+    catch (const logic_error&)
+    {
+        SWSS_LOG_ERROR("Bad PFC WD counter value %s=%s", field.c_str(), value.c_str());
+        return 0;
+    }
+}
+
+PfcWdQueueStats PfcWdBaseOrch::getQueueStats(const shared_ptr<Table>& countersTable,
+                                             const string& queueIdStr)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdQueueStats stats;
+    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    stats.operational = true;
+    vector<FieldValueTuple> fieldValues;
+
+    if (!countersTable->get(queueIdStr, fieldValues))
+    {
+        return stats;
+    }
+
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+        if (field == PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED)
+        {
+            stats.detectCount = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED)
+        {
+            stats.restoreCount = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATUS)
+        {
+            stats.operational = value == PFC_WD_QUEUE_STATUS_OPERATIONAL ? true : false;
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS)
+        {
+            stats.txPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS)
+        {
+            stats.txDropPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS)
+        {
+            stats.rxPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS)
+        {
+            stats.rxDropPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS_LAST)
+        {
+            stats.txPktLast = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST)
+        {
+            stats.txDropPktLast = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS_LAST)
+        {
+            stats.rxPktLast = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST)
+        {
+            stats.rxDropPktLast = parseQueueStat(field, value);
+        }
+    }
+
+    return stats;
+}
+
+void PfcWdBaseOrch::updateQueueStats(const shared_ptr<Table>& countersTable,
+                                     const string& queueIdStr,
+                                     const PfcWdQueueStats& stats)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> resultFvValues;
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(stats.detectCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(stats.restoreCount));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS, to_string(stats.txPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS, to_string(stats.txDropPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS, to_string(stats.rxPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS, to_string(stats.rxDropPkt));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS_LAST, to_string(stats.txPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST, to_string(stats.txDropPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS_LAST, to_string(stats.rxPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST, to_string(stats.rxDropPktLast));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, stats.operational ?
+                                                     PFC_WD_QUEUE_STATUS_OPERATIONAL :
+                                                     PFC_WD_QUEUE_STATUS_STORMED);
+
+    countersTable->set(queueIdStr, resultFvValues);
+}
+
+void PfcWdBaseOrch::beginStormCounters(const shared_ptr<Table>& countersTable,
+                                       const string& queueIdStr,
+                                       PfcWdHwStats hwStats,
+                                       PfcWdHwStats& baseline)
+{
+    SWSS_LOG_ENTER();
+
+    auto stats = getQueueStats(countersTable, queueIdStr);
+
+    // Only a genuinely new storm bumps the detect count. If a storm was already
+    // in progress we are resuming it, so the counters carry over untouched.
+    if (!(stats.detectCount > stats.restoreCount))
+    {
+        stats.detectCount++;
+
+        stats.txPktLast = 0;
+        stats.txDropPktLast = 0;
+        stats.rxPktLast = 0;
+        stats.rxDropPktLast = 0;
+    }
+    stats.operational = false;
+
+    baseline = hwStats;
+
+    updateQueueStats(countersTable, queueIdStr, stats);
+}
+
+void PfcWdBaseOrch::accumulateStormCounters(const shared_ptr<Table>& countersTable,
+                                            const string& queueIdStr,
+                                            PfcWdHwStats hwStats,
+                                            PfcWdHwStats& baseline,
+                                            bool periodic,
+                                            bool baselineValid)
+{
+    SWSS_LOG_ENTER();
+
+    auto stats = getQueueStats(countersTable, queueIdStr);
+
+    if (!periodic)
+    {
+        stats.restoreCount++;
+    }
+    stats.operational = !periodic;
+
+    if (baselineValid)
+    {
+        // A backward jump is read as a counter reset rather than wrapping the
+        // subtraction: the storm gets what the counter has reached since.
+        auto delta = [&](uint64_t cur, uint64_t base, const char *name) -> uint64_t
+        {
+            if (cur >= base)
+            {
+                return cur - base;
+            }
+
+            SWSS_LOG_WARN("PFC WD counter reset on queue %s: %s went from %" PRIu64 " to %" PRIu64,
+                          queueIdStr.c_str(), name, base, cur);
+            return cur;
+        };
+
+        const uint64_t dTxPkt     = delta(hwStats.txPkt,     baseline.txPkt,     "txPkt");
+        const uint64_t dTxDropPkt = delta(hwStats.txDropPkt, baseline.txDropPkt, "txDropPkt");
+        const uint64_t dRxPkt     = delta(hwStats.rxPkt,     baseline.rxPkt,     "rxPkt");
+        const uint64_t dRxDropPkt = delta(hwStats.rxDropPkt, baseline.rxDropPkt, "rxDropPkt");
+
+        stats.txPktLast     += dTxPkt;
+        stats.txDropPktLast += dTxDropPkt;
+        stats.rxPktLast     += dRxPkt;
+        stats.rxDropPktLast += dRxDropPkt;
+
+        stats.txPkt     += dTxPkt;
+        stats.txDropPkt += dTxDropPkt;
+        stats.rxPkt     += dRxPkt;
+        stats.rxDropPkt += dRxDropPkt;
+    }
+
+    baseline = hwStats;
+
+    updateQueueStats(countersTable, queueIdStr, stats);
 }
