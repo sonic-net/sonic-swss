@@ -2535,10 +2535,16 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
     {
-        SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
-                      remote_vtep.c_str(), vlan_id);
-        return true;
+        // The EVPN NVO can come after the remote VNIs, e.g. when the VTEP, its maps and the NVO
+        // are re-created while BGP is up, so wait for it. Log once per entry, not per retry.
+        if (m_noSourceVtepLogged.insert(make_pair(vlan_id, remote_vtep)).second)
+        {
+            SWSS_LOG_WARN("Remote VNI add: Source VTEP not found, waiting for the EVPN NVO. remote=%s vid=%d",
+                          remote_vtep.c_str(), vlan_id);
+        }
+        return false;
     }
+    m_noSourceVtepLogged.erase(make_pair(vlan_id, remote_vtep));
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     Port tunnelPort, vlanPort;
@@ -2665,6 +2671,7 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     m_vlanMemberFailureLogged.erase(make_pair(vlan_id, remote_vtep));
+    m_noSourceVtepLogged.erase(make_pair(vlan_id, remote_vtep));
 
     // The add took a tunnel user reference but never added the VLAN member: release it.
     if (m_pendingVlanMembers.erase(make_pair(vlan_id, remote_vtep)))
@@ -2756,10 +2763,15 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
     {
-        SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
-                      end_point_ip.c_str(),vlan_id);
-        return true;
+        // The EVPN NVO can come after the remote VNIs: wait for it, logging once per entry.
+        if (m_noSourceVtepLogged.insert(make_pair(vlan_id, end_point_ip)).second)
+        {
+            SWSS_LOG_WARN("Remote VNI add: Source VTEP not found, waiting for the EVPN NVO. remote=%s vid=%d",
+                          end_point_ip.c_str(), vlan_id);
+        }
+        return false;
     }
+    m_noSourceVtepLogged.erase(make_pair(vlan_id, end_point_ip));
 
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
     {
@@ -2852,11 +2864,12 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
 
     m_vlanMemberFailureLogged.erase(make_pair(vlan_id, end_point_ip));
+    m_noSourceVtepLogged.erase(make_pair(vlan_id, end_point_ip));
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
     {
-        SWSS_LOG_WARN("Remote VNI add: VTEP not found. remote=%s vid=%d",
+        SWSS_LOG_WARN("Remote VNI del: VTEP not found. remote=%s vid=%d",
                       end_point_ip.c_str(), vlan_id);
         return true;
     }

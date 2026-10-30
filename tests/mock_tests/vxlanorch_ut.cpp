@@ -1327,4 +1327,193 @@ namespace vxlanorch_test
         EXPECT_EQ(imrRefCount(), 1);
     }
 
+    // zebra can send the remote VNIs before the EVPN NVO exists, e.g. when the VTEP, its maps
+    // and the NVO are re-created while BGP is up. The remote VNI waits for the NVO.
+    class EvpnRemoteVniBeforeNvoTest : public EvpnRemoteVniTest
+    {
+    protected:
+        const string m_waitLog = "Remote VNI add: Source VTEP not found, waiting for the EVPN NVO. remote=10.1.1.2 vid=100";
+
+        void applyNvo(const KeyOpFieldsValuesTuple &kfv)
+        {
+            Table nvo(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+            if (kfvOp(kfv) == DEL_COMMAND)
+            {
+                nvo.del(kfvKey(kfv));
+            }
+            else
+            {
+                nvo.set(kfvKey(kfv), kfvFieldsValues(kfv));
+            }
+            auto consumer = dynamic_cast<Consumer *>(m_nvoOrch->getExecutor(APP_VXLAN_EVPN_NVO_TABLE_NAME));
+            consumer->addToSync(deque<KeyOpFieldsValuesTuple>{kfv});
+            static_cast<Orch *>(m_nvoOrch)->doTask();
+        }
+
+        void nvoDel()
+        {
+            applyNvo({"nvo1", DEL_COMMAND, {}});
+            ASSERT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+        }
+
+        void nvoSet()
+        {
+            applyNvo({"nvo1", SET_COMMAND, {{"source_vtep", "vtep1"}}});
+            ASSERT_NE(m_nvoOrch->getEVPNVtep(), nullptr);
+        }
+
+        bool floodMember()
+        {
+            Port vlanPort, tunnelPort;
+            if (!gPortsOrch->getVlanByVlanId(100, vlanPort))
+            {
+                return false;
+            }
+            if (useDipTunnels())
+            {
+                return m_VxlanTunnelOrch->getTunnelPort(m_remoteVtep, tunnelPort) &&
+                       gPortsOrch->isVlanMember(vlanPort, tunnelPort);
+            }
+            return m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true) &&
+                   gPortsOrch->isVlanMember(vlanPort, tunnelPort, m_remoteVtep);
+        }
+
+        // Runs fn and returns how often the wait for the NVO was logged.
+        template <typename F>
+        size_t waitLogs(F fn)
+        {
+            swss::Logger::swssOutputNotify("orchagent", "STDERR");
+            testing::internal::CaptureStderr();
+            fn();
+            string out = testing::internal::GetCapturedStderr();
+            const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+            swss::Logger::swssOutputNotify("orchagent",
+                (syslogStdout != nullptr && string(syslogStdout) == "1") ? "STDOUT" : "SYSLOG");
+
+            size_t count = 0;
+            for (size_t pos = out.find(m_waitLog); pos != string::npos; pos = out.find(m_waitLog, pos + 1))
+            {
+                count++;
+            }
+            return count;
+        }
+
+        // The remote VNI stays queued, logged once, until the NVO comes; then it is added.
+        void waitsForNvo()
+        {
+            nvoDel();
+            EXPECT_EQ(waitLogs([this] { setRemoteVni(); retryRemoteVni(); retryRemoteVni(); }), 1U);
+            EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+            EXPECT_FALSE(floodMember());
+
+            nvoSet();
+            retryRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_TRUE(floodMember());
+            if (useDipTunnels())
+            {
+                EXPECT_TRUE(dipTunnelExists());
+                EXPECT_EQ(imrRefCount(), 1);
+            }
+
+            // After the entry is added, a new wait for the NVO is logged again.
+            delRemoteVni();
+            EXPECT_FALSE(floodMember());
+            nvoDel();
+            EXPECT_EQ(waitLogs([this] { setRemoteVni(); retryRemoteVni(); }), 1U);
+            nvoSet();
+            retryRemoteVni();
+            EXPECT_TRUE(floodMember());
+            delRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_FALSE(floodMember());
+        }
+
+        // A DEL while the remote VNI waits for the NVO drops it, and nothing is added when the
+        // NVO comes. A new SET waits, and is logged, again.
+        void delWhileWaitingForNvo()
+        {
+            nvoDel();
+            EXPECT_EQ(waitLogs([this] { setRemoteVni(); }), 1U);
+            ASSERT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+
+            delRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+
+            nvoSet();
+            retryRemoteVni();
+            EXPECT_FALSE(floodMember());
+            if (useDipTunnels())
+            {
+                EXPECT_FALSE(dipTunnelExists());
+                EXPECT_FALSE(tunnelPortExists());
+                EXPECT_EQ(imrRefCount(), -1);
+            }
+
+            nvoDel();
+            EXPECT_EQ(waitLogs([this] { setRemoteVni(); retryRemoteVni(); }), 1U);
+            EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+            nvoSet();
+            retryRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_TRUE(floodMember());
+            delRemoteVni();
+        }
+    };
+
+    class EvpnRemoteVniBeforeNvoP2mpTest : public EvpnRemoteVniBeforeNvoTest
+    {
+    protected:
+        bool useDipTunnels() const override
+        {
+            return false;
+        }
+    };
+
+    TEST_F(EvpnRemoteVniBeforeNvoTest, RemoteVniWaitsForNvo) { waitsForNvo(); }
+    TEST_F(EvpnRemoteVniBeforeNvoP2mpTest, RemoteVniWaitsForNvo) { waitsForNvo(); }
+    TEST_F(EvpnRemoteVniBeforeNvoTest, DelWhileWaitingForNvo) { delWhileWaitingForNvo(); }
+    TEST_F(EvpnRemoteVniBeforeNvoP2mpTest, DelWhileWaitingForNvo) { delWhileWaitingForNvo(); }
+
+    // Without DIP tunnels a remote MAC points at the NVO's source VTEP tunnel port, so a remote
+    // MAC that comes before the NVO waits for it too.
+    TEST_F(EvpnRemoteVniBeforeNvoP2mpTest, RemoteMacWaitsForNvo)
+    {
+        const string mac = "00:11:22:33:44:55";
+        const string macKey = "Vlan100:" + mac;
+        auto fdbConsumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+        auto fdbApply = [&](const KeyOpFieldsValuesTuple &kfv) {
+            fdbConsumer->addToSync(deque<KeyOpFieldsValuesTuple>{kfv});
+            static_cast<Orch *>(gFdbOrch)->doTask();
+        };
+        const KeyOpFieldsValuesTuple macSet{macKey, SET_COMMAND,
+            {{"vni", "1000"}, {"type", "dynamic"}, {"remote_vtep", m_remoteVtep}}};
+
+        nvoDel();
+        setRemoteVni();
+
+        // A DEL while the MAC waits drops it.
+        fdbApply(macSet);
+        EXPECT_EQ(fdbConsumer->m_toSync.size(), 1U);
+        fdbApply({macKey, DEL_COMMAND, {}});
+        EXPECT_TRUE(fdbConsumer->m_toSync.empty());
+
+        fdbApply(macSet);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        EXPECT_EQ(fdbConsumer->m_toSync.size(), 1U);
+
+        nvoSet();
+        retryRemoteVni();
+        ASSERT_TRUE(floodMember());
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        EXPECT_TRUE(fdbConsumer->m_toSync.empty());
+        Port port;
+        ASSERT_TRUE(gFdbOrch->getPort(MacAddress(mac), 100, port));
+        EXPECT_EQ(port.m_alias, "Port_SRC_VTEP_10.1.1.1");
+
+        fdbApply({macKey, DEL_COMMAND, {}});
+        EXPECT_FALSE(gFdbOrch->getPort(MacAddress(mac), 100, port));
+        delRemoteVni();
+    }
+
 } // namespace vxlanorch_test
