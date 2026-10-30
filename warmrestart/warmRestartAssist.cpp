@@ -74,9 +74,13 @@ AppRestartAssist::~AppRestartAssist()
     }
 }
 
-void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerStateTable *psTable)
+void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerStateTable *psTable, bool replaceFields)
 {
     m_psTables[tableName]  = psTable;
+    if (replaceFields)
+    {
+        m_replaceFieldsTables.insert(tableName);
+    }
 
     // Clear the producerstate table to make sure no pending data for the AppTable
     if (m_warmStartInProgress)
@@ -248,6 +252,55 @@ void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldVal
 }
 
 /*
+ * An application whose replay stopped early cannot tell a STALE entry that is gone
+ * from one it never replayed, so the reconcile keeps them all.
+ */
+void AppRestartAssist::keepStaleEntries(const KeptEntryHandler &onKept)
+{
+    for (auto &table : appTableCacheMap)
+    {
+        size_t kept = 0;
+        for (auto &entry : table.second)
+        {
+            if (getCacheEntryState(entry.second) == STALE)
+            {
+                setCacheEntryState(entry.second, SAME);
+                kept++;
+                if (onKept)
+                {
+                    // the cache-state field is the last one
+                    vector<FieldValueTuple> fvVector(entry.second.begin(), entry.second.end() - 1);
+                    onKept(table.first, entry.first, fvVector);
+                }
+            }
+        }
+        SWSS_LOG_NOTICE("%s: keeping %zu stale entries", table.first.c_str(), kept);
+    }
+}
+
+// True when the APPL_DB entry of key has a field that fvVector does not set.
+bool AppRestartAssist::dropsAppDbField(const string &tableName, const string &key,
+                                       const vector<FieldValueTuple> &fvVector)
+{
+    auto table = m_appTables.find(tableName);
+    vector<FieldValueTuple> current;
+    if (table == m_appTables.end() || !table->second->get(key, current))
+    {
+        return false;
+    }
+
+    for (auto const &fv : current)
+    {
+        auto same = [&fv](const FieldValueTuple &n) { return fvField(n) == fvField(fv); };
+        if (std::find_if(fvVector.begin(), fvVector.end(), same) == fvVector.end())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
  * Reconcile logic:
  *  iterate through the cache map
  *  if the entry has "SAME" flag, do nothing
@@ -289,6 +342,13 @@ void AppRestartAssist::reconcile()
 
                 //add to appDB, exclude the state
                 it->second.pop_back();
+                if (m_replaceFieldsTables.count(tableName) &&
+                    dropsAppDbField(tableName, it->first, it->second))
+                {
+                    SWSS_LOG_NOTICE("%s NEW, key: %s replaces the APPL_DB entry",
+                            tableName.c_str(), it->first.c_str());
+                    m_psTables[tableName]->del(it->first);
+                }
                 m_psTables[tableName]->set(it->first, it->second);
             }
             else
