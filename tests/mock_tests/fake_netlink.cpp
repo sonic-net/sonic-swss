@@ -15,6 +15,8 @@ extern "C"
 
 struct rtnl_link* rtnl_link_get_by_name(struct nl_cache *cache, const char *name)
 {
+    // Match libnl: the caller owns a reference in addition to the shared mock.
+    nl_object_get(reinterpret_cast<struct nl_object *>(g_fakeLink));
     return g_fakeLink;
 }
 

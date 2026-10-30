@@ -187,6 +187,22 @@ TEST_F(FpmSyncdResponseTest, RouteResponseFeedbackV4)
     });
 }
 
+TEST(FpmSyncdNetlinkMockTest, LinkLookupReturnsHeldReference)
+{
+    auto *first = rtnl_link_get_by_name(nullptr, "Vrf10");
+    ASSERT_NE(first, nullptr);
+    auto *obj = reinterpret_cast<struct nl_object *>(first);
+    const int refCount = nl_object_get_refcnt(obj);
+
+    auto *second = rtnl_link_get_by_name(nullptr, "Vrf10");
+    ASSERT_EQ(second, first);
+    ASSERT_EQ(nl_object_get_refcnt(obj), refCount + 1);
+
+    rtnl_link_put(second);
+    EXPECT_EQ(nl_object_get_refcnt(obj), refCount);
+    rtnl_link_put(first);
+}
+
 TEST_F(FpmSyncdResponseTest, LinkEventsUpdateCachedLinksIncrementally)
 {
     constexpr int testIfIndex = 65000;
