@@ -998,4 +998,97 @@ namespace mux_rollback_test
         m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
         gNeighOrch->m_syncdNeighbors.erase(entry);
     }
+
+    // convertToPrefixBasedNbr sets NO_HOST_ROUTE before it installs the prefix
+    // route. If the route install fails, it must not record prefix_route, so the
+    // neighbor stays convertible and a later attempt can succeed.
+    TEST_F(MuxRollbackPrefixRouteTest, ConvertToPrefixBasedNbrRouteFailureIsRetryable)
+    {
+        const string ip = "192.168.0.65";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:0c");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        // First route install fails; the retry succeeds.
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_FALSE(gNeighOrch->convertToPrefixBasedNbr(entry));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_TRUE(gNeighOrch->convertToPrefixBasedNbr(entry));
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // Active path: a failed conversion must leave the neighbor out of neighbors_
+    // so the find() guard at the top of update() does not swallow the retry. A
+    // later update converts it once the route can be installed.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborActiveConversionFailureRetries)
+    {
+        SetAndAssertMuxState(ACTIVE_STATE);
+
+        const string ip = "192.168.0.63";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:0a");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        NextHopKey nh_key(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        // Not converted and not recorded, so a retry is still possible.
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 0);
+
+        // Retry: the guard lets it through and the conversion now succeeds.
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 1);
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // Standby path: same failure/retry contract, where the prefix route points
+    // at the tunnel next hop instead of the local one.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborStandbyConversionFailureRetries)
+    {
+        ASSERT_EQ(STANDBY_STATE, m_MuxCable->getState());
+
+        const string ip = "192.168.0.64";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:0b");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        NextHopKey nh_key(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 0);
+
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 1);
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
 }
