@@ -19,6 +19,8 @@ static int (*callback_teamdctl_connect)(struct teamdctl *tdc, const char *team_n
 static int (*callback_teamdctl_config_get_raw_direct)(struct teamdctl *tdc, char **response) = NULL;
 static void (*callback_teamdctl_disconnect)(struct teamdctl *tdc) = NULL;
 
+extern "C" bool team_change_handler_registered(team_handle *team);
+
 static unsigned int cb_sleep(unsigned int seconds)
 {
     return 0;
@@ -150,7 +152,7 @@ namespace teamportsync_test
     TEST_F(TeamPortSyncTest, TestInvalidIfIndex)
     {
         try {
-            swss::TeamSync::TeamPortSync("testLag", 0, NULL);
+            swss::TeamSync::TeamPortSync({"testLag", 0}, NULL);
             FAIL();
         } catch (std::runtime_error &exception) {
             EXPECT_THAT(exception.what(), testing::HasSubstr("Unable to initialize team socket"));
@@ -160,7 +162,7 @@ namespace teamportsync_test
     TEST_F(TeamPortSyncTest, NoLagPresent)
     {
         try {
-            swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+            swss::TeamSync::TeamPortSync({"testLag", 4}, NULL);
             FAIL();
         } catch (std::runtime_error &exception) {
             EXPECT_THAT(exception.what(), testing::HasSubstr("Unable to initialize team socket"));
@@ -173,7 +175,7 @@ namespace teamportsync_test
         callback_team_change_handler = cb_team_change_handler;
         callback_teamdctl_connect = cb_teamdctl_connect;
         try {
-            swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+            swss::TeamSync::TeamPortSync({"testLag", 4}, NULL);
             FAIL();
         } catch (std::runtime_error &exception) {
             EXPECT_THAT(exception.what(), testing::HasSubstr("Unable to get config from teamd"));
@@ -186,7 +188,7 @@ namespace teamportsync_test
         callback_team_change_handler = cb_team_change_handler;
         callback_teamdctl_connect = cb_teamdctl_connect;
         callback_teamdctl_config_get_raw_direct = cb_teamdctl_config_get_raw_direct_success;
-        swss::TeamSync::TeamPortSync("testLag", 4, NULL);
+        swss::TeamSync::TeamPortSync({"testLag", 4}, NULL);
     }
 }
 
@@ -257,7 +259,7 @@ namespace teamsync_test
 
         /* ifindex 0 is invalid; the real team_init() will fail, causing
          * TeamPortSync to throw system_error, which addLag() must catch. */
-        ts.addLag("testLag", 0, true, true, 1500);
+        ts.addLag({"testLag", 0}, true, true, 1500);
     }
 
     /* Verify that addLag() successfully creates the team instance and writes
@@ -273,7 +275,7 @@ namespace teamsync_test
         swss::DBConnector stateDb(1, "localhost", 0, 0);
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
-        ts.addLag("testLag", 4, true, true, 1500);
+        ts.addLag({"testLag", 4}, true, true, 1500);
     }
 
     /* When teamd is not ready, APP_LAG is still published for orchagent but
@@ -289,7 +291,7 @@ namespace teamsync_test
         swss::DBConnector stateDb(1, "localhost", 0, 0);
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
-        ts.addLag("testLag", 4, true, true, 1500);
+        ts.addLag({"testLag", 4}, true, true, 1500);
 
         swss::Table appLagTable(&db, APP_LAG_TABLE_NAME);
         std::vector<std::string> appKeys;
@@ -314,8 +316,8 @@ namespace teamsync_test
         swss::DBConnector stateDb(1, "localhost", 0, 0);
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
-        ts.addLag("testLag", 4, true, true, 1500);
-        ts.removeLag("testLag");
+        ts.addLag({"testLag", 4}, true, true, 1500);
+        ts.removeLag({"testLag", 4});
 
         swss::Table appLagTable(&db, APP_LAG_TABLE_NAME);
         std::vector<std::string> keys;
@@ -333,19 +335,21 @@ namespace teamsync_test
         swss::DBConnector stateDb(1, "localhost", 0, 0);
         TeamSyncUnderTest ts(&db, &stateDb, nullptr);
 
-        ts.addLag("testLag", 4, true, true, 1500);
+        ts.addLag({"testLag", 4}, true, true, 1500);
 
-        ASSERT_NE(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
-
-        ts.m_teamSelectables["testLag"]->m_lagMembers["Ethernet0"] = true;
-        ts.m_teamSelectables["testLag"]->m_lagMembers["Ethernet4"] = false;
+        auto lag = ts.m_teamSelectables.find({"testLag", 4});
+        ASSERT_NE(lag, ts.m_teamSelectables.end());
+        EXPECT_EQ(lag->first, swss::TeamSync::LagId("testLag", 4));
+        auto retired = lag->second;
+        retired->m_lagMembers["Ethernet0"] = true;
+        retired->m_lagMembers["Ethernet4"] = false;
 
         std::vector<swss::FieldValueTuple> memberFv;
         memberFv.emplace_back("status", "enabled");
         ts.m_lagMemberTable.set("testLag:Ethernet0", memberFv);
         ts.m_lagMemberTable.set("testLag:Ethernet4", memberFv);
 
-        ts.removeLag("testLag");
+        ts.removeLag({"testLag", 4});
 
         swss::Table appLagMemberTable(&db, APP_LAG_MEMBER_TABLE_NAME);
         std::vector<std::string> memberKeys;
@@ -362,10 +366,10 @@ namespace teamsync_test
         stateLagTable.getKeys(stateKeys);
         EXPECT_TRUE(stateKeys.empty());
 
-        /* removeLag() defers erasing TeamPortSync until doSelectableTask().
-         * Do not call doSelectableTask() here: mocked team_init does not yield
-         * a valid team event fd, so epoll registration would fail in unit tests. */
-        EXPECT_EQ(ts.m_selectablesToRemove.count("testLag"), 1u);
-        EXPECT_NE(ts.m_teamSelectables.find("testLag"), ts.m_teamSelectables.end());
+        /* An instance deleted before registration must never reach Select. */
+        EXPECT_TRUE(ts.m_selectablesToRemove.empty());
+        EXPECT_FALSE(team_change_handler_registered(retired->m_team));
+        EXPECT_TRUE(ts.m_teamSelectables.empty());
+        EXPECT_TRUE(ts.m_selectablesToAdd.empty());
     }
 }

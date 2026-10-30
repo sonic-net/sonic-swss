@@ -63,22 +63,21 @@ void TeamSync::periodic()
 
 void TeamSync::doSelectableTask()
 {
-    /* Start to track the new team instances */
-    for (auto s : m_selectablesToAdd)
+    /* Retire the exact old objects, not whichever LAG now has the name. */
+    for (const auto &sync : m_selectablesToRemove)
     {
-        m_select->addSelectable(m_teamSelectables[s].get());
-    }
-
-    m_selectablesToAdd.clear();
-
-    /* No longer track the deprecated team instances */
-    for (auto s : m_selectablesToRemove)
-    {
-        m_select->removeSelectable(m_teamSelectables[s].get());
-        m_teamSelectables.erase(s);
+        m_select->removeSelectable(sync.get());
     }
 
     m_selectablesToRemove.clear();
+
+    /* Start to track the new team instances */
+    for (const auto &sync : m_selectablesToAdd)
+    {
+        m_select->addSelectable(sync.get());
+    }
+
+    m_selectablesToAdd.clear();
 }
 
 void TeamSync::applyState()
@@ -95,8 +94,7 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if ((nlmsg_type != RTM_NEWLINK) && (nlmsg_type != RTM_DELLINK))
         return;
 
-    string lagName = rtnl_link_get_name(link);
-
+    LagId lagId{rtnl_link_get_name(link), rtnl_link_get_ifindex(link)};
     /* Listens to LAG messages */
     char *type = rtnl_link_get_type(link);
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
@@ -105,36 +103,36 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
     bool oper = flags & IFF_LOWER_UP;
-    unsigned int ifindex = rtnl_link_get_ifindex(link);
-
     if (type)
     {
         SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d type:%s",
-                       nlmsg_type, lagName.c_str(), admin, oper, ifindex, type);
+                       nlmsg_type, lagId.first.c_str(), admin, oper, lagId.second, type);
     }
     else
     {
         SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d",
-                       nlmsg_type, lagName.c_str(), admin, oper, ifindex);
+                       nlmsg_type, lagId.first.c_str(), admin, oper, lagId.second);
     }
 
     if (nlmsg_type == RTM_DELLINK)
     {
-        /* Always remove APP_LAG (and STATE_LAG if tracked), even when
-         * TeamPortSync was never created because teamdctl failed on add. */
-        removeLag(lagName);
+        removeLag(lagId);
         return;
     }
 
     unsigned int mtu = rtnl_link_get_mtu(link);
-    addLag(lagName, rtnl_link_get_ifindex(link),
-           rtnl_link_get_flags(link) & IFF_UP,
-           rtnl_link_get_flags(link) & IFF_LOWER_UP, mtu);
+    addLag(lagId, admin, oper, mtu);
 }
 
-void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
-                      bool oper_state, unsigned int mtu)
+void TeamSync::addLag(const LagId &lagId, bool admin_state, bool oper_state, unsigned int mtu)
 {
+    const string &lagName = lagId.first;
+    auto lag = m_teamSelectables.find(lagId);
+    if (lag != m_teamSelectables.end() && lag->first != lagId)
+        removeLag(lag->first);
+
+    auto &tsync = m_teamSelectables[lagId];
+
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
@@ -143,17 +141,14 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     fvVector.push_back(o);
     fvVector.push_back(m);
 
-    bool lag_update = true;
     /* Return when the team instance has already been tracked */
-    if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
+    if (tsync)
     {
-        auto tsync = m_teamSelectables[lagName];
         if (tsync->admin_state == admin_state && tsync->oper_state == oper_state && tsync->mtu == mtu)
             return;
         tsync->admin_state = admin_state;
         tsync->oper_state = oper_state;
         tsync->mtu = mtu;
-        lag_update = false;
     }
 
     FieldValueTuple s("state", "ok");
@@ -164,7 +159,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
      * never succeeded.  STATE_LAG is written only after teamd is ready (#3984). */
     m_lagTable.set(lagName, fvVector);
 
-    if (lag_update)
+    if (!tsync)
     {
         /* Create the team instance.
          * On container restart, teamsyncd may receive RTM_NEWLINK for pre-existing
@@ -177,23 +172,30 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
          * recreating the device the kernel emits a fresh RTM_NEWLINK with the correct
          * new ifindex and addLag() is called again, at which point initialization
          * succeeds. */
+        shared_ptr<TeamPortSync> sync;
         try
         {
-            auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-            m_stateLagTable.set(lagName, fvVector);
-            m_teamSelectables[lagName] = sync;
-            m_selectablesToAdd.insert(lagName);
-
-            SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
-                           lagName.c_str(), admin_state ? "up" : "down",
-                           oper_state ? "up" : "down", mtu);
+            sync = make_shared<TeamPortSync>(lagId, &m_lagMemberTable);
         }
         catch (const system_error& e)
         {
             SWSS_LOG_ERROR("addLag: Failed to initialize team handler for LAG %s "
                            "(ifindex %d): %d:%s. Waiting for next RTM_NEWLINK.",
-                           lagName.c_str(), ifindex, e.code().value(), e.what());
+                           lagName.c_str(), lagId.second, e.code().value(), e.what());
+            return;
         }
+
+        sync->admin_state = admin_state;
+        sync->oper_state = oper_state;
+        sync->mtu = mtu;
+        sync->onChange();
+        m_stateLagTable.set(lagName, fvVector);
+        tsync = sync;
+        m_selectablesToAdd.insert(sync);
+
+        SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
+                       lagName.c_str(), admin_state ? "up" : "down",
+                       oper_state ? "up" : "down", mtu);
     }
     else
     {
@@ -201,33 +203,44 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     }
 }
 
-void TeamSync::removeLag(const string &lagName)
+void TeamSync::removeLag(LagId lagId)
 {
-    auto it = m_teamSelectables.find(lagName);
-    if (it != m_teamSelectables.end())
+    const string &lagName = lagId.first;
+    auto lag = m_teamSelectables.find(lagId);
+    if (lag != m_teamSelectables.end() && lag->first != lagId)
     {
-        for (auto member : it->second->m_lagMembers)
+        SWSS_LOG_INFO("Ignore delete for old LAG %s ifindex %d (current %d)",
+                      lagName.c_str(), lagId.second, lag->first.second);
+        return;
+    }
+
+    if (lag != m_teamSelectables.end() && lag->second)
+    {
+        auto sync = lag->second;
+        /* Select may still dispatch this object in the current poll batch. */
+        team_change_handler_unregister(sync->m_team, &TeamPortSync::gPortChangeHandler, sync.get());
+        for (auto member : sync->m_lagMembers)
         {
             m_lagMemberTable.del(lagName + ":" + member.first);
 
             SWSS_LOG_INFO("Remove member %s before removing LAG %s",
                     member.first.c_str(), lagName.c_str());
         }
+
+        if (m_selectablesToAdd.erase(sync) == 0)
+        {
+            m_selectablesToRemove.insert(sync);
+        }
     }
 
-    /* Delete the LAG */
+    if (lag != m_teamSelectables.end())
+        m_teamSelectables.erase(lag);
+
+    /* Preserved rows must also be invalidated when no handler was tracked. */
     m_lagTable.del(lagName);
-
-    SWSS_LOG_INFO("Remove LAG %s", lagName.c_str());
-
-    if (it == m_teamSelectables.end())
-    {
-        return;
-    }
-
     m_stateLagTable.del(lagName);
 
-    m_selectablesToRemove.insert(lagName);
+    SWSS_LOG_INFO("Remove LAG %s", lagName.c_str());
 }
 
 void TeamSync::cleanTeamSync()
@@ -235,10 +248,9 @@ void TeamSync::cleanTeamSync()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAG teamd resources ...");
 
-    for (const auto& it: m_teamSelectables)
+    while (!m_teamSelectables.empty())
     {
-        /* Cleanup LAG */
-        removeLag(it.first);
+        removeLag(m_teamSelectables.begin()->first);
     }
     return;
 }
@@ -248,11 +260,9 @@ const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
     .type_mask  = TEAM_PORT_CHANGE | TEAM_OPTION_CHANGE
 };
 
-TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
-                                     ProducerStateTable *lagMemberTable) :
+TeamSync::TeamPortSync::TeamPortSync(const LagId &lagId, ProducerStateTable *lagMemberTable) :
     m_lagMemberTable(lagMemberTable),
-    m_lagName(lagName),
-    m_ifindex(ifindex)
+    m_lagId(lagId)
 {
     int count = 0;
     int max_retries = 3;
@@ -268,7 +278,7 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
                                    "Unable to allocate team socket");
             }
 
-            int err = team_init(m_team, ifindex);
+            int err = team_init(m_team, m_lagId.second);
             if (err)
             {
                 team_free(m_team);
@@ -295,7 +305,7 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
                                    "Unable to allocate teamdctl socket");
             }
 
-            err = teamdctl_connect(m_teamdctl, lagName.c_str(), nullptr, "usock");
+            err = teamdctl_connect(m_teamdctl, m_lagId.first.c_str(), nullptr, "usock");
             if (err)
             {
                 team_free(m_team);
@@ -325,7 +335,7 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
         catch (const system_error& e)
         {
             SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
-                          lagName.c_str(), e.code().value(), e.what(), count);
+                          m_lagId.first.c_str(), e.code().value(), e.what(), count);
 
             if (++count == max_retries)
             {
@@ -335,9 +345,6 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
             sleep(1);
         }
     }
-
-    /* Sync LAG at first */
-    onChange();
 }
 
 TeamSync::TeamPortSync::~TeamPortSync()
@@ -385,14 +392,14 @@ int TeamSync::TeamPortSync::onChange()
     {
         if (m_lagMembers.find(it.first) == m_lagMembers.end() || it.second != m_lagMembers[it.first])
         {
-            string key = m_lagName + ":" + it.first;
+            string key = m_lagId.first + ":" + it.first;
             vector<FieldValueTuple> v;
             FieldValueTuple l("status", it.second ? "enabled" : "disabled");
             v.push_back(l);
             m_lagMemberTable->set(key, v);
 
             SWSS_LOG_INFO("Set LAG %s member %s with status %s",
-                    m_lagName.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
+                    m_lagId.first.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
         }
     }
 
@@ -400,11 +407,11 @@ int TeamSync::TeamPortSync::onChange()
     {
         if (tmp_lag_members.find(it.first) == tmp_lag_members.end())
         {
-            string key = m_lagName + ":" + it.first;
+            string key = m_lagId.first + ":" + it.first;
             m_lagMemberTable->del(key);
 
             SWSS_LOG_INFO("Remove member %s from LAG %s",
-                    it.first.c_str(), m_lagName.c_str());
+                    it.first.c_str(), m_lagId.first.c_str());
         }
     }
 
