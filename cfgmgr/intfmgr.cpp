@@ -786,21 +786,18 @@ void IntfMgr::delIpv6LinkLocalNeigh(const string &alias)
     m_neighTable.getKeys(neighEntries);
     for (auto neighKey : neighEntries)
     {
-        if (!neighKey.compare(0, alias.size(), alias.c_str()))
+        vector<string> keys = tokenize(neighKey, ':', 1);
+        if (keys.size() == 2 && keys[0] == alias)
         {
-            vector<string> keys = tokenize(neighKey, ':', 1);
-            if (keys.size() == 2)
+            IpAddress ipAddress(keys[1]);
+            if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
             {
-                IpAddress ipAddress(keys[1]);
-                if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
-                {
-                    stringstream cmd;
-                    string res;
+                stringstream cmd;
+                string res;
 
-                    cmd << IP_CMD << " neigh del dev " << keys[0] << " " << keys[1] ;
-                    swss::exec(cmd.str(), res);
-                    SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", keys[1].c_str());
-                }
+                cmd << IP_CMD << " neigh del dev " << keys[0] << " " << keys[1] ;
+                swss::exec(cmd.str(), res);
+                SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", keys[1].c_str());
             }
         }
     }

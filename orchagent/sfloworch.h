@@ -108,11 +108,13 @@ class SflowOrch : public Orch
 {
 public:
     SflowOrch(DBConnector* db, std::vector<std::string> &tableNames);
+    void onWarmBootEnd() override;
 
 private:
     SflowPortInfoMap    m_sflowPortInfoMap;
     SflowRateSampleMap  m_sflowRateSampleMap;
     bool                m_sflowStatus;
+    bool                m_isWarmRestoreStage = false;
     SflowDropMonitor    m_sflowDropMonitor;
 
 
