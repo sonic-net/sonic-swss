@@ -73,6 +73,20 @@ namespace mux_rollback_test
             return gNeighOrch->isPrefixNeighborNh(nhKey);
         }
 
+        // Add a plain (non-mux) neighbor through NeighOrch: hw_configured,
+        // prefix_route=false, and no explicit /32 route. This is what a
+        // neighbor looks like when it was programmed before its mux object
+        // was ready.
+        void AddPlainNeighbor(const string& ip, const string& mac)
+        {
+            Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+            string key = VLAN_1000 + neigh_table.getTableNameSeparator() + ip;
+            neigh_table.set(key, { { "neigh", mac }, { "family", "IPv4" } });
+            gNeighOrch->addExistingData(&neigh_table);
+            static_cast<Orch *>(gNeighOrch)->doTask();
+            neigh_table.del(key);
+        }
+
         void ApplyInitialConfigs()
         {
             Table peer_switch_table = Table(m_config_db.get(), CFG_PEER_SWITCH_TABLE_NAME);
@@ -912,5 +926,169 @@ namespace mux_rollback_test
         EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
 
         gNeighOrch->m_syncdNextHops[nh_key] = saved_next_hop;
+    }
+  
+      // Warm recovery replays cached neighbors straight into update(), skipping
+    // addNeighbor. If such a neighbor has no /32 route yet, update() has to
+    // convert it to a prefix neighbor first, else set_route fails with
+    // ITEM_NOT_FOUND. On standby the route points at the tunnel next hop.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborStandbyConvertsMissingPrefixRoute)
+    {
+        const string ip = "192.168.0.60";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:07");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+        ASSERT_EQ(STANDBY_STATE, m_MuxCable->getState());
+
+        // The conversion installs the /32 route; stub the create so the test
+        // does not lean on vs route modeling. The old code never got here.
+        m_MuxCable->updateNeighbor(NextHopKey(IpAddress(ip), VLAN_1000), true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // Same case with the mux active: the /32 route points at the local
+    // next hop instead of the tunnel.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborActiveConvertsMissingPrefixRoute)
+    {
+        SetAndAssertMuxState(ACTIVE_STATE);
+
+        const string ip = "192.168.0.61";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:08");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(NextHopKey(IpAddress(ip), VLAN_1000), true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // A neighbor that is already prefix-based keeps its /32 route, so update()
+    // skips the conversion and creates no new route.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborSkipsConversionForExistingPrefixNeighbor)
+    {
+        const string ip = "192.168.0.62";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:09");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = true;
+        ASSERT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry).Times(0);
+
+        m_MuxCable->updateNeighbor(NextHopKey(IpAddress(ip), VLAN_1000), true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // convertToPrefixBasedNbr sets NO_HOST_ROUTE before it installs the prefix
+    // route. If the route install fails, it must not record prefix_route, so the
+    // neighbor stays convertible and a later attempt can succeed.
+    TEST_F(MuxRollbackPrefixRouteTest, ConvertToPrefixBasedNbrRouteFailureIsRetryable)
+    {
+        const string ip = "192.168.0.65";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:0c");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        // First route install fails; the retry succeeds.
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_FALSE(gNeighOrch->convertToPrefixBasedNbr(entry));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_TRUE(gNeighOrch->convertToPrefixBasedNbr(entry));
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // Active path: a failed conversion must leave the neighbor out of neighbors_
+    // so the find() guard at the top of update() does not swallow the retry. A
+    // later update converts it once the route can be installed.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborActiveConversionFailureRetries)
+    {
+        SetAndAssertMuxState(ACTIVE_STATE);
+
+        const string ip = "192.168.0.63";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:0a");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        NextHopKey nh_key(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        // Not converted and not recorded, so a retry is still possible.
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 0);
+
+        // Retry: the guard lets it through and the conversion now succeeds.
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 1);
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
+
+    // Standby path: same failure/retry contract, where the prefix route points
+    // at the tunnel next hop instead of the local one.
+    TEST_F(MuxRollbackPrefixRouteTest, UpdateNeighborStandbyConversionFailureRetries)
+    {
+        ASSERT_EQ(STANDBY_STATE, m_MuxCable->getState());
+
+        const string ip = "192.168.0.64";
+        AddPlainNeighbor(ip, "62:f9:65:10:2f:0b");
+
+        NeighborEntry entry(IpAddress(ip), VLAN_1000);
+        NextHopKey nh_key(IpAddress(ip), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillOnce(Return(SAI_STATUS_TABLE_FULL))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 0);
+
+        m_MuxCable->updateNeighbor(nh_key, true);
+
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(ip)), 1);
+
+        m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
+        gNeighOrch->m_syncdNeighbors.erase(entry);
     }
 }

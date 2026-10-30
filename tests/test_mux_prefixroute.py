@@ -117,6 +117,10 @@ class TestMuxTunnelBase():
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
         assert num.strip() >= str(expected_cnt)
 
+    def count_syslog_since_marker(self, dvs, marker, err_log):
+        (_, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        return int(num.strip())
+
     def create_vlan_interface(self, dvs):
         confdb = dvs.get_config_db()
 
@@ -2921,6 +2925,84 @@ class TestMuxTunnel(TestMuxTunnelBase):
         self.del_fdb(dvs, neighbor_mac.replace(":", "-"))
         config_db.delete_entry(self.CONFIG_MUX_CABLE, mux_port)
         time.sleep(1)
+
+    def test_warm_reboot_soc_neighbor_prefix_route_restore(
+            self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable,
+            setup_tunnel, setup_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        A SoC neighbor on a prefix-route mux must keep its /32 route across a
+        warm reboot. Recovery replays cached neighbor updates through
+        MuxPrefixBasedNbrHandler::update() instead of recreating the neighbor,
+        so a neighbor restored before its mux object was ready reaches update()
+        with no /32 route and set_route used to fail with ITEM_NOT_FOUND (-7).
+
+        The pre/post-reboot ordering that triggers the race is not reliably
+        forceable, so this checks what must hold after recovery: the SoC /32
+        route exists, points at the tunnel in standby, the neighbor keeps
+        NO_HOST_ROUTE, and no set_route ITEM_NOT_FOUND errors are logged.
+        """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        apdb = dvs.get_app_db()
+        asicdb = dvs.get_asic_db()
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
+
+        soc_ip = self.SERV1_SOC_IPV4
+        soc_mac = "00:00:00:00:00:01"
+        soc_prefix = soc_ip + self.IPV4_MASK
+
+        # Standby prefix-route mux with a SoC neighbor: the /32 route points at
+        # the tunnel next hop and the neighbor carries NO_HOST_ROUTE.
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.wait_for_mux_state(dvs, "Ethernet0", "standby")
+        self.add_fdb(dvs, "Ethernet0", soc_mac.replace(":", "-"))
+        self.add_neighbor(dvs, soc_ip, soc_mac)
+        time.sleep(1)
+
+        self.check_neigh_in_asic_db(asicdb, soc_ip, no_host_route=True)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 2)
+        soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
+        self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=True)
+
+        # Warm reboot. Recovery replays the cached SoC neighbor update through
+        # the prefix handler after the mux object is restored.
+        marker = dvs.add_log_marker()
+        dvs.runcmd("config warm_restart enable system")
+        dvs.stop_swss()
+        dvs.start_swss()
+        time.sleep(5)
+
+        # Mux state restored to standby.
+        apdb.wait_for_field_match(self.APP_MUX_CABLE, "Ethernet0", {"state": "standby"})
+
+        # SoC /32 route survived recovery, still NO_HOST_ROUTE and tunnel-pointed.
+        self.check_neigh_in_asic_db(asicdb, soc_ip, no_host_route=True)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 2)
+        soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
+        self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=True)
+
+        # The failing path logged set_route ITEM_NOT_FOUND (-7); assert none
+        # were produced during recovery.
+        for err in ("Failed to set route entry", "rv:-7"):
+            cnt = self.count_syslog_since_marker(dvs, marker, err)
+            assert cnt == 0, \
+                "Found {} '{}' log(s) after warm reboot for SoC {}".format(cnt, err, soc_ip)
+
+        # Toggle active then back to standby to confirm the restored route is
+        # healthy and reprogrammable.
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.wait_for_mux_state(dvs, "Ethernet0", "active")
+        soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
+        self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=False)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.wait_for_mux_state(dvs, "Ethernet0", "standby")
+        soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
+        self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=True)
+
+        # Cleanup
+        self.del_neighbor(dvs, soc_ip)
+        self.del_fdb(dvs, soc_mac.replace(":", "-"))
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

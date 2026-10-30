@@ -1215,6 +1215,20 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             neighbors_[nh.ip_address] = SAI_NULL_OBJECT_ID;
             break;
         case MuxState::MUX_STATE_ACTIVE:
+            // A neighbor learned before this mux object was ready is created
+            // without NO_HOST_ROUTE, so its explicit /32 route is missing and
+            // set_route below would fail with ITEM_NOT_FOUND. Convert it to a
+            // prefix based neighbor first, which installs the /32 route. Record
+            // the neighbor only after the conversion succeeds; otherwise the
+            // find() guard above skips the next retry.
+            if (!gNeighOrch->isPrefixNeighbor(nh) &&
+                !gNeighOrch->convertToPrefixBasedNbr(nh, local_nhid))
+            {
+                SWSS_LOG_ERROR("Failed to convert neighbor %s on %s to prefix based nbr, will retry",
+                               nh.ip_address.to_string().c_str(), nh.alias.c_str());
+                return;
+            }
+
             neighbors_[nh.ip_address] = local_nhid;
 
             // Update the prefix route with local nexthop
@@ -1228,6 +1242,19 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             gNeighOrch->increaseNextHopRefCount(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
+            // See MUX_STATE_ACTIVE: ensure the explicit /32 route exists before
+            // pointing it at the tunnel nexthop. Converting with the tunnel
+            // nexthop installs the /32 route when it is missing. Record the
+            // neighbor only after the conversion succeeds so a failed attempt
+            // can be retried.
+            if (!gNeighOrch->isPrefixNeighbor(nh) &&
+                !gNeighOrch->convertToPrefixBasedNbr(nh, tunnelId))
+            {
+                SWSS_LOG_ERROR("Failed to convert neighbor %s on %s to prefix based nbr, will retry",
+                               nh.ip_address.to_string().c_str(), nh.alias.c_str());
+                return;
+            }
+
             neighbors_[nh.ip_address] = tunnelId;
 
             // Update the prefix route with tunnel nexthop
