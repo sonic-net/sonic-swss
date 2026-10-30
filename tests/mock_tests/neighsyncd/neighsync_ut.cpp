@@ -1,19 +1,26 @@
 #include "gtest/gtest.h"
 
 #include <arpa/inet.h>
+#include <cerrno>
 #include <cstring>
+#include <linux/netlink.h>
 #include <linux/neighbour.h>
 #include <memory>
 #include <net/if.h>
 #include <netlink/addr.h>
+#include <netlink/attr.h>
+#include <netlink/errno.h>
+#include <netlink/handlers.h>
 #include <netlink/msg.h>
 #include <netlink/route/neighbour.h>
+#include <poll.h>
 #include <string>
 #include <vector>
 
 #include "../mock_table.h"
 #include "linkcache.h"
 #include "neighsyncd/neighsync.h"
+#include "neighsyncd/linklocalresyncstate.h"
 #include "redisutility.h"
 
 using namespace swss;
@@ -26,6 +33,203 @@ namespace swss
 std::string LinkCache::ifindexToName(int)
 {
     return mockInterfaceName;
+}
+
+}
+
+namespace
+{
+
+enum class DumpResponse
+{
+    Done,
+    Interrupted,
+    KernelError,
+};
+
+struct CapturedDumpRequest
+{
+    int type = 0;
+    int flags = 0;
+    int family = 0;
+    int headerIfindex = 0;
+    bool hasIfindexAttribute = false;
+    uint32_t ifindexAttribute = 0;
+};
+
+bool mockInterfaceLookup = false;
+bool mockDumpNeighbor = false;
+unsigned int mockIfindex = 42;
+int mockSendResult = 1;
+int mockPollResult = 1;
+int mockReceiveResult = 0;
+uint32_t mockSequence = 1234;
+DumpResponse mockDumpResponse = DumpResponse::Done;
+CapturedDumpRequest capturedDumpRequest;
+int dumpRequestCount = 0;
+nl_recvmsg_msg_cb_t validCallback = nullptr;
+void *validCallbackArg = nullptr;
+nl_recvmsg_msg_cb_t finishCallback = nullptr;
+void *finishCallbackArg = nullptr;
+nl_recvmsg_err_cb_t errorCallback = nullptr;
+void *errorCallbackArg = nullptr;
+
+void resetDumpMocks()
+{
+    mockInterfaceLookup = false;
+    mockDumpNeighbor = false;
+    mockIfindex = 42;
+    mockSendResult = 1;
+    mockPollResult = 1;
+    mockReceiveResult = 0;
+    mockSequence = 1234;
+    mockDumpResponse = DumpResponse::Done;
+    capturedDumpRequest = {};
+    dumpRequestCount = 0;
+    validCallback = nullptr;
+    validCallbackArg = nullptr;
+    finishCallback = nullptr;
+    finishCallbackArg = nullptr;
+    errorCallback = nullptr;
+    errorCallbackArg = nullptr;
+}
+
+}
+
+extern "C"
+{
+
+unsigned int __real_if_nametoindex(const char *ifname);
+int __real_nl_cb_set(
+    struct nl_cb *cb,
+    enum nl_cb_type type,
+    enum nl_cb_kind kind,
+    nl_recvmsg_msg_cb_t func,
+    void *arg);
+int __real_nl_cb_err(
+    struct nl_cb *cb,
+    enum nl_cb_kind kind,
+    nl_recvmsg_err_cb_t func,
+    void *arg);
+
+unsigned int __wrap_if_nametoindex(const char *ifname)
+{
+    return mockInterfaceLookup ? mockIfindex : __real_if_nametoindex(ifname);
+}
+
+int __wrap_nl_send_auto(struct nl_sock *, struct nl_msg *message)
+{
+    ++dumpRequestCount;
+    auto *header = nlmsg_hdr(message);
+    auto *neighbor = static_cast<struct ndmsg *>(NLMSG_DATA(header));
+    auto *ifindex = nlmsg_find_attr(header, sizeof(*neighbor), NDA_IFINDEX);
+    capturedDumpRequest.type = header->nlmsg_type;
+    capturedDumpRequest.flags = header->nlmsg_flags;
+    capturedDumpRequest.family = neighbor->ndm_family;
+    capturedDumpRequest.headerIfindex = neighbor->ndm_ifindex;
+    capturedDumpRequest.hasIfindexAttribute = ifindex != nullptr;
+    if (ifindex)
+    {
+        capturedDumpRequest.ifindexAttribute = nla_get_u32(ifindex);
+    }
+    header->nlmsg_seq = mockSequence;
+    return mockSendResult;
+}
+
+int __wrap_nl_cb_set(
+    struct nl_cb *cb,
+    enum nl_cb_type type,
+    enum nl_cb_kind kind,
+    nl_recvmsg_msg_cb_t func,
+    void *arg)
+{
+    if (type == NL_CB_VALID)
+    {
+        validCallback = func;
+        validCallbackArg = arg;
+    }
+    else if (type == NL_CB_FINISH)
+    {
+        finishCallback = func;
+        finishCallbackArg = arg;
+    }
+    return __real_nl_cb_set(cb, type, kind, func, arg);
+}
+
+int __wrap_nl_cb_err(
+    struct nl_cb *cb,
+    enum nl_cb_kind kind,
+    nl_recvmsg_err_cb_t func,
+    void *arg)
+{
+    errorCallback = func;
+    errorCallbackArg = arg;
+    return __real_nl_cb_err(cb, kind, func, arg);
+}
+
+int __wrap_poll(struct pollfd *, nfds_t, int)
+{
+    return mockPollResult;
+}
+
+int __wrap_nl_recvmsgs(struct nl_sock *, struct nl_cb *)
+{
+    if (mockReceiveResult < 0)
+    {
+        return mockReceiveResult;
+    }
+
+    if (mockDumpResponse == DumpResponse::KernelError)
+    {
+        struct sockaddr_nl address = {};
+        struct nlmsgerr error = {};
+        error.error = -EINVAL;
+        return errorCallback(&address, &error, errorCallbackArg);
+    }
+
+    if (mockDumpNeighbor)
+    {
+        std::unique_ptr<struct nl_msg, decltype(&nlmsg_free)> neighbor(nlmsg_alloc(), nlmsg_free);
+        if (!neighbor)
+        {
+            return -NLE_NOMEM;
+        }
+        auto *header = nlmsg_put(neighbor.get(), NL_AUTO_PORT, mockSequence,
+                                 RTM_NEWNEIGH, sizeof(struct ndmsg), NLM_F_MULTI);
+        if (!header)
+        {
+            return -NLE_NOMEM;
+        }
+        auto *message = static_cast<struct ndmsg *>(NLMSG_DATA(header));
+        memset(message, 0, sizeof(*message));
+        message->ndm_family = AF_INET6;
+        message->ndm_ifindex = static_cast<int>(mockIfindex);
+        message->ndm_state = NUD_PERMANENT;
+        message->ndm_type = RTN_UNICAST;
+        struct in6_addr address = {};
+        inet_pton(AF_INET6, "fe80::2", &address);
+        const unsigned char mac[] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
+        if (nla_put(neighbor.get(), NDA_DST, sizeof(address), &address) < 0 ||
+            nla_put(neighbor.get(), NDA_LLADDR, sizeof(mac), mac) < 0)
+        {
+            return -NLE_NOMEM;
+        }
+        validCallback(neighbor.get(), validCallbackArg);
+    }
+
+    std::unique_ptr<struct nl_msg, decltype(&nlmsg_free)> message(nlmsg_alloc(), nlmsg_free);
+    int flags = NLM_F_MULTI;
+    if (mockDumpResponse == DumpResponse::Interrupted)
+    {
+        flags |= NLM_F_DUMP_INTR;
+    }
+    auto *header = nlmsg_put(
+        message.get(), NL_AUTO_PORT, mockSequence, NLMSG_DONE, 0, flags);
+    if (!header)
+    {
+        return -NLE_NOMEM;
+    }
+    return finishCallback(message.get(), finishCallbackArg);
 }
 
 }
@@ -116,6 +320,7 @@ class NeighSyncTest : public ::testing::Test
   protected:
     void SetUp() override
     {
+        resetDumpMocks();
         testing_db::reset();
         mockInterfaceName = "Vlan1000";
         m_appDb = std::make_shared<DBConnector>("APPL_DB", 0);
@@ -163,6 +368,123 @@ class NeighSyncTest : public ::testing::Test
     std::shared_ptr<RedisPipeline> m_pipeline;
     std::unique_ptr<NeighSync> m_sync;
 };
+
+TEST_F(NeighSyncTest, SubPortLinkLocalUsesOwnConfigurationTable)
+{
+    Table subInterfaces(m_configDb.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+    Table interfaces(m_configDb.get(), CFG_INTF_TABLE_NAME);
+    Table lags(m_configDb.get(), CFG_LAG_INTF_TABLE_NAME);
+    Table neighbors(m_appDb.get(), APP_NEIGH_TABLE_NAME);
+    interfaces.set("Ethernet0", {{"ipv6_use_link_local_only", "enable"}});
+    lags.set("PortChannel1", {{"ipv6_use_link_local_only", "enable"}});
+
+    for (const std::string name : {"Ethernet0.100", "PortChannel1.100", "Eth0.100", "Po1.100"})
+    {
+        mockInterfaceName = name;
+        const std::string key = name + ":fe80::2";
+        auto neigh = createNeighbor(AF_INET6, "fe80::2", NUD_PERMANENT);
+        ASSERT_TRUE(neigh.get() != nullptr);
+        auto *object = reinterpret_cast<struct nl_object *>(neigh.get());
+        std::vector<FieldValueTuple> fields;
+
+        // Neither parent mode nor a duplicate legacy row enables a sub-port.
+        interfaces.set(name, {{"ipv6_use_link_local_only", "enable"}});
+        lags.set(name, {{"ipv6_use_link_local_only", "enable"}});
+        m_sync->onMsg(RTM_NEWNEIGH, object);
+        EXPECT_FALSE(neighbors.get(key, fields));
+
+        subInterfaces.set(name, {{"ipv6_use_link_local_only", "disable"}});
+        m_sync->onMsg(RTM_NEWNEIGH, object);
+        EXPECT_FALSE(neighbors.get(key, fields));
+        subInterfaces.set(name, {{"ipv6_use_link_local_only", "enable"}});
+        m_sync->onMsg(RTM_NEWNEIGH, object);
+        EXPECT_TRUE(neighbors.get(key, fields));
+        m_sync->onMsg(RTM_DELNEIGH, object);
+        EXPECT_FALSE(neighbors.get(key, fields));
+        subInterfaces.del(name);
+        interfaces.del(name);
+        lags.del(name);
+    }
+}
+
+TEST_F(NeighSyncTest, ReplaysSubPortNeighborAfterWrongTableEnable)
+{
+    mockInterfaceLookup = true;
+    mockDumpNeighbor = true;
+    mockInterfaceName = "Ethernet0.100";
+    LinkLocalResyncState state;
+    Table subInterfaces(m_configDb.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+    Table interfaces(m_configDb.get(), CFG_INTF_TABLE_NAME);
+    Table neighbors(m_appDb.get(), APP_NEIGH_TABLE_NAME);
+    const std::string key = mockInterfaceName + ":fe80::2";
+    const std::deque<KeyOpFieldsValuesTuple> enable = {{
+        mockInterfaceName, SET_COMMAND, {{"ipv6_use_link_local_only", "enable"}},
+    }};
+    const auto replayPending = [&]() {
+        const auto pending = state.getPendingInterfaces();
+        for (const auto &interface : pending)
+        {
+            if (m_sync->resyncLinkLocalNeighbors(interface))
+            {
+                state.markResyncComplete(interface);
+            }
+        }
+    };
+
+    subInterfaces.set(mockInterfaceName, {{"ipv6_use_link_local_only", "disable"}});
+    interfaces.set(mockInterfaceName, {{"ipv6_use_link_local_only", "enable"}});
+    state.process(CFG_INTF_TABLE_NAME, enable);
+    replayPending();
+    EXPECT_EQ(dumpRequestCount, 0);
+    std::vector<FieldValueTuple> fields;
+    EXPECT_FALSE(neighbors.get(key, fields));
+
+    subInterfaces.set(mockInterfaceName, {{"ipv6_use_link_local_only", "enable"}});
+    state.process(CFG_VLAN_SUB_INTF_TABLE_NAME, enable);
+    replayPending();
+    EXPECT_EQ(dumpRequestCount, 1);
+    EXPECT_TRUE(neighbors.get(key, fields));
+}
+
+TEST_F(NeighSyncTest, LinkLocalModeUsesOnlyAuthoritativeTableForEachInterfaceFamily)
+{
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"Ethernet0", CFG_INTF_TABLE_NAME}, {"PortChannel1", CFG_LAG_INTF_TABLE_NAME},
+        {"Vlan100", CFG_VLAN_INTF_TABLE_NAME}, {"Ethernet0.100", CFG_VLAN_SUB_INTF_TABLE_NAME},
+        {"PortChannel1.100", CFG_VLAN_SUB_INTF_TABLE_NAME},
+        {"Eth0.100", CFG_VLAN_SUB_INTF_TABLE_NAME}, {"Po1.100", CFG_VLAN_SUB_INTF_TABLE_NAME},
+        {"lo", ""},
+    };
+    Table neighbors(m_appDb.get(), APP_NEIGH_TABLE_NAME);
+    for (const auto &param : cases)
+    {
+        SCOPED_TRACE(param.first);
+        mockInterfaceName = param.first;
+        auto neighbor = createNeighbor(AF_INET6, "fe80::2", NUD_PERMANENT);
+        ASSERT_TRUE(neighbor.get() != nullptr);
+        const auto key = param.first + ":fe80::2";
+        for (const bool enabled : {true, false})
+        {
+            for (const std::string name : {CFG_INTF_TABLE_NAME, CFG_LAG_INTF_TABLE_NAME,
+                                          CFG_VLAN_INTF_TABLE_NAME, CFG_VLAN_SUB_INTF_TABLE_NAME})
+            {
+                Table table(m_configDb.get(), name);
+                table.set(param.first, {{"ipv6_use_link_local_only",
+                    (name == param.second) == enabled ? "enable" : "disable"}});
+            }
+            m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neighbor.get()));
+            std::vector<FieldValueTuple> fields;
+            EXPECT_EQ(neighbors.get(key, fields), enabled && !param.second.empty());
+            neighbors.del(key);
+        }
+        for (const std::string name : {CFG_INTF_TABLE_NAME, CFG_LAG_INTF_TABLE_NAME,
+                                      CFG_VLAN_INTF_TABLE_NAME, CFG_VLAN_SUB_INTF_TABLE_NAME})
+        {
+            Table table(m_configDb.get(), name);
+            table.del(param.first);
+        }
+    }
+}
 
 TEST_F(NeighSyncTest, PublishesDualTorFailedIpv6Neighbor)
 {
@@ -282,6 +604,71 @@ TEST_F(NeighSyncTest, RemovesStaleFailedNeighborOnNonVlanInterface)
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
 
     EXPECT_FALSE(failedNeighborExists("2001:db8:3::1"));
+}
+
+TEST_F(NeighSyncTest, SendsInterfaceFilteredIpv6NeighborDump)
+{
+    mockInterfaceLookup = true;
+
+    EXPECT_TRUE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+
+    EXPECT_EQ(dumpRequestCount, 1);
+    EXPECT_EQ(capturedDumpRequest.type, RTM_GETNEIGH);
+    EXPECT_EQ(capturedDumpRequest.flags & (NLM_F_REQUEST | NLM_F_DUMP),
+              NLM_F_REQUEST | NLM_F_DUMP);
+    EXPECT_EQ(capturedDumpRequest.family, AF_INET6);
+    EXPECT_EQ(capturedDumpRequest.headerIfindex, 0);
+    EXPECT_TRUE(capturedDumpRequest.hasIfindexAttribute);
+    EXPECT_EQ(capturedDumpRequest.ifindexAttribute, mockIfindex);
+}
+
+TEST_F(NeighSyncTest, DoesNotSendDumpForUnknownInterface)
+{
+    mockInterfaceLookup = true;
+    mockIfindex = 0;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+    EXPECT_EQ(dumpRequestCount, 0);
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpSendFails)
+{
+    mockInterfaceLookup = true;
+    mockSendResult = -NLE_FAILURE;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpReceiveFails)
+{
+    mockInterfaceLookup = true;
+    mockReceiveResult = -NLE_AGAIN;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpReceiveTimesOut)
+{
+    mockInterfaceLookup = true;
+    mockPollResult = 0;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenDumpIsInterrupted)
+{
+    mockInterfaceLookup = true;
+    mockDumpResponse = DumpResponse::Interrupted;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, FailsWhenKernelRejectsDump)
+{
+    mockInterfaceLookup = true;
+    mockDumpResponse = DumpResponse::KernelError;
+
+    EXPECT_FALSE(m_sync->resyncLinkLocalNeighbors("Ethernet0"));
 }
 
 } // namespace
