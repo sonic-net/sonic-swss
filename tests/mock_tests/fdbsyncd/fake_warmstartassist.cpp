@@ -16,6 +16,7 @@ AppRestartAssist::~AppRestartAssist()
 
 void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerStateTable *psTable)
 {
+    m_psTables[tableName] = psTable;
 }
 
 // join the field-value strings for straight printing.
@@ -44,11 +45,13 @@ void AppRestartAssist::readTablesToMap()
 
 void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldValueTuple> fvVector, bool delete_key)
 {
+    appTableCacheMap[tableName][key] = fvVector;
 }
 
 
 void AppRestartAssist::reconcile()
 {
+    m_warmStartInProgress = false;
 }
 
 void AppRestartAssist::setReconcileInterval(uint32_t time)

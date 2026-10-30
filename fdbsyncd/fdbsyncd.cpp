@@ -98,6 +98,7 @@ int main(int argc, char **argv)
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());
             s.addSelectable(sync.getCfgEvpnNvoTable());
+            s.addSelectable(sync.getStateFdbSyncTable());
             while (true)
             {
                 s.select(&temps);
@@ -113,6 +114,10 @@ int main(int argc, char **argv)
                 else if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
                     sync.processCfgEvpnNvo();
+                }
+                else if (temps == (Selectable *)sync.getStateFdbSyncTable())
+                {
+                    sync.processStateFdbSync();
                 }
                 else if (temps == &replayCheckTimer)
                 {
@@ -155,6 +160,7 @@ int main(int argc, char **argv)
                             sync.getRestartAssist()->stopReconcileTimer(s);
                             sync.getRestartAssist()->reconcile();
                             SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete");
+                            sync.applyPendingMacSyncMode();
                         }
                     }
                 }

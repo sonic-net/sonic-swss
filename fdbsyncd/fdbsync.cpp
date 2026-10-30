@@ -3,6 +3,7 @@
 
 #include <string>
 #include <algorithm>
+#include <cstdlib>
 #include <netinet/in.h>
 #include <linux/nexthop.h>
 #include <netlink/route/link.h>
@@ -28,9 +29,6 @@ using namespace std;
 using namespace swss;
 
 #define VXLAN_BR_IF_NAME_PREFIX    "Brvxlan"
-#ifndef RTPROT_HW
-#define RTPROT_HW 193  /* Protocol ID for hardware learned routes */
-#endif
 
 namespace
 {
@@ -103,19 +101,224 @@ bool FdbSync::parseFdbStateKey(const string &key, string &vlanName, string &macA
 
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
+    m_fdbTableRead(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME, false),
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
     m_l2NhgTable(pipelineAppDB, APP_L2_NEXTHOP_GROUP_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
-    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
+    m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME),
+    m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
+    m_stateFdbSyncTableRead(stateDb, STATE_FDB_SYNC_TABLE_NAME),
+    m_cfgFdbSyncTableRead(config_db, CFG_FDB_SYNC_TABLE_NAME)
 {
+    string subtype;
+    Table deviceMetadata(config_db, CFG_DEVICE_METADATA_TABLE_NAME);
+
+    m_l3EvpnMh = deviceMetadata.hget("localhost", "subtype", subtype) && subtype == "L3EvpnMH";
+    readMacSyncMode();
+
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
     {
-        m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
+        /*
+         * Only the producer of a table may drive its warm-restart
+         * reconciliation: reconcile() deletes every entry left STALE. In FPM
+         * mode fpmsyncd produces APP_VXLAN_FDB_TABLE, so registering it here
+         * would delete all remote MACs across a warm reboot.
+         */
+        if (!m_fpmMacSync)
+        {
+            m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
+        }
         m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
     }
-    m_isFdbProtoSupported = checkFdbProtoSupport();
+}
+
+/*
+ * fdbsyncd runs in the swss container, which a bgp restart leaves running, so it
+ * follows the mode fpmsyncd publishes when it starts: the mode zebra and fpmsyncd
+ * run, which changes when the bgp container restarts. Before fpmsyncd has published
+ * one, at boot, the configured mode applies, which is the one fpmsyncd will run.
+ */
+void FdbSync::readMacSyncMode()
+{
+    string mode;
+
+    if (!m_stateFdbSyncTableRead.hget("global", "mac_sync_mode", mode))
+    {
+        m_cfgFdbSyncTableRead.hget("global", "mac_sync_mode", mode);
+    }
+    setMacSyncMode(mode);
+}
+
+void FdbSync::setMacSyncMode(const string& mode)
+{
+    /*
+     * The tables fdbsyncd reconciles after a warm restart were registered at
+     * startup for the mode then, and reconcile() writes through those
+     * registrations, so a mode change waits until reconciliation is done.
+     */
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+    {
+        m_pendingMacSyncMode = mode;
+        m_macSyncModePending = true;
+        SWSS_LOG_NOTICE("FdbSync: mac_sync_mode '%s' held until warm-restart reconciliation completes",
+                        mode.c_str());
+        return;
+    }
+
+    bool fpmMacSync = m_l3EvpnMh || (mode == "fpm");
+
+    if (fpmMacSync == m_fpmMacSync)
+    {
+        return;
+    }
+
+    m_fpmMacSync = fpmMacSync;
+    SWSS_LOG_NOTICE("FdbSync: mac_sync_mode is now %s", m_fpmMacSync ? "fpm" : "kernel");
+
+    if (!m_fpmMacSync)
+    {
+        adoptRemoteMacs();
+        updateAllLocalMac();
+    }
+    else
+    {
+        /* fpmsyncd writes APP_VXLAN_FDB_TABLE in this mode. */
+        m_mac.clear();
+    }
+}
+
+void FdbSync::applyPendingMacSyncMode()
+{
+    if (!m_macSyncModePending)
+    {
+        return;
+    }
+
+    m_macSyncModePending = false;
+    setMacSyncMode(m_pendingMacSyncMode);
+}
+
+/*
+ * Take over the remote MACs fpmsyncd wrote to APP_VXLAN_FDB_TABLE in fpm mode,
+ * so a kernel withdrawal still removes them. The VxLAN device of a MAC with a
+ * VTEP or a nexthop group is the one named <tunnel>-<VLAN id>, when known. A MAC
+ * fpmsyncd programmed against a local Ethernet Segment port has no producer in
+ * kernel mode, so no kernel event would refresh or withdraw it: it is removed.
+ */
+void FdbSync::adoptRemoteMacs()
+{
+    std::vector<std::string> keys;
+    std::unordered_map<std::string, std::string> vlanDevice;
+    size_t adopted = 0;
+    size_t removed = 0;
+
+    for (const auto &intf : m_intf_info)
+    {
+        const std::string &name = intf.second.ifname;
+        auto dash = name.rfind('-');
+        if (dash != std::string::npos && dash + 1 < name.size())
+        {
+            vlanDevice.emplace("Vlan" + name.substr(dash + 1), name);
+        }
+    }
+
+    m_mac.clear();
+    m_fdbTableRead.getKeys(keys);
+
+    for (const auto &key : keys)
+    {
+        std::vector<FieldValueTuple> values;
+        if (!m_fdbTableRead.get(key, values))
+        {
+            continue;
+        }
+
+        m_mac_info info{};
+        info.nhtype = FdbDest::UNKNOWN;
+        for (const auto &fv : values)
+        {
+            const std::string &field = fvField(fv);
+            const std::string &value = fvValue(fv);
+
+            if (field == "remote_vtep")
+            {
+                info.nhtype = FdbDest::VTEP;
+                info.nexthop_value = value;
+            }
+            else if (field == "nexthop_group")
+            {
+                info.nhtype = FdbDest::NEXTHOPGROUP;
+                info.nexthop_value = value;
+            }
+            else if (field == "ifname")
+            {
+                info.ifname = value;
+            }
+            else if (field == "type")
+            {
+                info.type = value;
+            }
+            else if (field == "vni")
+            {
+                info.vni = static_cast<unsigned int>(strtoul(value.c_str(), NULL, 10));
+            }
+        }
+
+        if (info.nhtype == FdbDest::UNKNOWN && !info.ifname.empty())
+        {
+            m_fdbTable.del(key);
+            removed++;
+            continue;
+        }
+        if (info.nhtype == FdbDest::UNKNOWN)
+        {
+            SWSS_LOG_WARN("FdbSync: VXLAN_FDB_TABLE entry %s has no destination, not taken over", key.c_str());
+            continue;
+        }
+
+        auto device = vlanDevice.find(key.substr(0, key.find(':')));
+        if (device != vlanDevice.end())
+        {
+            info.ifname = device->second;
+        }
+
+        m_mac[key] = info;
+        adopted++;
+    }
+
+    SWSS_LOG_NOTICE("FdbSync: took over %zu remote MACs from APPL_DB, removed %zu on local Ethernet Segment ports",
+                    adopted, removed);
+}
+
+void FdbSync::processStateFdbSync()
+{
+    std::deque<KeyOpFieldsValuesTuple> entries;
+
+    m_stateFdbSyncTable.pops(entries);
+
+    for (auto& entry : entries)
+    {
+        processStateFdbSyncEntry(entry);
+    }
+}
+
+void FdbSync::processStateFdbSyncEntry(const KeyOpFieldsValuesTuple& entry)
+{
+    /* Without a published mode, the last one fpmsyncd ran still applies. */
+    if (kfvKey(entry) != "global" || kfvOp(entry) != SET_COMMAND)
+    {
+        return;
+    }
+
+    for (auto& fv : kfvFieldsValues(entry))
+    {
+        if (fvField(fv) == "mac_sync_mode")
+        {
+            setMacSyncMode(fvValue(fv));
+        }
+    }
 }
 
 FdbSync::~FdbSync()
@@ -124,31 +327,6 @@ FdbSync::~FdbSync()
     {
         delete m_AppRestartAssist;
     }
-}
-
-bool FdbSync::checkFdbProtoSupport()
-{
-    /* Test whether the local bridge command and kernel both support the
-     * exact proto syntax used below. Some iproute2 versions advertise a
-     * protocol field but still reject the "proto hw" spelling/name. */
-    std::string res;
-    int ret = swss::exec("bridge fdb help 2>&1 | grep -q proto", res);
-    if (ret != 0)
-    {
-        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
-        return false;
-    }
-
-    ret = swss::exec("bridge fdb add 00:00:00:00:00:00 dev lo proto hw 2>/dev/null", res);
-    swss::exec("bridge fdb del 00:00:00:00:00:00 dev lo 2>/dev/null", res);
-    if (ret != 0)
-    {
-        SWSS_LOG_NOTICE("bridge fdb proto support not detected");
-        return false;
-    }
-
-    SWSS_LOG_NOTICE("bridge fdb proto support detected");
-    return true;
 }
 
 // Check if interface entries are restored in kernel
@@ -428,7 +606,6 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 {
     char *op;
     char *type;
-    std::string proto_string = "";
     string port_name = "";
     string key = info->vid + ":" + info->mac;
     short fdb_type;    /*dynamic or static*/
@@ -475,10 +652,16 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         return;
     }
 
+    if (m_fpmMacSync)
+    {
+        /* fpmsyncd carries local MACs to zebra over FPM in this mode. */
+        SWSS_LOG_INFO("Ignore kernel update, MAC sync runs over FPM, MAC %s", key.c_str());
+        return;
+    }
+
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
         type = "dynamic extern_learn";
-        proto_string = m_isFdbProtoSupported ? " proto hw" : "";
     }
     else
     {
@@ -487,7 +670,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 
     const std::string cmds = std::string("")
         + " bridge fdb " + op + " " + info->mac + " dev "
-        + port_name + " master " + type + " vlan " + info->vid.substr(4) + proto_string;
+        + port_name + " master " + type + " vlan " + info->vid.substr(4);
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -521,7 +704,11 @@ void FdbSync::addLocalMac(string key, string op)
     string mac = "";
     string vlan_name = "";
     string vlan = "";
-    std::string proto_string = "";
+
+    if (m_fpmMacSync)
+    {
+        return;
+    }
 
     if (!parseFdbStateKey(key, vlan_name, mac))
     {
@@ -553,7 +740,6 @@ void FdbSync::addLocalMac(string key, string op)
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
             type = "dynamic extern_learn";
-            proto_string = m_isFdbProtoSupported ? " proto hw" : "";
         }
         else
         {
@@ -562,8 +748,7 @@ void FdbSync::addLocalMac(string key, string op)
 
         const std::string cmds = std::string("")
                 + " bridge fdb " + op + " " + mac + " dev "
-                + port_name + " master " + type  + " vlan " + vlan
-                + proto_string;
+                + port_name + " master " + type  + " vlan " + vlan;
 
         std::string res;
         int ret = swss::exec(cmds, res);
@@ -584,7 +769,6 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
     string port_name = "";
     string key = info->vid + ":" + info->mac;
     short fdb_type;    /*dynamic or static*/
-    std::string proto_string = "";
 
     if (
         info->op_type == FDB_OPER_ADD &&
@@ -625,7 +809,6 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
         type = "dynamic extern_learn";
-        proto_string = m_isFdbProtoSupported ? " proto hw" : "";
     }
     else
     {
@@ -634,7 +817,7 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
 
     const std::string cmds = std::string("")
         + " bridge fdb " + op + " " + info->mac + " dev "
-        + port_name + " master " + type + " vlan " + info->vid.substr(4) + proto_string;
+        + port_name + " master " + type + " vlan " + info->vid.substr(4);
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -644,12 +827,11 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
     return;
 }
 
-void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, uint8_t protocol)
+void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac)
 {
     string key = "Vlan" + to_string(vlan) + ":" + mac;
     int type = 0;
     string port_name = "";
-    std::string proto_string = "";
 
     SWSS_LOG_INFO("Updating Intf %d, Vlan:%d MAC:%s Key %s", ifindex, vlan, mac.c_str(), key.c_str());
 
@@ -657,18 +839,13 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, u
     {
         type = m_mclag_remote_fdb_mac[key].type;
         port_name = m_mclag_remote_fdb_mac[key].port_name;
-        if (protocol == RTPROT_ZEBRA)
-            proto_string = m_isFdbProtoSupported ? " proto zebra" : "";
-        else if (protocol == RTPROT_HW)
-            /* Unlikely this can happen, but keeping just in case */
-            proto_string = m_isFdbProtoSupported ? " proto hw" : "";
-        SWSS_LOG_INFO(" port %s, type %d %s\n", port_name.c_str(), type, proto_string.c_str());
+        SWSS_LOG_INFO(" port %s, type %d\n", port_name.c_str(), type);
 
         if (type == FDB_TYPE_STATIC)
         {
             const std::string cmds = std::string("")
                 + " bridge fdb replace" + " " + mac + " dev "
-                + port_name + " master static vlan " + to_string(vlan) + proto_string;
+                + port_name + " master static vlan " + to_string(vlan);
 
             std::string res;
             int ret = swss::exec(cmds, res);
@@ -691,12 +868,19 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, u
  * If MAC is still present in the state DB cache then fdbsyncd will be 
  * re-programmed with MAC in the Kernel
  */
-void FdbSync::macRefreshStateDB(int vlan, string kmac, uint8_t protocol)
+void FdbSync::macRefreshStateDB(int vlan, string kmac)
 {
+    /* Reached from onMsgNbr() ahead of its own fpm check: in fpm mode the kernel
+     * bridge is not the transport, so refreshing it there is both useless and a
+     * process spawn per MAC. */
+    if (m_fpmMacSync)
+    {
+        return;
+    }
+
     string key = "Vlan" + to_string(vlan) + ":" + kmac;
     char *type;
     string port_name = "";
-    std::string proto_string = "";
 
     SWSS_LOG_INFO("Refreshing Vlan:%d MAC route MAC:%s Key %s", vlan, kmac.c_str(), key.c_str());
 
@@ -718,14 +902,9 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac, uint8_t protocol)
             type = "static";
         }
 
-        if (protocol == RTPROT_ZEBRA)
-            proto_string = m_isFdbProtoSupported ? " proto zebra" : "";
-        else if (protocol == RTPROT_HW)
-            proto_string = m_isFdbProtoSupported ? " proto hw" : "";
-
         const std::string cmds = std::string("")
             + " bridge fdb " + "replace" + " " + kmac + " dev "
-            + port_name + " master " + type  + " vlan " + to_string(vlan) + proto_string;
+            + port_name + " master " + type  + " vlan " + to_string(vlan);
 
         std::string res;
         int ret = swss::exec(cmds, res);
@@ -829,12 +1008,10 @@ void FdbSync::macDelVxlanDB(string key)
     string type = m_mac[key].type;
     string vni = to_string(m_mac[key].vni);
     string ifname = m_mac[key].ifname;
-    string protocol = to_string(m_mac[key].protocol);
 
     FieldValueTuple t("type", type);
     FieldValueTuple v("vni", vni);
     FieldValueTuple f("ifname", ifname);
-    FieldValueTuple p("protocol", protocol);
 
     if (m_mac[key].nhtype == FdbDest::VTEP)
     {
@@ -842,8 +1019,8 @@ void FdbSync::macDelVxlanDB(string key)
         string vtep = m_mac[key].nexthop_value;
         FieldValueTuple nh("remote_vtep", vtep);
         fvVector.push_back(nh);
-        SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s vni:%s protocol:%u",
-                        key.c_str(), vtep.c_str(), type.c_str(), vni.c_str(), m_mac[key].protocol);
+        SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s vni:%s",
+                        key.c_str(), vtep.c_str(), type.c_str(), vni.c_str());
     }
     else if (m_mac[key].nhtype == FdbDest::NEXTHOPGROUP)
     {
@@ -851,8 +1028,8 @@ void FdbSync::macDelVxlanDB(string key)
         string nexthop_group = m_mac[key].nexthop_value;
         FieldValueTuple nh("nexthop_group", nexthop_group);
         fvVector.push_back(nh);
-        SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s nexthop_group:%s type:%s vni:%s protocol:%u",
-                        key.c_str(), nexthop_group.c_str(), type.c_str(), vni.c_str(), m_mac[key].protocol);
+        SWSS_LOG_NOTICE("VXLAN_FDB_TABLE: DEL_KEY %s nexthop_group:%s type:%s vni:%s",
+                        key.c_str(), nexthop_group.c_str(), type.c_str(), vni.c_str());
     }
     else if (m_mac[key].nhtype == FdbDest::IFNAME)
     {
@@ -860,14 +1037,13 @@ void FdbSync::macDelVxlanDB(string key)
         string ifname = m_mac[key].nexthop_value;
         FieldValueTuple nh("ifname", ifname);
         fvVector.push_back(nh);
-        SWSS_LOG_INFO("VXLAN_FDB_TABLE: DEL_KEY %s ifname:%s type:%s vni:%s protocol:%u",
-                        key.c_str(), ifname.c_str(), type.c_str(), vni.c_str(), m_mac[key].protocol);
+        SWSS_LOG_INFO("VXLAN_FDB_TABLE: DEL_KEY %s ifname:%s type:%s vni:%s",
+                        key.c_str(), ifname.c_str(), type.c_str(), vni.c_str());
     }
 
     fvVector.push_back(t);
     fvVector.push_back(v);
     fvVector.push_back(f);
-    fvVector.push_back(p);
 
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
@@ -882,7 +1058,7 @@ void FdbSync::macDelVxlanDB(string key)
 }
 
 void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_t vni, string intf_name,
-     string nexthop_group, FdbDest dest_type, uint8_t protocol)
+     string nexthop_group, FdbDest dest_type)
 {
     std::vector<FieldValueTuple> fvVector;
     string svni = to_string(vni);
@@ -891,11 +1067,9 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
     m_mac[key].type = type;
     m_mac[key].vni = vni;
     m_mac[key].ifname = intf_name;
-    m_mac[key].protocol = protocol;
 
     FieldValueTuple fv_type("type", type);
     FieldValueTuple fv_vni("vni", svni);
-    FieldValueTuple fv_protocol("protocol", to_string(protocol));
 
     if (dest_type == FdbDest::NEXTHOPGROUP)
     {
@@ -905,8 +1079,8 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         m_mac[key].nexthop_value = nexthop_group;
         FieldValueTuple nh("nexthop_group", nexthop_group);
         fvVector.push_back(nh);
-        SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s nexthop_group:%s type:%s vni:%s ifname:%s protocol:%u",
-                      key.c_str(), nexthop_group.c_str(), type.c_str(), svni.c_str(), intf_name.c_str(), protocol);
+        SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s nexthop_group:%s type:%s vni:%s ifname:%s",
+                      key.c_str(), nexthop_group.c_str(), type.c_str(), svni.c_str(), intf_name.c_str());
     }
     else if (dest_type == FdbDest::VTEP)
     {
@@ -918,8 +1092,8 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         m_mac[key].nexthop_value = svtep;
         FieldValueTuple nh("remote_vtep", svtep);
         fvVector.push_back(nh);
-        SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s vni:%s ifname:%s protocol:%u",
-                      key.c_str(), svtep.c_str(), type.c_str(), svni.c_str(), intf_name.c_str(), protocol);
+        SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s vni:%s ifname:%s",
+                      key.c_str(), svtep.c_str(), type.c_str(), svni.c_str(), intf_name.c_str());
     }
     else if (dest_type == FdbDest::IFNAME)
     {
@@ -929,8 +1103,8 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
         m_mac[key].nexthop_value = intf_name;
         FieldValueTuple fv_ifname("ifname", intf_name);
         fvVector.push_back(fv_ifname);
-        SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s ifname:%s type:%s vni:%s ifname:%s protocol:%u",
-                      key.c_str(), intf_name.c_str(), type.c_str(), svni.c_str(), intf_name.c_str(), protocol);
+        SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s ifname:%s type:%s vni:%s ifname:%s",
+                      key.c_str(), intf_name.c_str(), type.c_str(), svni.c_str(), intf_name.c_str());
     } else {
         SWSS_LOG_ERROR("VXLAN_FDB_TABLE: dest_type:%d is invalid, ADD_KEY %s type:%s vni:%s ifname:%s",
                 static_cast<int>(dest_type), key.c_str(), type.c_str(), svni.c_str(), intf_name.c_str());
@@ -939,10 +1113,6 @@ void FdbSync::macAddVxlan(string key, struct nl_addr *vtep, string type, uint32_
 
     fvVector.push_back(fv_type);
     fvVector.push_back(fv_vni);
-    if (protocol != RTPROT_UNSPEC)
-    {
-        fvVector.push_back(fv_protocol);
-    }
 
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
@@ -962,25 +1132,25 @@ void FdbSync::macDelVxlan(string key)
     {
         if (m_mac[key].nhtype == FdbDest::VTEP)
         {
-            SWSS_LOG_INFO("DEL_KEY %s vtep:%s type:%s vni:%s ifname:%s protocol:%u", key.c_str(),
+            SWSS_LOG_INFO("DEL_KEY %s vtep:%s type:%s vni:%s ifname:%s", key.c_str(),
                            m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
-                           to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol);
+                           to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str());
         }
         else if (m_mac[key].nhtype == FdbDest::NEXTHOPGROUP)
         {
-            SWSS_LOG_INFO("DEL_KEY %s nexthop:%s type:%s vni:%s ifname:%s protocol:%u", key.c_str(),
+            SWSS_LOG_INFO("DEL_KEY %s nexthop:%s type:%s vni:%s ifname:%s", key.c_str(),
                            m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
-                           to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol);
+                           to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str());
         }
         else if (m_mac[key].nhtype == FdbDest::IFNAME)
         {
-            SWSS_LOG_INFO("DEL_KEY %s ifname:%s type:%s vni:%s protocol:%u", key.c_str(),
+            SWSS_LOG_INFO("DEL_KEY %s ifname:%s type:%s vni:%s", key.c_str(),
                            m_mac[key].nexthop_value.c_str(), m_mac[key].type.c_str(),
-                           to_string(m_mac[key].vni).c_str(), m_mac[key].protocol);
+                           to_string(m_mac[key].vni).c_str());
         }
         else {
-            SWSS_LOG_ERROR("DEL_KEY %s type: %s vni:%s ifname:%s protocol:%u, entry nhtype is invalid, nhtype: %d", key.c_str(),
-                m_mac[key].type.c_str(), to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), m_mac[key].protocol, static_cast<int>(m_mac[key].nhtype));
+            SWSS_LOG_ERROR("DEL_KEY %s type: %s vni:%s ifname:%s, entry nhtype is invalid, nhtype: %d", key.c_str(),
+                m_mac[key].type.c_str(), to_string(m_mac[key].vni).c_str(), m_mac[key].ifname.c_str(), static_cast<int>(m_mac[key].nhtype));
 
         }
         macDelVxlanDB(key);
@@ -1075,7 +1245,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
             int vid = rtnl_neigh_get_vlan(neigh);
             if (state & NUD_PERMANENT)
             {
-                updateMclagRemoteMacPort(ifindex, vid, macStr, RTPROT_UNSPEC);
+                updateMclagRemoteMacPort(ifindex, vid, macStr);
             }
         }
 
@@ -1109,7 +1279,7 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
         vlan = rtnl_neigh_get_vlan(neigh);
         if (m_isEvpnNvoExist)
         {
-            macRefreshStateDB(vlan, macStr, RTPROT_UNSPEC);
+            macRefreshStateDB(vlan, macStr);
         }
         return;
     }
@@ -1181,9 +1351,20 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
     key += ":";
     key += macStr;
 
+    /*
+     * Only unicast MACs move to the FPM channel. IMET/remote-VNI handling
+     * above still comes from the kernel, so the gate cannot sit on the whole
+     * neighbour path.
+     */
+    if (m_fpmMacSync)
+    {
+        SWSS_LOG_INFO("Ignore kernel remote MAC, MAC sync runs over FPM, key %s", key.c_str());
+        return;
+    }
+
     if (!delete_key)
     {
-        macAddVxlan(key, vtep_addr, type, vni, ifname, nexthop_group, dest_type, RTPROT_UNSPEC);
+        macAddVxlan(key, vtep_addr, type, vni, ifname, nexthop_group, dest_type);
     }
     else
     {
