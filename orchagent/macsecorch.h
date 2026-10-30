@@ -41,7 +41,8 @@ public:
 private:
     void doTask(Consumer &consumer);
     void doTask(NotificationConsumer &consumer);
-    void handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry);
+    void handleNotification(swss::KeyOpFieldsValuesTuple& entry);
+    void handleMacsecPostNotification(const std::string &op, const std::string &data);
 
 public:
     using TaskArgs = std::vector<FieldValueTuple>;
