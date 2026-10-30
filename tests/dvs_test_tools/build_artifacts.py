@@ -46,12 +46,11 @@ def main():
     output = subprocess.check_output([str((args.output/'sai_constants').resolve())], text=True)
     manifest = {'constants': {k:int(v) for k,v in (line.split('=') for line in output.splitlines())}}
     header = swss/'fpmsyncd/fpm/fpm.h'
-    contract = swss/'fpmsyncd/fpm/fpm_protection.h'
     encoder = tools/'fpm_encoder.cpp'
     subprocess.run(['c++', '-std=c++14', '-Wall', '-Wextra', '-Werror',
                     '-I'+str(swss), str(encoder), '-o', str(args.output/'fpm_encoder')], check=True)
     manifest['sources'] = {str(path):hashlib.sha256(path.read_bytes()).hexdigest()
-                           for path in (encoder,header,contract,args.sai/'inc/saibridge.h',tools/'sai_fault_shim.cpp',Path(__file__))}
+                           for path in (encoder,header,args.sai/'inc/saibridge.h',tools/'sai_fault_shim.cpp',Path(__file__))}
     manifest['scope'] = 'Synthetic reference wire encoder using the SWSS contract; not live FRR integration.'
     (args.output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 
