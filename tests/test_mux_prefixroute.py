@@ -256,16 +256,26 @@ class TestMuxTunnelBase():
         assert tunnel_nh_id
 
     def check_nexthop_in_asic_db(self, asicdb, key, standby=False):
+        # orchagent programs a route over a mux neighbor in several steps (a
+        # standby neighbor prefix route starts as neighbor next hop + drop and
+        # then moves to tunnel next hop + forward), so wait for the end state.
+        def _access_function():
+            fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
+            if not fvs:
+                return (False, None)
 
-        fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
-        if not fvs:
-            assert False
+            nhid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            action = fvs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_FORWARD")
+            forwarding = action != "SAI_PACKET_ACTION_DROP"
+            return (forwarding and (nhid == tunnel_nh_id) == standby, (nhid, action))
 
-        nhid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
-        if standby:
-            assert (nhid == tunnel_nh_id)
-        else:
-            assert (nhid != tunnel_nh_id)
+        status, result = wait_for_result(
+            _access_function,
+            PollingConfig(polling_interval=0.01, timeout=5.0, strict=False)
+        )
+
+        assert status, "Route {} has (next hop, packet action) {}, expected {} tunnel next hop {} and no drop".format(
+            key, result, "the" if standby else "anything but the", tunnel_nh_id)
 
     def check_nexthop_group_in_asic_db(self, asicdb, key, num_tnl_nh=0):
 

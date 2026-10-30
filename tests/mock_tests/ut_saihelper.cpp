@@ -112,6 +112,7 @@ namespace ut_helper
         sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, (void**)&sai_dash_outbound_port_map_api);
         sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI, (void**)&sai_dash_trusted_vni_api);
         sai_api_query(SAI_API_STP, (void**)&sai_stp_api);
+        sai_api_query(SAI_API_L2MC_GROUP, (void**)&sai_l2mc_group_api);
         sai_api_query((sai_api_t)SAI_API_DASH_METER, (void**)&sai_dash_meter_api);
         return SAI_STATUS_SUCCESS;
     }
@@ -153,6 +154,7 @@ namespace ut_helper
         sai_dash_ha_api = nullptr;
         sai_dash_flow_api = nullptr;
         sai_stp_api = nullptr;
+        sai_l2mc_group_api = nullptr;
         sai_dash_meter_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
