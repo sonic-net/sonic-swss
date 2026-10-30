@@ -107,6 +107,12 @@ copp_group_queue4_group3 = {
         "queue": "4"
 }
 
+copp_group_queue3_group1 = {
+    "trap_action":"trap",
+    "trap_priority":"4",
+    "queue": "3"
+}
+
 copp_group_queue1_group1 = {
         "trap_action":"trap",
         "trap_priority":"1",
@@ -168,9 +174,9 @@ copp_trap = {
         "bgp": ["bgp;bgpv6", copp_group_queue4_group1],
         "lacp": ["lacp", copp_group_queue4_group1, "always_enabled"],
         "arp": ["arp_req;arp_resp;neigh_discovery", copp_group_queue4_group2, "always_enabled"],
-        "lldp": ["lldp", copp_group_queue4_group3],
+        "lldp": ["lldp", copp_group_queue3_group1],
         "dhcp": ["dhcp;dhcpv6", copp_group_queue4_group3],
-        "udld": ["udld", copp_group_queue4_group3, "always_enabled"],
+        "udld": ["udld", copp_group_queue3_group1, "always_enabled"],
         "ip2me": ["ip2me", copp_group_queue1_group1, "always_enabled"],
         "nat": ["src_nat_miss;dest_nat_miss", copp_group_queue1_group2],
         "sflow": ["sample_packet", copp_group_queue2_group1],
@@ -845,7 +851,7 @@ class TestCopp(object):
 
     def test_disabled_feature_always_enabled_trap(self, dvs, testlog):
         self.setup_copp(dvs)
-        fvs = swsscommon.FieldValuePairs([("trap_ids", "lldp"), ("trap_group", "queue4_group3"), ("always_enabled", "true")])
+        fvs = swsscommon.FieldValuePairs([("trap_ids", "lldp"), ("trap_group", "queue3_group1"), ("always_enabled", "true")])
         self.trap_ctbl.set("lldp", fvs)
         fvs = swsscommon.FieldValuePairs([("state", "disabled")])
         self.feature_tbl.set("lldp", fvs)
@@ -877,7 +883,7 @@ class TestCopp(object):
             assert trap_found == True
 
         # change always_enabled to be false and check the trap is not installed:
-        fvs = swsscommon.FieldValuePairs([("trap_ids", "lldp"), ("trap_group", "queue4_group3"), ("always_enabled", "false")])
+        fvs = swsscommon.FieldValuePairs([("trap_ids", "lldp"), ("trap_group", "queue3_group1"), ("always_enabled", "false")])
         self.trap_ctbl.set("lldp", fvs)
         time.sleep(2)
 
@@ -888,7 +894,7 @@ class TestCopp(object):
                 table_found = False
 
         # teardown
-        fvs = swsscommon.FieldValuePairs([("trap_ids", "lldp"), ("trap_group", "queue4_group3")])
+        fvs = swsscommon.FieldValuePairs([("trap_ids", "lldp"), ("trap_group", "queue3_group1")])
         self.trap_ctbl.set("lldp", fvs)
         fvs = swsscommon.FieldValuePairs([("state", "enabled")])
         self.feature_tbl.set("lldp", fvs)
