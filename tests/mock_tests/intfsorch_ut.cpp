@@ -15,6 +15,8 @@ namespace intfsorch_test
     using namespace std;
 
     int create_rif_count = 0;
+    int src_mac_set_count = 0;
+    std::string last_set_src_mac;
     int remove_rif_count = 0;
     bool saw_loopback_action = false;
     bool fail_next_rif_set = false;
@@ -45,6 +47,11 @@ namespace intfsorch_test
             _In_ sai_object_id_t router_interface_id,
             _In_ const sai_attribute_t *attr)
     {
+        if (attr->id == SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS)
+        {
+            ++src_mac_set_count;
+            last_set_src_mac = swss::MacAddress(attr->value.mac).to_string();
+        }
         if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
         {
             ++loopback_action_set_count;
@@ -88,6 +95,8 @@ namespace intfsorch_test
             sai_router_intfs_api->remove_router_interface = _ut_remove_router_interface;
             sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
             saw_loopback_action = false;
+            src_mac_set_count = 0;
+            last_set_src_mac.clear();
             fail_next_rif_set = false;
             loopback_action_set_count = 0;
             last_loopback_action = SAI_PACKET_ACTION_FORWARD;
@@ -575,5 +584,111 @@ namespace intfsorch_test
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
         ASSERT_EQ(port.m_nat_zone_id, 7u);
+    }
+
+    // VLAN_TABLE entry as vlanmgrd sends it: mac is the VLAN's mac, else the system MAC
+    static KeyOpFieldsValuesTuple vlanEntry(const string &vlan, const string &mac)
+    {
+        return {vlan, "SET", {{"admin_status", "up"}, {"mtu", "9100"}, {"mac", mac}, {"host_ifname", ""}}};
+    }
+
+    // Source MAC of the VLAN's router interface as the SAI has it
+    static string rifSrcMac(const string &alias)
+    {
+        Port port;
+        if (!gPortsOrch->getPort(alias, port) || !port.m_rif_id)
+        {
+            return "";
+        }
+        sai_attribute_t attr;
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+        if (sai_router_intfs_api->get_router_interface_attribute(port.m_rif_id, 1, &attr) != SAI_STATUS_SUCCESS)
+        {
+            return "";
+        }
+        return swss::MacAddress(attr.value.mac).to_string();
+    }
+
+    // Warm reboot: orchagent bakes VLAN_TABLE and INTF_TABLE from APPL_DB and creates the VLAN router interface
+    // with its mac_addr, then vlanmgrd replays every VLAN (system MAC). The replay must not move the source MAC.
+    TEST_F(IntfsOrchTest, IntfsOrchWarmReplayKeepsMacAddr)
+    {
+        const string R1 = "02:00:5e:10:20:01";
+        const string sys = gMacAddress.to_string();
+
+        Table vlanTable(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table intfTable(m_app_db.get(), APP_INTF_TABLE_NAME);
+        // the mock APPL_DB outlives the test: drop its rows however the test ends
+        struct RowsCleanup
+        {
+            Table &vlans, &intfs;
+            ~RowsCleanup() { vlans.del("Vlan2010"); intfs.del("Vlan2010"); }
+        } cleanup{vlanTable, intfTable};
+        vlanTable.set("Vlan2010", kfvFieldsValues(vlanEntry("Vlan2010", sys)));
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        Port vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan2010", vlan));
+
+        intfTable.set("Vlan2010", {{"mac_addr", R1}});
+        gIntfsOrch->addExistingData(&intfTable);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_NE(gIntfsOrch->getSyncdIntfses().find("Vlan2010"), gIntfsOrch->getSyncdIntfses().end());
+        ASSERT_EQ(rifSrcMac("Vlan2010"), R1);
+        auto sets = src_mac_set_count;
+
+        // vlanmgrd's replay of the same VLAN entry after the router interface exists
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        ASSERT_NE(vlanConsumer, nullptr);
+        vlanConsumer->addToSync({vlanEntry("Vlan2010", sys)});
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(vlanConsumer->m_toSync.empty());
+        EXPECT_EQ(src_mac_set_count, sets) << "replay set the source MAC to " << last_set_src_mac;
+        EXPECT_EQ(rifSrcMac("Vlan2010"), R1);
+        EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at("Vlan2010").mac.to_string(), R1);
+    }
+
+    // A VLAN mac change moves the router interface source MAC only while the interface has no mac_addr of its own.
+    TEST_F(IntfsOrchTest, IntfsOrchVlanMacYieldsToMacAddr)
+    {
+        const string R1 = "02:00:5e:10:20:01";
+        const string V1 = "02:00:5e:20:00:01";
+        const string V2 = "02:00:5e:20:00:02";
+        const string sys = gMacAddress.to_string();
+        auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(vlanConsumer, nullptr);
+        ASSERT_NE(intfConsumer, nullptr);
+
+        vlanConsumer->addToSync({vlanEntry("Vlan2010", sys)});
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        intfConsumer->addToSync({{"Vlan2010", "SET", {{"mac_addr", R1}}}});
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(rifSrcMac("Vlan2010"), R1);
+        auto sets = src_mac_set_count;
+
+        // VLAN mac changes under a mac_addr: the router interface keeps the mac_addr
+        vlanConsumer->addToSync({vlanEntry("Vlan2010", V1)});
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        EXPECT_EQ(src_mac_set_count, sets) << "VLAN mac set the source MAC to " << last_set_src_mac;
+        EXPECT_EQ(rifSrcMac("Vlan2010"), R1);
+        EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at("Vlan2010").mac.to_string(), R1);
+
+        // mac_addr removed (intfmgrd sends the zero MAC): the VLAN mac takes over
+        intfConsumer->addToSync({{"Vlan2010", "SET", {{"mtu", "9100"}, {"mac_addr", "00:00:00:00:00:00"}}}});
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        EXPECT_EQ(src_mac_set_count, sets + 1);
+        EXPECT_EQ(last_set_src_mac, V1);
+        EXPECT_EQ(rifSrcMac("Vlan2010"), V1);
+
+        // without a mac_addr a VLAN mac change is set once, and a repeat sets nothing
+        vlanConsumer->addToSync({vlanEntry("Vlan2010", V2)});
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        EXPECT_EQ(src_mac_set_count, sets + 2);
+        EXPECT_EQ(rifSrcMac("Vlan2010"), V2);
+        EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at("Vlan2010").mac.to_string(), V2);
+        vlanConsumer->addToSync({vlanEntry("Vlan2010", V2)});
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        EXPECT_EQ(src_mac_set_count, sets + 2);
     }
 }
