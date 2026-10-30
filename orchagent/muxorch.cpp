@@ -65,26 +65,94 @@ const map<std::pair<MuxState, MuxState>, MuxStateChange> muxStateTransition =
 
     { { MuxState::MUX_STATE_STANDBY, MuxState::MUX_STATE_ACTIVE}, MuxStateChange::MUX_STATE_STANDBY_ACTIVE
     },
+
+    { { MuxState::MUX_STATE_INIT, MuxState::MUX_STATE_ADMIN_ACTIVE}, MuxStateChange::MUX_STATE_INIT_ACTIVE
+    },
+
+    { { MuxState::MUX_STATE_INIT, MuxState::MUX_STATE_ADMIN_STANDBY}, MuxStateChange::MUX_STATE_INIT_STANDBY
+    },
+
+    { { MuxState::MUX_STATE_ACTIVE, MuxState::MUX_STATE_ADMIN_STANDBY}, MuxStateChange::MUX_STATE_ACTIVE_STANDBY
+    },
+
+    { { MuxState::MUX_STATE_ADMIN_ACTIVE, MuxState::MUX_STATE_STANDBY}, MuxStateChange::MUX_STATE_ACTIVE_STANDBY
+    },
+
+    { { MuxState::MUX_STATE_ADMIN_ACTIVE, MuxState::MUX_STATE_ADMIN_STANDBY}, MuxStateChange::MUX_STATE_ACTIVE_STANDBY
+    },
+
+    { { MuxState::MUX_STATE_STANDBY, MuxState::MUX_STATE_ADMIN_ACTIVE}, MuxStateChange::MUX_STATE_STANDBY_ACTIVE
+    },
+
+    { { MuxState::MUX_STATE_ADMIN_STANDBY, MuxState::MUX_STATE_ACTIVE}, MuxStateChange::MUX_STATE_STANDBY_ACTIVE
+    },
+
+    { { MuxState::MUX_STATE_ADMIN_STANDBY, MuxState::MUX_STATE_ADMIN_ACTIVE}, MuxStateChange::MUX_STATE_STANDBY_ACTIVE
+    },
+
+    /* Same forwarding side, only the switchover trigger changes */
+    { { MuxState::MUX_STATE_ACTIVE, MuxState::MUX_STATE_ADMIN_ACTIVE}, MuxStateChange::MUX_STATE_ADMIN_ROLE_CHANGE
+    },
+
+    { { MuxState::MUX_STATE_ADMIN_ACTIVE, MuxState::MUX_STATE_ACTIVE}, MuxStateChange::MUX_STATE_ADMIN_ROLE_CHANGE
+    },
+
+    { { MuxState::MUX_STATE_STANDBY, MuxState::MUX_STATE_ADMIN_STANDBY}, MuxStateChange::MUX_STATE_ADMIN_ROLE_CHANGE
+    },
+
+    { { MuxState::MUX_STATE_ADMIN_STANDBY, MuxState::MUX_STATE_STANDBY}, MuxStateChange::MUX_STATE_ADMIN_ROLE_CHANGE
+    },
 };
 
 const map <MuxState, string> muxStateValToString =
 {
     { MuxState::MUX_STATE_ACTIVE, "active" },
     { MuxState::MUX_STATE_STANDBY, "standby" },
+    { MuxState::MUX_STATE_ADMIN_ACTIVE, "admin_active" },
+    { MuxState::MUX_STATE_ADMIN_STANDBY, "admin_standby" },
     { MuxState::MUX_STATE_INIT, "init" },
     { MuxState::MUX_STATE_FAILED, "failed" },
     { MuxState::MUX_STATE_PENDING, "pending" },
 };
 
+/* admin_active/admin_standby are written by linkmgrd for admin-initiated switching.
+ * They forward like active/standby; only the trigger source differs.
+ */
 const map <string, MuxState> muxStateStringToVal =
 {
     { "active", MuxState::MUX_STATE_ACTIVE },
     { "standby", MuxState::MUX_STATE_STANDBY },
+    { "admin_active", MuxState::MUX_STATE_ADMIN_ACTIVE },
+    { "admin_standby", MuxState::MUX_STATE_ADMIN_STANDBY },
     { "unknown", MuxState::MUX_STATE_STANDBY },
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
     { "pending", MuxState::MUX_STATE_PENDING },
 };
+
+/* Operational state seen by xcvrd and STATE_DB; admin_ is an APP_DB input spelling only */
+static inline MuxState mux_oper_state (MuxState state)
+{
+    switch (state)
+    {
+        case MuxState::MUX_STATE_ADMIN_ACTIVE:
+            return MuxState::MUX_STATE_ACTIVE;
+        case MuxState::MUX_STATE_ADMIN_STANDBY:
+            return MuxState::MUX_STATE_STANDBY;
+        default:
+            return state;
+    }
+}
+
+static inline string mux_oper_state_string (MuxState state)
+{
+    return muxStateValToString.at(mux_oper_state(state));
+}
+
+static inline bool mux_state_is_standby (MuxState state)
+{
+    return (mux_oper_state(state) == MuxState::MUX_STATE_STANDBY);
+}
 
 static inline MuxStateChange mux_state_change (MuxState prev, MuxState curr)
 {
@@ -387,6 +455,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
+    state_machine_handlers_.insert(handler_pair(MUX_STATE_ADMIN_ROLE_CHANGE, &MuxCable::stateAdminRoleChange));
 
     if (WarmStart::isWarmStart()) {
         /* Warmboot case, Set initial state to "init" 
@@ -468,6 +537,16 @@ bool MuxCable::stateStandby()
     return true;
 }
 
+bool MuxCable::stateAdminRoleChange()
+{
+    // Forwarding side is unchanged; only the switchover trigger moved between
+    // link-prober driven and admin driven.
+    SWSS_LOG_INFO("Mux %s admin role change, state %s", mux_name_.c_str(),
+                   muxStateValToString.at(state_).c_str());
+
+    return true;
+}
+
 void MuxCable::setState(string new_state)
 {
     SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
@@ -475,27 +554,27 @@ void MuxCable::setState(string new_state)
 
     MuxState ns = muxStateStringToVal.at(new_state);
 
-    /* Update new_state to handle unknown state */
-    new_state = muxStateValToString.at(ns);
+    /* xcvrd and STATE_DB only ever see the operational state */
+    string oper_state = mux_oper_state_string(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
     if (it ==  muxStateTransition.end())
     {
         // Update HW Mux cable state anyways
-        mux_cb_orch_->updateMuxState(mux_name_, new_state);
-        if (strcmp(new_state.c_str(), muxStateValToString.at(state_).c_str()) == 0)
+        mux_cb_orch_->updateMuxState(mux_name_, oper_state);
+        if (ns == state_)
         {
             SWSS_LOG_NOTICE("[%s] Maintaining current MUX state", mux_name_.c_str());
         }
         else
         {
             SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
-                            muxStateValToString.at(state_).c_str(), new_state.c_str());
+                            muxStateValToString.at(state_).c_str(), muxStateValToString.at(ns).c_str());
         }
         return;
     }
 
-    mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, true);
+    mux_cb_orch_->updateMuxMetricState(mux_name_, oper_state, true);
 
     prev_state_ = state_;
     state_ = ns;
@@ -511,13 +590,13 @@ void MuxCable::setState(string new_state)
         throw std::runtime_error("Failed to handle state transition");
     }
 
-    mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, false);
+    mux_cb_orch_->updateMuxMetricState(mux_name_, oper_state, false);
 
     st_chg_in_progress_ = false;
     st_chg_failed_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
-    mux_cb_orch_->updateMuxState(mux_name_, new_state);
+    mux_cb_orch_->updateMuxState(mux_name_, oper_state);
     return;
 }
 
@@ -531,7 +610,7 @@ void MuxCable::rollbackStateChange()
     }
     SWSS_LOG_WARN("[%s] Rolling back state change to %s", mux_name_.c_str(),
                      muxStateValToString.at(prev_state_).c_str());
-    mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(prev_state_), true);
+    mux_cb_orch_->updateMuxMetricState(mux_name_, mux_oper_state_string(prev_state_), true);
     st_chg_in_progress_ = true;
     state_ = prev_state_;
     bool success = false;
@@ -542,10 +621,12 @@ void MuxCable::rollbackStateChange()
     switch (prev_state_)
     {
         case MuxState::MUX_STATE_ACTIVE:
+        case MuxState::MUX_STATE_ADMIN_ACTIVE:
             success = stateActive();
             break;
         case MuxState::MUX_STATE_INIT:
         case MuxState::MUX_STATE_STANDBY:
+        case MuxState::MUX_STATE_ADMIN_STANDBY:
             success = stateStandby();
             break;
         case MuxState::MUX_STATE_FAILED:
@@ -566,8 +647,8 @@ void MuxCable::rollbackStateChange()
         SWSS_LOG_ERROR("[%s] Rollback to %s failed",
                         mux_name_.c_str(), muxStateValToString.at(prev_state_).c_str());
     }
-    mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(state_), false);
-    mux_cb_orch_->updateMuxState(mux_name_, muxStateValToString.at(state_));
+    mux_cb_orch_->updateMuxMetricState(mux_name_, mux_oper_state_string(state_), false);
+    mux_cb_orch_->updateMuxState(mux_name_, mux_oper_state_string(state_));
 }
 
 string MuxCable::getState()
@@ -575,7 +656,7 @@ string MuxCable::getState()
     SWSS_LOG_INFO("Get state request for %s, state %s",
                    mux_name_.c_str(), muxStateValToString.at(state_).c_str());
 
-    return (muxStateValToString.at(state_));
+    return (mux_oper_state_string(state_));
 }
 
 bool MuxCable::aclHandler(sai_object_id_t port, string alias, bool add)
@@ -776,12 +857,14 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
             neighbors_[nh.ip_address] = SAI_NULL_OBJECT_ID;
             break;
         case MuxState::MUX_STATE_ACTIVE:
+        case MuxState::MUX_STATE_ADMIN_ACTIVE:
             neighbors_[nh.ip_address] = gNeighOrch->getLocalNextHopId(nh);
             gNeighOrch->enableNeighbor(nh);
             gRouteOrch->updateNextHopRoutes(nh, num_routes);
             gNeighOrch->increaseNextHopRefCount(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
+        case MuxState::MUX_STATE_ADMIN_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
             gRouteOrch->updateNextHopRoutes(nh, num_routes);
             gNeighOrch->decreaseNextHopRefCount(nh, num_routes);
@@ -798,7 +881,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
     else
     {
         /* if current state is standby, remove the tunnel route */
-        if (state == MuxState::MUX_STATE_STANDBY)
+        if (mux_state_is_standby(state))
         {
             remove_route(pfx);
             updateTunnelRoute(nh, false);
@@ -1215,6 +1298,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             neighbors_[nh.ip_address] = SAI_NULL_OBJECT_ID;
             break;
         case MuxState::MUX_STATE_ACTIVE:
+        case MuxState::MUX_STATE_ADMIN_ACTIVE:
             neighbors_[nh.ip_address] = local_nhid;
 
             // Update the prefix route with local nexthop
@@ -1228,6 +1312,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
             gNeighOrch->increaseNextHopRefCount(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
+        case MuxState::MUX_STATE_ADMIN_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
 
             // Update the prefix route with tunnel nexthop
@@ -1250,7 +1335,7 @@ void MuxPrefixBasedNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, b
     else
     {
         /* if current state is standby, remove the tunnel route */
-        if (state == MuxState::MUX_STATE_STANDBY)
+        if (mux_state_is_standby(state))
         {
             updateTunnelRoute(nh, false);
         }

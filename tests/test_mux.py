@@ -16,6 +16,7 @@ tunnel_nh_id = 0
 
 class TestMuxTunnelBase():
     APP_MUX_CABLE               = "MUX_CABLE_TABLE"
+    APP_HW_MUX_CABLE            = "HW_MUX_CABLE_TABLE"
     APP_NEIGH_TABLE             = "NEIGH_TABLE"
     APP_ROUTE_TABLE             = "ROUTE_TABLE"
     APP_TUNNEL_DECAP_TABLE_NAME = "TUNNEL_DECAP_TABLE"
@@ -1170,6 +1171,65 @@ class TestMuxTunnelBase():
         sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
+    def check_hw_mux_state(self, appdb, ifname, expected_state):
+        tbl = swsscommon.Table(appdb, self.APP_HW_MUX_CABLE)
+        status, fvs = tbl.get(ifname)
+        assert status
+        assert dict(fvs)["state"] == expected_state
+
+    def create_and_test_admin_state(self, appdb, dvs_acl):
+
+        # Start with active, verify NO ACL rules exists
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "active")
+
+        dvs_acl.verify_no_acl_rules()
+
+        # same forwarding side, only the switchover trigger changes
+        self.set_mux_state(appdb, "Ethernet4", "admin_active")
+        dvs_acl.verify_no_acl_rules()
+        self.check_hw_mux_state(appdb, "Ethernet4", "active")
+
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        dvs_acl.verify_no_acl_rules()
+        self.check_hw_mux_state(appdb, "Ethernet4", "active")
+
+        # admin_standby must drop traffic exactly like standby, and must be
+        # normalized to standby in HW_MUX_CABLE_TABLE
+        self.set_mux_state(appdb, "Ethernet4", "admin_standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+        self.check_hw_mux_state(appdb, "Ethernet4", "standby")
+
+        # standby -> admin_standby keeps the drop rule in place
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+        self.check_hw_mux_state(appdb, "Ethernet4", "standby")
+
+        # admin_active must clear the drop rule exactly like active
+        self.set_mux_state(appdb, "Ethernet4", "admin_active")
+        dvs_acl.verify_no_acl_rules()
+        self.check_hw_mux_state(appdb, "Ethernet4", "active")
+
+        # admin_ and plain values must be interchangeable in both directions
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet4", "admin_active")
+        dvs_acl.verify_no_acl_rules()
+        self.check_hw_mux_state(appdb, "Ethernet4", "active")
+
+        self.set_mux_state(appdb, "Ethernet8", "admin_standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet8", "active")
+        dvs_acl.verify_no_acl_rules()
+        self.check_hw_mux_state(appdb, "Ethernet8", "active")
+
     def create_and_test_metrics(self, appdb, statedb):
 
         # Set to active and test attributes for start and end time
@@ -2019,6 +2079,19 @@ class TestMuxTunnel(TestMuxTunnelBase):
         statedb = dvs.get_state_db()
 
         self.create_and_test_metrics(appdb, statedb)
+
+    def test_admin_state(self, dvs, dvs_acl, testlog):
+        """ test that admin_active/admin_standby behave as active/standby """
+
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        try:
+            self.create_and_test_admin_state(appdb, dvs_acl)
+        finally:
+            self.set_mux_state(appdb, "Ethernet0", "active")
+            self.set_mux_state(appdb, "Ethernet4", "active")
+            self.set_mux_state(appdb, "Ethernet8", "active")
+            dvs_acl.verify_no_acl_rules()
 
     def test_neighbor_miss(
             self, dvs, dvs_route, ips_for_test, neigh_miss_test_sequence,
