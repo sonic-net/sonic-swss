@@ -2668,6 +2668,15 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (nlmsg_type == RTM_NEWLINK || nlmsg_type == RTM_DELLINK)
     {
         nl_cache_refill(m_nl_sock, m_link_cache);
+
+        /* AF_BRIDGE carries a port leaving the bridge, not the netdev going away. */
+        struct rtnl_link *link = (struct rtnl_link *)obj;
+        const char *type = rtnl_link_get_type(link);
+        if (nlmsg_type == RTM_DELLINK && m_macsync && rtnl_link_get_family(link) != AF_BRIDGE &&
+            type && strcmp(type, "vxlan") == 0 && rtnl_link_get_name(link))
+        {
+            m_macsync->onVxlanLinkDel(rtnl_link_get_name(link));
+        }
         return;
     }
 

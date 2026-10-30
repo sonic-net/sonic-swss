@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -54,6 +55,15 @@ public:
     void onFpmConnected(FpmInterface& fpm);
     void onFpmDisconnected();
 
+    /* A VxLAN netdev was deleted: withdraw the remote MACs that came from it. */
+    void onVxlanLinkDel(const std::string& ifname);
+
+    /* Reads the link messages already queued. A netdev's delete is queued
+     * before zebra can see a new netdev under its name, so reading them before
+     * each FPM MAC message withdraws the old netdev's rows before the new one's
+     * are written. */
+    void setLinkReader(std::function<void()> reader) { m_readLinks = std::move(reader); }
+
     bool isFpmMode() const { return m_fpmMode; }
 
 private:
@@ -72,8 +82,11 @@ private:
     void processStateFdbEntry(const KeyOpFieldsValuesTuple& entry);
     void sendLocalMac(const std::string& vlanName, const std::string& mac,
                       LocalMac& local, bool add);
+    void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row);
+    void removeRemoteMac(const std::string& key);
 
     ProducerStateTable m_vxlanFdbTable;
+    Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
     Table m_stateFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
@@ -88,7 +101,22 @@ private:
     /* if_nametoindex(), replaceable so a test can take a port away. */
     std::function<unsigned int(const std::string&)> m_ifNameToIndex;
 
+    /* if_indextoname(), empty when the index does not resolve; replaceable so a
+     * test can name a VxLAN netdev. */
+    std::function<std::string(unsigned int)> m_ifIndexToName;
+
+    std::function<void()> m_readLinks;
+
     std::map<std::string, LocalMac> m_localMacs;
+
+    /* The remote MAC rows MacSync has queued, keyed like VXLAN_FDB_TABLE, as
+     * zebra sent them. APPL_DB shows a row once orchagent has read it, so the
+     * rows are looked up here before APPL_DB. */
+    struct RemoteRow
+    {
+        std::vector<FieldValueTuple> row;
+    };
+    std::map<std::string, RemoteRow> m_remoteRows;
 };
 
 }

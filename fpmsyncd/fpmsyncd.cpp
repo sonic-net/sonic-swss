@@ -1,5 +1,6 @@
 #include <iostream>
 #include <inttypes.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <jemalloc/jemalloc.h>
 #include "logger.h"
@@ -98,6 +99,13 @@ int main(int argc, char **argv)
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
+    macsync.setLinkReader([&netlink]() {
+        struct pollfd pfd = {netlink.getFd(), POLLIN, 0};
+        while (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
+        {
+            netlink.readData();
+        }
+    });
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
