@@ -484,14 +484,20 @@ class TestMuxTunnelBase():
         ps = swsscommon.ProducerStateTable(apdb.db_connection, self.APP_ROUTE_TABLE)
         ps._del(route)
 
-    def wait_for_mux_state(self, dvs, interface, expected_state):
+    def wait_for_mux_state(self, dvs, interface, expected_state, polling_config=None):
         """
-        Waits until state change completes - expected state is in state_db
+        Waits until state change completes - expected state is in state_db.
+        Pass polling_config to allow extra slack (e.g. just after a warm restart
+        the orchagent can take longer than the default poll window to publish).
         """
 
         apdb = dvs.get_app_db()
         expected_field = {"state": expected_state}
-        apdb.wait_for_field_match(self.APP_MUX_CABLE, interface, expected_field)
+        if polling_config is not None:
+            apdb.wait_for_field_match(self.APP_MUX_CABLE, interface, expected_field,
+                                      polling_config=polling_config)
+        else:
+            apdb.wait_for_field_match(self.APP_MUX_CABLE, interface, expected_field)
 
     def bulk_neighbor_test(self, confdb, appdb, asicdb, dvs, dvs_route):
         dvs.runcmd("ip neigh flush all")
@@ -1573,9 +1579,18 @@ class TestMuxTunnelBase():
             appdb.wait_for_deleted_keys(self.APP_NEIGH_TABLE, key)
 
     def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
+        table = swsscommon.Table(configdb.db_connection, qos_map_type_name)
+
+        # A previous run (or a flaky retry whose teardown did not remove it) can
+        # leave this map in CONFIG DB. Setting it again then produces no new
+        # ASIC OID, so clear any stale same-name entry first and let the ASIC
+        # OID drain before adding, guaranteeing exactly one new OID below.
+        if qos_map_name in table.getKeys():
+            table._del(qos_map_name)
+            time.sleep(1)
+
         current_oids = asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)
         # Apply QoS map to config db
-        table = swsscommon.Table(configdb.db_connection, qos_map_type_name)
         fvs = swsscommon.FieldValuePairs(list(qos_map.items()))
         table.set(qos_map_name, fvs)
         time.sleep(1)
@@ -2964,6 +2979,19 @@ class TestMuxTunnel(TestMuxTunnelBase):
         soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
         self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=True)
 
+        # A warm restart replays APP_DB. A MUX_CABLE_TABLE entry whose port no
+        # longer has a CONFIG_DB mux entry (left behind by an earlier test on
+        # this reused switch) replays as a task the orchagent can never finish,
+        # so it stays in warm-start "restored", never reaches "reconciled", and
+        # never acts on the toggle below. Drop any such orphan first so this
+        # test does not depend on what ran before it.
+        configured_mux = set(dvs.get_config_db().get_keys(self.CONFIG_MUX_CABLE))
+        mux_ps = swsscommon.ProducerStateTable(appdb, self.APP_MUX_CABLE)
+        for port in apdb.get_keys(self.APP_MUX_CABLE):
+            if port not in configured_mux:
+                mux_ps._del(port)
+        time.sleep(1)
+
         # Warm reboot. Recovery replays the cached SoC neighbor update through
         # the prefix handler after the mux object is restored.
         marker = dvs.add_log_marker()
@@ -2989,14 +3017,16 @@ class TestMuxTunnel(TestMuxTunnelBase):
                 "Found {} '{}' log(s) after warm reboot for SoC {}".format(cnt, err, soc_ip)
 
         # Toggle active then back to standby to confirm the restored route is
-        # healthy and reprogrammable.
+        # healthy and reprogrammable. Just after a warm restart the orchagent may
+        # still be settling, so give the state transitions extra slack.
+        post_reboot_poll = PollingConfig(polling_interval=1, timeout=30.0, strict=True)
         self.set_mux_state(appdb, "Ethernet0", "active")
-        self.wait_for_mux_state(dvs, "Ethernet0", "active")
+        self.wait_for_mux_state(dvs, "Ethernet0", "active", polling_config=post_reboot_poll)
         soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
         self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=False)
 
         self.set_mux_state(appdb, "Ethernet0", "standby")
-        self.wait_for_mux_state(dvs, "Ethernet0", "standby")
+        self.wait_for_mux_state(dvs, "Ethernet0", "standby", polling_config=post_reboot_poll)
         soc_rt = dvs_route.check_asicdb_route_entries([soc_prefix])
         self.check_nexthop_in_asic_db(asicdb, soc_rt[0], standby=True)
 

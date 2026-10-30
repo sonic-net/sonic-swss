@@ -2946,6 +2946,17 @@ bool NeighOrch::convertToPrefixBasedNbr(const NeighborEntry &neighborEntry, sai_
     {
         SWSS_LOG_ERROR("Failed to create prefix route for neighbor %s on %s, rv:%d",
                        ip_address.to_string().c_str(), alias.c_str(), status);
+
+        // NO_HOST_ROUTE removed the kernel /32 host route, and the prefix route
+        // failed to install. Put the host route back so the neighbor still has a
+        // route and the next update can retry the conversion.
+        neighbor_attr.value.booldata = 0;
+        sai_status_t revert = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+        if (revert != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to restore host route for neighbor %s on %s, rv:%d",
+                           ip_address.to_string().c_str(), alias.c_str(), revert);
+        }
         return false;
     }
 
