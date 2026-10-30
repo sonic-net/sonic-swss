@@ -27,19 +27,11 @@ using namespace swss;
 
 MacAddress gMacAddress;
 
-static bool received_sigterm = false;
-static struct sigaction old_sigaction;
+static volatile sig_atomic_t shutdown_requested = 0;
 
-static void sig_handler(int signo)
+static void sig_handler(int)
 {
-    SWSS_LOG_ENTER();
-
-    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
-        old_sigaction.sa_handler(signo);
-    }
-
-    received_sigterm = true;
-    return;
+    shutdown_requested = 1;
 }
 
 int main(int argc, char **argv)
@@ -50,12 +42,14 @@ int main(int argc, char **argv)
         Logger::linkToDbNative("macsecmgrd");
         SWSS_LOG_NOTICE("--- Starting macsecmgrd ---");
 
-        /* Register the signal handler for SIGTERM */
+        /* Leave cleanup to the main thread and MACsecMgr destructor. */
         struct sigaction sigact = {};
         sigact.sa_handler = sig_handler;
-        if (sigaction(SIGTERM, &sigact, &old_sigaction))
+        if (sigemptyset(&sigact.sa_mask) ||
+            sigaction(SIGTERM, &sigact, nullptr) ||
+            sigaction(SIGINT, &sigact, nullptr))
         {
-            SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
+            SWSS_LOG_ERROR("failed to setup MACsec shutdown signal handlers");
             exit(EXIT_FAILURE);
         }
 
@@ -81,7 +75,7 @@ int main(int argc, char **argv)
         bool isPostStateReady = false;
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (!received_sigterm)
+        while (!shutdown_requested)
         {
             /* Don't process any config until POST state is ready */
             if (!isPostStateReady)
@@ -104,6 +98,10 @@ int main(int argc, char **argv)
             int ret;
 
             ret = s.select(&sel, SELECT_TIMEOUT);
+            if (shutdown_requested)
+            {
+                break;
+            }
             if (ret == Select::ERROR)
             {
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
@@ -118,6 +116,7 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
+        return 0;
     }
     catch(const std::exception &e)
     {

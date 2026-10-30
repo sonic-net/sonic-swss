@@ -294,6 +294,29 @@ tests_intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTE
 tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
+## macsecmgrd unit tests
+
+tests_macsecmgrd_SOURCES = macsecmgrd/macsecmgr_ut.cpp \
+                           $(top_srcdir)/cfgmgr/macsecmgr.cpp \
+                           $(top_srcdir)/cfgmgr/macsecmkastatus.cpp \
+                           $(top_srcdir)/lib/recorder.cpp \
+                           $(top_srcdir)/orchagent/orch.cpp \
+                           $(top_srcdir)/orchagent/request_parser.cpp \
+                           mock_orchagent_main.cpp \
+                           mock_dbconnector.cpp \
+                           mock_table.cpp \
+                           mock_hiredis.cpp \
+                           fake_response_publisher.cpp \
+                           mock_redisreply.cpp \
+                           common/mock_shell_command.cpp
+
+tests_macsecmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
+tests_macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_macsecmgrd_INCLUDES)
+tests_macsecmgrd_LDFLAGS = -Wl,--wrap=popen -Wl,--wrap=pclose
+tests_macsecmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis \
+        -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
 ## teammgrd unit tests
 
 tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
@@ -318,27 +341,6 @@ tests_teammgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_socket_free -Wl
         -Wl,-wrap,rtnl_link_put -Wl,-wrap,nl_addr_build -Wl,-wrap,nl_addr_put \
         -Wl,-wrap,rtnl_link_set_addr -Wl,-wrap,rtnl_link_get_kernel -Wl,-wrap,rtnl_link_change
 tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
-        -lswsscommon -lgtest -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
-
-## macsecmgrd unit tests
-
-tests_macsecmgrd_SOURCES = macsecmgrd/macsecmgr_ut.cpp \
-                           $(top_srcdir)/cfgmgr/macsecmgr.cpp \
-                           $(top_srcdir)/lib/recorder.cpp \
-                           $(top_srcdir)/orchagent/orch.cpp \
-                           $(top_srcdir)/orchagent/request_parser.cpp \
-                           mock_orchagent_main.cpp \
-                           mock_dbconnector.cpp \
-                           mock_table.cpp \
-                           mock_hiredis.cpp \
-                           fake_response_publisher.cpp \
-                           mock_redisreply.cpp \
-                           common/mock_shell_command.cpp
-
-tests_macsecmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
-tests_macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
-tests_macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_macsecmgrd_INCLUDES)
-tests_macsecmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
         -lswsscommon -lgtest -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
 
 ## fpmsyncd unit tests
