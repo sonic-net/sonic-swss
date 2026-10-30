@@ -30,6 +30,8 @@ upstream:
       - { path: 'target/debs/{debian_version}/libnl-route-3-dev_*.deb', scopes: [build] }
       - { path: 'target/debs/{debian_version}/libnl-nf-3-200_*.deb',    scopes: [build] }
       - { path: 'target/debs/{debian_version}/libnl-nf-3-dev_*.deb',    scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnexthopgroup_*.deb',     scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnexthopgroup-dev_*.deb', scopes: [build] }
       - 'target/debs/{debian_version}/libyang3_*.deb'
       - 'target/debs/{debian_version}/libyang-dev_3*.deb'
 

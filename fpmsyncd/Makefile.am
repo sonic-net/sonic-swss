@@ -8,12 +8,13 @@ else
 DBGFLAGS = -g
 endif
 
-fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp routesendcoalescer.cpp $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
+fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp nhgmgr.cpp routesendcoalescer.cpp $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                     $(top_srcdir)/lib/orch_zmq_config.cpp
 
 fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
-fpmsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon -ljemalloc
+fpmsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon -ljemalloc -lnexthopgroup
+
 
 if !ASAN_ENABLED
 check-local: fpmsyncd
