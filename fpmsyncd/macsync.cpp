@@ -664,6 +664,21 @@ void MacSync::processStateFdbEntry(const KeyOpFieldsValuesTuple& entry)
     local.ifindex = stored.ifindex;
     stored = local;
     sendLocalMac(vlanName, mac, stored, true);
+
+    /* A local learn replaces a remote MAC in the kernel bridge, so zebra sends
+     * no delete for it; fdbsyncd removes the row on a local learn in kernel
+     * mode. It goes by key, whoever wrote it; a row MacSync has queued counts
+     * before APPL_DB's. An Ethernet Segment port row is the module's to
+     * withdraw. */
+    auto queued = m_remoteRows.find(key);
+    std::vector<FieldValueTuple> row;
+    bool remote = queued != m_remoteRows.end() ? !hasField(queued->second.row, "ifname")
+                                               : m_vxlanFdbTableRead.get(key, row) && !hasField(row, "ifname");
+    if (remote)
+    {
+        removeRemoteMac(key);
+        SWSS_LOG_INFO("MacSync: removed remote MAC %s, learnt locally", key.c_str());
+    }
 }
 
 bool MacSync::sendLocalMac(const string& vlanName, const string& mac, LocalMac& local,

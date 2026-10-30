@@ -2129,3 +2129,79 @@ TEST_F(MacSyncEsHeldRowTest, RemoteMacOutsideTheWindowIsWritten)
     zebraSendsRemote();
     EXPECT_EQ(rowField("nexthop_group"), "536870916");
 }
+
+/*
+ * A local learn replaces a remote MAC in the kernel bridge, so zebra sends no
+ * delete for the remote one: the row goes when the MAC is learnt locally.
+ */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesTheRemoteRow)
+{
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    zebraSendsRemote();
+    ASSERT_TRUE(hasRow());
+
+    m_macSync->clearPendingWrites();
+    learn(TEST_KEY, "PortChannel1");
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+}
+
+/* The row goes whoever wrote it. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesARowItDidNotWrite)
+{
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"},
+                                                      {"type", "dynamic"},
+                                                      {"vni", std::to_string(TEST_VNI)}});
+
+    learn(TEST_KEY, "PortChannel1");
+    EXPECT_FALSE(hasRow());
+}
+
+/* A row orchagent has not read yet is not in APPL_DB, and goes all the same. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesARowOrchagentHasNotRead)
+{
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    zebraSendsRemote();
+    unread(TEST_KEY);
+    auto dels = rowDels();
+
+    learn(TEST_KEY, "PortChannel1");
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* With no remote row, a local learn writes nothing to APPL_DB. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnWithoutARemoteRowWritesNothing)
+{
+    testing_db::resetOperationCounters();
+    m_macSync->clearPendingWrites();
+    learn("Vlan100:00:11:22:33:44:66", "PortChannel1");
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_FALSE(m_macSync->hasPendingWrites());
+}
+
+/* A row on an Ethernet Segment port is the module's to withdraw. */
+TEST_F(MacSyncTest, LocalLearnKeepsAnEthernetSegmentPortRow)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("lo", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE | NUD_NOARP);
+    req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, SET_COMMAND,
+                                                           {{"port", "lo"}, {"type", "dynamic"}}});
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "ifname"), "lo");
+
+    cfgEs.del("lo");
+}
