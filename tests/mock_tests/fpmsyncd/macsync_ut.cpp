@@ -1644,6 +1644,50 @@ TEST_F(MacSyncStaleTest, EoiuReconcileLeavesTheStaleRows)
 }
 
 /*
+ * fpmsyncd holds the pipeline during a warm restart, which an FPM reconnect
+ * also starts; MacSync's writes tell it to flush them anyway.
+ */
+TEST_F(MacSyncStaleTest, RemoteMacWritesAskForAFlush)
+{
+    EXPECT_FALSE(m_macSync->hasPendingWrites());
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+    /* Held until the caller has emptied the pipeline. */
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+    m_macSync->clearPendingWrites();
+    EXPECT_FALSE(m_macSync->hasPendingWrites());
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    m_macSync->clearPendingWrites();
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+
+    addRemoteMac(OTHER_VTEP_IFINDEX, 200, 0x03);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    m_macSync->clearPendingWrites();
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_MAX)), 0);
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+}
+
+/* A replayed row that is not rewritten leaves nothing to flush. */
+TEST_F(MacSyncStaleTest, UnchangedReplayRowAsksForNoFlush)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    m_macSync->clearPendingWrites();
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_FALSE(m_macSync->hasPendingWrites());
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    EXPECT_TRUE(m_macSync->hasPendingWrites());
+}
+
+/*
  * bgpd does not send a route again when only its ESI changes, so a port's
  * local MACs are reported to zebra again (delete, then add back) when the port
  * joins or leaves an Ethernet Segment in a VLAN.
