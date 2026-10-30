@@ -1327,4 +1327,82 @@ namespace vxlanorch_test
         EXPECT_EQ(imrRefCount(), 1);
     }
 
+    class VxlanOrchRemoteVniTest : public VxlanOrchTest
+    {
+        protected:
+        // A remote VNI DEL carries no fields. Sets up what the DEL path looks up (the
+        // EVPN source VTEP, the remote end point, the VLAN and the remote's tunnel port,
+        // which is not a VLAN member) and feeds the given entries to the orch, so the
+        // DEL ends on the "spurious delete" path that counts it on the end point.
+        uint32_t spuriousRemoteVniDels(Orch *remote_vni_orch, const deque<KeyOpFieldsValuesTuple> &entries,
+                                       const string &remote_vtep, const string &tunnel_port)
+        {
+            CreateBasicVxlanTunnel("vtep1", "10.1.1.1");
+            VxlanTunnel *vtep = m_vxlan_tunnel_orch->getVxlanTunnel("vtep1");
+            m_evpnNvoOrch->source_vtep_ptr = vtep;
+
+            tunnel_refcnt_t ref_counts;
+            memset(&ref_counts, 0, sizeof(tunnel_refcnt_t));
+            ref_counts.imr_refcnt = 1;
+            vtep->tnl_users_[remote_vtep] = ref_counts;
+
+            Port vlan("Vlan100", Port::VLAN);
+            vlan.m_vlan_info.vlan_id = 100;
+            gPortsOrch->m_portList["Vlan100"] = vlan;
+            gPortsOrch->m_portList[tunnel_port] = Port(tunnel_port, Port::TUNNEL);
+
+            auto consumer = dynamic_cast<Consumer *>(remote_vni_orch->getExecutor(APP_VXLAN_REMOTE_VNI_TABLE_NAME));
+            consumer->addToSync(entries);
+            remote_vni_orch->doTask();
+            EXPECT_TRUE(consumer->m_toSync.empty());
+
+            return vtep->tnl_users_[remote_vtep].spurious_del_imr_refcnt;
+        }
+    };
+
+    // The first remote VNI request an orchagent sees can be a DEL (e.g. on a cold start
+    // with EVPN peers up). It must be handled, not thrown away by the request parser.
+    TEST_F(VxlanOrchRemoteVniTest, RemoteVniP2pDelAsFirstRequest)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+
+        deque<KeyOpFieldsValuesTuple> entries = {
+            { "Vlan100:10.1.1.2", DEL_COMMAND, {} }
+        };
+        EXPECT_EQ(spuriousRemoteVniDels(m_evpnRemoteVnip2pOrch, entries, "10.1.1.2", "Port_EVPN_10.1.1.2"), 1u);
+    }
+
+    // A DEL must not act on the VNI of whatever request the orch parsed before it.
+    TEST_F(VxlanOrchRemoteVniTest, RemoteVniP2pDelIgnoresEarlierVni)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+
+        // An out-of-range VNI: the SET is dropped, but the parser has seen its VNI.
+        auto consumer = dynamic_cast<Consumer *>(m_evpnRemoteVnip2pOrch->getExecutor(APP_VXLAN_REMOTE_VNI_TABLE_NAME));
+        consumer->addToSync(deque<KeyOpFieldsValuesTuple>{
+            { "Vlan200:10.1.1.3", SET_COMMAND, { { "vni", to_string(MAX_VNI_ID) } } }
+        });
+        static_cast<Orch *>(m_evpnRemoteVnip2pOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        deque<KeyOpFieldsValuesTuple> entries = {
+            { "Vlan100:10.1.1.2", DEL_COMMAND, {} }
+        };
+        EXPECT_EQ(spuriousRemoteVniDels(m_evpnRemoteVnip2pOrch, entries, "10.1.1.2", "Port_EVPN_10.1.1.2"), 1u);
+    }
+
+    TEST_F(VxlanOrchRemoteVniTest, RemoteVniP2mpDelAsFirstRequest)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+
+        auto p2mp_orch = make_unique<EvpnRemoteVnip2mpOrch>(m_app_db.get(), APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+        deque<KeyOpFieldsValuesTuple> entries = {
+            { "Vlan100:10.1.1.2", DEL_COMMAND, {} }
+        };
+        EXPECT_EQ(spuriousRemoteVniDels(p2mp_orch.get(), entries, "10.1.1.2", "Port_SRC_VTEP_10.1.1.1"), 1u);
+    }
+
 } // namespace vxlanorch_test
