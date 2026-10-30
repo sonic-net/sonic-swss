@@ -16,6 +16,7 @@
 #include "mlagorch.h"
 #include "vxlanorch.h"
 #include "l2nhgorch.h"
+#include "evpnmhorch.h"
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
@@ -31,6 +32,7 @@ extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
 extern L2NhgOrch*       gL2NhgOrch;
 extern FdbOrch*         gFdbOrch;
+extern EvpnMhOrch*      gEvpnMhOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -1748,6 +1750,13 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
         if (gMlagOrch->isMlagInterface(p.m_alias))
         {
             SWSS_LOG_NOTICE("Ignoring fdb flush on MCLAG port:%s", p.m_alias.c_str());
+            return;
+        }
+        /* The ES backup group carries the port's MACs while it is down (switchover). */
+        if (gEvpnMhOrch && gEvpnMhOrch->isEsBackupAttached(p.m_alias))
+        {
+            SWSS_LOG_NOTICE("Keeping fdb entries of ES port %s on its backup next hop group",
+                            p.m_alias.c_str());
             return;
         }
 

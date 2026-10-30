@@ -7562,6 +7562,13 @@ bool PortsOrch::removeBridgePort(Port &port)
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
+    /*
+     * Observers release what refers to the bridge port (isolation group bindings and
+     * members, ES protection groups), which needs the bridge port to still exist.
+     */
+    PortUpdate update = { port, false };
+    notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
+
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -7571,15 +7578,14 @@ bool PortsOrch::removeBridgePort(Port &port)
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BRIDGE, status);
         if (handle_status != task_success)
         {
+            /* The bridge port stays: observers take back what they released above. */
+            PortUpdate restore = { port, true };
+            notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&restore));
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
     saiOidToAlias.erase(port.m_bridge_port_id);
     port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
-
-    /* Remove bridge port */
-    PortUpdate update = { port, false };
-    notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
@@ -8478,6 +8484,13 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 
     increasePortRefCount(port.m_alias);
 
+    if (!enableForwarding && port.m_type != Port::SYSTEM)
+    {
+        /* Created not distributing: no distribution change reports it. */
+        LagMemberDistributionUpdate distribution = { port, false };
+        notify(SUBJECT_TYPE_LAG_MEMBER_DISTRIBUTION_CHANGE, static_cast<void *>(&distribution));
+    }
+
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -8625,6 +8638,16 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
     SWSS_LOG_NOTICE("%s distribution on LAG member %s",
         enableDistribution ? "Enable" : "Disable",
         lagMember.m_alias.c_str());
+
+    /*
+     * A LAG whose last member stops distributing stops forwarding before its oper state
+     * follows. Only a change the SAI made is reported.
+     */
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        LagMemberDistributionUpdate update = { lagMember, enableDistribution };
+        notify(SUBJECT_TYPE_LAG_MEMBER_DISTRIBUTION_CHANGE, static_cast<void *>(&update));
+    }
 
     return true;
 }
