@@ -115,6 +115,23 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     EXEC_WITH_ERROR_THROW(no_ll_learn_cmd, res);
 }
 
+// A host command that fails is reported once at ERROR; the retries that
+// follow, once a second until it succeeds, log at DEBUG, so an incident that
+// lasts hours does not fill syslog.
+void VlanMgr::noteHostCmdFailed(const string &key, const string &what, const string &err)
+{
+    if (m_hostCmdFailed.insert(key).second)
+        SWSS_LOG_ERROR("Failed to %s, retrying every second: %s", what.c_str(), err.c_str());
+    else
+        SWSS_LOG_DEBUG("Still failing to %s: %s", what.c_str(), err.c_str());
+}
+
+void VlanMgr::noteHostCmdDone(const string &key)
+{
+    if (m_hostCmdFailed.erase(key))
+        SWSS_LOG_NOTICE("%s reached the host bridge after retries", key.c_str());
+}
+
 bool VlanMgr::addHostVlan(int vlan_id)
 {
     SWSS_LOG_ENTER();
@@ -245,8 +262,11 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     //               /sbin/bridge vlan del vid 1 dev {{ port_alias }} &&
     //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
     ostringstream cmds, inner;
+    // The default vid removal is best-effort: on a tagging_mode change of an existing
+    // member this runs a second time when vid 1 is already gone, and a hard failure here
+    // would throw before APPL_DB is updated, dropping the mode change end-to-end.
     inner << IP_CMD " link set " << shellquote(port_alias) << " master " DOT1Q_BRIDGE_NAME " && "
-      BRIDGE_CMD " vlan del vid " DEFAULT_VLAN_ID " dev " << shellquote(port_alias) << " && "
+      "( " BRIDGE_CMD " vlan del vid " DEFAULT_VLAN_ID " dev " << shellquote(port_alias) << " || true ) && "
       BRIDGE_CMD " vlan add vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " " + tagging_cmd;
     cmds << BASH_CMD " -c " << shellquote(inner.str());
 
@@ -272,40 +292,47 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     return true;
 }
 
-bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
+bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias, bool last_vlan)
 {
     SWSS_LOG_ENTER();
 
-    // The command should be generated as:
-    // /bin/bash -c '/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
-    //               ( vlanShow=$(/sbin/bridge vlan show dev {{port_alias}});
-    //               ret=$?;
-    //               if [ $ret -eq 0 ]; then
-    //               if (! echo "$vlanShow" | grep -q {{port_alias}})
-    //                 || (echo "$vlanShow" | grep -q None$)
-    //                 || (echo "$vlanShow" | grep -q {{port_alias}}$); then
-    //               /sbin/ip link set {{port_alias}} nomaster;
-    //               fi;
-    //               else exit $ret; fi )'
-
-    // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
+    // Whether the port has left its last VLAN is the caller's call, from the
+    // membership records. The kernel's VID list on the bridge port is not a
+    // membership record: spanning tree removes a blocked port's VID from it
+    // and puts it back when the port forwards, so a port that is still a
+    // member can show no VIDs at all. Deciding "no VLAN left" from that list
+    // detached such ports from the bridge, after which every later VID
+    // removal on them failed and their state rows were never cleared.
     ostringstream cmds, inner;
-    inner << BRIDGE_CMD " vlan del vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " && ( "
-      "vlanShow=$(" BRIDGE_CMD " vlan show dev " << shellquote(port_alias) << "); "
-      "ret=$?; "
-      "if [ $ret -eq 0 ]; then "
-      "if (! echo \"$vlanShow\" | " GREP_CMD " -q " << shellquote(port_alias) << ") "
-      " || (echo \"$vlanShow\" | " GREP_CMD " -q None$) "
-      " || (echo \"$vlanShow\" | " GREP_CMD " -q " << shellquote(port_alias) << "$); then "
-      IP_CMD " link set " << shellquote(port_alias) << " nomaster; "
-      "fi; "
-      "else exit $ret; fi )";
+    inner << BRIDGE_CMD " vlan del vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias);
+    if (last_vlan)
+    {
+        inner << " && " IP_CMD " link set " << shellquote(port_alias) << " nomaster";
+    }
     cmds << BASH_CMD " -c " << shellquote(inner.str());
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds.str(), res);
 
     return true;
+}
+
+bool VlanMgr::portHasOtherVlanMembers(const string &vlan_alias, const string &port_alias)
+{
+    // STATE_DB rather than m_PortVlanMember: the cache is empty after a
+    // restart, the state table is not.
+    vector<string> keys;
+    m_stateVlanMemberTable.getKeys(keys);
+    const string suffix = string("|") + port_alias;
+    for (const auto &key : keys)
+    {
+        if (key.size() > suffix.size() && key.compare(key.size() - suffix.size(), suffix.size(), suffix) == 0
+            && key != vlan_alias + suffix)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool VlanMgr::isVlanMacOk()
@@ -380,7 +407,21 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             /* Add host VLAN when it has not been created. */
             if (m_vlans.find(key) == m_vlans.end())
             {
-                addHostVlan(vlan_id);
+                // A host command that fails must not throw out of this task:
+                // the exception would leave the task queued and every later
+                // VLAN change waiting behind it. Keep this VLAN queued and
+                // let the others through.
+                try
+                {
+                    addHostVlan(vlan_id);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    noteHostCmdFailed(key, "create " + key + " in the host bridge", e.what());
+                    it++;
+                    continue;
+                }
+                noteHostCmdDone(key);
             }
             m_vlanReplay.erase(kfvKey(t));
 
@@ -455,9 +496,18 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            m_hostCmdFailed.erase(key);
             if (m_vlans.find(key) != m_vlans.end())
             {
-                removeHostVlan(vlan_id);
+                try
+                {
+                    removeHostVlan(vlan_id);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    // The netdev is already gone; finish the removal.
+                    SWSS_LOG_WARN("Host bridge removal of %s failed: %s", key.c_str(), e.what());
+                }
                 m_vlans.erase(key);
                 m_appVlanTableProducer.del(key);
                 m_stateVlanTable.del(key);
@@ -538,6 +588,24 @@ bool VlanMgr::isVlanMemberStateOk(const string &vlanMemberKey)
     {
         SWSS_LOG_DEBUG("%s is ready", vlanMemberKey.c_str());
         return true;
+    }
+    return false;
+}
+
+// Checks STATE_DB so a previously applied tagging_mode is still known right after a vlanmgrd restart
+bool VlanMgr::isVlanMemberModeApplied(const string &vlanMemberKey, const string &tagging_mode)
+{
+    vector<FieldValueTuple> temp;
+
+    if (m_stateVlanMemberTable.get(vlanMemberKey, temp))
+    {
+        for (const auto &fv : temp)
+        {
+            if (fvField(fv) == "tagging_mode" && fvValue(fv) == tagging_mode)
+            {
+                return true;
+            }
+        }
     }
     return false;
 }
@@ -630,21 +698,6 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
        // TODO:  store port/lag/VLAN data in local data structure and perform more validations.
         if (op == SET_COMMAND)
         {
-             if (isVlanMemberStateOk(kfvKey(t)))
-             {
-                SWSS_LOG_DEBUG("%s already set", kfvKey(t).c_str());
-                m_vlanMemberReplay.erase(kfvKey(t));
-                it = consumer.m_toSync.erase(it);
-                continue;
-             }
-
-            /* Don't proceed if member port/lag is not ready yet */
-            if (!isMemberStateOk(port_alias) || !isVlanStateOk(vlan_alias))
-            {
-                SWSS_LOG_DEBUG("%s not ready, delaying", kfvKey(t).c_str());
-                it++;
-                continue;
-            }
             string tagging_mode = "untagged";
 
             for (auto i : kfvFieldsValues(t))
@@ -664,8 +717,36 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            if (addHostVlanMember(vlan_id, port_alias, tagging_mode))
+            // Skip only duplicates. Checked against STATE_DB, not the in-memory m_PortVlanMember cache
+            if (isVlanMemberModeApplied(kfvKey(t), tagging_mode))
             {
+                SWSS_LOG_DEBUG("%s already set", kfvKey(t).c_str());
+                m_vlanMemberReplay.erase(kfvKey(t));
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            /* Don't proceed if member port/lag is not ready yet */
+            if (!isMemberStateOk(port_alias) || !isVlanStateOk(vlan_alias))
+            {
+                SWSS_LOG_DEBUG("%s not ready, delaying", kfvKey(t).c_str());
+                it++;
+                continue;
+            }
+
+            bool added = false;
+            try
+            {
+                added = addHostVlanMember(vlan_id, port_alias, tagging_mode);
+            }
+            catch (const std::runtime_error &e)
+            {
+                // Keep this member queued and let the others through; see doVlanTask.
+                noteHostCmdFailed(kfvKey(t), "add " + kfvKey(t) + " to the host bridge", e.what());
+            }
+            if (added)
+            {
+                noteHostCmdDone(kfvKey(t));
                 key = VLAN_PREFIX + to_string(vlan_id);
                 key += DEFAULT_KEY_SEPARATOR;
                 key += port_alias;
@@ -674,6 +755,8 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 vector<FieldValueTuple> fvVector;
                 FieldValueTuple s("state", "ok");
                 fvVector.push_back(s);
+                FieldValueTuple tm("tagging_mode", tagging_mode);
+                fvVector.push_back(tm);
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
 
                 m_vlanMemberReplay.erase(kfvKey(t));
@@ -688,9 +771,18 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            m_hostCmdFailed.erase(kfvKey(t));
             if (isVlanMemberStateOk(kfvKey(t)))
             {
-                removeHostVlanMember(vlan_id, port_alias);
+                try
+                {
+                    removeHostVlanMember(vlan_id, port_alias, !portHasOtherVlanMembers(vlan_alias, port_alias));
+                }
+                catch (const std::runtime_error &e)
+                {
+                    // The port is already out of the bridge (or gone); finish the removal.
+                    SWSS_LOG_WARN("Host bridge removal of %s failed: %s", kfvKey(t).c_str(), e.what());
+                }
                 key = VLAN_PREFIX + to_string(vlan_id);
                 key += DEFAULT_KEY_SEPARATOR;
                 key += port_alias;
@@ -891,6 +983,8 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
                 vector<FieldValueTuple> fvVector1;
                 FieldValueTuple s1("state", "ok");
                 fvVector.push_back(s1);
+                FieldValueTuple tm("tagging_mode", tagging_mode);
+                fvVector.push_back(tm);
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
             }
         }
@@ -899,7 +993,9 @@ void VlanMgr::doVlanPacVlanMemberTask(Consumer &consumer)
             if (isVlanMemberStateOk(kfvKey(t)))
             {
                 SWSS_LOG_NOTICE("Remove Vlan Member key: %s", kfvKey(t).c_str());
-                removeHostVlanMember(vlan_id, port_alias);
+                // The static memberships come back right below, so the port
+                // leaves the bridge only when it has none.
+                removeHostVlanMember(vlan_id, port_alias, m_PortVlanMember[port_alias].empty());
                 key = VLAN_PREFIX + to_string(vlan_id);
                 key += DEFAULT_KEY_SEPARATOR;
                 key += port_alias;
@@ -944,6 +1040,8 @@ void VlanMgr::addPortToVlan(const std::string& membername, const std::string& vl
         vector<FieldValueTuple> fvVector1;
         FieldValueTuple s2("state", "ok");
         fvVector1.push_back(s2);
+        FieldValueTuple s3("tagging_mode", tagging_mode);
+        fvVector1.push_back(s3);
         key = VLAN_PREFIX + to_string(vlan_id);
         key += '|';
         key += membername;

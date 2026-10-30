@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_macsecmgrd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_macsecmgrd tests_vlanmgrd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_macsecmgrd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_macsecmgrd tests_vlanmgrd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
@@ -56,6 +56,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_sai_api.cpp \
                 bulker_ut.cpp \
                 portmgr_ut.cpp \
+                stpmgrd/stpmgr_ut.cpp \
                 sflowmgrd_ut.cpp \
                 policerorch_ut.cpp \
                 vnetorch_ut.cpp \
@@ -187,6 +188,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
+                $(top_srcdir)/cfgmgr/stpmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
                 $(top_srcdir)/orchagent/zmqrouteorch.cpp \
@@ -248,7 +250,11 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
-tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
+# The stpmgrd tests bind the stpd and stpmgrd IPC sockets in a writable
+# temp dir; /var/run is not bindable in the build container.
+tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES) \
+                 -DSTPD_SOCK_NAME='"/tmp/stpmgr_ut/stpipc.sock"' \
+                 -DSTPMGRD_SOCK_NAME='"/tmp/stpmgr_ut/stpmgrd.sock"'
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
                 -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
@@ -292,6 +298,26 @@ tests_intfmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdi
 tests_intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_intfmgrd_INCLUDES)
 tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
+
+## vlanmgrd unit tests
+
+tests_vlanmgrd_SOURCES = vlanmgrd/vlanmgr_switch_ut.cpp \
+                         $(top_srcdir)/cfgmgr/vlanmgr.cpp \
+                         $(top_srcdir)/lib/recorder.cpp \
+                         $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/request_parser.cpp \
+                         mock_dbconnector.cpp \
+                         mock_table.cpp \
+                         mock_hiredis.cpp \
+                         fake_response_publisher.cpp \
+                         mock_redisreply.cpp \
+                         common/mock_shell_command.cpp
+
+tests_vlanmgrd_INCLUDES = -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib -I$(top_srcdir)/orchagent -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I$(P4_ORCH_DIR)/tests
+tests_vlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_vlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_vlanmgrd_INCLUDES)
+tests_vlanmgrd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main
 
 ## teammgrd unit tests
