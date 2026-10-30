@@ -385,11 +385,8 @@ namespace teammgr_ut
         auto *consumer = teammgr.getConsumerBase(CFG_LAG_TABLE_NAME);
         ASSERT_TRUE(consumer->m_toSync.empty());
 
-        swss::KeyOpFieldsValuesTuple deletion("PortChannel495", DEL_COMMAND, {});
-        consumer->addToSync(deletion);
-        swss::KeyOpFieldsValuesTuple replacement(
-                "PortChannel495", SET_COMMAND, {{"admin_status", "up"}});
-        consumer->addToSync(replacement);
+        consumer->addToSync({"PortChannel495", DEL_COMMAND, {}});
+        consumer->addToSync({"PortChannel495", SET_COMMAND, {{"admin_status", "up"}}});
         callback = [](const std::string &cmd, std::string &) {
             mockCallArgs.push_back(cmd);
             return static_cast<int>(swss::TeamdStartResult::retry);
