@@ -238,9 +238,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     int state = rtnl_neigh_get_state(neigh);
     if (is_dualtor && family == IPV6_NAME)
     {
+        bool isVlanInterface = !intfName.compare(0, strlen("Vlan"), "Vlan");
         if (nlmsg_type == RTM_NEWNEIGH && state == NUD_FAILED)
         {
-            if (!intfName.compare(0, strlen("Vlan"), "Vlan"))
+            if (isVlanInterface)
             {
                 std::vector<FieldValueTuple> failedNeighFields = {
                     FieldValueTuple("NULL", "NULL"),
@@ -253,6 +254,17 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
                 m_kernelFailedNeighTable.del(key);
                 SWSS_LOG_INFO("Ignoring failed kernel neighbor '%s' on non-VLAN interface", key.c_str());
             }
+        }
+        else if (nlmsg_type == RTM_DELNEIGH && isVlanInterface)
+        {
+            /*
+             * Deleting a resolved neighbor makes the kernel report NUD_FAILED
+             * immediately followed by RTM_DELNEIGH. nbrmgrd may not have consumed
+             * the entry published for the NUD_FAILED report yet, so a lookup in
+             * NEIGH_FAILED_TABLE would miss it. Always remove the entry instead.
+             */
+            m_kernelFailedNeighTable.del(key);
+            SWSS_LOG_INFO("Removed deleted kernel neighbor '%s' from failed neighbor table", key.c_str());
         }
         else if (nlmsg_type == RTM_DELNEIGH ||
                  ((nlmsg_type == RTM_NEWNEIGH || nlmsg_type == RTM_GETNEIGH) &&
