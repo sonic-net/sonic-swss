@@ -211,6 +211,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
                         }
+                        else if (key == PORT_PHY_ATTR_KEY)
+                        {
+                            setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
+                            setFlexCounterGroupPollInterval(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value, true);
+                        }
                     }
                     // PORT_PHY_ATTR_KEY and PORT_PHY_SERDES_ATTR_KEY share the 'counterpoll phy' knob
                     if (key == PORT_PHY_ATTR_KEY)
@@ -350,16 +355,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         if(value == "enable")
                         {
-                            if (!m_port_phy_attr_enabled)
-                            {
-                                m_port_phy_attr_enabled = true;
-                                gPortsOrch->generatePortPhyAttrCounterMap();
-                            }
-                            if (!m_port_phy_serdes_attr_enabled)
-                            {
-                                m_port_phy_serdes_attr_enabled = true;
-                                gPortsOrch->generatePortPhySerdesAttrCounterMap();
-                            }
+                            /*
+                             * Always (re)generate maps on enable. A prior
+                             * disable/clear, can leave
+                             * m_port_phy_*_enabled true while FLEX_COUNTER_DB
+                             * ID lists are empty — skipping regenerate then
+                             * permanently starves PORT_PHY_ATTR polling.
+                             */
+                            m_port_phy_attr_enabled = true;
+                            gPortsOrch->generatePortPhyAttrCounterMap();
+                            m_port_phy_serdes_attr_enabled = true;
+                            gPortsOrch->generatePortPhySerdesAttrCounterMap();
                         }
                         if (value == "disable")
                         {
@@ -392,6 +398,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
                         {
                             setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
+                        }
+                        else if (key == PORT_PHY_ATTR_KEY)
+                        {
+                            setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
+                            setFlexCounterGroupOperation(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value, true);
                         }
                     }
                     // PORT_PHY_ATTR_KEY and PORT_PHY_SERDES_ATTR_KEY share the 'counterpoll phy' knob
