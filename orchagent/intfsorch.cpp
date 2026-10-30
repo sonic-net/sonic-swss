@@ -867,7 +867,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
         }
 
-        if (alias == "eth0" || alias == "docker0" || alias == "usb0")
+        if (alias == "eth0" || alias == "docker0" || alias == "usb0" || alias == "bmc0")
         {
             it = consumer.m_toSync.erase(it);
             continue;

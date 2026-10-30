@@ -906,6 +906,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                         * route pointing to it, so that we can traps packets to
                         * CPU */
                         if (alias == "eth0" || alias == "docker0" || alias == "usb0" ||
+                            alias == "bmc0" ||
                             alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
                         {
                             excp_intfs_flag = true;
