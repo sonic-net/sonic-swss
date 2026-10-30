@@ -132,8 +132,8 @@ def test_member_invalid_payload_preserves_accepted_row(bpp,bpp_fpm,invalid):
     if invalid=='zero_id': payload=b'\x00'*4+payload[4:]
     if invalid=='type': payload=payload[:4]+b'\x02'+payload[5:]
     if invalid=='family': payload=payload[:5]+b'\xff'+payload[6:]
-    if invalid=='zero_mac': payload=payload[:-6]+b'\x00'*6
-    if invalid=='multicast_mac': payload=payload[:-6]+bytes.fromhex('010000000002')
+    if invalid=='zero_mac': payload=payload[:24]+b'\x00'*6+payload[30:]
+    if invalid=='multicast_mac': payload=payload[:24]+bytes.fromhex('010000000002')+payload[30:]
     bpp_fpm.send(frame(149,payload))
     bpp_fpm.barrier()
     stable(lambda: assert_object_unchanged(bpp,identifier,expected))
@@ -272,10 +272,10 @@ def test_cli_through_fpm_and_swss_show_reports_confirmed_readback(bpp,bpp_fpm):
 
 
 def test_largest_transport_sized_group_is_decoded_without_count_wrap(bpp,bpp_fpm):
-    # FPM(4) + aligned netlink/Group header(36) + 28 bytes per Member.
-    members=[0x40000001+i for i in range(583)]
+    # FPM(4) + netlink(16) + native Group header(20) + 32 bytes per Member.
+    members=[0x40000001+i for i in range(510)]
     data=group_frame(bpp.group_id,members)
-    assert len(data)==16364 and len(data)<=16384
+    assert len(data)==16360 and len(data)<=16384
     bpp_fpm.send(data)
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':','.join(map(str,members))})
 
@@ -387,9 +387,45 @@ def test_group_with_invalid_last_member_publishes_no_partial_snapshot(bpp,bpp_fp
     first,second=0x40002001,0x40002002
     valid=group_frame(bpp.group_id,[first,second])
     # Last Member RMAC is invalid; the earlier Member must not be published.
-    payload=valid[20:20+18+2*28]
-    bpp_fpm.send(frame(151,payload[:-6]+b'\x00'*6)); bpp_fpm.barrier()
+    payload=bytearray(valid[20:20+20+2*32])
+    payload[20+32+24:20+32+30]=b'\x00'*6
+    bpp_fpm.send(frame(151,payload)); bpp_fpm.barrier()
     for identifier in (first,second,bpp.group_id):
         assert not bpp.app_db.get_entry(OBJECTS,str(identifier))
     bpp_fpm.send(valid)
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':str(first)+','+str(second)})
+
+
+@pytest.mark.parametrize('object_kind',['member','group'])
+def test_packed_payload_is_rejected_without_changing_natural_row(bpp,bpp_fpm,object_kind):
+    if object_kind=='member':
+        identifier=bpp.member_id
+        valid=member_frame(identifier,bpp.ip)
+        payload=valid[20:]
+        packed=payload[:6]+payload[8:30]
+        expected=member_row(bpp.ip)
+        kind=149
+    else:
+        identifier=bpp.group_id
+        valid=group_frame(identifier,[bpp.member_id])
+        payload=valid[20:]
+        record=payload[20:]
+        packed=payload[:18]+record[:6]+record[8:30]
+        expected={'nexthop_group':str(bpp.member_id)}
+        kind=151
+    bpp_fpm.send(valid); exact(bpp,OBJECTS,str(identifier),expected)
+    bpp_fpm.send(frame(kind,packed)); bpp_fpm.barrier()
+    stable(lambda: assert_object_unchanged(bpp,identifier,expected))
+
+
+def test_native_padding_is_ignored_for_member_and_inline_group(bpp,bpp_fpm):
+    member=bytearray(member_frame(bpp.member_id,bpp.ip)[20:])
+    for offset in (6,7,30,31): member[offset]=0xa5
+    bpp_fpm.send(frame(149,member))
+    exact(bpp,OBJECTS,str(bpp.member_id),member_row(bpp.ip))
+    group=bytearray(group_frame(bpp.group_id,[bpp.member_id])[20:])
+    group[18:20]=b'\xa5\xa5'
+    group[20:]=member
+    bpp_fpm.send(frame(151,group))
+    exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':str(bpp.member_id)})
+    exact(bpp,OBJECTS,str(bpp.member_id),member_row(bpp.ip))

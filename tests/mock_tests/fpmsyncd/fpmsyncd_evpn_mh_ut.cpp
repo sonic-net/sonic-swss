@@ -1306,7 +1306,7 @@ TEST_F(FpmBindingTest, FullGroupSnapshotRefreshesMembersAndRetainsHldRowShape)
 TEST_F(FpmBindingTest, GroupTransportBoundaryAndOldIdOnlyLayoutAreRejectedSafely)
 {
     const size_t maximum = (FPM_MAX_MSG_LEN - FPM_MSG_HDR_LEN - NLMSG_SPACE(sizeof(l2_nhg_group_msg))) / sizeof(l2_nhg_member_msg);
-    ASSERT_EQ(maximum,583u);
+    ASSERT_EQ(maximum,510u);
     std::vector<l2_nhg_member_msg> members;
     for (uint32_t i=0;i<maximum;++i) members.push_back(bppWireMember(0x40000001u+i));
     auto bytes = bppWireGroup(0x80000001u,members);
@@ -1357,4 +1357,70 @@ TEST_F(FpmBindingTest, ReplayDoneTravelsThroughFpmLinkWithoutPublishingState)
     EXPECT_TRUE(absent("PortChannel0"));
     EXPECT_EQ(testing_db::getProducerSetCount("L2_NEXTHOP_GROUP_TABLE"),0u);
     EXPECT_EQ(testing_db::getProducerSetCount("EVPN_ES_BACKUP_NHG_TABLE"),0u);
+}
+
+TEST_F(FpmBindingTest, NativeAlignedMemberAndGroupIgnorePaddingBytes)
+{
+    auto rawMember = [](uint32_t id, const char *ip) {
+        // Independent native ABI fixture: do not serialize the decoder's struct.
+        std::vector<unsigned char> body(32, 0xa5);
+        memcpy(body.data(), &id, sizeof(id));
+        body[4] = 1; body[5] = strchr(ip, ':') ? AF_INET6 : AF_INET;
+        unsigned char address[16]{};
+        EXPECT_EQ(inet_pton(body[5], ip, address), 1);
+        memcpy(body.data() + 8, address, sizeof(address));
+        const unsigned char mac[6]{2, 0, 0, 0, 0, 3};
+        memcpy(body.data() + 24, mac, sizeof(mac));
+        return body;
+    };
+    auto deliver = [&](uint16_t type, const std::vector<unsigned char> &body) {
+        std::vector<unsigned char> bytes(NLMSG_SPACE(body.size()));
+        nlmsghdr header{}; header.nlmsg_type = type;
+        header.nlmsg_len = static_cast<uint32_t>(NLMSG_LENGTH(body.size()));
+        memcpy(bytes.data(), &header, sizeof(header));
+        memcpy(bytes.data() + NLMSG_HDRLEN, body.data(), body.size());
+        sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    };
+    const auto first = rawMember(0x40000007u, "10.0.0.2");
+    const auto second = rawMember(0x40000008u, "2001:db8::2");
+    deliver(RTM_FPM_ADD_L2_NEXTHOP, first);
+    Table objects(&db, "L2_NEXTHOP_GROUP_TABLE");
+    std::string value;
+    ASSERT_TRUE(objects.hget("1073741831", "remote_vtep", value)); EXPECT_EQ(value, "10.0.0.2");
+    std::vector<unsigned char> group(20, 0xa5);
+    const uint32_t id = 0x80000001u, count = 2;
+    memcpy(group.data(), &id, sizeof(id)); memcpy(group.data() + 4, &count, sizeof(count));
+    group.insert(group.end(), first.begin(), first.end()); group.insert(group.end(), second.begin(), second.end());
+    deliver(RTM_FPM_ADD_L2_NEXTHOP_GROUP, group);
+    ASSERT_TRUE(objects.hget("2147483649", "nexthop_group", value)); EXPECT_EQ(value, "1073741831,1073741832");
+    ASSERT_TRUE(objects.hget("1073741832", "remote_vtep", value)); EXPECT_EQ(value, "2001:db8::2");
+    ASSERT_TRUE(objects.hget("1073741832", "router_mac", value)); EXPECT_EQ(value, "02:00:00:00:00:03");
+}
+
+TEST_F(FpmBindingTest, PackedLayoutsCannotReplaceAcceptedNativeRows)
+{
+    const auto member = bppWireMember();
+    struct { nlmsghdr header; l2_nhg_member_msg member; } natural{};
+    natural.header.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP;
+    natural.header.nlmsg_len = NLMSG_LENGTH(sizeof(member)); natural.member = member;
+    sync->onMsgRaw(&natural.header); pipeline.flush();
+    auto group = bppWireGroup(0x80000001u, {member});
+    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(group.data())); pipeline.flush();
+    Table objects(&db, "L2_NEXTHOP_GROUP_TABLE");
+    std::vector<FieldValueTuple> memberBefore, groupBefore, after;
+    ASSERT_TRUE(objects.get("1073741831", memberBefore)); ASSERT_TRUE(objects.get("2147483649", groupBefore));
+    std::vector<unsigned char> packedMember(NLMSG_SPACE(28));
+    nlmsghdr header{}; header.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP; header.nlmsg_len = NLMSG_LENGTH(28);
+    memcpy(packedMember.data(), &header, sizeof(header));
+    auto *payload = packedMember.data() + NLMSG_HDRLEN;
+    memcpy(payload, &member.l2nm_nh_id, 4); payload[4] = 1; payload[5] = AF_INET;
+    memcpy(payload + 6, &member.l2nm_remote_vtep, 16); memcpy(payload + 22, member.l2nm_router_mac, 6);
+    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(packedMember.data())); pipeline.flush();
+    std::vector<unsigned char> packedGroup(NLMSG_SPACE(18));
+    header.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP_GROUP; header.nlmsg_len = NLMSG_LENGTH(18);
+    memcpy(packedGroup.data(), &header, sizeof(header));
+    const uint32_t id = 0x80000001u; memcpy(packedGroup.data() + NLMSG_HDRLEN, &id, sizeof(id));
+    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(packedGroup.data())); pipeline.flush();
+    ASSERT_TRUE(objects.get("1073741831", after)); EXPECT_EQ(after, memberBefore);
+    ASSERT_TRUE(objects.get("2147483649", after)); EXPECT_EQ(after, groupBefore);
 }
