@@ -37,7 +37,7 @@ bool protectionIdType(uint32_t id, fpm_nhg_type type)
 bool protectionMemberFields(const l2_nhg_member_msg &msg, vector<FieldValueTuple> &fields)
 {
     // L2 Members and Groups belong to kernel netlink/fdbsyncd, never FPM.
-    if (!protectionIdType(msg.l2nm_nh_id, FPM_NHG_TYPE_L3_BPP_NH) || msg.l2nm_type != 1 ||
+    if (!protectionIdType(msg.l2nm_nh_id, FPM_NHG_TYPE_L3_BPP_NH) || msg.l2nm_type != L2_NHG_MEMBER_TYPE_L3 ||
         (msg.l2nm_family != AF_INET && msg.l2nm_family != AF_INET6)) return false;
     const bool missingMac = all_of(begin(msg.l2nm_router_mac), end(msg.l2nm_router_mac),
                                   [](uint8_t b) { return b == 0; });
@@ -2760,7 +2760,7 @@ void RouteSync::onL2ProtectionMsg(struct nlmsghdr *h)
     l2_nhg_group_msg header;
     memcpy(&header, NLMSG_DATA(h), sizeof(header));
     if (header.l2ng_count > L2_NHG_MAX_MEMBERS ||
-        h->nlmsg_len != NLMSG_LENGTH(sizeof(header) + header.l2ng_count * sizeof(l2_nhg_member_msg)))
+        h->nlmsg_len != NLMSG_LENGTH(L2_NHG_GROUP_MSG_LEN(header.l2ng_count)))
     {
         SWSS_LOG_ERROR("Invalid FPM group count/length");
         return;
