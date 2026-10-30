@@ -37,7 +37,7 @@ bool protectionIdType(uint32_t id, fpm_nhg_type type)
 bool protectionMemberFields(const l2_nhg_member_msg &msg, vector<FieldValueTuple> &fields)
 {
     // L2 Members and Groups belong to kernel netlink/fdbsyncd, never FPM.
-    if (!protectionIdType(msg.l2nm_nh_id, NHG_TYPE_L3_BPP_NH) || msg.l2nm_type != 1 ||
+    if (!protectionIdType(msg.l2nm_nh_id, FPM_NHG_TYPE_L3_BPP_NH) || msg.l2nm_type != 1 ||
         (msg.l2nm_family != AF_INET && msg.l2nm_family != AF_INET6)) return false;
     const bool missingMac = all_of(begin(msg.l2nm_router_mac), end(msg.l2nm_router_mac),
                                   [](uint8_t b) { return b == 0; });
@@ -2602,7 +2602,7 @@ void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
     }
     // Zero remains the unbind sentinel. Never retag or truncate an FRR ID.
     if (binding.ebnm_backup_nhg_id != 0 &&
-        !protectionIdType(binding.ebnm_backup_nhg_id, NHG_TYPE_L3_BPP))
+        !protectionIdType(binding.ebnm_backup_nhg_id, FPM_NHG_TYPE_L3_BPP))
     {
         SWSS_LOG_WARN("Reject FPM binding with non-protection Group id=%u", binding.ebnm_backup_nhg_id);
         return;
@@ -2741,7 +2741,7 @@ void RouteSync::onL2ProtectionMsg(struct nlmsghdr *h)
             SWSS_LOG_ERROR("Invalid FPM member length");
             return;
         }
-        if (!protectionIdType(msg.l2nm_nh_id, NHG_TYPE_L3_BPP_NH))
+        if (!protectionIdType(msg.l2nm_nh_id, FPM_NHG_TYPE_L3_BPP_NH))
         {
             SWSS_LOG_WARN("Reject FPM Member with wrong ID type id=%u", msg.l2nm_nh_id);
             return;
@@ -2765,7 +2765,7 @@ void RouteSync::onL2ProtectionMsg(struct nlmsghdr *h)
         SWSS_LOG_ERROR("Invalid FPM group count/length");
         return;
     }
-    if (!protectionIdType(header.l2ng_nhg_id, NHG_TYPE_L3_BPP))
+    if (!protectionIdType(header.l2ng_nhg_id, FPM_NHG_TYPE_L3_BPP))
     { SWSS_LOG_WARN("Reject FPM Group with wrong ID type id=%u", header.l2ng_nhg_id); return; }
     if (deleting) { writeFpmL2Object(header.l2ng_nhg_id, true, true, {}); return; }
     vector<pair<uint32_t, vector<FieldValueTuple>>> staged;
