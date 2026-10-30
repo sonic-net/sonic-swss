@@ -76,6 +76,7 @@ orchagent_SOURCES = \
             qosorch.cpp \
             buffer/bufferhelper.cpp \
             bufferorch.cpp \
+            mirror/mirror_capabilities.cpp \
             mirrororch.cpp \
             fdborch.cpp \
             macmoveguard.cpp \

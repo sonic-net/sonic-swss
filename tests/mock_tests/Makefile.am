@@ -141,6 +141,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/qosorch.cpp \
                 $(top_srcdir)/orchagent/buffer/bufferhelper.cpp \
                 $(top_srcdir)/orchagent/bufferorch.cpp \
+                $(top_srcdir)/orchagent/mirror/mirror_capabilities.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
                 $(top_srcdir)/orchagent/macmoveguard.cpp \
