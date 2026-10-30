@@ -90,13 +90,37 @@ static bool getAttr(const struct rtattr *rta, T& value)
     return true;
 }
 
+static bool hasField(const std::vector<FieldValueTuple>& row, const string& field)
+{
+    return std::any_of(row.begin(), row.end(), [&field](const FieldValueTuple& fv) {
+        return fvField(fv) == field;
+    });
+}
+
+/* SONiC names a VLAN's VxLAN netdev <tunnel>-<vid>; empty for any other name. */
+static string vlanOfNetdev(const string& ifname)
+{
+    auto dash = ifname.rfind('-');
+
+    if (dash == string::npos || dash + 1 == ifname.size())
+    {
+        return "";
+    }
+    return "Vlan" + ifname.substr(dash + 1);
+}
+
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
+    m_vxlanFdbTableRead(pipeline->getDBConnector(), APP_VXLAN_FDB_TABLE_NAME),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
     m_cfgEvpnEsTable(cfgDb, "EVPN_ETHERNET_SEGMENT"),
-    m_ifNameToIndex([](const string& name) { return if_nametoindex(name.c_str()); })
+    m_ifNameToIndex([](const string& name) { return if_nametoindex(name.c_str()); }),
+    m_ifIndexToName([](unsigned int ifindex) {
+        char name[IF_NAMESIZE] = {0};
+        return (ifindex && if_indextoname(ifindex, name)) ? string(name) : string();
+    })
 {
     string subtype;
     Table deviceMetadata(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
@@ -146,6 +170,86 @@ void MacSync::onFpmConnected(FpmInterface& fpm)
 void MacSync::onFpmDisconnected()
 {
     m_fpmInterface = nullptr;
+}
+
+/*
+ * Deleting a VxLAN netdev flushes its FDB in the kernel, which is how fdbsyncd
+ * withdraws the rows in kernel mode. zebra sends no per-MAC delete for it: its
+ * remote MAC uninstall needs the netdev still enslaved to the bridge. onMacMsg()
+ * keys a remote MAC by the VLAN in the <tunnel>-<vid> name of the netdev it came
+ * on, so that VLAN's rows are withdrawn here, whoever wrote them. Ethernet
+ * Segment port rows stay, as the kernel keeps those entries on the port.
+ */
+void MacSync::onVxlanLinkDel(const string& ifname)
+{
+    if (!m_fpmMode)
+    {
+        return;
+    }
+
+    string vlanName = vlanOfNetdev(ifname);
+    if (vlanName.empty())
+    {
+        SWSS_LOG_INFO("MacSync: %s deleted, but its name gives no VLAN", ifname.c_str());
+        return;
+    }
+
+    string prefix = vlanName + ":";
+    std::vector<string> gone;
+
+    /* orchagent may not have read the rows MacSync queued last. A row MacSync
+     * withdrew can still be in APPL_DB, and withdrawing it again does no harm. */
+    for (auto it = m_remoteRows.lower_bound(prefix);
+         it != m_remoteRows.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it)
+    {
+        if (!hasField(it->second.row, "ifname"))
+        {
+            gone.push_back(it->first);
+        }
+    }
+
+    std::vector<string> keys;
+    m_vxlanFdbTableRead.getKeys(keys);
+    for (const auto& key : keys)
+    {
+        std::vector<FieldValueTuple> row;
+
+        if (key.compare(0, prefix.size(), prefix) == 0 && !m_remoteRows.count(key) &&
+            m_vxlanFdbTableRead.get(key, row) && !hasField(row, "ifname"))
+        {
+            gone.push_back(key);
+        }
+    }
+
+    for (const auto& key : gone)
+    {
+        removeRemoteMac(key);
+        SWSS_LOG_INFO("MacSync: removed remote MAC %s, %s is gone", key.c_str(), ifname.c_str());
+    }
+
+    size_t withdrawn = gone.size();
+    if (withdrawn)
+    {
+        SWSS_LOG_NOTICE("MacSync: %s deleted, withdrew its %zu remote MACs", ifname.c_str(), withdrawn);
+    }
+}
+
+/* set() merges fields, so a MAC whose destination changes would keep the old
+ * one. The row is deleted first, whoever wrote it; when both reach orchagent
+ * in one pop, it sees only the new row. */
+void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTuple>& row)
+{
+    m_vxlanFdbTable.del(key);
+    m_vxlanFdbTable.set(key, row);
+    m_remoteRows[key] = RemoteRow{row};
+}
+
+/* By key, whoever wrote the row: one an earlier fpmsyncd or fdbsyncd in kernel
+ * mode left behind is still zebra's to withdraw. */
+void MacSync::removeRemoteMac(const string& key)
+{
+    m_vxlanFdbTable.del(key);
+    m_remoteRows.erase(key);
 }
 
 void MacSync::processStateFdb()
@@ -330,6 +434,11 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         return;
     }
 
+    if (m_readLinks)
+    {
+        m_readLinks();
+    }
+
     struct ndmsg *ndm = (struct ndmsg *)NLMSG_DATA(h);
 
     if (ndm->ndm_family != AF_BRIDGE)
@@ -374,18 +483,8 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
      * VTEP, and a VxLAN-side copy carrying NDA_DST but no VLAN. The netdev name
      * is the only VLAN source present on both, so derive from it as fdbsyncd does
      * (SONiC names the device <tunnel>-<vlanid>). */
-    string vlanName;
-    char ifname[IF_NAMESIZE] = {0};
-
-    if (if_indextoname((unsigned int)ndm->ndm_ifindex, ifname))
-    {
-        string intf(ifname);
-        auto dash = intf.rfind('-');
-        if (dash != string::npos)
-        {
-            vlanName = "Vlan" + intf.substr(dash + 1);
-        }
-    }
+    string ifname = m_ifIndexToName((unsigned int)ndm->ndm_ifindex);
+    string vlanName = vlanOfNetdev(ifname);
 
     if (vlanName.empty() && tb[NDA_VLAN])
     {
@@ -406,11 +505,16 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
                   (ndm->ndm_state == NUD_INCOMPLETE) ||
                   (ndm->ndm_state == NUD_FAILED);
 
+    if (!remove && ndm->ndm_ifindex && ifname.empty())
+    {
+        /* The netdev is gone: a VxLAN netdev's rows went with its delete. */
+        SWSS_LOG_INFO("MacSync: skipping MAC %s on deleted ifindex %d", key.c_str(), ndm->ndm_ifindex);
+        return;
+    }
+
     if (remove)
     {
-        /* By key, whoever wrote the row: one an earlier fpmsyncd or fdbsyncd in
-         * kernel mode left behind is still zebra's to withdraw. */
-        m_vxlanFdbTable.del(key);
+        removeRemoteMac(key);
         SWSS_LOG_INFO("MacSync: removed remote MAC %s", key.c_str());
         return;
     }
@@ -452,7 +556,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
                 return;
             }
         }
-        else if (ifname[0] && isEthernetSegmentInterface(ifname))
+        else if (!ifname.empty() && isEthernetSegmentInterface(ifname))
         {
             /* A MAC on an Ethernet Segment we also hold locally is reachable
              * through our own access port, so zebra sends it against that port
@@ -487,11 +591,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
 
-    /* set() merges fields, so a MAC whose destination changes would keep the old
-     * one. The row is deleted first, whoever wrote it; when both reach orchagent
-     * in one pop, it sees only the new row. */
-    m_vxlanFdbTable.del(key);
-    m_vxlanFdbTable.set(key, fvVector);
+    writeRemoteMac(key, fvVector);
 
     string dest = !nexthopGroup.empty() ? ("nexthop_group " + nexthopGroup)
                 : !esInterface.empty()  ? ("ifname " + esInterface)

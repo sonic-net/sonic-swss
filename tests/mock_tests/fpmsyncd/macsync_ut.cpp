@@ -17,12 +17,14 @@
 #include <net/if.h>
 
 #include <cstring>
+#include <map>
 #include <vector>
 
 #include <linux/if_ether.h>
 #include <linux/neighbour.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netlink/route/link.h>
 
 #define private public
 #include "fpmsyncd/macsync.h"
@@ -146,6 +148,15 @@ public:
         Table table(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
         return table.get(key, values);
     }
+
+    /* orchagent has not read MacSync's last write to the row yet. */
+    void unread(const std::string& k)
+    {
+        Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+        appFdb.del(k);
+    }
+
+    std::size_t rowDels() { return testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME); }
 
     std::string fieldValue(const std::vector<FieldValueTuple>& values,
                            const std::string& field)
@@ -978,4 +989,224 @@ TEST_F(MacSyncTest, RemoteMacDestinationChangeReplacesARowItDidNotWrite)
     ASSERT_TRUE(getEntry(TEST_KEY, values));
     EXPECT_EQ(fieldValue(values, "nexthop_group"), "4242");
     EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
+}
+
+/*
+ * Deleting a VxLAN netdev flushes its FDB in the kernel, and zebra sends no
+ * per-MAC delete for it. The rows of its VLAN must go with it.
+ */
+namespace {
+
+const unsigned int VTEP_IFINDEX = 1000;
+const unsigned int OTHER_VTEP_IFINDEX = 1001;
+
+}
+
+class MacSyncLinkDelTest : public MacSyncTest
+{
+public:
+    void SetUp() override
+    {
+        MacSyncTest::SetUp();
+        m_macSync->m_ifIndexToName = [this](unsigned int ifindex) {
+            auto it = m_links.find(ifindex);
+            return it == m_links.end() ? std::string() : it->second;
+        };
+        m_links[VTEP_IFINDEX] = "vtep1-100";
+        m_links[OTHER_VTEP_IFINDEX] = "vtep1-200";
+    }
+
+    void addRemoteMac(unsigned int ifindex, uint16_t vlan, uint8_t lastOctet,
+                      uint16_t type = RTM_NEWNEIGH)
+    {
+        MacMsg req;
+        buildMacMsg(req, type, NUD_REACHABLE);
+        setLastOctet(req, lastOctet);
+        req.ndm.ndm_ifindex = (int)ifindex;
+        addVlan(req, vlan);
+        addVtep(req, "10.1.1.1");
+        addSrcVni(req, TEST_VNI);
+        feed(req);
+    }
+
+    /* NDA_LLADDR is the first attribute buildMacMsg() adds. */
+    void setLastOctet(MacMsg& req, uint8_t octet)
+    {
+        auto *rta = (struct rtattr *)(void *)((char *)&req.n + NLMSG_LENGTH(sizeof(struct ndmsg)));
+        ((uint8_t *)RTA_DATA(rta))[ETH_ALEN - 1] = octet;
+    }
+
+    std::string key(uint16_t vlan, uint8_t lastOctet)
+    {
+        char mac[18];
+        snprintf(mac, sizeof(mac), "00:11:22:33:44:%02x", lastOctet);
+        return "Vlan" + std::to_string(vlan) + ":" + mac;
+    }
+
+    bool hasEntry(const std::string& k)
+    {
+        std::vector<FieldValueTuple> values;
+        return getEntry(k, values);
+    }
+
+    /* A row some other writer left in APPL_DB. */
+    void putRow(const std::string& k, const std::vector<FieldValueTuple>& row)
+    {
+        Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+        appFdb.set(k, row);
+    }
+
+    /* Delivers a link deletion the way fpmsyncd's netlink socket does. */
+    void delLink(unsigned int ifindex, const char *name, const char *type, int family = AF_UNSPEC)
+    {
+        struct rtnl_link *link = rtnl_link_alloc();
+        rtnl_link_set_ifindex(link, (int)ifindex);
+        rtnl_link_set_name(link, name);
+        if (type)
+        {
+            rtnl_link_set_type(link, type);
+        }
+        rtnl_link_set_family(link, family);
+        m_links.erase(ifindex);
+        m_routeSync->onMsg(RTM_DELLINK, (struct nl_object *)link);
+        rtnl_link_put(link);
+    }
+
+    std::map<unsigned int, std::string> m_links;
+};
+
+TEST_F(MacSyncLinkDelTest, RemoteMacsWithdrawnWithTheirVxlanLink)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    addRemoteMac(OTHER_VTEP_IFINDEX, 200, 0x01);
+    ASSERT_TRUE(hasEntry(key(100, 0x01)));
+    ASSERT_TRUE(hasEntry(key(100, 0x02)));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(200, 0x01)));
+}
+
+/* An add zebra queued before the netdev went away must not bring a row back. */
+TEST_F(MacSyncLinkDelTest, AddOnADeletedLinkIsSkipped)
+{
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A late delete still resolves its row through NDA_VLAN. */
+TEST_F(MacSyncLinkDelTest, DeleteOnADeletedLinkStillWithdraws)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    m_links.erase(VTEP_IFINDEX);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A VLAN remapped to a new VNI gets a new netdev under the same name. The old
+ * one's delete, still queued when zebra sends a MAC on the new one, is read
+ * first, so it takes only the old rows. */
+TEST_F(MacSyncLinkDelTest, QueuedLinkDeleteIsReadBeforeAMac)
+{
+    const unsigned int NEW_IFINDEX = 1002;
+    bool queued = false;
+    m_macSync->setLinkReader([this, &queued]() {
+        if (queued)
+        {
+            queued = false;
+            delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+        }
+    });
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    m_links[NEW_IFINDEX] = "vtep1-100";
+    queued = true;
+    addRemoteMac(NEW_IFINDEX, 100, 0x02);
+
+    EXPECT_FALSE(queued);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+    m_macSync->setLinkReader(nullptr);
+}
+
+/* A row orchagent has not read yet is not in APPL_DB, and goes all the same. */
+TEST_F(MacSyncLinkDelTest, RowOrchagentHasNotReadGoesWithTheLink)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    unread(key(100, 0x01));
+    auto dels = rowDels();
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* The VLAN's rows go whoever wrote them; Ethernet Segment port rows (no VTEP,
+ * the kernel keeps them on the port) and other VLANs' rows stay. */
+TEST_F(MacSyncLinkDelTest, RowsOfTheVlanGoWhoeverWroteThem)
+{
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    putRow(key(100, 0x02), {{"nexthop_group", "7"}, {"type", "dynamic"}, {"vni", "20100"}});
+    putRow(key(100, 0x03), {{"ifname", "PortChannel1"}, {"type", "dynamic"}, {"vni", "0"}});
+    putRow(key(1000, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "21000"}});
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+    EXPECT_TRUE(hasEntry(key(1000, 0x01)));
+}
+
+/* A port leaving the bridge (AF_BRIDGE) and a non-VxLAN netdev flush nothing:
+ * the kernel keeps a VxLAN netdev's own FDB in the first case, and has none of
+ * these rows in the second. */
+TEST_F(MacSyncLinkDelTest, OnlyAVxlanNetdevDeletionFlushes)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan", AF_BRIDGE);
+    m_links[VTEP_IFINDEX] = "vtep1-100";
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", nullptr);
+    m_links[VTEP_IFINDEX] = "vtep1-100";
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "bond");
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* fdbsyncd owns APPL_DB in kernel mode. */
+TEST_F(MacSyncLinkDelTest, KernelModeLeavesRowsToFdbsyncd)
+{
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    m_macSync->m_fpmMode = false;
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* A netdev not named <tunnel>-<vid> names no VLAN, so no row is taken. */
+TEST_F(MacSyncLinkDelTest, UnconventionalNameWithdrawsNothing)
+{
+    m_links[VTEP_IFINDEX] = "vxlanif";
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    req.ndm.ndm_ifindex = (int)VTEP_IFINDEX;
+    addVlan(req, TEST_VLAN);
+    addVtep(req, "10.1.1.1");
+    feed(req);
+    ASSERT_TRUE(hasEntry(TEST_KEY));
+
+    delLink(VTEP_IFINDEX, "vxlanif", "vxlan");
+
+    EXPECT_TRUE(hasEntry(TEST_KEY));
 }
