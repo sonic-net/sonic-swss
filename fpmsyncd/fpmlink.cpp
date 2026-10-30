@@ -209,7 +209,10 @@ void FpmLink::accept()
     if (m_connection_socket < 0)
         throw system_error(errno, system_category());
 
-    SWSS_LOG_INFO("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
+    // The destructor must close the accepted socket on connection teardown.
+    m_connected = true;
+
+    SWSS_LOG_NOTICE("New FPM connection accepted from: %s", inet_ntoa(client_addr.sin_addr));
 }
 
 int FpmLink::getFd()

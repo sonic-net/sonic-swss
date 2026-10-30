@@ -4,10 +4,86 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
+#include <fcntl.h>
 
 using namespace swss;
 
 using ::testing::_;
+
+class FpmLinkLifecycleTest : public ::testing::Test
+{
+public:
+    void TearDown() override
+    {
+        if (m_client >= 0)
+            close(m_client);
+    }
+
+    int connectClient()
+    {
+        m_client = socket(AF_INET, SOCK_STREAM, 0);
+        if (m_client < 0)
+            return -1;
+
+        // Bound peer reads so a missing close fails instead of hanging the test.
+        timeval timeout{1, 0};
+        if (setsockopt(m_client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
+            return -1;
+
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = htons(FPM_DEFAULT_PORT);
+        return connect(m_client, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    }
+
+    DBConnector m_db{"APPL_DB", 0};
+    RedisPipeline m_pipeline{&m_db, 1};
+    RouteSync m_routeSync{&m_pipeline};
+    int m_client = -1;
+};
+
+TEST_F(FpmLinkLifecycleTest, TeardownClosesAcceptedSocketAcrossReconnects)
+{
+    for (int attempt = 0; attempt < 5; ++attempt)
+    {
+        int accepted;
+        {
+            FpmLink fpm(&m_routeSync);
+            ASSERT_EQ(connectClient(), 0);
+            fpm.accept();
+            accepted = fpm.getFd();
+            ASSERT_GE(fcntl(accepted, F_GETFD), 0);
+        }
+
+        errno = 0;
+        EXPECT_EQ(fcntl(accepted, F_GETFD), -1);
+        EXPECT_EQ(errno, EBADF);
+        char byte;
+        EXPECT_EQ(recv(m_client, &byte, sizeof(byte), 0), 0);
+        EXPECT_EQ(close(m_client), 0);
+        m_client = -1;
+    }
+}
+
+TEST_F(FpmLinkLifecycleTest, PeerEofTeardownClosesAcceptedSocket)
+{
+    int accepted;
+    {
+        FpmLink fpm(&m_routeSync);
+        ASSERT_EQ(connectClient(), 0);
+        fpm.accept();
+        accepted = fpm.getFd();
+        ASSERT_EQ(shutdown(m_client, SHUT_WR), 0);
+        EXPECT_THROW(fpm.readData(), FpmLink::FpmConnectionClosedException);
+    }
+
+    errno = 0;
+    EXPECT_EQ(fcntl(accepted, F_GETFD), -1);
+    EXPECT_EQ(errno, EBADF);
+    char byte;
+    EXPECT_EQ(recv(m_client, &byte, sizeof(byte), 0), 0);
+}
 
 class MockMsgHandler : public NetMsg
 {

@@ -286,6 +286,7 @@ int main(int argc, char **argv)
         }
         catch (FpmLink::FpmConnectionClosedException &e)
         {
+            SWSS_LOG_NOTICE("FPM connection closed by peer, reconnecting");
             cout << "Connection lost, reconnecting..." << endl;
         }
     }
