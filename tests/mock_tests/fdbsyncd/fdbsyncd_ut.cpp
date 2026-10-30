@@ -2389,3 +2389,259 @@ TEST_F(FdbSyncdEvpnMhTest, TestMixedNhgAndVtepMacs)
 
     ASSERT_TRUE(true);
 }
+
+/*
+ * Local MAC delete after the port has left the VLAN: the kernel keeps the port's
+ * extern_learn and static entries in that VLAN and rejects a per-MAC delete there.
+ * The kernel is scripted: the port carries no VID 2100 (it left the VLAN, or spanning
+ * tree blocks it there), so per-MAC deletes fail, and it is a bridge port while
+ * s_bridgePort is set. VLAN membership is the STATE_DB VLAN_MEMBER_TABLE row.
+ */
+static bool s_bridgePort = true;
+
+static int leftVlanKernel(const std::string &cmd, std::string &out)
+{
+    mockCallArgs.push_back(cmd);
+    out = "";
+    if (cmd.find("bridge fdb del") != std::string::npos)
+    {
+        return 255;
+    }
+    if (cmd.find("test -d /sys/class/net/") == 0)
+    {
+        return s_bridgePort ? 0 : 1;
+    }
+    if (cmd.find("bridge vlan show") != std::string::npos)
+    {
+        out = "port              vlan-id  \n";
+    }
+    return 0;
+}
+
+/* Runs fn with swss ERROR logs sent to stdout and returns what it logged.
+   These tests log to syslog, so that is the output restored afterwards. */
+template <typename Fn>
+static std::string errorLogsOf(Fn fn)
+{
+    auto prio = swss::Logger::getMinPrio();
+    swss::Logger::swssOutputNotify("fdbsyncd", "STDOUT");
+    swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+    testing::internal::CaptureStdout();
+    fn();
+    std::string out = testing::internal::GetCapturedStdout();
+    swss::Logger::setMinPrio(prio);
+    swss::Logger::swssOutputNotify("fdbsyncd", "SYSLOG");
+    return out;
+}
+
+class FdbSyncdLeftVlanTest : public FdbSyncdEvpnMhTest
+{
+public:
+    void SetUp() override
+    {
+        FdbSyncdEvpnMhTest::SetUp();
+        s_bridgePort = true;
+    }
+
+    void TearDown() override
+    {
+        FdbSyncdEvpnMhTest::TearDown();
+        callback = nullptr;
+    }
+
+    void setMember(bool member)
+    {
+        Table stateVlanMember(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME);
+        if (member)
+        {
+            stateVlanMember.set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+        }
+        else
+        {
+            stateVlanMember.del("Vlan2100|Ethernet160");
+        }
+    }
+
+    void addMac(const std::string &mac, short type)
+    {
+        struct m_fdb_info info;
+        info.mac = mac;
+        info.vid = "Vlan2100";
+        info.port_name = "Ethernet160";
+        info.type = type;
+        info.op_type = FDB_OPER_ADD;
+        callback = captureCommand;
+        m_mockFdbSync.updateLocalMac(&info);
+    }
+
+    // Delete mac with the scripted kernel; mockCallArgs holds only the commands of the delete
+    void deleteMac(const std::string &mac, short type)
+    {
+        struct m_fdb_info info;
+        info.mac = mac;
+        info.vid = "Vlan2100";
+        info.port_name = "Ethernet160";
+        info.type = type;
+        info.op_type = FDB_OPER_DEL;
+        callback = leftVlanKernel;
+        mockCallArgs.clear();
+        m_mockFdbSync.updateLocalMac(&info);
+        callback = captureCommand;
+    }
+
+    bool flushed()
+    {
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("bridge fdb flush") != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+TEST_F(FdbSyncdLeftVlanTest, DynamicMacFlushedWhenPortLeftVlan)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51 dev Ethernet160 master dynamic extern_learn vlan 2100"),
+              std::string::npos);
+    EXPECT_EQ(mockCallArgs[1], "test -d /sys/class/net/Ethernet160/brport");
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan2100:02:4c:45:00:00:51"), 0u);
+}
+
+TEST_F(FdbSyncdLeftVlanTest, StaticMacFlushedWhenPortLeftVlan)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51 dev Ethernet160 master static vlan 2100"),
+              std::string::npos);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, FlushOncePerPortAndVlan)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    addMac("02:4c:45:00:00:52", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+
+    // The flush removed the second MAC too
+    deleteMac("02:4c:45:00:00:52", FDB_TYPE_DYNAMIC);
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:52"), std::string::npos);
+}
+
+TEST_F(FdbSyncdLeftVlanTest, MacAddedAgainFlushesAgain)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+
+    // The port rejoined and learned again, then left again
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, NoFlushWhenPortLeftBridge)
+{
+    // The kernel removed every entry of a port that left the bridge
+    s_bridgePort = false;
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+
+    ASSERT_EQ(mockCallArgs.size(), 2u);
+    EXPECT_EQ(mockCallArgs[1], "test -d /sys/class/net/Ethernet160/brport");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, NoFlushWhileStpBlocksMember)
+{
+    // Spanning tree removed the VID from the port, but it is still a member of the VLAN
+    setMember(true);
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51"), std::string::npos);
+}
+
+TEST_F(FdbSyncdLeftVlanTest, StaticMacOnStpBlockedMemberKeepsOtherStatics)
+{
+    setMember(true);
+    addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+
+    // Deleting one static MAC while spanning tree blocks the port must leave the other one
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_FALSE(flushed());
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan2100:02:4c:45:00:00:52"), 1u);
+
+    // Once the member is removed, the next failed delete flushes
+    setMember(false);
+    deleteMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, FailedDeleteAfterRejoinIsAnError)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:53", FDB_TYPE_STATIC);
+
+    // The port left the VLAN: the first failed delete flushes
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_TRUE(flushed());
+
+    // The port rejoined and no static MAC was added since: a failed delete is an error again
+    setMember(true);
+    auto errors = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:52", FDB_TYPE_STATIC); });
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb del 02:4c:45:00:00:52 dev Ethernet160 master static vlan 2100"),
+              std::string::npos);
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+
+    // It left again: the next failed delete flushes again, without an error
+    setMember(false);
+    errors = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:53", FDB_TYPE_STATIC); });
+    EXPECT_EQ(errors, "");
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, FlushedWhileMemberOfAnotherVlan)
+{
+    // The port left VLAN 2100 but is still a member of VLAN 2200
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2200|Ethernet160", { FieldValueTuple("state", "ok") });
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    deleteMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+
+    ASSERT_EQ(mockCallArgs.size(), 3u);
+    EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 extern_learn");
+}
+
+TEST_F(FdbSyncdLeftVlanTest, NoFlushAfterSuccessfulDelete)
+{
+    addMac("02:4c:45:00:00:51", FDB_TYPE_DYNAMIC);
+    mockCallArgs.clear();
+    struct m_fdb_info info;
+    info.mac = "02:4c:45:00:00:51";
+    info.vid = "Vlan2100";
+    info.port_name = "Ethernet160";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_DEL;
+    m_mockFdbSync.updateLocalMac(&info);
+
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb del 02:4c:45:00:00:51"), std::string::npos);
+}
