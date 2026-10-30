@@ -386,6 +386,34 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    def test_VlanMemberPriorityTaggedPvid(self, dvs):
+        # A priority-tagged member must get the VLAN as its port PVID, like an untagged member.
+        vlan = "2"
+        interface = "Ethernet0"
+        port_oid = dvs.asic_db.port_name_map[interface]
+
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+
+        self.dvs_vlan.create_vlan_member(vlan, interface, "priority_tagged")
+        self.dvs_vlan.verify_vlan_member(vlan_oid, interface, "SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED")
+
+        # PVID is set to the VLAN id, not left at the default.
+        self.dvs_vlan.asic_db.wait_for_field_match(
+            "ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid,
+            {"SAI_PORT_ATTR_PORT_VLAN_ID": vlan})
+
+        self.dvs_vlan.remove_vlan_member(vlan, interface)
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+
+        # PVID is restored to the default VLAN on removal.
+        self.dvs_vlan.asic_db.wait_for_field_match(
+            "ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid,
+            {"SAI_PORT_ATTR_PORT_VLAN_ID": "1"})
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+
     @pytest.mark.skip(reason="AddMaxVlan takes too long to execute")
     def test_AddMaxVlan(self, dvs):
 
