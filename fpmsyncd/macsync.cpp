@@ -1,4 +1,11 @@
 #include <arpa/inet.h>
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <linux/nexthop.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 #include <net/if.h>
 #include <string.h>
 
@@ -123,6 +130,116 @@ static string vlanOfNetdev(const string& ifname)
     return "Vlan" + ifname.substr(dash + 1);
 }
 
+/* The nexthop group a row names, 0 for none. */
+static uint32_t groupOf(const std::vector<FieldValueTuple>& row)
+{
+    auto field = std::find_if(row.begin(), row.end(), [](const FieldValueTuple& fv) {
+        return fvField(fv) == "nexthop_group";
+    });
+    if (field == row.end())
+    {
+        return 0;
+    }
+    char *end = nullptr;
+    unsigned long value = strtoul(fvValue(*field).c_str(), &end, 10);
+    return (*end || value > UINT32_MAX) ? 0 : (uint32_t)value;
+}
+
+/* Asks the kernel about a nexthop id. Anything but a clear answer is Unknown,
+ * since withdrawing a live group's rows would blackhole them. */
+static MacSync::NexthopState kernelNexthopState(uint32_t id)
+{
+    int fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE);
+    if (fd < 0)
+    {
+        return MacSync::NexthopState::Unknown;
+    }
+
+    struct timeval tv = {0, 200000};
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    struct
+    {
+        struct nlmsghdr n;
+        struct nhmsg nhm;
+        char buf[16];
+    } req;
+    memset(&req, 0, sizeof(req));
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+    req.n.nlmsg_type = RTM_GETNEXTHOP;
+    req.n.nlmsg_flags = NLM_F_REQUEST;
+    req.n.nlmsg_seq = 1;
+    addAttr(&req.n, sizeof(req), NHA_ID, &id, sizeof(id));
+
+    struct sockaddr_nl sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.nl_family = AF_NETLINK;
+
+    MacSync::NexthopState state = MacSync::NexthopState::Unknown;
+    ssize_t sent;
+    do
+    {
+        sent = sendto(fd, &req, req.n.nlmsg_len, 0, (struct sockaddr *)&sa, sizeof(sa));
+    } while (sent < 0 && errno == EINTR);
+
+    if (sent >= 0)
+    {
+        alignas(struct nlmsghdr) char buf[8192];
+
+        while (true)
+        {
+            ssize_t got = recv(fd, buf, sizeof(buf), 0);
+            if (got < 0 && errno == EINTR)
+            {
+                continue;
+            }
+            if (got <= 0 || MacSync::parseNexthopReply(buf, (size_t)got, 1, state))
+            {
+                break;
+            }
+        }
+    }
+
+    close(fd);
+    return state;
+}
+
+bool MacSync::parseNexthopReply(char *buf, size_t len, uint32_t seq, NexthopState& state)
+{
+    int left = (int)len;
+
+    for (struct nlmsghdr *h = (struct nlmsghdr *)(void *)buf; NLMSG_OK(h, left); h = NLMSG_NEXT(h, left))
+    {
+        if (h->nlmsg_seq != seq)
+        {
+            continue;
+        }
+
+        state = NexthopState::Unknown;
+        if (h->nlmsg_type == NLMSG_ERROR && h->nlmsg_len >= NLMSG_LENGTH(sizeof(struct nlmsgerr)))
+        {
+            if (((struct nlmsgerr *)NLMSG_DATA(h))->error == -ENOENT)
+            {
+                state = NexthopState::Absent;
+            }
+        }
+        else if (h->nlmsg_type == RTM_NEWNEXTHOP && h->nlmsg_len >= NLMSG_LENGTH(sizeof(struct nhmsg)))
+        {
+            struct rtattr *tb[NHA_MAX + 1];
+            int alen = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+
+            if (parseRtAttrs(tb, NHA_MAX, (struct rtattr *)(void *)((char *)NLMSG_DATA(h) + NLMSG_ALIGN(sizeof(struct nhmsg))), alen))
+            {
+                /* Routing and FDB nexthops share the ids, so a routing one means no FDB group. */
+                state = tb[NHA_FDB] ? NexthopState::Fdb : NexthopState::Absent;
+            }
+        }
+        return true;
+    }
+
+    return false;
+}
+
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
     m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
     m_vxlanFdbTableRead(pipeline->getDBConnector(), APP_VXLAN_FDB_TABLE_NAME),
@@ -135,7 +252,9 @@ MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfg
         char name[IF_NAMESIZE] = {0};
         return (ifindex && if_indextoname(ifindex, name)) ? string(name) : string();
     }),
-    m_esReAddTimer(timespec{ES_READD_DELAY_MS / 1000, (ES_READD_DELAY_MS % 1000) * 1000000L})
+    m_esReAddTimer(timespec{ES_READD_DELAY_MS / 1000, (ES_READD_DELAY_MS % 1000) * 1000000L}),
+    m_kernelNexthopState(kernelNexthopState),
+    m_nhgFlushTimer(timespec{NHG_FLUSH_DELAY_MS / 1000, (NHG_FLUSH_DELAY_MS % 1000) * 1000000L})
 {
     string subtype;
     Table deviceMetadata(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
@@ -193,6 +312,9 @@ void MacSync::onFpmDisconnected()
     /* zebra sends its remote MACs again on the next connect. */
     m_esReAddDeferred.clear();
     m_esReAddGrace.clear();
+    /* The rows become stale on the next connect, and the stale sweep has them. */
+    m_nhgFlushPending.clear();
+    m_nhgFlushTimer.stop();
 }
 
 /*
@@ -404,12 +526,12 @@ void MacSync::withdrawStaleRemoteMacs()
 /* set() merges fields, so a MAC whose destination changes would keep the old
  * one. The row is deleted first, whoever wrote it; when both reach orchagent
  * in one pop, it sees only the new row. */
-void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTuple>& row)
+void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTuple>& row, uint64_t seq)
 {
     m_vxlanFdbTable.del(key);
     m_vxlanFdbTable.set(key, row);
     m_pendingWrites = true;
-    m_remoteRows[key] = RemoteRow{row};
+    m_remoteRows[key] = RemoteRow{row, seq};
     m_staleRemoteMacs.erase(key);
 }
 
@@ -424,6 +546,206 @@ void MacSync::removeRemoteMac(const string& key)
 }
 
 constexpr long MacSync::ES_READD_DELAY_MS;
+
+constexpr long MacSync::NHG_FLUSH_DELAY_MS;
+constexpr long MacSync::NHG_FLUSH_BATCH_MS;
+constexpr int MacSync::NHG_FLUSH_TRIES;
+
+void MacSync::onKernelNexthop(struct nlmsghdr *h)
+{
+    if (!m_fpmMode || (h->nlmsg_type != RTM_NEWNEXTHOP && h->nlmsg_type != RTM_DELNEXTHOP) ||
+        h->nlmsg_len < NLMSG_LENGTH(sizeof(struct nhmsg)))
+    {
+        return;
+    }
+
+    struct nhmsg *nhm = (struct nhmsg *)NLMSG_DATA(h);
+    int len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+    struct rtattr *tb[NHA_MAX + 1];
+    uint32_t id = 0;
+
+    if (!parseRtAttrs(tb, NHA_MAX, (struct rtattr *)(void *)((char *)nhm + NLMSG_ALIGN(sizeof(struct nhmsg))), len) ||
+        !tb[NHA_ID] || !getAttr(tb[NHA_ID], id) || !id)
+    {
+        return;
+    }
+
+    /* Routing nexthops share the ids, and their churn is not this. */
+    if (!tb[NHA_FDB])
+    {
+        return;
+    }
+
+    if (h->nlmsg_type == RTM_NEWNEXTHOP)
+    {
+        m_deletedNhgs.erase(id);
+
+        /* The id is in use again: what zebra sends from now on is for the new
+         * group, and the rows sent before went with the old one. */
+        auto pending = m_nhgFlushPending.find(id);
+        if (pending != m_nhgFlushPending.end())
+        {
+            pending->second.recreated = true;
+            pending->second.seq = m_remoteMacSeq;
+        }
+        return;
+    }
+
+    /* Rows name a group. The kernel deletes a group with its last member and
+     * notifies that delete too, so a member's own delete needs nothing. */
+    if (!tb[NHA_GROUP])
+    {
+        return;
+    }
+
+    m_deletedNhgs.insert(id);
+
+    auto now = std::chrono::steady_clock::now();
+    bool armed = !m_nhgFlushPending.empty();
+    m_nhgFlushPending[id] = NhgFlush{now + std::chrono::milliseconds(NHG_FLUSH_DELAY_MS), m_remoteMacSeq, false, 0};
+    if (!armed)
+    {
+        armNhgFlushTimer(now);
+    }
+}
+
+void MacSync::armNhgFlushTimer(std::chrono::steady_clock::time_point now)
+{
+    m_nhgFlushTimer.stop();
+    if (m_nhgFlushPending.empty())
+    {
+        return;
+    }
+
+    auto next = m_nhgFlushPending.begin()->second.due;
+    for (const auto& pending : m_nhgFlushPending)
+    {
+        next = std::min(next, pending.second.due);
+    }
+
+    long wait = std::max<long>(1000000, (long)std::chrono::duration_cast<std::chrono::nanoseconds>(next - now).count());
+    m_nhgFlushTimer.setInterval(timespec{wait / 1000000000, wait % 1000000000});
+    m_nhgFlushTimer.start();
+}
+
+/* The timer can fire after it was re-armed, so only the flushes that are due run. */
+void MacSync::processNhgFlush(std::chrono::steady_clock::time_point now)
+{
+    if (!m_fpmMode)
+    {
+        m_nhgFlushPending.clear();
+        m_nhgFlushTimer.stop();
+        return;
+    }
+
+    /* A creation still queued decides what the delete took. */
+    if (m_readKernelNexthops)
+    {
+        m_readKernelNexthops();
+    }
+
+    std::map<uint32_t, NhgFlush> due;
+    auto horizon = now + std::chrono::milliseconds(NHG_FLUSH_BATCH_MS);
+    for (auto it = m_nhgFlushPending.begin(); it != m_nhgFlushPending.end();)
+    {
+        if (it->second.due > horizon)
+        {
+            ++it;
+            continue;
+        }
+        due.insert(*it);
+        it = m_nhgFlushPending.erase(it);
+    }
+
+    /* Only the groups rows still use are looked up. A row zebra has not sent
+     * since the last connect is the stale sweep's. */
+    std::set<uint32_t> used;
+    for (const auto& remote : m_remoteRows)
+    {
+        uint32_t group = groupOf(remote.second.row);
+
+        if (group && due.count(group) && !m_staleRemoteMacs.count(remote.first))
+        {
+            used.insert(group);
+        }
+    }
+    for (const auto& held : m_esReAddDeferred)
+    {
+        if (due.count(groupOf(held.second.row)))
+        {
+            used.insert(groupOf(held.second.row));
+        }
+    }
+
+    /* The last row each delete took: every row once the kernel confirms the
+     * group is gone. A group under the id now is a new one, and only the rows
+     * sent before it was created, or before the delete if its creation was
+     * not read, went with the old one. */
+    std::map<uint32_t, uint64_t> lastFlushed;
+    for (uint32_t id : used)
+    {
+        NhgFlush& flush = due[id];
+        NexthopState state = flush.recreated ? NexthopState::Fdb : m_kernelNexthopState(id);
+
+        if (state == NexthopState::Absent)
+        {
+            lastFlushed[id] = UINT64_MAX;
+        }
+        else if (state == NexthopState::Fdb)
+        {
+            lastFlushed[id] = flush.seq;
+        }
+        else if (++flush.tries < NHG_FLUSH_TRIES)
+        {
+            SWSS_LOG_INFO("MacSync: no clear answer on nexthop group %u, asking again", id);
+            flush.due = now + std::chrono::milliseconds(NHG_FLUSH_DELAY_MS);
+            m_nhgFlushPending[id] = flush;
+        }
+        else
+        {
+            SWSS_LOG_INFO("MacSync: no clear answer on nexthop group %u, keeping its remote MACs", id);
+        }
+    }
+
+    auto onDueGroup = [&lastFlushed](uint32_t group, uint64_t seq) {
+        auto flushed = lastFlushed.find(group);
+        return flushed != lastFlushed.end() && seq <= flushed->second;
+    };
+
+    size_t withdrawn = 0;
+    if (!lastFlushed.empty())
+    {
+        std::vector<string> gone;
+        for (const auto& remote : m_remoteRows)
+        {
+            if (!m_staleRemoteMacs.count(remote.first) &&
+                onDueGroup(groupOf(remote.second.row), remote.second.seq))
+            {
+                gone.push_back(remote.first);
+            }
+        }
+        for (const auto& key : gone)
+        {
+            removeRemoteMac(key);
+            SWSS_LOG_INFO("MacSync: removed remote MAC %s, its nexthop group is gone", key.c_str());
+            withdrawn++;
+        }
+
+        for (auto it = m_esReAddDeferred.begin(); it != m_esReAddDeferred.end();)
+        {
+            bool flushed = onDueGroup(groupOf(it->second.row), it->second.seq);
+            it = flushed ? m_esReAddDeferred.erase(it) : std::next(it);
+        }
+    }
+
+    if (withdrawn)
+    {
+        SWSS_LOG_NOTICE("MacSync: withdrew %zu remote MACs on deleted nexthop groups", withdrawn);
+    }
+
+    armNhgFlushTimer(now);
+}
+
 
 /*
  * When a port becomes a local Ethernet Segment port, zebra gives its MACs the
@@ -581,7 +903,7 @@ void MacSync::releaseEsReAddDeferred(const string& key)
         /* onVxlanLinkDel() withdrew what the netdev held. */
         return;
     }
-    writeRemoteMac(key, held.row);
+    writeRemoteMac(key, held.row, held.seq);
     SWSS_LOG_INFO("MacSync: wrote remote MAC %s held for its ES re-add", key.c_str());
 }
 
@@ -795,6 +1117,11 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         m_readLinks();
     }
 
+    if (m_readKernelNexthops)
+    {
+        m_readKernelNexthops();
+    }
+
     struct ndmsg *ndm = (struct ndmsg *)NLMSG_DATA(h);
 
     if (ndm->ndm_family != AF_BRIDGE)
@@ -953,6 +1280,27 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
 
+    /* zebra creates a group in the kernel before it sends MACs on it, and the
+     * creation is read before each MAC message. So a MAC on a group the kernel
+     * has deleted since was sent before the delete, which took it, however
+     * late it is read. The kernel is asked in case a creation was missed. */
+    if (nhid && m_deletedNhgs.count(nhid))
+    {
+        NexthopState state = m_kernelNexthopState(nhid);
+
+        if (state == NexthopState::Absent)
+        {
+            m_esReAddDeferred.erase(key);
+            removeRemoteMac(key);
+            SWSS_LOG_INFO("MacSync: dropped remote MAC %s on deleted nexthop group %u", key.c_str(), nhid);
+            return;
+        }
+        if (state == NexthopState::Fdb)
+        {
+            m_deletedNhgs.erase(nhid);
+        }
+    }
+
     /* zebra's answer to onEsPortVlan()'s delete while an ES peer also has the
      * MAC: the MAC on the segment's next hop group. Written now, it would
      * replace the hardware's local entry and the STATE_DB delete that follows
@@ -976,7 +1324,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     {
         /* A row already there would replace the local entry the same way. */
         removeRemoteMac(key);
-        m_esReAddDeferred[key] = HeldRow{(unsigned int)ndm->ndm_ifindex, fvVector};
+        m_esReAddDeferred[key] = HeldRow{(unsigned int)ndm->ndm_ifindex, fvVector, ++m_remoteMacSeq};
         SWSS_LOG_INFO("MacSync: remote MAC %s held until its ES re-add", key.c_str());
         return;
     }
@@ -989,7 +1337,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         m_staleRemoteMacs.erase(stale);
         if (same)
         {
-            m_remoteRows[key] = RemoteRow{fvVector};
+            m_remoteRows[key] = RemoteRow{fvVector, ++m_remoteMacSeq};
             /* zebra's replay after a connect sends every MAC again. A live add
              * still rewrites the row, which repairs one APPL_DB lost. */
             SWSS_LOG_INFO("MacSync: remote MAC %s unchanged", key.c_str());
@@ -997,7 +1345,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         }
     }
 
-    writeRemoteMac(key, fvVector);
+    writeRemoteMac(key, fvVector, ++m_remoteMacSeq);
 
     string dest = !nexthopGroup.empty() ? ("nexthop_group " + nexthopGroup)
                 : !esInterface.empty()  ? ("ifname " + esInterface)

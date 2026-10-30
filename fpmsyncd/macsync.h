@@ -5,6 +5,7 @@
 #include <linux/neighbour.h>
 
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <functional>
 #include <map>
@@ -105,6 +106,36 @@ public:
         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
     static constexpr long ES_READD_DELAY_MS = 1000;
 
+    /*
+     * A kernel nexthop message. zebra programs an Ethernet Segment's L2 nexthop
+     * group into the kernel, not over FPM, and deleting a group flushes the
+     * kernel FDB entries that use it; zebra can free a MAC on the group without
+     * a delete of its own. So NHG_FLUSH_DELAY_MS after a group's delete, the
+     * rows the delete took are withdrawn: all the rows on it once the kernel
+     * confirms the group is gone, or the ones sent before a group under the
+     * same id was created.
+     */
+    void onKernelNexthop(struct nlmsghdr *h);
+    SelectableTimer *getNhgFlushTimer() { return &m_nhgFlushTimer; }
+    void processNhgFlush(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    static constexpr long NHG_FLUSH_DELAY_MS = 1000;
+    /* Deletes due this much later are flushed together. */
+    static constexpr long NHG_FLUSH_BATCH_MS = 100;
+    /* Kernel lookups with no clear answer before the rows are kept. */
+    static constexpr int NHG_FLUSH_TRIES = 3;
+
+    /* Reads the kernel nexthop messages already queued. zebra creates a group
+     * in the kernel before it sends MACs on it, so reading them before each
+     * FPM MAC message puts a group's delete and creation in order with them. */
+    void setKernelNexthopReader(std::function<void()> reader) { m_readKernelNexthops = std::move(reader); }
+
+    /* What the kernel holds on a nexthop id: an FDB nexthop, none (no such id,
+     * or a routing nexthop), or no clear answer. */
+    enum class NexthopState { Fdb, Absent, Unknown };
+    /* Parses an RTM_GETNEXTHOP answer; false when buf holds none for seq. */
+    static bool parseNexthopReply(char *buf, size_t len, uint32_t seq, NexthopState& state);
+
     bool isFpmMode() const { return m_fpmMode; }
 
     /* MacSync has written VXLAN_FDB_TABLE since the pipeline was last empty:
@@ -129,12 +160,13 @@ private:
     /* False when nothing was sent. */
     bool sendLocalMac(const std::string& vlanName, const std::string& mac,
                       LocalMac& local, bool add);
-    void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row);
+    void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row, uint64_t seq);
     void removeRemoteMac(const std::string& key);
     void withdrawStaleRemoteMacs();
     struct HeldRow;
     void releaseEsReAddDeferred(const std::string& key);
     void armEsReAddTimer(std::chrono::steady_clock::time_point now);
+    void armNhgFlushTimer(std::chrono::steady_clock::time_point now);
 
     ProducerStateTable m_vxlanFdbTable;
     Table m_vxlanFdbTableRead;
@@ -166,6 +198,9 @@ private:
     struct RemoteRow
     {
         std::vector<FieldValueTuple> row;
+        /* m_remoteMacSeq when zebra sent it, which orders it against a nexthop
+         * group's delete. */
+        uint64_t seq {0};
     };
     std::map<std::string, RemoteRow> m_remoteRows;
     /* The remote rows at the last connect, in APPL_DB or queued, that zebra
@@ -201,10 +236,34 @@ private:
         /* The netdev zebra sent it on. */
         unsigned int ifindex;
         std::vector<FieldValueTuple> row;
+        /* m_remoteMacSeq when zebra sent it. */
+        uint64_t seq {0};
     };
     std::map<std::string, HeldRow> m_esReAddDeferred;
     /* Re-added MACs, and until when zebra's earlier answer is dropped. */
     std::map<std::string, std::chrono::steady_clock::time_point> m_esReAddGrace;
+
+    /* Asks the kernel about a nexthop id; replaceable so a test can answer. */
+    std::function<NexthopState(uint32_t)> m_kernelNexthopState;
+    std::function<void()> m_readKernelNexthops;
+    /* Remote MACs zebra has sent, counted so rows can be told from a group's delete. */
+    uint64_t m_remoteMacSeq {0};
+
+    /* FDB nexthop groups the kernel has deleted and not created again. */
+    std::set<uint32_t> m_deletedNhgs;
+
+    struct NhgFlush
+    {
+        std::chrono::steady_clock::time_point due;
+        /* m_remoteMacSeq at the delete, or at the group's creation after it. */
+        uint64_t seq;
+        /* An RTM_NEWNEXTHOP followed the delete. */
+        bool recreated;
+        int tries;
+    };
+    /* Deleted nexthop groups whose rows are still to withdraw. */
+    std::map<uint32_t, NhgFlush> m_nhgFlushPending;
+    SelectableTimer m_nhgFlushTimer;
 };
 
 }

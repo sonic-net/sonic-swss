@@ -1,4 +1,5 @@
 #include <iostream>
+#include <memory>
 #include <inttypes.h>
 #include <poll.h>
 #include <sys/stat.h>
@@ -54,6 +55,18 @@ const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
 // TODO: support eoiu hold interval config
 const uint32_t DEFAULT_EOIU_HOLD_INTERVAL = 3;
 
+/* Kernel nexthop messages for MacSync; zebra's FPM nexthops reach RouteSync directly. */
+class KernelNexthopMsg : public NetMsg
+{
+public:
+    explicit KernelNexthopMsg(MacSync& macsync) : m_macsync(macsync) {}
+    void onMsg(int, struct nl_object *) override {}
+    void onMsgRaw(struct nlmsghdr *h) override { m_macsync.onKernelNexthop(h); }
+
+private:
+    MacSync& m_macsync;
+};
+
 // Check if eoiu state reached by both ipv4 and ipv6
 static bool eoiuFlagsSet(Table &bgpStateTable)
 {
@@ -106,6 +119,26 @@ int main(int argc, char **argv)
             netlink.readData();
         }
     });
+
+    /* Its own socket, so routing nexthop churn does not delay link events;
+     * only fpm mode reads it. NetDispatcher runs a raw handler only for a
+     * type with no parsed one. */
+    std::unique_ptr<NetLink> nexthopNetlink;
+    KernelNexthopMsg kernelNexthop(macsync);
+    if (macsync.isFpmMode())
+    {
+        nexthopNetlink = std::make_unique<NetLink>();
+        nexthopNetlink->registerGroup(RTNLGRP_NEXTHOP);
+        NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEXTHOP, &kernelNexthop);
+        NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEXTHOP, &kernelNexthop);
+        macsync.setKernelNexthopReader([&nexthopNetlink]() {
+            struct pollfd pfd = {nexthopNetlink->getFd(), POLLIN, 0};
+            while (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
+            {
+                nexthopNetlink->readData();
+            }
+        });
+    }
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
@@ -162,8 +195,13 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            if (nexthopNetlink)
+            {
+                s.addSelectable(nexthopNetlink.get());
+            }
             s.addSelectable(macsync.getStateFdbTable());
             s.addSelectable(macsync.getEsReAddTimer());
+            s.addSelectable(macsync.getNhgFlushTimer());
 
             if (sync.isSuppressionEnabled())
             {
@@ -276,6 +314,13 @@ int main(int argc, char **argv)
                 if (temps == (Selectable *)macsync.getEsReAddTimer())
                 {
                     macsync.processEsReAdd();
+                    flushWrites();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getNhgFlushTimer())
+                {
+                    macsync.processNhgFlush();
                     flushWrites();
                     continue;
                 }

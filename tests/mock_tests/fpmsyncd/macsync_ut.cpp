@@ -17,12 +17,15 @@
 
 #include <net/if.h>
 
+#include <cerrno>
 #include <cstring>
 #include <map>
+#include <set>
 #include <vector>
 
 #include <linux/if_ether.h>
 #include <linux/neighbour.h>
+#include <linux/nexthop.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netlink/route/link.h>
@@ -2204,4 +2207,596 @@ TEST_F(MacSyncTest, LocalLearnKeepsAnEthernetSegmentPortRow)
     EXPECT_EQ(fieldValue(values, "ifname"), "lo");
 
     cfgEs.del("lo");
+}
+
+/*
+ * zebra programs an Ethernet Segment's L2 nexthop group straight into the
+ * kernel, and deleting it there flushes the kernel FDB entries on it. A MAC
+ * zebra frees on the group without a delete of its own must lose its row the
+ * same way, or the row and the group stay in the ASIC.
+ */
+class MacSyncNhgFlushTest : public MacSyncTest
+{
+public:
+    static constexpr int VXLAN_IFINDEX = 50;
+    static constexpr uint32_t ES_NHG = 536870916;
+    static constexpr uint32_t OTHER_NHG = 536870917;
+    static constexpr uint32_t VTEP_NH = 11;
+
+    void SetUp() override
+    {
+        MacSyncTest::SetUp();
+        m_macSync->m_ifIndexToName = [](unsigned int ifindex) {
+            return ifindex == VXLAN_IFINDEX ? std::string("vtep1-100") : std::string();
+        };
+        m_realNexthopState = m_macSync->m_kernelNexthopState;
+        m_macSync->m_kernelNexthopState = [this](uint32_t id) {
+            auto it = m_kernelIds.find(id);
+            if (it == m_kernelIds.end())
+            {
+                return MacSync::NexthopState::Absent;
+            }
+            return it->second ? MacSync::NexthopState::Fdb : MacSync::NexthopState::Absent;
+        };
+    }
+
+    /* The ids the kernel holds, and whether each is an FDB nexthop, as
+     * RTM_GETNEXTHOP would answer. */
+    std::map<uint32_t, bool> m_kernelIds;
+    std::function<MacSync::NexthopState(uint32_t)> m_realNexthopState;
+
+    struct NhMsg
+    {
+        struct nlmsghdr n;
+        struct nhmsg nhm;
+        char buf[256];
+    };
+
+    void addNhAttr(NhMsg& req, int type, const void *data, size_t alen)
+    {
+        size_t len = RTA_LENGTH(alen);
+        struct rtattr *rta =
+            (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
+        rta->rta_type = (unsigned short)type;
+        rta->rta_len = (unsigned short)len;
+        if (alen)
+        {
+            memcpy(RTA_DATA(rta), data, alen);
+        }
+        req.n.nlmsg_len = (uint32_t)(NLMSG_ALIGN(req.n.nlmsg_len) + RTA_ALIGN(len));
+    }
+
+    /* A kernel nexthop change and its notification; members make it a group. */
+    void kernelNh(uint16_t type, uint32_t id, bool fdb = true, std::vector<uint32_t> members = {VTEP_NH})
+    {
+        if (type == RTM_NEWNEXTHOP)
+        {
+            m_kernelIds[id] = fdb;
+        }
+        else
+        {
+            m_kernelIds.erase(id);
+        }
+
+        NhMsg req;
+        memset(&req, 0, sizeof(req));
+        req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+        req.n.nlmsg_type = type;
+        req.nhm.nh_family = AF_UNSPEC;
+        addNhAttr(req, NHA_ID, &id, sizeof(id));
+        if (!members.empty())
+        {
+            std::vector<struct nexthop_grp> grp(members.size());
+            for (size_t i = 0; i < members.size(); i++)
+            {
+                memset(&grp[i], 0, sizeof(grp[i]));
+                grp[i].id = members[i];
+            }
+            addNhAttr(req, NHA_GROUP, grp.data(), grp.size() * sizeof(struct nexthop_grp));
+        }
+        if (fdb)
+        {
+            addNhAttr(req, NHA_FDB, nullptr, 0);
+        }
+        m_macSync->onKernelNexthop(&req.n);
+    }
+
+    /* zebra's remote MAC for the MAC whose last byte is last, on a group or a VTEP. */
+    void remote(uint8_t last, uint32_t nhg, const char *vtep = nullptr)
+    {
+        MacMsg req;
+        buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+        struct rtattr *lladdr =
+            (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct ndmsg))));
+        ((uint8_t *)RTA_DATA(lladdr))[ETH_ALEN - 1] = last;
+        req.ndm.ndm_ifindex = VXLAN_IFINDEX;
+        addSrcVni(req, TEST_VNI);
+        if (vtep)
+        {
+            addVtep(req, vtep);
+        }
+        else
+        {
+            addNhgId(req, nhg);
+        }
+        feed(req);
+    }
+
+    static std::string key(uint8_t last)
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Vlan100:00:11:22:33:44:%02x", last);
+        return buf;
+    }
+
+    bool hasRow(uint8_t last)
+    {
+        std::vector<FieldValueTuple> values;
+        return getEntry(key(last), values);
+    }
+
+    static std::chrono::steady_clock::time_point due()
+    {
+        return std::chrono::steady_clock::now() +
+               std::chrono::milliseconds(MacSync::NHG_FLUSH_DELAY_MS + 1000);
+    }
+};
+
+constexpr int MacSyncNhgFlushTest::VXLAN_IFINDEX;
+constexpr uint32_t MacSyncNhgFlushTest::ES_NHG;
+constexpr uint32_t MacSyncNhgFlushTest::OTHER_NHG;
+constexpr uint32_t MacSyncNhgFlushTest::VTEP_NH;
+
+TEST_F(MacSyncNhgFlushTest, GroupDeleteWithdrawsItsRows)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    ASSERT_TRUE(hasRow(0x55));
+
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(std::chrono::steady_clock::now());
+    EXPECT_TRUE(hasRow(0x55));
+
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_EQ(m_macSync->m_remoteRows.count(key(0x55)), 0u);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* A MAC zebra sent before its group's delete is read after the flush when the
+ * FPM channel lags; the kernel has no such group, so it is not written. */
+TEST_F(MacSyncNhgFlushTest, MacReadAfterItsGroupWentIsDropped)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+
+    remote(0x55, ES_NHG);
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* A creation that was not read: the kernel has the group again. */
+TEST_F(MacSyncNhgFlushTest, MacOnAGroupTheKernelHasAgainIsWritten)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+
+    remote(0x55, ES_NHG);
+    EXPECT_TRUE(hasRow(0x55));
+    EXPECT_TRUE(m_macSync->m_deletedNhgs.empty());
+}
+
+/* A group the daemon never saw created still flushes on its own delete. */
+TEST_F(MacSyncNhgFlushTest, UnseenGroupDeleteWithdrawsItsRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* The kernel notifies the group's own delete when its last member goes. */
+TEST_F(MacSyncNhgFlushTest, MemberDeleteAloneKeepsTheRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, VTEP_NH, true, {});
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+/* A group created again with the same id: what zebra sends for it stays, and
+ * the rows it does not send again went with the deleted group. */
+TEST_F(MacSyncNhgFlushTest, RecreatedGroupKeepsOnlyTheRowsSentAgain)
+{
+    remote(0x55, ES_NHG);
+    remote(0x56, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    /* Sent before the creation: on the old group, whose kernel entry is gone. */
+    remote(0x58, ES_NHG);
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x56, ES_NHG);
+    remote(0x57, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_FALSE(hasRow(0x58));
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(hasRow(0x57));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* A creation still queued at the flush is read first. */
+TEST_F(MacSyncNhgFlushTest, FlushReadsQueuedKernelMessagesFirst)
+{
+    int asked = 0;
+    m_macSync->m_kernelNexthopState = [&asked](uint32_t) {
+        asked++;
+        return MacSync::NexthopState::Fdb;
+    };
+    std::vector<std::pair<uint16_t, uint32_t>> queued;
+    m_macSync->setKernelNexthopReader([this, &queued]() {
+        auto events = std::move(queued);
+        queued.clear();
+        for (const auto& event : events)
+        {
+            kernelNh(event.first, event.second);
+        }
+    });
+
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    queued = {{RTM_NEWNEXTHOP, ES_NHG}};
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(queued.empty());
+    EXPECT_EQ(asked, 0);
+    EXPECT_FALSE(hasRow(0x55));
+    m_macSync->setKernelNexthopReader(nullptr);
+}
+
+/* With the group gone, a row sent after the delete names nothing either. */
+TEST_F(MacSyncNhgFlushTest, LateRowOnAGoneGroupIsWithdrawn)
+{
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* zebra sends MACs on a group only after it creates the group in the kernel,
+ * so the kernel messages queued when an FPM MAC message is read come first. */
+TEST_F(MacSyncNhgFlushTest, QueuedKernelMessagesAreReadBeforeAMac)
+{
+    std::vector<std::pair<uint16_t, uint32_t>> queued;
+    m_macSync->setKernelNexthopReader([this, &queued]() {
+        auto events = std::move(queued);
+        queued.clear();
+        for (const auto& event : events)
+        {
+            kernelNh(event.first, event.second);
+        }
+    });
+
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    queued = {{RTM_DELNEXTHOP, ES_NHG}, {RTM_NEWNEXTHOP, ES_NHG}};
+    remote(0x56, ES_NHG);
+    EXPECT_TRUE(queued.empty());
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_TRUE(hasRow(0x56));
+    m_macSync->setKernelNexthopReader(nullptr);
+}
+
+/* A later delete of the new group takes the rows sent for it too. */
+TEST_F(MacSyncNhgFlushTest, SecondDeleteWithdrawsTheNewGroupsRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x56, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_FALSE(hasRow(0x56));
+}
+
+/* Routing and FDB nexthops share the ids: a routing nexthop that takes the id
+ * neither keeps the rows nor counts as the group created again. */
+TEST_F(MacSyncNhgFlushTest, RoutingNexthopOnTheIdDoesNotKeepTheRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG, false);
+    EXPECT_FALSE(m_macSync->m_nhgFlushPending.begin()->second.recreated);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* The kernel has a group under the id, but its creation was never read: the
+ * rows sent before the delete went with the old group, later ones stay. */
+TEST_F(MacSyncNhgFlushTest, GroupPresentWithoutItsCreationKeepsTheLaterRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+    remote(0x56, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* zebra programs the group before it re-installs the MACs over FPM, so the
+ * re-install can be read before the kernel's RTM_NEWNEXTHOP, or that is lost. */
+TEST_F(MacSyncNhgFlushTest, UnreadRecreationKeepsTheReinstalledRows)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+    remote(0x55, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* An unclear answer is asked again, and the rows are kept once the tries run out. */
+TEST_F(MacSyncNhgFlushTest, UnknownKernelAnswerKeepsTheRows)
+{
+    int asked = 0;
+    m_macSync->m_kernelNexthopState = [&asked](uint32_t) {
+        asked++;
+        return MacSync::NexthopState::Unknown;
+    };
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    for (int i = 0; i < MacSync::NHG_FLUSH_TRIES; i++)
+    {
+        ASSERT_EQ(m_macSync->m_nhgFlushPending.size(), 1u);
+        m_macSync->processNhgFlush(m_macSync->m_nhgFlushPending.begin()->second.due);
+        EXPECT_TRUE(hasRow(0x55));
+    }
+    EXPECT_EQ(asked, MacSync::NHG_FLUSH_TRIES);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+TEST_F(MacSyncNhgFlushTest, UnknownKernelAnswerIsAskedAgain)
+{
+    auto answer = MacSync::NexthopState::Unknown;
+    m_macSync->m_kernelNexthopState = [&answer](uint32_t) { return answer; };
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+    ASSERT_EQ(m_macSync->m_nhgFlushPending.size(), 1u);
+
+    answer = MacSync::NexthopState::Absent;
+    m_macSync->processNhgFlush(m_macSync->m_nhgFlushPending.begin()->second.due);
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* A row zebra moved off the group before its delete is not the group's. */
+TEST_F(MacSyncNhgFlushTest, RowMovedOffTheGroupStays)
+{
+    remote(0x55, ES_NHG);
+    remote(0x55, 0, "10.0.0.2");
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(key(0x55), values));
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "10.0.0.2");
+}
+
+/* A row an earlier fpmsyncd wrote that zebra replays unchanged is not
+ * rewritten, and is on the group as much as a new one. */
+TEST_F(MacSyncNhgFlushTest, UnchangedReplayRowIsOnTheGroup)
+{
+    remote(0x55, ES_NHG);
+    m_macSync->m_remoteRows.clear();
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    testing_db::resetOperationCounters();
+    remote(0x55, ES_NHG);
+    ASSERT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+TEST_F(MacSyncNhgFlushTest, OnlyTheDeletedGroupsRowsGo)
+{
+    kernelNh(RTM_NEWNEXTHOP, OTHER_NHG);
+    remote(0x55, ES_NHG);
+    remote(0x56, OTHER_NHG);
+    remote(0x57, 0, "10.0.0.2");
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(hasRow(0x57));
+}
+
+/* Deletes read close together go in one pass. */
+TEST_F(MacSyncNhgFlushTest, DeletesCloseTogetherFlushTogether)
+{
+    remote(0x55, ES_NHG);
+    remote(0x56, OTHER_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, OTHER_NHG);
+    m_macSync->processNhgFlush(m_macSync->m_nhgFlushPending.begin()->second.due);
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_FALSE(hasRow(0x56));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+TEST_F(MacSyncNhgFlushTest, RoutingNexthopDeleteIsIgnored)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG, false);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG, false, {});
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+/* Rows from before a reconnect carry the old zebra's ids; the stale sweep has them. */
+TEST_F(MacSyncNhgFlushTest, StaleRowIsLeftToTheSweep)
+{
+    remote(0x55, ES_NHG);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+TEST_F(MacSyncNhgFlushTest, HeldRowOnTheGroupIsDropped)
+{
+    MacSync::HeldRow held{VXLAN_IFINDEX, {{"nexthop_group", std::to_string(ES_NHG)}, {"type", "dynamic"}}};
+    m_macSync->m_esReAddDeferred.emplace(key(0x55), held);
+    MacSync::HeldRow other{VXLAN_IFINDEX, {{"nexthop_group", std::to_string(OTHER_NHG)}, {"type", "dynamic"}}};
+    m_macSync->m_esReAddDeferred.emplace(key(0x56), other);
+
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(key(0x55)), 0u);
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(key(0x56)), 1u);
+}
+
+TEST_F(MacSyncNhgFlushTest, HeldRowOnALiveGroupIsKept)
+{
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+    MacSync::HeldRow held{VXLAN_IFINDEX, {{"nexthop_group", std::to_string(ES_NHG)}, {"type", "dynamic"}},
+                          ++m_macSync->m_remoteMacSeq};
+    m_macSync->m_esReAddDeferred.emplace(key(0x55), held);
+    m_macSync->processNhgFlush(due());
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(key(0x55)), 1u);
+}
+
+TEST_F(MacSyncNhgFlushTest, DisconnectCancelsTheFlush)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->onFpmDisconnected();
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+TEST_F(MacSyncNhgFlushTest, KernelModeIgnoresNexthops)
+{
+    remote(0x55, ES_NHG);
+    m_macSync->m_fpmMode = false;
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+TEST_F(MacSyncNhgFlushTest, TruncatedMessageIsIgnored)
+{
+    remote(0x55, ES_NHG);
+    NhMsg req;
+    memset(&req, 0, sizeof(req));
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg)) - 1;
+    req.n.nlmsg_type = RTM_DELNEXTHOP;
+    m_macSync->onKernelNexthop(&req.n);
+
+    uint32_t id = ES_NHG;
+    struct nexthop_grp grp;
+    memset(&grp, 0, sizeof(grp));
+    grp.id = VTEP_NH;
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+    addNhAttr(req, NHA_ID, &id, 2);
+    addNhAttr(req, NHA_GROUP, &grp, sizeof(grp));
+    addNhAttr(req, NHA_FDB, nullptr, 0);
+    m_macSync->onKernelNexthop(&req.n);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* The kernel's answers to RTM_GETNEXTHOP. */
+TEST_F(MacSyncNhgFlushTest, NexthopReplyIsParsed)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct nlmsgerr err;
+    } nack;
+    auto error = [&nack](int code, uint32_t seq) {
+        memset(&nack, 0, sizeof(nack));
+        nack.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nlmsgerr));
+        nack.n.nlmsg_type = NLMSG_ERROR;
+        nack.n.nlmsg_seq = seq;
+        nack.err.error = code;
+    };
+    MacSync::NexthopState state = MacSync::NexthopState::Fdb;
+
+    error(-ENOENT, 1);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
+
+    error(-EPERM, 1);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Unknown);
+
+    error(0, 1);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Unknown);
+
+    error(-ENOENT, 2);
+    state = MacSync::NexthopState::Fdb;
+    EXPECT_FALSE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Fdb);
+
+    /* Another request's answer, then this one's. */
+    struct
+    {
+        decltype(nack) other;
+        decltype(nack) mine;
+    } both;
+    error(-EPERM, 2);
+    both.other = nack;
+    error(-ENOENT, 1);
+    both.mine = nack;
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&both, sizeof(both), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
+
+    auto reply = [this](bool fdb) {
+        NhMsg msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+        msg.n.nlmsg_type = RTM_NEWNEXTHOP;
+        msg.n.nlmsg_seq = 1;
+        uint32_t id = ES_NHG;
+        addNhAttr(msg, NHA_ID, &id, sizeof(id));
+        if (fdb)
+        {
+            addNhAttr(msg, NHA_FDB, nullptr, 0);
+        }
+        return msg;
+    };
+    NhMsg msg = reply(true);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&msg, msg.n.nlmsg_len, 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Fdb);
+
+    msg = reply(false);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&msg, msg.n.nlmsg_len, 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
+
+    /* An attribute cut short. */
+    msg = reply(true);
+    struct rtattr *last = (struct rtattr *)(void *)((char *)&msg.n + msg.n.nlmsg_len - RTA_LENGTH(0));
+    last->rta_len = RTA_LENGTH(8);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&msg, msg.n.nlmsg_len, 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Unknown);
+}
+
+/* A real lookup of an id nothing holds. */
+TEST_F(MacSyncNhgFlushTest, KernelLookupOfAnUnusedId)
+{
+    auto state = m_realNexthopState(0xfffffff0u);
+    if (state == MacSync::NexthopState::Unknown)
+    {
+        GTEST_SKIP() << "no RTM_GETNEXTHOP answer here";
+    }
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
 }
