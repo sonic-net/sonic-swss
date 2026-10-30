@@ -3874,15 +3874,14 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
     unsigned int vrfIfIndex = 0;
     if (!vrfName.empty())
     {
-        auto *held = getLinkByName(vrfName.c_str());
-        if (held == nullptr)
+        auto link = makeUniqueWithDestructor(getLinkByName(vrfName.c_str()), rtnl_link_put);
+        if (!link)
         {
             SWSS_LOG_DEBUG("Failed to find VRF when constructing response message for prefix %s(%s). "
                 "This message is probably outdated", prefix.to_string().c_str(),
                 vrfName.c_str());
             return;
         }
-        auto link = makeUniqueWithDestructor(held, rtnl_link_put);
         vrfIfIndex = rtnl_link_get_ifindex(link.get());
     }
 
