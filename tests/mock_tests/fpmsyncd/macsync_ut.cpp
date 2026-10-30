@@ -11,6 +11,7 @@
 #include "schema.h"
 #include "redisutility.h"
 #include "mock_table.h"
+#include "selectabletimer.h"
 
 #include <gtest/gtest.h>
 
@@ -1209,4 +1210,417 @@ TEST_F(MacSyncLinkDelTest, UnconventionalNameWithdrawsNothing)
     delLink(VTEP_IFINDEX, "vxlanif", "vxlan");
 
     EXPECT_TRUE(hasEntry(TEST_KEY));
+}
+
+/*
+ * zebra replays the remote MACs it holds on every FPM connect, and after a
+ * restart of either side or a dropped connection that is the only way a MAC
+ * it withdrew meanwhile can be found out. Rows it does not send again go,
+ * whoever wrote them.
+ */
+class MacSyncStaleTest : public MacSyncLinkDelTest
+{
+public:
+    /* Rows an earlier fpmsyncd, or fdbsyncd in kernel mode, left in APPL_DB. */
+    void putRows(std::initializer_list<std::string> keys)
+    {
+        for (const auto& k : keys)
+        {
+            putRow(k, {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", std::to_string(TEST_VNI)}});
+        }
+    }
+
+    /* A bgp warm restart timer unlike any settle rule interval. */
+    static constexpr time_t WARM_TIMER = 300;
+
+    std::chrono::steady_clock::time_point m_t0 = std::chrono::steady_clock::now();
+};
+
+constexpr time_t MacSyncStaleTest::WARM_TIMER;
+
+TEST_F(MacSyncStaleTest, ReconnectWithdrawsRowsZebraDoesNotSendAgain)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x03);
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_HOLD)), 0);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+}
+
+/* A row zebra withdraws during the replay is gone either way. */
+TEST_F(MacSyncStaleTest, DeleteDuringReplayStillWithdraws)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+
+    testing_db::resetOperationCounters();
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_HOLD)), 0);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+}
+
+/* The replay sends every MAC again; an unchanged row is not rewritten, so the
+ * ASIC entry is not removed and added back. */
+TEST_F(MacSyncStaleTest, UnchangedRowIsNotRewritten)
+{
+    putRows({key(100, 0x01)});
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+
+    m_macSync->withdrawStaleRemoteMacs();
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/* Outside a replay an add is written again even when unchanged. */
+TEST_F(MacSyncStaleTest, LiveAddRewritesTheRow)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* A MAC that moved to another VTEP while the connection was down is replaced. */
+TEST_F(MacSyncStaleTest, ChangedRowIsReplaced)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    setLastOctet(req, 0x01);
+    req.ndm.ndm_ifindex = (int)VTEP_IFINDEX;
+    addVlan(req, 100);
+    addVtep(req, "10.2.2.2");
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+
+    m_macSync->withdrawStaleRemoteMacs();
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(key(100, 0x01), values));
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "10.2.2.2");
+}
+
+/* After a bgp restart the rows the old processes left in APPL_DB are
+ * reconciled against what the new zebra sends. */
+TEST_F(MacSyncStaleTest, RestartWithdrawsRowsTheNewZebraDoesNotSend)
+{
+    putRows({key(100, 0x01), key(100, 0x02)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x03);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_HOLD)), 0);
+
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+}
+
+/* A row orchagent has not read yet is not in APPL_DB, and is stale all the
+ * same: zebra may have withdrawn the MAC while the connection was down. */
+TEST_F(MacSyncStaleTest, RowOrchagentHasNotReadIsMarked)
+{
+    ASSERT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    unread(key(100, 0x01));
+
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    auto dels = rowDels();
+    m_macSync->withdrawStaleRemoteMacs();
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* A row MacSync withdrew is still in APPL_DB until orchagent reads the delete,
+ * so zebra's replay of the MAC writes it again instead of keeping it. */
+TEST_F(MacSyncStaleTest, WithdrawnRowOrchagentHasNotReadIsWrittenAgain)
+{
+    ASSERT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+}
+
+/* Each connect starts again from what APPL_DB holds. */
+TEST_F(MacSyncStaleTest, SecondConnectMarksTheRowsAgain)
+{
+    putRows({key(100, 0x01), key(100, 0x02)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.size(), 2u);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    m_macSync->withdrawStaleRemoteMacs();
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/* The sweep waits for zebra's replay, which runs behind its routes, to end. */
+TEST_F(MacSyncStaleTest, SweepWaitsForTheChannelToGoQuiet)
+{
+    using std::chrono::seconds;
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    auto hold = m_t0 + seconds(MacSync::STALE_SWEEP_HOLD);
+    m_macSync->noteFpmMessage(hold - seconds(1));
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(hold), MacSync::STALE_SWEEP_QUIET - 1);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(hold + seconds(MacSync::STALE_SWEEP_QUIET - 1)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/*
+ * The first remote MAC of a burst can be read in the same poll that returns
+ * the stale timer, before the main loop notes the FPM message: the channel is
+ * not quiet then.
+ */
+TEST_F(MacSyncStaleTest, FirstRemoteMacOfABurstIsNotQuiet)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    auto connect = std::chrono::steady_clock::now() - seconds(MacSync::STALE_SWEEP_HOLD + 5);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, connect));
+    m_macSync->noteFpmMessage(connect);
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    EXPECT_GT(m_macSync->onStaleSweepTimer(std::chrono::steady_clock::now()), 0);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* No remote MAC from zebra yet means the EVPN sessions are not up, however
+ * quiet the channel: the rows stay until the bound. */
+TEST_F(MacSyncStaleTest, SweepWaitsForARemoteMacFromZebra)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(MacSync::STALE_SWEEP_HOLD)),
+              MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(MacSync::STALE_SWEEP_MAX)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A channel that never goes quiet still gets its sweep. */
+TEST_F(MacSyncStaleTest, SweepRunsByTheBoundOnABusyChannel)
+{
+    using std::chrono::seconds;
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    auto bound = m_t0 + seconds(MacSync::STALE_SWEEP_MAX);
+    m_macSync->noteFpmMessage(bound - seconds(1));
+    EXPECT_GT(m_macSync->onStaleSweepTimer(bound - seconds(1)), 0);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(bound), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* fpmsyncd re-arms macStaleTimer from its own expiry, while the periodic timer
+ * still runs; a start() without the stop() keeps the first interval. */
+TEST(MacStaleTimerTest, ReArmWhileRunningTakesTheNewInterval)
+{
+    SelectableTimer timer(timespec{0, 0});
+    timer.setInterval(timespec{1, 0});
+    timer.start();
+
+    timer.stop();
+    timer.setInterval(timespec{3, 0});
+    timer.start();
+
+    itimerspec armed;
+    ASSERT_EQ(timerfd_gettime(timer.getFd(), &armed), 0);
+    EXPECT_EQ(armed.it_interval.tv_sec, 3);
+    EXPECT_GE(armed.it_value.tv_sec, 2);
+    timer.stop();
+}
+
+/* Nothing in APPL_DB starts no sweep. */
+TEST_F(MacSyncStaleTest, EmptyTableMarksNothing)
+{
+    EXPECT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+}
+
+/* fdbsyncd owns APPL_DB in kernel mode, and nothing there is swept. */
+TEST_F(MacSyncStaleTest, KernelModeMarksNothing)
+{
+    putRows({key(100, 0x01)});
+    m_macSync->m_fpmMode = false;
+
+    EXPECT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+    m_macSync->withdrawStaleRemoteMacs();
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* With bgp warm restart off, a connect takes the settle rule. */
+TEST_F(MacSyncStaleTest, ColdStartTakesTheSettleRule)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(0, m_t0), MacSync::STALE_SWEEP_HOLD);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(MacSync::STALE_SWEEP_HOLD)),
+              MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/*
+ * In a warm start the rows zebra has not sent again go at the warm restart
+ * timer, however long BGP takes and whatever the channel does before then.
+ */
+TEST_F(MacSyncStaleTest, WarmStartWithdrawsAtTheWarmRestartTimer)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01), key(100, 0x02)});
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), WARM_TIMER);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    /* zebra has sent a MAC and the channel is quiet: the settle rule would sweep. */
+    auto settled = m_t0 + seconds(MacSync::STALE_SWEEP_HOLD + MacSync::STALE_SWEEP_QUIET);
+    m_macSync->noteFpmMessage(m_t0);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(settled), WARM_TIMER - MacSync::STALE_SWEEP_HOLD - MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/* No remote MAC from zebra by the warm restart timer: the rows go anyway. */
+TEST_F(MacSyncStaleTest, WarmStartNeedsNoRemoteMacFromZebra)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    m_macSync->noteFpmMessage(m_t0 + std::chrono::seconds(WARM_TIMER));
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* An FPM drop after the warm start's sweep has zebra still up: settle rule. */
+TEST_F(MacSyncStaleTest, ReconnectAfterTheWarmStartTakesTheSettleRule)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(WARM_TIMER)), 0);
+
+    auto t1 = m_t0 + seconds(1000);
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, t1), MacSync::STALE_SWEEP_HOLD);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(t1 + seconds(MacSync::STALE_SWEEP_HOLD)), MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(t1 + seconds(MacSync::STALE_SWEEP_MAX)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A warm start with nothing stale is over at once; a later connect settles. */
+TEST_F(MacSyncStaleTest, ReconnectAfterAnEmptyWarmStartTakesTheSettleRule)
+{
+    EXPECT_FALSE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), MacSync::STALE_SWEEP_HOLD);
+}
+
+/* An FPM drop before the warm start's sweep keeps the warm restart timer,
+ * counted again from the reconnect as the route reconcile is. */
+TEST_F(MacSyncStaleTest, ReconnectDuringTheWarmStartKeepsTheWarmRestartTimer)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01), key(100, 0x02)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    ASSERT_GT(m_macSync->onStaleSweepTimer(m_t0 + seconds(60)), 0);
+
+    auto t1 = m_t0 + seconds(60);
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, t1), WARM_TIMER);
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.size(), 2u);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(WARM_TIMER)), 60);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(t1 + seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, t1 + seconds(1000)), MacSync::STALE_SWEEP_HOLD);
+}
+
+/* A row still stale from the last connect, which zebra then replays unchanged,
+ * is not rewritten either. */
+TEST_F(MacSyncStaleTest, ReconnectKeepsARowStillStaleFromTheLastConnect)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+}
+
+/* Guards the logic only: within a process checkAndStart() stays true once it
+ * returned true, unless restore_count goes missing from STATE_DB. */
+TEST_F(MacSyncStaleTest, ReconnectDuringTheWarmStartWithWarmRestartOffSettles)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(0, m_t0), MacSync::STALE_SWEEP_HOLD);
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), MacSync::STALE_SWEEP_HOLD);
+}
+
+/* bgp warm restart turned on after a cold start: an FPM drop still settles. */
+TEST_F(MacSyncStaleTest, ReconnectAfterAColdStartSettles)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_EQ(m_macSync->markRemoteMacsStale(0, m_t0), MacSync::STALE_SWEEP_HOLD);
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), MacSync::STALE_SWEEP_HOLD);
 }
