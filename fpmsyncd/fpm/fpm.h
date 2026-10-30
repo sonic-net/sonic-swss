@@ -52,6 +52,11 @@
 
 #ifndef _FPM_H
 #define _FPM_H
+#include <assert.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <netinet/in.h>
+#include <linux/rtnetlink.h>
 
 /*
  * The Forwarding Plane Manager (FPM) is an optional component that
@@ -169,7 +174,13 @@ typedef enum {
   RTM_FPM_ADD_EVPN_ES_BACKUP_NHG,
   /* Notify FPM about a delete of a backup NHG */
   RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
-  RTM_FPM_LAST = RTM_FPM_DEL_EVPN_ES_BACKUP_NHG,
+  RTM_FPM_ADD_L2_NEXTHOP = 149,
+  RTM_FPM_DEL_L2_NEXTHOP = 150,
+  RTM_FPM_ADD_L2_NEXTHOP_GROUP = 151,
+  RTM_FPM_DEL_L2_NEXTHOP_GROUP = 152,
+  /* End of the producer's protection replay; no payload or activation gate. */
+  RTM_FPM_EVPN_MH_REPLAY_DONE = 153,
+  RTM_FPM_LAST = RTM_FPM_EVPN_MH_REPLAY_DONE,
   RTM_FPM_MAX = RTM_FPM_LAST
 } rtm_fpm_msg_types_et;
 
@@ -186,10 +197,116 @@ struct evpn_df_msg {
   int edm_non_df;
 };
 
+
+/* Shared SONiC/FRR contract. Coordinate these assignments before deployment.
+ * Kernel L2 objects retain their existing tags. Protection uses types 4 and 8.
+ * Producers supply the complete, already-tagged ID.
+ * See https://github.com/sonic-net/SONiC/pull/2556 (identifier ownership).
+ *
+ * Enumerator names are FPM_NHG_TYPE_* so this header can be included next to
+ * FRR enum nhg_type (NHG_TYPE_L3_BPP_NH = 4, NHG_TYPE_L3_BPP = 8). Numeric
+ * values must match.
+ */
+#ifndef NHG_ID_TYPE_POS
+#define NHG_ID_TYPE_POS 28
+#endif
+#define NHG_ID_TYPE_MASK (UINT32_C(0xf) << NHG_ID_TYPE_POS)
+#define NHG_ID_VALUE_MASK UINT32_C(0x0fffffff)
+enum fpm_nhg_type {
+  FPM_NHG_TYPE_KERNEL_L2_NH = 1, /* NHG_TYPE_L2_NH; kernel netlink only */
+  FPM_NHG_TYPE_KERNEL_L2 = 2,    /* NHG_TYPE_L2; kernel netlink only */
+  FPM_NHG_TYPE_L3_BPP_NH = 4,    /* Member; FRR NHG_TYPE_L3_BPP_NH; FPM only */
+  FPM_NHG_TYPE_L3_BPP = 8,       /* Group and Binding; FRR NHG_TYPE_L3_BPP; FPM only */
+};
+#define NHG_ID_TYPE(id) (((uint32_t)(id) & NHG_ID_TYPE_MASK) >> NHG_ID_TYPE_POS)
+#define NHG_ID_VALUE(id) ((uint32_t)(id) & NHG_ID_VALUE_MASK)
+#define L2_NHG_ESI_LEN 10u
+#define L2_NHG_MEMBER_TYPE_L2 0
+#define L2_NHG_MEMBER_TYPE_L3 1
+/* Use the same native C ABI convention as the existing FPM extensions.
+ * FRR and SWSS must agree on sizes/offsets, including alignment padding.
+ */
+struct l2_nhg_member_msg {
+  uint32_t l2nm_nh_id;
+  uint8_t l2nm_type;   /* L2_NHG_MEMBER_TYPE_L2 or L2_NHG_MEMBER_TYPE_L3 */
+  uint8_t l2nm_family; /* AF_INET or AF_INET6 */
+  union { struct in_addr ip4; struct in6_addr ip6; } l2nm_remote_vtep;
+  uint8_t l2nm_router_mac[6];
+};
+struct l2_nhg_group_msg {
+  uint32_t l2ng_nhg_id;
+  uint32_t l2ng_count;
+  /* Opaque ES identity; it does not replace the Group ID as the DB key. */
+  uint8_t l2ng_esi[L2_NHG_ESI_LEN];
+  struct l2_nhg_member_msg l2ng_members[];
+};
+
+#define L2_NHG_GROUP_MSG_LEN(n) \
+  (sizeof(struct l2_nhg_group_msg) + \
+   (size_t)(n) * sizeof(struct l2_nhg_member_msg))
+/*
+ * One Group ADD is FPM hdr (4) + nlmsghdr (16) + Group header (20) + n * 32.
+ * FPM_MAX_MSG_LEN is 16384, so n <= 510 (16360 bytes). 511 does not fit.
+ */
+#define L2_NHG_MAX_MEMBERS 510u
+
+#ifdef __cplusplus
+static_assert(NHG_ID_TYPE_POS == 28 && NHG_ID_TYPE_MASK == UINT32_C(0xf0000000), "FPM ID type layout");
+static_assert(sizeof(l2_nhg_member_msg) == 32 &&
+              offsetof(l2_nhg_member_msg, l2nm_type) == 4 &&
+              offsetof(l2_nhg_member_msg, l2nm_family) == 5 &&
+              offsetof(l2_nhg_member_msg, l2nm_remote_vtep) == 8 &&
+              offsetof(l2_nhg_member_msg, l2nm_router_mac) == 24, "FPM member layout");
+static_assert(sizeof(l2_nhg_group_msg) == 20 &&
+              offsetof(l2_nhg_group_msg, l2ng_count) == 4 &&
+              offsetof(l2_nhg_group_msg, l2ng_esi) == 8 &&
+              offsetof(l2_nhg_group_msg, l2ng_members) == 20, "FPM group layout");
+static_assert(L2_NHG_GROUP_MSG_LEN(0) == 20 && L2_NHG_GROUP_MSG_LEN(1) == 52,
+              "FPM group payload length");
+#else
+_Static_assert(NHG_ID_TYPE_POS == 28 && NHG_ID_TYPE_MASK == UINT32_C(0xf0000000), "FPM ID type layout");
+_Static_assert(sizeof(struct l2_nhg_member_msg) == 32 &&
+               offsetof(struct l2_nhg_member_msg, l2nm_type) == 4 &&
+               offsetof(struct l2_nhg_member_msg, l2nm_family) == 5 &&
+               offsetof(struct l2_nhg_member_msg, l2nm_remote_vtep) == 8 &&
+               offsetof(struct l2_nhg_member_msg, l2nm_router_mac) == 24, "FPM member layout");
+_Static_assert(sizeof(struct l2_nhg_group_msg) == 20 &&
+               offsetof(struct l2_nhg_group_msg, l2ng_count) == 4 &&
+               offsetof(struct l2_nhg_group_msg, l2ng_esi) == 8 &&
+               offsetof(struct l2_nhg_group_msg, l2ng_members) == 20, "FPM group layout");
+_Static_assert(L2_NHG_GROUP_MSG_LEN(0) == 20 && L2_NHG_GROUP_MSG_LEN(1) == 52,
+               "FPM group payload length");
+#endif
+
 struct evpn_backup_nhg_msg {
   int ebnm_ifindex;
-  int ebnm_backup_nhg_id;
+  uint32_t ebnm_backup_nhg_id;
 };
+
+/* Signed interface index, unsigned NHG ID; no packing/endian change. */
+#ifdef __cplusplus
+static_assert(sizeof(int) == 4 && sizeof(evpn_backup_nhg_msg) == 8,
+              "FPM binding ABI requires two native 32-bit integers");
+static_assert(RTM_FPM_ADD_EVPN_ES_BACKUP_NHG == 147 &&
+              RTM_FPM_DEL_EVPN_ES_BACKUP_NHG == 148 &&
+              RTM_FPM_ADD_L2_NEXTHOP == 149 &&
+              RTM_FPM_DEL_L2_NEXTHOP == 150 &&
+              RTM_FPM_ADD_L2_NEXTHOP_GROUP == 151 &&
+              RTM_FPM_DEL_L2_NEXTHOP_GROUP == 152 &&
+              RTM_FPM_EVPN_MH_REPLAY_DONE == 153,
+              "FPM protection message types must remain fixed");
+#else
+_Static_assert(sizeof(int) == 4 && sizeof(struct evpn_backup_nhg_msg) == 8,
+               "FPM binding ABI requires two native 32-bit integers");
+_Static_assert(RTM_FPM_ADD_EVPN_ES_BACKUP_NHG == 147 &&
+               RTM_FPM_DEL_EVPN_ES_BACKUP_NHG == 148 &&
+               RTM_FPM_ADD_L2_NEXTHOP == 149 &&
+               RTM_FPM_DEL_L2_NEXTHOP == 150 &&
+               RTM_FPM_ADD_L2_NEXTHOP_GROUP == 151 &&
+               RTM_FPM_DEL_L2_NEXTHOP_GROUP == 152 &&
+               RTM_FPM_EVPN_MH_REPLAY_DONE == 153,
+               "FPM protection message types must remain fixed");
+#endif
 
 /* Attribute IDs for SHL Updates */
 #define FPM_SHL_IPV4_ADDR   1
@@ -216,6 +333,27 @@ fpm_msg_align (size_t len)
  * the message payload always starts at an aligned address.
  */
 #define FPM_MSG_HDR_LEN (fpm_msg_align (sizeof (fpm_msg_hdr_t)))
+
+/*
+ * One Group ADD framed size: aligned FPM header + aligned netlink
+ * (hdr + payload). Must stay <= FPM_MAX_MSG_LEN. Expanded here so the
+ * check is an integer constant expression.
+ */
+#ifdef __cplusplus
+static_assert((((sizeof(fpm_msg_hdr_t) + FPM_MSG_ALIGNTO - 1) &
+		~(size_t)(FPM_MSG_ALIGNTO - 1)) +
+	       NLMSG_ALIGN(sizeof(nlmsghdr) +
+			   L2_NHG_GROUP_MSG_LEN(L2_NHG_MAX_MEMBERS))) <=
+		      FPM_MAX_MSG_LEN,
+	      "L2_NHG_MAX_MEMBERS must fit in one FPM frame");
+#else
+_Static_assert((((sizeof(fpm_msg_hdr_t) + FPM_MSG_ALIGNTO - 1) &
+		 ~(size_t)(FPM_MSG_ALIGNTO - 1)) +
+		NLMSG_ALIGN(sizeof(struct nlmsghdr) +
+			    L2_NHG_GROUP_MSG_LEN(L2_NHG_MAX_MEMBERS))) <=
+		       FPM_MAX_MSG_LEN,
+	       "L2_NHG_MAX_MEMBERS must fit in one FPM frame");
+#endif
 
 /*
  * fpm_data_len_to_msg_len
@@ -279,7 +417,7 @@ fpm_msg_next (fpm_msg_hdr_t *hdr, size_t *len)
     *len -= msg_len;
   }
 
-  return reinterpret_cast<fpm_msg_hdr_t *>(static_cast<void *>(((char*) hdr) + msg_len));
+  return (fpm_msg_hdr_t *)(void *)(((char*) hdr) + msg_len);
 }
 
 /*

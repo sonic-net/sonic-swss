@@ -9,6 +9,7 @@ extern "C" {
 #include "vxlanorch.h"
 #include "nhgorch.h"
 #include "l2nhgorch.h"
+#include "lib/fpm_protection_ids.h"
 
 extern Directory<Orch*> gDirectory;
 extern RouteOrch*       gRouteOrch;
@@ -21,11 +22,17 @@ extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_next_hop_api_t*       sai_next_hop_api;
 
+namespace
+{
+const string protectionTypeField = "type";
+}
+
 #define NHG_DELIMITER ','
 #define NEXTHOP_GROUP_PORT_PREFIX "Port_Nexthop_Group_"
 
 L2NhgOrch::L2NhgOrch(DBConnector* appDbConnector, string appL2NhgTable) :
-    NhgOrchCommon(appDbConnector, appL2NhgTable)
+    NhgOrchCommon(appDbConnector, appL2NhgTable),
+    m_fpmL2Ids(appDbConnector, FPM_PROTECTION_ID_TABLE)
 {
     SWSS_LOG_ENTER();
 
@@ -45,7 +52,7 @@ L2NhgOrch::~L2NhgOrch()
     }
 }
 
-sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
+sai_object_id_t L2NhgOrch::createSaiNextHopGroup(bool protection)
 {
     SWSS_LOG_ENTER();
     sai_object_id_t nhg_oid = SAI_NULL_OBJECT_ID;
@@ -75,6 +82,7 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create an L2 Next Hop Group of type Bridge port: rc: %d", status);
+        if (protection) return SAI_NULL_OBJECT_ID;
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
@@ -87,7 +95,7 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
     return nhg_oid;
 }
 
-bool L2NhgOrch::removeSaiNextHopGroup(sai_object_id_t nhg_id)
+bool L2NhgOrch::removeSaiNextHopGroup(sai_object_id_t nhg_id, bool protection)
 {
     SWSS_LOG_ENTER();
 
@@ -95,6 +103,7 @@ bool L2NhgOrch::removeSaiNextHopGroup(sai_object_id_t nhg_id)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete L2 Nexthop Group 0x%" PRIx64 ": rc: %d", nhg_id, status);
+        if (protection) return false;
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
@@ -178,36 +187,9 @@ pair<sai_object_id_t, sai_object_id_t> L2NhgOrch::createSaiNextHop(sai_object_id
     sai_object_id_t nh_oid = SAI_NULL_OBJECT_ID;
     sai_object_id_t nhgm_oid = SAI_NULL_OBJECT_ID;
 
-    /* Creating a next hop of type bridge port */
-    sai_attribute_t nh_attr;
-    vector<sai_attribute_t> nh_attrs;
-
-    nh_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
-    nh_attr.value.s32 = SAI_NEXT_HOP_TYPE_BRIDGE_PORT;
-    nh_attrs.push_back(nh_attr);
-
-    nh_attr.id = SAI_NEXT_HOP_ATTR_IP;
-    swss::copy(nh_attr.value.ipaddr, swss::IpAddress(remote_vtep_ip));
-    nh_attrs.push_back(nh_attr);
-
-    nh_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
-    nh_attr.value.oid = tunnel_oid;
-    nh_attrs.push_back(nh_attr);
-
-    sai_status_t status = sai_next_hop_api->create_next_hop(&nh_oid,
-                                                            gSwitchId,
-                                                            (uint32_t)(nh_attrs.size()),
-                                                            nh_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create an L2 Next Hop of type Bridge port: rc: %d", status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
-        if (handle_status != task_success)
-        {
-            parseHandleSaiStatusFailure(handle_status);
-        }
-        return {SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID};
-    }
+    nh_oid = createSaiBridgeNextHop(tunnel_oid, remote_vtep_ip);
+    if (nh_oid == SAI_NULL_OBJECT_ID) return {SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID};
+    sai_status_t status;
 
     /* Add this l2 next hop to the next hop group */
     vector<sai_attribute_t> nhgm_attrs;
@@ -810,11 +792,22 @@ void L2NhgOrch::doL2NhgTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            status = updateL2Nhg(key, t, consumer);
+            map<string, string> fields;
+            for (const auto &fv : kfvFieldsValues(t)) fields[fvField(fv)] = fvValue(fv);
+            const bool typed = fields.count(protectionTypeField) || hasFpmProtectionId(m_fpmL2Ids, key);
+            if (typed) status = updateProtectionRow(t);
+            else if (m_protectionMembers.count(key) || m_protectionGroups.count(key))
+            {
+                SWSS_LOG_ERROR("Legacy row conflicts with protection id %s", key.c_str());
+                status = true;
+            }
+            else status = updateL2Nhg(key, t, consumer);
         }
         else if (op == DEL_COMMAND)
         {
-            status = deleteL2Nhg(key, consumer);
+            if (m_protectionMembers.count(key) || m_protectionGroups.count(key))
+                status = deleteProtectionRow(key);
+            else status = deleteL2Nhg(key, consumer);
         }
         else
         {
@@ -863,6 +856,8 @@ unsigned long L2NhgOrch::getL2NhgCount()
             count++;
         }
     }
+    for (const auto &group : m_protectionGroups)
+        if (group.second.oid != SAI_NULL_OBJECT_ID) ++count;
     return count;
 }
 
@@ -874,6 +869,8 @@ unsigned long L2NhgOrch::getL2NhVtepRefCount(const std::string &nhg_id)
 
 bool L2NhgOrch::hasActiveL2Nhg(const std::string &nhg_id)
 {
+    auto typed = m_protectionGroups.find(nhg_id);
+    if (typed != m_protectionGroups.end()) return typed->second.ready && !typed->second.deleted;
     return (m_nhg_nh.find(nhg_id) != m_nhg_nh.end() && m_nhg_nh[nhg_id].is_active);
 }
 
@@ -884,6 +881,13 @@ bool L2NhgOrch::isL2NextHop(const std::string &nhg_id)
 
 unsigned long L2NhgOrch::getNumL2NhgNextHops(const std::string &nhg_id)
 {
+    auto typed = m_protectionGroups.find(nhg_id);
+    if (typed != m_protectionGroups.end())
+    {
+        std::set<sai_object_id_t> members;
+        for (const auto &member : typed->second.members) members.insert(member.second);
+        return members.size();
+    }
     if (m_nhg_nh.find(nhg_id) != m_nhg_nh.end())
     {
         return m_nhg_nh[nhg_id].next_hops.size();

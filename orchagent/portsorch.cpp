@@ -1,4 +1,5 @@
 #include <cstdlib>
+#include <limits>
 #include <cstring>
 #include <algorithm>
 
@@ -6007,6 +6008,14 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    // A VLAN member can be gone while final bridge cleanup is still deferred.
+    // Keep its DEL until cleanup succeeds; unrelated missing-member DELs stay
+    // idempotent and a bridge with other members must remain in use.
+    auto retireBridgePort = [&](Port &port, bool memberRemoved) {
+        return (!memberRemoved && !m_bridgePortRemovalPending.count(port.m_alias)) ||
+            getBridgePortReferenceCount(port) != 0 || removeBridgePort(port);
+    };
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -6049,7 +6058,10 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         {
             if (op == DEL_COMMAND)
             {
-                it = consumer.m_toSync.erase(it);
+                if (getPort(port_alias, port) && !retireBridgePort(port, false))
+                    ++it;
+                else
+                    it = consumer.m_toSync.erase(it);
                 continue;
             }
 
@@ -6101,29 +6113,26 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             }
 
             if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
-                it = consumer.m_toSync.erase(it);
+            {
+                // A preceding DEL may be waiting only for bridge retirement.
+                // This SET restored the bridge and member; retire that old task
+                // too, so a later pass cannot remove the replacement member.
+                it = consumer.m_toSync.erase(consumer.m_toSync.lower_bound(kfvKey(t)), std::next(it));
+            }
             else
                 it++;
         }
         else if (op == DEL_COMMAND)
         {
-            if (vlan.m_members.find(port_alias) != vlan.m_members.end())
+            const bool memberPresent = vlan.m_members.count(port_alias) != 0;
+            if (memberPresent && !removeVlanMember(vlan, port))
             {
-                if (removeVlanMember(vlan, port))
-                {
-		    if (getBridgePortReferenceCount(port) == 0)
-                    {
-                        removeBridgePort(port);
-                    }
-                    it = consumer.m_toSync.erase(it);
-                }
-                else
-                {
-                    it++;
-                }
+                ++it;
+                continue;
             }
+            if (!retireBridgePort(port, memberPresent))
+                ++it;
             else
-                /* Cannot locate the VLAN */
                 it = consumer.m_toSync.erase(it);
         }
         else
@@ -7383,7 +7392,33 @@ bool PortsOrch::addBridgePort(Port &port)
 
     if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
     {
+        Port current;
+        const bool known = getPort(port.m_alias, current);
+        if ((!known && port.m_bridge_port_generation) || (known &&
+            (current.m_bridge_port_id != port.m_bridge_port_id ||
+             current.m_bridge_port_generation != port.m_bridge_port_generation))) return false;
+        // A new add demand cancels a removal that was deferred or failed.
+        if (m_bridgePortRemovalPending.count(port.m_alias))
+        {
+            // A failed removal may already have stripped host-interface tags
+            // and disabled this still-existing bridge port. Restore both
+            // before resuming protection or declaring the add satisfied.
+            if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP)) return false;
+            sai_attribute_t enable{};
+            enable.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+            enable.value.booldata = true;
+            if (sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &enable) != SAI_STATUS_SUCCESS)
+                return false;
+            m_bridgePortRemovalPending.erase(port.m_alias);
+            PortUpdate update = { port, true };
+            notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, &update);
+        }
         return true;
+    }
+    if (m_nextBridgePortGeneration == std::numeric_limits<uint64_t>::max())
+    {
+        SWSS_LOG_ERROR("Bridge port incarnation exhausted for %s", port.m_alias.c_str());
+        return false;
     }
 
     if (port.m_rif_id != 0)
@@ -7507,6 +7542,7 @@ bool PortsOrch::addBridgePort(Port &port)
         }
     }
 
+    port.m_bridge_port_generation = ++m_nextBridgePortGeneration;
     if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
     {
         SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
@@ -7530,6 +7566,23 @@ bool PortsOrch::removeBridgePort(Port &port)
     if (port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
     {
         return true;
+    }
+    Port current;
+    const bool known = getPort(port.m_alias, current);
+    if ((!known && port.m_bridge_port_generation) || (known &&
+        (current.m_bridge_port_id != port.m_bridge_port_id ||
+         current.m_bridge_port_generation != port.m_bridge_port_generation)))
+    {
+        SWSS_LOG_WARN("Refusing stale bridge-port removal for %s", port.m_alias.c_str());
+        return false;
+    }
+    m_bridgePortRemovalPending.insert(port.m_alias);
+    BridgePortRemovalUpdate removal = { port };
+    notify(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &removal);
+    if (!removal.ready)
+    {
+        SWSS_LOG_NOTICE("Bridge-port cleanup pending for %s", port.m_alias.c_str());
+        return false;
     }
     /* Set bridge port admin status to DOWN */
     sai_attribute_t attr;
@@ -7574,16 +7627,21 @@ bool PortsOrch::removeBridgePort(Port &port)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    saiOidToAlias.erase(port.m_bridge_port_id);
+    const auto removedId = port.m_bridge_port_id;
+    const auto removedGeneration = port.m_bridge_port_generation;
+    saiOidToAlias.erase(removedId);
     port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+    port.m_bridge_port_generation = 0;
+    m_bridgePortRemovalPending.erase(port.m_alias);
+    // Publish authoritative absence before post-removal callbacks can retry.
+    m_portList[port.m_alias] = port;
 
     /* Remove bridge port */
-    PortUpdate update = { port, false };
+    PortUpdate update = { port, false, removedId, removedGeneration };
     notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
-    m_portList[port.m_alias] = port;
     return true;
 }
 
@@ -8645,6 +8703,7 @@ bool PortsOrch::addTunnel(string tunnel_alias, sai_object_id_t tunnel_id, bool h
     }
     tunnel.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     m_portList[tunnel_alias] = tunnel;
+    m_bridge_port_ref_count.emplace(tunnel_alias, 0);
     saiOidToAlias[tunnel_id] = tunnel_alias;
 
     SWSS_LOG_INFO("addTunnel:: %" PRIx64, tunnel_id);
@@ -8658,6 +8717,7 @@ bool PortsOrch::removeTunnel(Port tunnel)
 
     saiOidToAlias.erase(tunnel.m_tunnel_id);
     m_portList.erase(tunnel.m_alias);
+    m_bridge_port_ref_count.erase(tunnel.m_alias);
 
     return true;
 }
@@ -8670,6 +8730,7 @@ bool PortsOrch::addL2NexthopGroup(string nhg_alias, sai_object_id_t nhg_oid)
     nhgPort.m_nexthop_group_id = nhg_oid;
     nhgPort.m_learn_mode = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
     m_portList[nhg_alias] = nhgPort;
+    m_bridge_port_ref_count.emplace(nhg_alias, 0);
 
     SWSS_LOG_INFO("Created a l2 nhg port %s with oid: 0x%" PRIx64, nhg_alias.c_str(), nhg_oid);
     return true;
@@ -8680,6 +8741,7 @@ bool PortsOrch::removeL2NexthopGroup(Port nhgPort)
     SWSS_LOG_ENTER();
 
     m_portList.erase(nhgPort.m_alias);
+    m_bridge_port_ref_count.erase(nhgPort.m_alias);
 
     return true;
 }
@@ -10187,6 +10249,9 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     }
 
 
+    // Observers must see the aggregate's actual status in getPort(), rather
+    // than the caller's previous cached copy (notably doLagTask's local Port).
+    m_portList[port.m_alias] = port;
     PortOperStateUpdate update = {port, status};
     notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
 }
