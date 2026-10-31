@@ -1174,4 +1174,129 @@ namespace hftelprofile_ut
         EXPECT_EQ(orchStub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT].count("Ethernet4"), 0);
         EXPECT_EQ(profileStub.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
     }
+
+    /*
+     * Object lists are built from orchagent state, so they stay correct even
+     * when SAI GET fails, as it does in syncd INIT_VIEW during warm restart.
+     */
+    struct ObjectListTest : public ::testing::Test
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        static sai_object_id_t next_oid;
+        static int get_calls;
+        static map<sai_object_id_t, vector<sai_object_id_t>> tam_telemetry_lists;
+        static map<sai_object_id_t, vector<sai_object_id_t>> tam_type_lists;
+
+        static sai_status_t mock_create(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            *oid = next_oid++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_remove(sai_object_id_t)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_get(sai_object_id_t, uint32_t, sai_attribute_t *)
+        {
+            ++get_calls;
+            return SAI_STATUS_INVALID_OBJECT_ID;
+        }
+
+        static sai_status_t mock_set_tam(sai_object_id_t oid, const sai_attribute_t *attr)
+        {
+            if (attr->id != SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            auto &list = attr->value.objlist;
+            tam_telemetry_lists[oid].assign(list.list, list.list + list.count);
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_set_tam_telemetry(sai_object_id_t oid, const sai_attribute_t *attr)
+        {
+            if (attr->id != SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+            auto &list = attr->value.objlist;
+            tam_type_lists[oid].assign(list.list, list.list + list.count);
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.create_tam_telemetry = mock_create;
+            ut_api.remove_tam_telemetry = mock_remove;
+            ut_api.create_tam_report = mock_create;
+            ut_api.remove_tam_report = mock_remove;
+            ut_api.create_tam_tel_type = mock_create;
+            ut_api.remove_tam_tel_type = mock_remove;
+            ut_api.get_tam_attribute = mock_get;
+            ut_api.get_tam_telemetry_attribute = mock_get;
+            ut_api.set_tam_attribute = mock_set_tam;
+            ut_api.set_tam_telemetry_attribute = mock_set_tam_telemetry;
+            sai_tam_api = &ut_api;
+
+            next_oid = 0x1000;
+            get_calls = 0;
+            tam_telemetry_lists.clear();
+            tam_type_lists.clear();
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+        }
+    };
+
+    sai_object_id_t ObjectListTest::next_oid;
+    int ObjectListTest::get_calls;
+    map<sai_object_id_t, vector<sai_object_id_t>> ObjectListTest::tam_telemetry_lists;
+    map<sai_object_id_t, vector<sai_object_id_t>> ObjectListTest::tam_type_lists;
+
+    TEST_F(ObjectListTest, ListsTrackAllChildrenWithoutSaiGet)
+    {
+        const sai_object_id_t tam_oid = 0x10;
+        const sai_object_id_t collector_oid = 0x20;
+        CounterNameCache cache;
+        vector<sai_object_id_t> telemetry_list;
+
+        auto profile_a = make_unique<HFTelProfile>(
+            "a", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        auto profile_b = make_unique<HFTelProfile>(
+            "b", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        sai_object_id_t telemetry_a = *profile_a->m_sai_tam_telemetry_obj;
+        sai_object_id_t telemetry_b = *profile_b->m_sai_tam_telemetry_obj;
+
+        EXPECT_EQ(tam_telemetry_lists[tam_oid], vector<sai_object_id_t>({telemetry_a, telemetry_b}));
+
+        sai_object_id_t port_type = profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+        sai_object_id_t queue_type = profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_QUEUE);
+
+        EXPECT_EQ(tam_type_lists[telemetry_a], vector<sai_object_id_t>({port_type, queue_type}));
+
+        profile_a->clearGroup("PORT");
+        EXPECT_EQ(tam_type_lists[telemetry_a], vector<sai_object_id_t>({queue_type}));
+
+        profile_a.reset();
+        EXPECT_EQ(tam_telemetry_lists[tam_oid], vector<sai_object_id_t>({telemetry_b}));
+
+        profile_b.reset();
+        EXPECT_TRUE(tam_telemetry_lists[tam_oid].empty());
+        EXPECT_TRUE(telemetry_list.empty());
+        EXPECT_EQ(get_calls, 0);
+    }
 }
