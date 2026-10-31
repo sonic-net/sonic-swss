@@ -2654,7 +2654,30 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     if (nlmsg_type == RTM_NEWLINK || nlmsg_type == RTM_DELLINK)
     {
-        nl_cache_refill(m_nl_sock, m_link_cache);
+        /* Apply this link notification to the cache rather than dumping all
+         * links again. During startup, each link emits a notification and a
+         * full refill for every notification makes the work grow with the
+         * number of links squared.
+         *
+         * RTNLGRP_LINK also delivers AF_BRIDGE notifications. The cache
+         * identifies a link by ifindex and address family, so one of those
+         * messages can add an AF_BRIDGE object for an ifindex that the old
+         * AF_UNSPEC dump never stored. Lookups here are by ifindex or by
+         * name, so that extra object does not change which interface we
+         * resolve.
+         */
+        int err = nl_cache_include(m_link_cache, obj, nullptr, nullptr);
+        if (err < 0)
+        {
+            SWSS_LOG_WARN("Failed to update link cache from netlink message %d: %s; refreshing cache",
+                          nlmsg_type, nl_geterror(err));
+            err = nl_cache_refill(m_nl_sock, m_link_cache);
+            if (err < 0)
+            {
+                SWSS_LOG_ERROR("Failed to refresh link cache after netlink message %d: %s",
+                               nlmsg_type, nl_geterror(err));
+            }
+        }
         return;
     }
 
@@ -3475,6 +3498,10 @@ bool RouteSync::getIfName(int if_index, char *if_name, size_t name_len)
     return true;
 }
 
+/*
+ * The returned link holds a reference from rtnl_link_get_by_name().
+ * The caller releases it with rtnl_link_put().
+ */
 rtnl_link* RouteSync::getLinkByName(const char *name)
 {
     auto link = rtnl_link_get_by_name(m_link_cache, name);
@@ -3847,7 +3874,7 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
     unsigned int vrfIfIndex = 0;
     if (!vrfName.empty())
     {
-        auto* link = getLinkByName(vrfName.c_str());
+        auto link = makeUniqueWithDestructor(getLinkByName(vrfName.c_str()), rtnl_link_put);
         if (!link)
         {
             SWSS_LOG_DEBUG("Failed to find VRF when constructing response message for prefix %s(%s). "
@@ -3855,7 +3882,7 @@ void RouteSync::onRouteResponse(const std::string& key, const std::vector<FieldV
                 vrfName.c_str());
             return;
         }
-        vrfIfIndex = rtnl_link_get_ifindex(link);
+        vrfIfIndex = rtnl_link_get_ifindex(link.get());
     }
 
     rtnl_route_set_table(routeObject.get(), vrfIfIndex);
