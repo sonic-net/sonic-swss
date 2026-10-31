@@ -170,6 +170,16 @@ namespace tunneldecaporch_test
             delete gCrmOrch;
             gCrmOrch = nullptr;
         }
+
+        void expectMissingTunnelRefCountUnchanged(TunnelDecapOrch &orch, const string &name)
+        {
+            EXPECT_EQ(orch.getTunnelRefCount(name), 0);
+            orch.increaseTunnelRefCount(name);
+            EXPECT_EQ(orch.getTunnelRefCount(name), 0);
+            orch.decreaseTunnelRefCount(name);
+            EXPECT_EQ(orch.getTunnelRefCount(name), 0);
+            EXPECT_EQ(orch.tunnelTable.find(name), orch.tunnelTable.end());
+        }
     };
 
     TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_Creation)
@@ -760,6 +770,17 @@ namespace tunneldecaporch_test
             .Times(1)
             .WillOnce(Return(SAI_STATUS_SUCCESS));
         gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+    }
+
+    TEST_F(TunnelDecapOrchTest, TunnelDecapOrch_RefCountMissingTunnelDoesNotInsert)
+    {
+        vector<string> tunnel_tables = { APP_TUNNEL_DECAP_TABLE_NAME };
+        auto tunnelDecapOrch = make_shared<TunnelDecapOrch>(
+            m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+        ASSERT_NE(tunnelDecapOrch, nullptr);
+
+        // operator[] would insert a default entry; find() must not.
+        expectMissingTunnelRefCountUnchanged(*tunnelDecapOrch, "missing_tunnel");
     }
 
 } // namespace tunneldecaporch_test
