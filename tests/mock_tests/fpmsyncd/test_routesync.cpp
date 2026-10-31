@@ -32,6 +32,46 @@ using namespace ut_fpmsyncd;
 
 using ::testing::_;
 
+namespace
+{
+struct LinkCacheFailureState
+{
+    bool enabled = false;
+    int refillResult = 0;
+    int includeCalls = 0;
+    int refillCalls = 0;
+};
+
+LinkCacheFailureState linkCacheFailure;
+}
+
+extern "C"
+{
+int __real_nl_cache_include(struct nl_cache *, struct nl_object *, change_func_t, void *);
+int __real_nl_cache_refill(struct nl_sock *, struct nl_cache *);
+
+int __wrap_nl_cache_include(struct nl_cache *cache, struct nl_object *obj,
+                            change_func_t callback, void *data)
+{
+    if (linkCacheFailure.enabled)
+    {
+        ++linkCacheFailure.includeCalls;
+        return -NLE_NOMEM;
+    }
+    return __real_nl_cache_include(cache, obj, callback, data);
+}
+
+int __wrap_nl_cache_refill(struct nl_sock *sock, struct nl_cache *cache)
+{
+    if (linkCacheFailure.enabled)
+    {
+        ++linkCacheFailure.refillCalls;
+        return linkCacheFailure.refillResult;
+    }
+    return __real_nl_cache_refill(sock, cache);
+}
+}
+
 static void dispatchLinkMessage(struct nl_object *obj, void *context)
 {
     auto *routeSync = static_cast<RouteSync *>(context);
@@ -186,6 +226,43 @@ TEST_F(FpmSyncdResponseTest, RouteResponseFeedbackV4)
         {"protocol", "kernel"},
     });
 }
+
+class LinkCacheRecoveryTest : public FpmSyncdResponseTest,
+                              public ::testing::WithParamInterface<int>
+{
+public:
+    void TearDown() override
+    {
+        linkCacheFailure = {};
+        FpmSyncdResponseTest::TearDown();
+    }
+};
+
+TEST_P(LinkCacheRecoveryTest, RefreshesCacheWhenIncrementalUpdateFails)
+{
+    auto link = std::unique_ptr<rtnl_link, decltype(&rtnl_link_put)>(
+        rtnl_link_alloc(), rtnl_link_put);
+    ASSERT_NE(link, nullptr);
+    rtnl_link_set_ifindex(link.get(), 65000);
+    rtnl_link_set_name(link.get(), "fpmrecovery0");
+
+    linkCacheFailure.enabled = true;
+    linkCacheFailure.refillResult = GetParam();
+    ASSERT_GE(sendLinkMessage(m_routeSync, link.get(), false), 0);
+    EXPECT_EQ(linkCacheFailure.includeCalls, 1);
+    EXPECT_EQ(linkCacheFailure.refillCalls, 1);
+
+    // A failed update must not prevent processing the next notification.
+    linkCacheFailure.enabled = false;
+    ASSERT_GE(sendLinkMessage(m_routeSync, link.get(), false), 0);
+    auto cachedLink = std::unique_ptr<rtnl_link, decltype(&rtnl_link_put)>(
+        rtnl_link_get(m_routeSync.m_link_cache, 65000), rtnl_link_put);
+    ASSERT_NE(cachedLink, nullptr);
+    EXPECT_STREQ(rtnl_link_get_name(cachedLink.get()), "fpmrecovery0");
+}
+
+INSTANTIATE_TEST_SUITE_P(RefillSuccessAndFailure, LinkCacheRecoveryTest,
+                        ::testing::Values(0, -NLE_FAILURE));
 
 TEST(FpmSyncdNetlinkMockTest, LinkLookupReturnsHeldReference)
 {
