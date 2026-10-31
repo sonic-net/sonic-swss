@@ -119,6 +119,7 @@ class RouteTableFieldValueTupleWrapper : public FieldValueTupleWrapperBase {
     string router_mac = string();
     string segment = string();
     string seg_src = string();
+    string primary_nh_count = string();
     bool includeEmptyFields = false;
 };
 
@@ -224,6 +225,28 @@ public:
 
     void setSuppressionEnabled(bool enabled);
 
+    /*
+     * BGP PIC backup nexthops travel as the SONiC-private FPM_RTA_BACKUP_NH
+     * top-level attribute. libnl's rtnl_route parser doesn't know the
+     * attribute number (it's above RTA_MAX), so FpmLink hands the raw
+     * nlmsghdr to setPendingBackupNexthopsFromRawMsg() before dispatching
+     * the libnl-converted message; getNextHopList()/getNextHopWt() then
+     * append the parsed backups onto the same comma-separated lists they
+     * already build for primaries, with primary_nh_count marking the
+     * boundary. The pending state is overwritten on each call, so it always
+     * scopes to the in-flight message.
+     *
+     * Each backup carries gateway, ifindex and weight; MPLS labels and SRv6
+     * SIDs aren't carried by the encoder.
+     */
+    struct BackupNexthop
+    {
+        std::string gw;     // formatted gateway (e.g. "10.0.0.99" or "::")
+        int if_index{0};
+        uint8_t weight{1};
+    };
+    void setPendingBackupNexthopsFromRawMsg(struct nlmsghdr *h);
+
     bool isSuppressionEnabled() const
     {
         return m_isSuppressionEnabled;
@@ -324,6 +347,12 @@ private:
     WarmStartHelper  m_warmStartHelper;
 
     bool                m_isSuppressionEnabled{false};
+
+    /* Backup nexthops parsed from the in-flight message's FPM_RTA_BACKUP_NH;
+     * see setPendingBackupNexthopsFromRawMsg(). Written by FpmLink and read
+     * by getNextHopList()/getNextHopWt() in the same dispatch path on
+     * fpmsyncd's single thread, so no synchronization is needed. */
+    std::vector<BackupNexthop> m_pendingBackupNexthops;
     FpmInterface*       m_fpmInterface {nullptr};
 
     /* Handle regular route (include VRF route) */
@@ -394,9 +423,9 @@ private:
     bool getSrv6VpnRouteNextHop(struct nlmsghdr *h, int received_bytes,
                                struct rtattr *tb[], uint32_t &pic_id,uint32_t &nhg_id);
 
-    /* Get next hop list */
-    void getNextHopList(struct rtnl_route *route_obj, string& gw_list,
-                        string& mpls_list, string& intf_list);
+    /* Get next hop list, returns the number of primary nexthops */
+    int getNextHopList(struct rtnl_route *route_obj, string& gw_list,
+                       string& mpls_list, string& intf_list);
 
     /* Get next hop gateway IP addresses */
     string getNextHopGw(struct rtnl_route *route_obj);

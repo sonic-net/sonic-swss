@@ -11,6 +11,7 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 #include "fpmsyncd/fpm/fpm.h"
+#include "fpmsyncd/fpm/fpm_backup_nh.h"
 #include "macaddress.h"
 #include "converter.h"
 #include <string.h>
@@ -20,6 +21,7 @@
 #include <linux/lwtunnel.h>
 #include <linux/rtnetlink.h>
 #include <linux/seg6_iptunnel.h>
+#include <linux/netlink.h>
 
 using namespace std;
 using namespace swss;
@@ -62,6 +64,12 @@ using namespace swss;
 #define LWTUNNEL_IP_ID    1
 
 #define NH_ENCAP_SRV6_ROUTE         101
+
+/* FPM_RTA_BACKUP_NH is pinned while the kernel's RTA_MAX grows with its
+ * headers; it must stay above every kernel route attribute or it would be
+ * read as one. dplane_fpm_sonic.c asserts the same on the encoder side. */
+static_assert(FPM_RTA_BACKUP_NH > RTA_MAX,
+              "FPM_RTA_BACKUP_NH collides with the kernel RTA space; move it higher");
 
 #define IPV4_MAX_BYTE       4
 #define IPV6_MAX_BYTE      16
@@ -1259,6 +1267,9 @@ RouteTableFieldValueTupleWrapper::fieldValueTupleVector() {
     }
     if (nbZmqEnabled || includeEmptyFields || seg_src != string()) {
         fvVector.push_back(FieldValueTuple("seg_src", seg_src.c_str()));
+    }
+    if (nbZmqEnabled || includeEmptyFields || primary_nh_count != string()) {
+        fvVector.push_back(FieldValueTuple("primary_nh_count", primary_nh_count.c_str()));
     }
     // Return value optimization will avoid copy of the following vector
     return fvVector;
@@ -2840,8 +2851,21 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
         /* Get nexthop lists */
 
-        getNextHopList(route_obj, gw_list, mpls_list, intf_list);
+        int primary_count = getNextHopList(route_obj, gw_list, mpls_list, intf_list);
         weights = getNextHopWt(route_obj);
+
+        /*
+         * BGP PIC backup nexthops (FPM_RTA_BACKUP_NH) are appended after the
+         * primaries and primary_nh_count marks the boundary. Routes without
+         * backups don't carry the field, so their entries are unchanged and
+         * all their nexthops are primaries.
+         */
+        if (!m_pendingBackupNexthops.empty())
+        {
+            fvw.primary_nh_count = to_string(primary_count);
+            SWSS_LOG_INFO("Route %s: %d primary and %zu backup nexthop(s)",
+                          destipprefix, primary_count, m_pendingBackupNexthops.size());
+        }
 
         vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
 
@@ -3488,20 +3512,156 @@ rtnl_link* RouteSync::getLinkByName(const char *name)
 }
 
 /*
+ * setPendingBackupNexthopsFromRawMsg() - parse BGP PIC backup nexthops
+ * @arg h     (input) raw netlink message as received from the FPM socket
+ *
+ * libnl's rtnl_route parser drops FPM_RTA_BACKUP_NH (it's above RTA_MAX), so
+ * FpmLink calls this on the raw message right before dispatching the
+ * libnl-converted one. The parsed backups are kept in m_pendingBackupNexthops
+ * for getNextHopList()/getNextHopWt() to append after the primaries. The
+ * state is cleared on every call, so it scopes to the in-flight message.
+ *
+ * The common no-backup case costs a single top-level RTA scan.
+ */
+void RouteSync::setPendingBackupNexthopsFromRawMsg(struct nlmsghdr *h)
+{
+    m_pendingBackupNexthops.clear();
+
+    /* The encoder only appends FPM_RTA_BACKUP_NH to RTM_NEWROUTE */
+    if (h == nullptr || h->nlmsg_type != RTM_NEWROUTE)
+    {
+        return;
+    }
+
+    int rtm_payload = (int)h->nlmsg_len - (int)NLMSG_LENGTH(sizeof(struct rtmsg));
+    if (rtm_payload < 0)
+    {
+        return;
+    }
+
+    struct rtmsg *rtm = (struct rtmsg *)NLMSG_DATA(h);
+    int family = rtm->rtm_family;
+    if (family != AF_INET && family != AF_INET6)
+    {
+        return;
+    }
+
+    /*
+     * Mask NLA_F_NESTED before comparing: the encoder builds the attribute
+     * with FRR's nl_attr_nest(), which sets that bit on the type.
+     */
+    struct rtattr *backup_rta = nullptr;
+    for (struct rtattr *rta = RTM_RTA(rtm); RTA_OK(rta, rtm_payload);
+         rta = RTA_NEXT(rta, rtm_payload))
+    {
+        if ((rta->rta_type & ~NLA_F_NESTED) == FPM_RTA_BACKUP_NH)
+        {
+            backup_rta = rta;
+            break;
+        }
+    }
+
+    if (backup_rta == nullptr)
+    {
+        return;
+    }
+
+    /*
+     * The payload is a sequence of struct rtnexthop, laid out like the
+     * RTA_MULTIPATH payload.
+     */
+    struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(backup_rta);
+    int len = (int)RTA_PAYLOAD(backup_rta);
+
+    for (; RTNH_OK(rtnh, len); len -= RTNH_ALIGN(rtnh->rtnh_len), rtnh = RTNH_NEXT(rtnh))
+    {
+        BackupNexthop nh;
+        nh.if_index = rtnh->rtnh_ifindex;
+        nh.weight = (uint8_t)(rtnh->rtnh_hops + 1);
+
+        struct rtattr *subtb[RTA_MAX + 1] = {0};
+        if (rtnh->rtnh_len > sizeof(*rtnh))
+        {
+            netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
+                                 (int)(rtnh->rtnh_len - sizeof(*rtnh)));
+        }
+
+        size_t expected_gw_len = (family == AF_INET6) ? IPV6_MAX_BYTE : IPV4_MAX_BYTE;
+        const char *default_gw = (family == AF_INET6) ? "::" : "0.0.0.0";
+
+        if (subtb[RTA_VIA])
+        {
+            /*
+             * RFC 5549: an IPv6 nexthop on an IPv4 route is encoded as a
+             * cross-family RTA_VIA {family, addr}, the same way zebra
+             * encodes such primaries. Decode it by its embedded family.
+             */
+            const struct rtvia *via = (const struct rtvia *)RTA_DATA(subtb[RTA_VIA]);
+            size_t via_len = RTA_PAYLOAD(subtb[RTA_VIA]);
+            size_t via_addr_len = via_len > sizeof(via->rtvia_family) ?
+                                  via_len - sizeof(via->rtvia_family) : 0;
+            int via_af = via_len >= sizeof(via->rtvia_family) ? via->rtvia_family : AF_UNSPEC;
+            size_t via_need = (via_af == AF_INET6) ? IPV6_MAX_BYTE : IPV4_MAX_BYTE;
+
+            if ((via_af == AF_INET || via_af == AF_INET6) && via_addr_len >= via_need)
+            {
+                char gw_ip[MAX_ADDR_SIZE + 1] = {0};
+                inet_ntop(via_af, via->rtvia_addr, gw_ip, MAX_ADDR_SIZE);
+                nh.gw = gw_ip;
+            }
+            else
+            {
+                SWSS_LOG_WARN("FPM_RTA_BACKUP_NH: malformed RTA_VIA (family %d, %zu address bytes)",
+                              via_af, via_addr_len);
+                nh.gw = default_gw;
+            }
+        }
+        else if (subtb[RTA_GATEWAY] && RTA_PAYLOAD(subtb[RTA_GATEWAY]) >= expected_gw_len)
+        {
+            char gw_ip[MAX_ADDR_SIZE + 1] = {0};
+            inet_ntop(family, RTA_DATA(subtb[RTA_GATEWAY]), gw_ip, MAX_ADDR_SIZE);
+            nh.gw = gw_ip;
+        }
+        else
+        {
+            if (subtb[RTA_GATEWAY])
+            {
+                SWSS_LOG_WARN("FPM_RTA_BACKUP_NH: RTA_GATEWAY too short (%zu bytes, need %zu)",
+                              (size_t)RTA_PAYLOAD(subtb[RTA_GATEWAY]), expected_gw_len);
+            }
+            nh.gw = default_gw;
+        }
+
+        m_pendingBackupNexthops.push_back(std::move(nh));
+    }
+
+    SWSS_LOG_DEBUG("FPM_RTA_BACKUP_NH: parsed %zu backup nexthop(s)",
+                   m_pendingBackupNexthops.size());
+}
+
+/*
  * getNextHopList() - parses next hop list attached to route_obj
  * @arg route_obj     (input) Netlink route object
  * @arg gw_list       (output) comma-separated list of NH IP gateways
  * @arg mpls_list     (output) comma-separated list of NH MPLS info
  * @arg intf_list     (output) comma-separated list of NH interfaces
  *
- * Return void
+ * Backup nexthops parsed from FPM_RTA_BACKUP_NH, if any, are appended after
+ * the primaries.
+ *
+ * Return the number of primary nexthops
  */
-void RouteSync::getNextHopList(struct rtnl_route *route_obj, string& gw_list,
-                               string& mpls_list, string& intf_list)
+int RouteSync::getNextHopList(struct rtnl_route *route_obj, string& gw_list,
+                              string& mpls_list, string& intf_list)
 {
     bool mpls_found = false;
+    /*
+     * libnl only parses RTA_MULTIPATH (or the singlepath RTA_GATEWAY/RTA_OIF
+     * shape), so every nexthop it returns is a primary.
+     */
+    int primary_count = rtnl_route_get_nnexthops(route_obj);
 
-    for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
+    for (int i = 0; i < primary_count; i++)
     {
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
         struct nl_addr *addr = NULL;
@@ -3577,7 +3737,36 @@ void RouteSync::getNextHopList(struct rtnl_route *route_obj, string& gw_list,
             intf_list += "unknown";
         }
 
-        if (i + 1 < rtnl_route_get_nnexthops(route_obj))
+        if (i + 1 < primary_count || !m_pendingBackupNexthops.empty())
+        {
+            gw_list += NHG_DELIMITER;
+            mpls_list += NHG_DELIMITER;
+            intf_list += NHG_DELIMITER;
+        }
+    }
+
+    /*
+     * Append BGP PIC backup nexthops after the primaries. Backups carry no
+     * MPLS encap, so mpls_list gets the "na" filler to stay aligned.
+     */
+    for (size_t b = 0; b < m_pendingBackupNexthops.size(); b++)
+    {
+        const auto &nh = m_pendingBackupNexthops[b];
+
+        gw_list += nh.gw;
+        mpls_list += string("na");
+
+        char if_name[IFNAMSIZ] = "0";
+        if (getIfName(nh.if_index, if_name, IFNAMSIZ))
+        {
+            intf_list += if_name;
+        }
+        else
+        {
+            intf_list += "unknown";
+        }
+
+        if (b + 1 < m_pendingBackupNexthops.size())
         {
             gw_list += NHG_DELIMITER;
             mpls_list += NHG_DELIMITER;
@@ -3589,6 +3778,8 @@ void RouteSync::getNextHopList(struct rtnl_route *route_obj, string& gw_list,
     {
         mpls_list.clear();
     }
+
+    return primary_count;
 }
 
 /*
@@ -3690,7 +3881,23 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         }
         result += to_string(weight);
 
-        if (i + 1 < rtnl_route_get_nnexthops(route_obj))
+        if (i + 1 < rtnl_route_get_nnexthops(route_obj) || !m_pendingBackupNexthops.empty())
+        {
+            result += string(",");
+        }
+    }
+
+    /* Append backup weights, aligned with the backups in getNextHopList() */
+    for (size_t b = 0; b < m_pendingBackupNexthops.size(); b++)
+    {
+        uint8_t weight = m_pendingBackupNexthops[b].weight;
+        if (weight == 0)
+        {
+            weight = 1;
+        }
+        result += to_string(weight);
+
+        if (b + 1 < m_pendingBackupNexthops.size())
         {
             result += string(",");
         }
