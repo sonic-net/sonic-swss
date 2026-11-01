@@ -102,6 +102,15 @@ unordered_map<string, string> flexCounterGroupMap =
     {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP}
 };
 
+static void setPortSecondaryPollFactor(const string &group, const string &factor)
+{
+    setFlexCounterGroupSecondaryPollFactor(group, factor);
+
+    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+    {
+        setFlexCounterGroupSecondaryPollFactor(group, factor, true);
+    }
+}
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
@@ -195,6 +204,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
         {
             string bulk_chunk_size;
             string bulk_chunk_size_per_counter;
+            bool secondary_poll_factor_present = false;
 
             for (auto valuePair:data)
             {
@@ -216,6 +226,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (key == PORT_PHY_ATTR_KEY)
                     {
                         setFlexCounterGroupPollInterval(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value);
+                    }
+                }
+                else if (field == SECONDARY_POLL_FACTOR_FIELD)
+                {
+                    secondary_poll_factor_present = true;
+
+                    // FEC FLR currently uses the secondary cadence only for
+                    // the PORT flex-counter group.
+                    if (key == PORT_KEY)
+                    {
+                        setPortSecondaryPollFactor(flexCounterGroupMap[key], value);
                     }
                 }
                 else if (field == BULK_CHUNK_SIZE_FIELD)
@@ -418,6 +439,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 setFlexCounterGroupBulkChunkSize(flexCounterGroupMap[key], "NULL", "NULL");
                 m_groupsWithBulkChunkSize.erase(key);
             }
+
+            if (key == PORT_KEY && !secondary_poll_factor_present)
+            {
+                setPortSecondaryPollFactor(
+                    flexCounterGroupMap[key],
+                    PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR);
+            }
+        }
+        else if (op == DEL_COMMAND && key == PORT_KEY)
+        {
+            setPortSecondaryPollFactor(
+                flexCounterGroupMap[key],
+                PORTS_ORCH_DEFAULT_SECONDARY_POLL_FACTOR);
         }
 
         consumer.m_toSync.erase(it++);
