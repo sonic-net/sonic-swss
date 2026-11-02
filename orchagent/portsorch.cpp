@@ -1815,24 +1815,107 @@ bool PortsOrch::isPortAdminUp(const string &alias)
     return it->second.m_admin_state_up;
 }
 
-bool PortsOrch::setPortAdminStatusByAlias(const string &alias, bool up)
+bool PortsOrch::isAdminDownHeld(const string &alias) const
+{
+    return m_adminDownHolders.find(alias) != m_adminDownHolders.end();
+}
+
+bool PortsOrch::isAdminDownHeldBy(const string &alias, const string &holder) const
+{
+    auto it = m_adminDownHolders.find(alias);
+    return it != m_adminDownHolders.end() && it->second.count(holder) != 0;
+}
+
+void PortsOrch::acquireAdminDownHold(const string &alias, const string &holder)
+{
+    m_adminDownHolders[alias].insert(holder);
+}
+
+void PortsOrch::releaseAdminDownHold(const string &alias, const string &holder)
+{
+    auto it = m_adminDownHolders.find(alias);
+    if (it == m_adminDownHolders.end())
+    {
+        return;
+    }
+
+    it->second.erase(holder);
+    if (it->second.empty())
+    {
+        m_adminDownHolders.erase(it);
+    }
+}
+
+bool PortsOrch::setPortAdminStatusByAlias(const string &alias, bool up, const string &holder)
 {
     SWSS_LOG_ENTER();
 
     auto it = m_portList.find(alias);
+
     if (it == m_portList.end())
     {
+        if (up)
+        {
+            releaseAdminDownHold(alias, holder);
+            SWSS_LOG_NOTICE("Port %s no longer exists: dropped the admin-down hold of %s",
+                            alias.c_str(), holder.c_str());
+        }
         SWSS_LOG_ERROR("Failed to get Port object by port alias: %s", alias.c_str());
         return false;
     }
 
+    bool wasHeld = isAdminDownHeld(alias);
+
+    if (up)
+    {
+        releaseAdminDownHold(alias, holder);
+    }
+    else
+    {
+        acquireAdminDownHold(alias, holder);
+    }
+
+    bool held = isAdminDownHeld(alias);
+
+    /* Drive the port unless it was and still is held down. A release that
+     * leaves no holder drives it up even if this holder had nothing to
+     * release: holds do not survive an orchagent restart, the port's
+     * hardware admin-down state may. */
+    if (held && wasHeld)
+    {
+        return true;
+    }
+
     Port &port = it->second;
+
+    /* A LAG owns no SAI port object of its own - cascade to the members, as
+     * doLagTask() does. m_admin_state_up mirrors APP_DB and is doLagTask()'s
+     * diff baseline, so the hold is tracked separately to keep a teamsyncd
+     * republish from undoing it. */
+    if (port.m_type == Port::LAG)
+    {
+        port.m_forced_admin_down = held;
+        cascadeLagAdminStatusToMembers(port, !held && port.m_admin_state_up);
+        return true;
+    }
+
     if (!setPortAdminStatus(port, up))
     {
+        /* Undo the hold change for a request the hardware rejected */
+        if (held && !wasHeld)
+        {
+            releaseAdminDownHold(alias, holder);
+        }
+        else if (!held && wasHeld)
+        {
+            acquireAdminDownHold(alias, holder);
+        }
         return false;
     }
 
-    port.m_admin_state_up = up;
+    /* m_admin_state_up stays what APP_DB configured: it is doPortTask()'s
+     * diff baseline, and the hold is tracked separately, so a replay of the
+     * configured admin-up does not undo the hold. */
     return true;
 }
 
@@ -5653,6 +5736,55 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     pCfg.admin_status.value = admin_status;
                 }
 
+                /* This is a guard to suppress admin-up of port if parent LAG is admin-down */
+                if (pCfg.admin_status.is_set && pCfg.admin_status.value && p.m_lag_forced_admin_down)
+                {
+                    SWSS_LOG_NOTICE("Port %s: suppressing admin-up from APP_DB "
+                                    "(forced admin-down by parent LAG)",
+                                    p.m_alias.c_str());
+                    pCfg.admin_status.is_set = false;
+                }
+
+                /* A port held down by the BPDU guard stays down until an
+                 * operator brings it up: a configured down-to-up transition
+                 * (config interface shutdown, then startup) releases the hold
+                 * and StpOrch's record, so the guard trips again on the next
+                 * BPDU. Any other write that carries admin_status=up, an MTU
+                 * edit or the replay after a config reload, leaves the hold in
+                 * place. Other holders keep the port down either way. */
+                if (pCfg.admin_status.is_set && pCfg.admin_status.value && isAdminDownHeld(p.m_alias))
+                {
+                    /* admin_status is the configured state saved before any
+                     * "bring the port down" step above (speed, FEC, autoneg)
+                     * moved the mirror; the mirror alone would read such a
+                     * bounce as the operator's down-to-up transition. */
+                    if (!admin_status &&
+                        isAdminDownHeldBy(p.m_alias, ADMIN_DOWN_HOLDER_STP_BPDU_GUARD))
+                    {
+                        releaseAdminDownHold(p.m_alias, ADMIN_DOWN_HOLDER_STP_BPDU_GUARD);
+                        if (gStpOrch)
+                        {
+                            gStpOrch->releaseBpduGuardErrDisableRecord(p.m_alias, "brought admin-up by config");
+                        }
+                        SWSS_LOG_NOTICE("Port %s: admin-up from APP_DB releases the BPDU guard err-disable",
+                                        p.m_alias.c_str());
+                    }
+                    if (isAdminDownHeld(p.m_alias))
+                    {
+                        SWSS_LOG_NOTICE("Port %s: suppressing admin-up from APP_DB (held down)",
+                                        p.m_alias.c_str());
+                        pCfg.admin_status.is_set = false;
+                        /* The hold keeps the hardware down; the mirror goes
+                         * back to what APP_DB configured, so a bounce above
+                         * does not leave it reading down for the next write. */
+                        if (!p.m_admin_state_up)
+                        {
+                            p.m_admin_state_up = true;
+                            m_portList[p.m_alias] = p;
+                        }
+                    }
+                }
+
                 /* Last step set port admin status */
                 if (pCfg.admin_status.is_set)
                 {
@@ -5866,6 +5998,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             /* Delete port from port list */
             m_portConfigMap.erase(alias);
             m_portList.erase(alias);
+            m_adminDownHolders.erase(alias);
+            if (gStpOrch)
+            {
+                gStpOrch->releaseBpduGuardErrDisableRecord(alias, "port removed");
+            }
             saiOidToAlias.erase(port_id);
 
             SWSS_LOG_NOTICE("Removed port %s", alias.c_str());
@@ -6203,6 +6340,13 @@ bool PortsOrch::setSaiHostTxSignal(const Port &port, bool enable)
     return true;
 }
 
+/* A LAG's members are held down either by its APP_DB admin status or by an
+ * internal orchagent client (see Port::m_forced_admin_down). */
+static inline bool isLagHeldDown(const Port &lag)
+{
+    return !lag.m_admin_state_up || lag.m_forced_admin_down;
+}
+
 void PortsOrch::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -6229,6 +6373,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             string tpid_string;
             uint16_t tpid = 0;
             bool invalid_field = false;
+            string admin_status_str;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -6276,6 +6421,10 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     tpid = (uint16_t)stoi(tpid_string, 0, 16);
                     SWSS_LOG_DEBUG("reading TPID string:%s to uint16: 0x%x", tpid_string.c_str(), tpid);
                  }
+                else if (fvField(i) == "admin_status")
+                {
+                    admin_status_str = fvValue(i);
+                }
             }
 
             if (invalid_field)
@@ -6379,6 +6528,53 @@ void PortsOrch::doLagTask(Consumer &consumer)
                         SWSS_LOG_NOTICE("Saved to set port %s learn mode %s", alias.c_str(), learn_mode_str.c_str());
                     }
                 }
+
+                /* Detect admin status transition and propagate to members */
+                if (!admin_status_str.empty())
+                {
+                    bool newAdminUp = (admin_status_str == "up");
+
+                    if (l.m_admin_state_up != newAdminUp)
+                    {
+                        SWSS_LOG_NOTICE("LAG %s admin status changed to %s",
+                                        alias.c_str(),
+                                        newAdminUp ? "up" : "down");
+                        /* Always track the configured state so the next diff is
+                         * against APP_DB, not against an internal client */
+                        l.m_admin_state_up = newAdminUp;
+
+                        /* A configured down-to-up transition releases the BPDU
+                         * guard's hold on a LAG, as it does on a port. */
+                        if (newAdminUp && l.m_forced_admin_down &&
+                            isAdminDownHeldBy(alias, ADMIN_DOWN_HOLDER_STP_BPDU_GUARD))
+                        {
+                            releaseAdminDownHold(alias, ADMIN_DOWN_HOLDER_STP_BPDU_GUARD);
+                            if (gStpOrch)
+                            {
+                                gStpOrch->releaseBpduGuardErrDisableRecord(alias, "brought admin-up by config");
+                            }
+                            if (!isAdminDownHeld(alias))
+                            {
+                                l.m_forced_admin_down = false;
+                                SWSS_LOG_NOTICE("LAG %s: admin-up from APP_DB releases the BPDU guard err-disable",
+                                                alias.c_str());
+                            }
+                        }
+
+                        /* This is a guard to suppress admin-up of a LAG that is
+                         * held down by an internal client */
+                        if (newAdminUp && l.m_forced_admin_down)
+                        {
+                            SWSS_LOG_NOTICE("LAG %s: suppressing admin-up from APP_DB "
+                                            "(forced admin-down)", alias.c_str());
+                        }
+                        else
+                        {
+                            cascadeLagAdminStatusToMembers(l, newAdminUp);
+                        }
+                        m_portList[alias] = l;
+                    }
+                }
             }
 
             it = consumer.m_toSync.erase(it);
@@ -6393,6 +6589,12 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 continue;
             }
 
+            /* If LAG is held down, restore member states before deleting the LAG */
+            if (isLagHeldDown(lag))
+            {
+                cascadeLagAdminStatusToMembers(lag, true);
+            }
+
             if (removeLag(lag))
                 it = consumer.m_toSync.erase(it);
             else
@@ -6402,6 +6604,92 @@ void PortsOrch::doLagTask(Consumer &consumer)
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
             it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void PortsOrch::cascadeLagAdminStatusToMembers(Port &lag, bool bringLagMembersUp)
+{
+    /* This cascades the status of the LAG being up/down to its individual members.
+     * If the LAG is up or down, members are brought up or down accordingly.
+     * Note: Before deleting a LAG, we bring the members up if they were down already.
+    */
+    SWSS_LOG_ENTER();
+
+    for (const auto &memberAlias : lag.m_members)
+    {
+        auto memberIt = m_portList.find(memberAlias);
+        if (memberIt == m_portList.end())
+        {
+            SWSS_LOG_WARN("LAG %s member %s not found in portList",
+                          lag.m_alias.c_str(), memberAlias.c_str());
+            continue;
+        }
+
+        Port &member = memberIt->second;
+
+        if (member.m_type == Port::SYSTEM)
+            continue;
+
+        if (!bringLagMembersUp)
+        {
+            /* LAG going admin-down: flag all members and force them down */
+            member.m_lag_forced_admin_down = true;
+            if (member.m_admin_state_up)
+            {
+                if (!setPortAdminStatus(member, false))
+                {
+                    SWSS_LOG_ERROR("LAG %s: failed to force member %s admin-down",
+                                   lag.m_alias.c_str(), memberAlias.c_str());
+                    member.m_lag_forced_admin_down = false;
+                    continue;
+                }
+                member.m_admin_state_up = false;
+                SWSS_LOG_NOTICE("LAG %s admin-down: forced member %s admin-down",
+                                lag.m_alias.c_str(), memberAlias.c_str());
+            }
+        }
+        else
+        {
+            /* LAG going admin-up: restore member states */
+            if (!member.m_lag_forced_admin_down)
+                continue;
+
+            member.m_lag_forced_admin_down = false;
+
+            /* Read the port's configured admin_status from APP_DB */
+            string cfgAdminStatus;
+            vector<FieldValueTuple> tuples;
+            if (m_portTable->get(memberAlias, tuples))
+            {
+                for (const auto &fv : tuples)
+                {
+                    if (fvField(fv) == "admin_status")
+                    {
+                        cfgAdminStatus = fvValue(fv);
+                        break;
+                    }
+                }
+            }
+
+            bool shouldBeUp = (cfgAdminStatus == "up");
+            if (shouldBeUp && !member.m_admin_state_up)
+            {
+                if (!setPortAdminStatus(member, true))
+                {
+                    SWSS_LOG_ERROR("LAG %s: failed to restore member %s admin-up",
+                                   lag.m_alias.c_str(), memberAlias.c_str());
+                    continue;
+                }
+                member.m_admin_state_up = true;
+                SWSS_LOG_NOTICE("LAG %s admin-up: restored member %s admin-up",
+                                lag.m_alias.c_str(), memberAlias.c_str());
+            }
+            else if (!shouldBeUp)
+            {
+                SWSS_LOG_NOTICE("LAG %s admin-up: member %s stays admin-down (configured down)",
+                                lag.m_alias.c_str(), memberAlias.c_str());
+            }
         }
     }
 }
@@ -6539,6 +6827,33 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     it++;
                     continue;
                 }
+
+                /* If the parent LAG is held down, force the new member down */
+                if (isLagHeldDown(lag))
+                {
+                    Port updatedMember;
+                    if (getPort(port_alias, updatedMember) &&
+                        updatedMember.m_type != Port::SYSTEM)
+                    {
+                        updatedMember.m_lag_forced_admin_down = true;
+                        if (updatedMember.m_admin_state_up)
+                        {
+                            if (setPortAdminStatus(updatedMember, false))
+                            {
+                                updatedMember.m_admin_state_up = false;
+                                SWSS_LOG_NOTICE("LAG %s admin-down: forced new member %s admin-down",
+                                                lag_alias.c_str(), port_alias.c_str());
+                            }
+                            else
+                            {
+                                SWSS_LOG_ERROR("LAG %s: failed to force new member %s admin-down",
+                                               lag_alias.c_str(), port_alias.c_str());
+                                updatedMember.m_lag_forced_admin_down = false;
+                            }
+                        }
+                        m_portList[port_alias] = updatedMember;
+                    }
+                }
             }
 
             if (isVoqChassisDbInUse() && (port.m_type != Port::SYSTEM))
@@ -6598,6 +6913,49 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
 
             if (removeLagMember(lag, port))
             {
+                /* Restore admin state if it was forced down by parent LAG.
+                 * Check configured admin-status to decide if port should
+                 * come up. */
+                {
+                    Port updatedMember;
+                    if (getPort(port_alias, updatedMember) &&
+                        updatedMember.m_lag_forced_admin_down)
+                    {
+                        updatedMember.m_lag_forced_admin_down = false;
+
+                        string cfgAdminStatus;
+                        vector<FieldValueTuple> tuples;
+                        if (m_portTable->get(port_alias, tuples))
+                        {
+                            for (const auto &fv : tuples)
+                            {
+                                if (fvField(fv) == "admin_status")
+                                {
+                                    cfgAdminStatus = fvValue(fv);
+                                    break;
+                                }
+                            }
+                        }
+
+                        bool shouldBeUp = (cfgAdminStatus == "up");
+                        if (shouldBeUp && !updatedMember.m_admin_state_up)
+                        {
+                            if (setPortAdminStatus(updatedMember, true))
+                            {
+                                updatedMember.m_admin_state_up = true;
+                                SWSS_LOG_NOTICE("Restored member %s admin-up after removal from LAG %s",
+                                                port_alias.c_str(), lag_alias.c_str());
+                            }
+                            else
+                            {
+                                SWSS_LOG_ERROR("Failed to restore member %s admin-up after removal from LAG %s",
+                                               port_alias.c_str(), lag_alias.c_str());
+                            }
+                        }
+                        m_portList[port_alias] = updatedMember;
+                    }
+                }
+
                 it = consumer.m_toSync.erase(it);
             }
             else
@@ -8361,6 +8719,7 @@ bool PortsOrch::removeLag(Port lag)
 
     saiOidToAlias.erase(lag.m_lag_id);
     m_portList.erase(lag.m_alias);
+    m_adminDownHolders.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
     m_bridge_port_ref_count.erase(lag.m_alias);
 
