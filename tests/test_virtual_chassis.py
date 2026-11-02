@@ -4,6 +4,7 @@ import ast
 import time
 import pytest
 import buffer_model
+from dvslib.dvs_common import wait_for_result
 
 DVS_ENV = ["ASIC_VENDOR=vs"]
 
@@ -599,6 +600,52 @@ class TestVirtualChassis(object):
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
         
+    def test_chassis_ipv6_system_neigh_kernel_entries(self, vct):
+        if vct is None:
+            return
+
+        inband_port = "Ethernet0"
+        neighbor_ip = "2001:db8:104::3"
+        neighbor_mac = "00:01:02:03:04:06"
+        state_key = f"Ethernet4|{neighbor_ip}"
+        linecard = self.get_lc_dvs(vct, "0")
+        assert linecard is not None
+
+        self.config_inbandif_port(vct, inband_port)
+        state_db = linecard.get_state_db()
+        entry_created = False
+        try:
+            state_db.create_entry("SYSTEM_NEIGH_TABLE", state_key, {"neigh": neighbor_mac})
+            entry_created = True
+
+            def kernel_entries_present():
+                _, neighbors = linecard.runcmd("ip -6 neigh show")
+                _, routes = linecard.runcmd("ip -6 route show")
+                route_present = any(
+                    neighbor_ip in line and f"dev {inband_port}" in line and "metric 256" in line
+                    for line in routes.splitlines()
+                )
+                present = (f"{neighbor_ip} dev {inband_port} lladdr {neighbor_mac}" in neighbors and
+                           route_present)
+                return present, (neighbors, routes)
+
+            wait_for_result(kernel_entries_present)
+
+            state_db.delete_entry("SYSTEM_NEIGH_TABLE", state_key)
+            entry_created = False
+
+            def kernel_entries_removed():
+                _, neighbors = linecard.runcmd("ip -6 neigh show")
+                _, routes = linecard.runcmd("ip -6 route show")
+                removed = (neighbor_ip not in neighbors and neighbor_ip not in routes)
+                return removed, (neighbors, routes)
+
+            wait_for_result(kernel_entries_removed)
+        finally:
+            if entry_created:
+                state_db.delete_entry("SYSTEM_NEIGH_TABLE", state_key)
+            self.del_inbandif_port(vct, inband_port)
+
     def test_chassis_system_lag(self, vct):
         """Test PortChannel in VOQ based chassis systems.
         
