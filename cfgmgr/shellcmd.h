@@ -25,7 +25,7 @@
 
 static inline std::string shellquote(const std::string& str)
 {
-    static const std::regex re("([$`\"\\\n])");
+    static const std::regex re("([$`\"\\\\\n])");
     return "\"" + std::regex_replace(str, re, "\\$1") + "\"";
 }
 
