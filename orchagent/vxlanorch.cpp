@@ -144,7 +144,8 @@ create_tunnel_map(MAP_T map_t)
                                 static_cast<uint32_t>(tunnel_map_attrs.size()),
                                 tunnel_map_attrs.data()
                           );
-    if (status == SAI_STATUS_NOT_SUPPORTED || SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status))
+    if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
     {
         /* A switch may lack some map types (e.g. VLAN maps on an L3 VNI only
          * device). The tunnel is created with the maps that exist, and an
@@ -359,6 +360,14 @@ create_tunnel(
             SWSS_LOG_NOTICE("create_tunnel:encapmaplist[%d]=0x%" PRIx64 "",num_emap,emap_list[num_emap]);
             num_emap++;
         }
+    }
+
+    /* No decap or encap map is available when the switch supports none of the
+     * map types or every map create failed. Some SAIs reject such a tunnel. */
+    if (num_map == 0 && num_emap == 0)
+    {
+        SWSS_LOG_WARN("No tunnel maps to attach; not creating the tunnel");
+        return SAI_NULL_OBJECT_ID;
     }
 
     attr.id = SAI_TUNNEL_ATTR_ENCAP_MAPPERS;
@@ -2374,7 +2383,12 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
             uint8_t mapper_list = 0;
             TUNNELMAP_SET_VLAN(mapper_list);
             TUNNELMAP_SET_VRF(mapper_list);
-            tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            bool tunnel_created = tunnel_obj->createTunnelHw(mapper_list,
+                                                TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            if (!tunnel_created)
+            {
+                return false;
+            }
             if (!tunnel_orch->isDipTunnelsSupported())
             {
                 Port tunPort;

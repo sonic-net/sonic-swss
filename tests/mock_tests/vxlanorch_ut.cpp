@@ -316,11 +316,9 @@ namespace vxlanorch_test
                         SetArgPointee<0>(SAI_NULL_OBJECT_ID),
                         Return(SAI_STATUS_FAILURE)
                         ));
+        // A tunnel without maps is not created
         EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
-            .WillOnce(DoAll(
-                        SetArgPointee<0>(SAI_NULL_OBJECT_ID),
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+            .Times(0);
         // None of the maps was created, so none is removed
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
             .Times(0);
@@ -425,6 +423,57 @@ namespace vxlanorch_test
                 EXPECT_EQ(tunnel->addEncapMapperEntry(0x1003, 2000, TUNNEL_MAP_T_VLAN), SAI_NULL_OBJECT_ID);
 
                 EXPECT_TRUE(vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000));
+                });
+
+        std::string error;
+        EXPECT_FALSE(getSaiFailureStatus(error)) << error;
+
+        vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    /*
+     * A switch that supports none of the tunnel map types, reporting it as
+     * NOT_IMPLEMENTED: no tunnel is created and orchagent is not marked
+     * unhealthy.
+     */
+    TEST_F(VxlanOrchTest, TunnelNoMapTypeSupported)
+    {
+        initSwitchOrch();
+        initVxlanOrch();
+        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+        setSaiFailureStatus(false);
+
+        auto src_ip = IpAddress("10.1.0.1");
+        auto dst_ip = IpAddress("20.1.0.1");
+        VxlanTunnel* tunnel = new VxlanTunnel("vxlan_tunnel_1", src_ip, dst_ip, TNL_CREATION_SRC_CLI);
+        vxlan_orch->addTunnel("vxlan_tunnel_1", tunnel);
+
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+            .Times(4)
+            .WillRepeatedly(Invoke([](sai_object_id_t *tunnel_map_id, sai_object_id_t,
+                                      uint32_t attr_count, const sai_attribute_t *attr_list) {
+                *tunnel_map_id = SAI_NULL_OBJECT_ID;
+                for (uint32_t i = 0; i < attr_count; i++)
+                {
+                    if (attr_list[i].id == SAI_TUNNEL_MAP_ATTR_TYPE &&
+                        (attr_list[i].value.s32 == SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID ||
+                         attr_list[i].value.s32 == SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI))
+                    {
+                        return SAI_STATUS_NOT_IMPLEMENTED;
+                    }
+                }
+                return SAI_STATUS_ATTR_NOT_IMPLEMENTED_0;
+            }));
+        EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+            .Times(0);
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+            .Times(0);
+
+        EXPECT_NO_THROW({
+                EXPECT_FALSE(vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64));
+                EXPECT_FALSE(tunnel->isActive());
+                EXPECT_EQ(tunnel->getTunnelId(), SAI_NULL_OBJECT_ID);
                 });
 
         std::string error;
@@ -1425,6 +1474,114 @@ namespace vxlanorch_test
         EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
         EXPECT_TRUE(isFloodMember());
         EXPECT_EQ(imrRefCount(), 1);
+    }
+
+
+    static decltype(sai_tunnel_api->create_tunnel_map) g_savedCreateTunnelMap = nullptr;
+    static int g_tunnelCreates = 0;
+
+    static sai_status_t stubTunnelMapNotSupported(sai_object_id_t *id, sai_object_id_t,
+                                                  uint32_t, const sai_attribute_t *)
+    {
+        *id = SAI_NULL_OBJECT_ID;
+        return SAI_STATUS_NOT_SUPPORTED;
+    }
+
+    static sai_status_t stubCountCreateTunnel(sai_object_id_t *id, sai_object_id_t sw,
+                                              uint32_t n, const sai_attribute_t *attrs)
+    {
+        g_tunnelCreates++;
+        return g_savedCreateTunnel(id, sw, n, attrs);
+    }
+
+    // A VRF-VNI map on a switch that supports no tunnel map type, with the
+    // P2MP tunnel port used when the SAI does not support DIP tunnels.
+    class VxlanVrfMapNoTunnelMapTest : public MockOrchTest
+    {
+    protected:
+        VxlanTunnelMapOrch *m_tunnelMapOrch = nullptr;
+        VxlanVrfMapOrch *m_vrfMapOrch = nullptr;
+
+        void ApplyInitialConfigs() override
+        {
+            Table port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            auto ports = ut_helper::getInitialSaiPorts();
+            for (const auto &it : ports)
+            {
+                port_table.set(it.first, it.second);
+            }
+            port_table.set("PortConfigDone", {{"count", to_string(ports.size())}});
+            port_table.set("PortInitDone", {{}});
+            gPortsOrch->addExistingData(&port_table);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
+
+        void PostSetUp() override
+        {
+            g_tunnelCreates = 0;
+            g_savedCreateTunnelMap = sai_tunnel_api->create_tunnel_map;
+            sai_tunnel_api->create_tunnel_map = stubTunnelMapNotSupported;
+            g_savedCreateTunnel = sai_tunnel_api->create_tunnel;
+            sai_tunnel_api->create_tunnel = stubCountCreateTunnel;
+
+            m_VxlanTunnelOrch->is_dip_tunnel_supported = false;
+
+            m_tunnelMapOrch = new VxlanTunnelMapOrch(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
+            gDirectory.set(m_tunnelMapOrch);
+            m_vrfMapOrch = new VxlanVrfMapOrch(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+            gDirectory.set(m_vrfMapOrch);
+
+            Table vrf(m_app_db.get(), APP_VRF_TABLE_NAME);
+            vrf.set("Vrf1", {{"v4", "true"}});
+            gVrfOrch->addExistingData(&vrf);
+            static_cast<Orch *>(gVrfOrch)->doTask();
+            ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf1"));
+
+            Table tunnel(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            tunnel.set("vtep1", {{"src_ip", "10.1.1.1"}});
+            m_VxlanTunnelOrch->addExistingData(&tunnel);
+            static_cast<Orch *>(m_VxlanTunnelOrch)->doTask();
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        }
+
+        void PreTearDown() override
+        {
+            delete m_vrfMapOrch;
+            m_vrfMapOrch = nullptr;
+            delete m_tunnelMapOrch;
+            m_tunnelMapOrch = nullptr;
+
+            sai_tunnel_api->create_tunnel_map = g_savedCreateTunnelMap;
+            sai_tunnel_api->create_tunnel = g_savedCreateTunnel;
+            setSaiFailureStatus(false);
+        }
+
+        Consumer *vrfMapConsumer()
+        {
+            return dynamic_cast<Consumer *>(m_vrfMapOrch->getExecutor(APP_VXLAN_VRF_TABLE_NAME));
+        }
+    };
+
+    // The tunnel cannot be created, so the map is not applied and the request
+    // is retried. No tunnel port is added with a null tunnel id.
+    TEST_F(VxlanVrfMapNoTunnelMapTest, VrfMapWaitsForTunnel)
+    {
+        setSaiFailureStatus(false);
+
+        vrfMapConsumer()->addToSync({{"vtep1:evpn_map_1000_Vrf1", SET_COMMAND,
+                                      {{"vni", "1000"}, {"vrf", "Vrf1"}}}});
+        static_cast<Orch *>(m_vrfMapOrch)->doTask();
+
+        EXPECT_EQ(vrfMapConsumer()->m_toSync.size(), 1U);
+        EXPECT_FALSE(m_vrfMapOrch->isVrfMapExists("vtep1:evpn_map_1000_Vrf1"));
+        EXPECT_FALSE(m_VxlanTunnelOrch->getVxlanTunnel("vtep1")->isActive());
+        EXPECT_EQ(g_tunnelCreates, 0);
+
+        Port tunnelPort;
+        EXPECT_FALSE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+
+        std::string error;
+        EXPECT_FALSE(getSaiFailureStatus(error)) << error;
     }
 
 } // namespace vxlanorch_test
