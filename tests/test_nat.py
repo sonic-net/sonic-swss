@@ -71,6 +71,25 @@ class TestNat(object):
                 break
         assert zone
 
+    @pytest.mark.parametrize("interface", ["Ethernet999;:", "Ethernet0$(id)", "Ethernet0123456789"])
+    def test_NatRejectsUnsafeInterfaceName(self, dvs, testlog, interface):
+        self.setup_db(dvs)
+        state_db = dvs.get_state_db()
+        rc, original_pid = dvs.runcmd("pgrep -x natmgrd")
+        assert rc == 0 and original_pid.strip()
+
+        try:
+            state_db.create_entry("PORT_TABLE", interface, {"state": "ok"})
+            dvs.set_nat_zone(interface, "1")
+            rc, rules = dvs.runcmd("iptables -t mangle -S")
+            assert rc == 0
+            assert interface not in rules
+            rc, current_pid = dvs.runcmd("pgrep -x natmgrd")
+            assert rc == 0 and current_pid.strip() == original_pid.strip()
+        finally:
+            self.config_db.delete_entry("INTERFACE", interface)
+            state_db.delete_entry("PORT_TABLE", interface)
+
     def test_AddNatStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
