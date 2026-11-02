@@ -260,6 +260,12 @@ public:
     /* Mark all routes from DB with offloaded flag */
     void markRoutesOffloaded(swss::DBConnector& db);
 
+    // Cold protection replay: call before accepting each FPM session.
+    void resetFpmProtectionState(swss::DBConnector& db);
+    void onL2ProtectionMsg(struct nlmsghdr *h);
+    bool writeFpmL2Object(uint32_t id, bool group, bool deleting,
+                          const vector<swss::FieldValueTuple> &fields);
+
     void onFpmConnected(FpmInterface& fpm)
     {
         if (!m_fpmInterface) {
@@ -308,6 +314,16 @@ private:
     ProducerStateTable  m_evpn_dfTable;
     /* EVPN ES Backup NextHopGroup Table */
     ProducerStateTable  m_evpn_esBackupNhgTable;
+    swss::RedisPipeline *m_fpmProtectionPipeline;
+    swss::Table m_fpmL2Rows;
+    swss::Table m_fpmL2Ids;
+    ProducerStateTable m_fpmL2Table;
+    swss::Table m_fpmL2Pending;
+    bool readFpmL2Row(const string &key, vector<swss::FieldValueTuple> &fields);
+    bool canWriteFpmL2Object(uint32_t id, bool group);
+    // Accepted binding identity survives interface removal and FPM reconnect.
+    map<int, string> m_evpnBackupNhgInterfaces;
+    map<string, int> m_evpnBackupNhgIndexes;
     /* srv6 mySid table */
     ProducerStateTable m_srv6MySidTable; 
     /* srv6 sid list table */

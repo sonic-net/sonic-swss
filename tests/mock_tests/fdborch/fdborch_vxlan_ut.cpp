@@ -14,6 +14,7 @@
 
 // Include the mock FDB API functions
 #include "mock_sai_fdb.h"
+#include "muxorch.h"
 
 using ::testing::_;
 
@@ -96,6 +97,7 @@ namespace fdborch_vxlan_ut
         FlexCounterOrch *m_flexCounterOrch = nullptr;
         VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
         FlowCounterRouteOrch *m_flowCounterRouteOrch = nullptr;
+        std::unique_ptr<MuxOrch> m_muxOrch;
 
         virtual void SetUp() override
         {
@@ -224,6 +226,11 @@ namespace fdborch_vxlan_ut
             gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, m_portsOrch.get(), m_chassis_app_db.get());
+            // NeighOrch's next-hop lookup consults MuxOrch even when no MUX
+            // cable is configured. Keep the normal empty dependency registered.
+            m_muxOrch.reset(new MuxOrch(m_config_db.get(),
+                {CFG_MUX_CABLE_TABLE_NAME, CFG_PEER_SWITCH_TABLE_NAME}, nullptr, gNeighOrch, gFdbOrch));
+            gDirectory.set(m_muxOrch.get());
 
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
@@ -278,6 +285,7 @@ namespace fdborch_vxlan_ut
         }
 
         virtual void TearDown() override {
+            m_muxOrch->detachObservers();
             delete gCrmOrch;
             gCrmOrch = nullptr;
 
@@ -329,6 +337,7 @@ namespace fdborch_vxlan_ut
             delete m_flexCounterOrch;
             m_flexCounterOrch = nullptr;
 
+            m_muxOrch.reset();
             gDirectory.m_values.clear();
             sai_route_api = pold_sai_route_api;
             sai_router_intfs_api = pold_sai_router_intfs_api;

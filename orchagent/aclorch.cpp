@@ -5152,7 +5152,7 @@ bool AclOrch::removeAclTable(string table_id)
     if (table.bindToSwitch)
     {
         // Only bind egress table to switch for now.
-        assert(table->stage == ACL_STAGE_EGRESS);
+        assert(table.stage == ACL_STAGE_EGRESS);
         if(!gSwitchOrch->unbindAclTableFromSwitch(ACL_STAGE_EGRESS, table.getOid()))
         {
             SWSS_LOG_ERROR("Failed to unbind ACL table %s from switch", table_id.c_str());

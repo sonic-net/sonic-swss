@@ -209,7 +209,10 @@ void FpmLink::accept()
     if (m_connection_socket < 0)
         throw system_error(errno, system_category());
 
-    SWSS_LOG_INFO("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
+    // The destructor must close the accepted socket on connection teardown.
+    m_connected = true;
+
+    SWSS_LOG_NOTICE("New FPM connection accepted from: %s", inet_ntoa(client_addr.sin_addr));
 }
 
 int FpmLink::getFd()
@@ -265,7 +268,13 @@ uint64_t FpmLink::readData()
 
 void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
 {
-    size_t msg_len = fpm_msg_len(hdr);
+    if (!fpm_msg_hdr_ok(hdr))
+    {
+        SWSS_LOG_ERROR("Malformed FPM message header");
+        return;
+    }
+    // NLMSG_OK must be bounded by the payload, excluding the FPM header.
+    size_t msg_len = fpm_msg_data_len(hdr);
 
     if (hdr->msg_type != FPM_MSG_TYPE_NETLINK)
     {
@@ -317,6 +326,10 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
             NetDispatcher::getInstance().onNetlinkMessage(msg);
         }
         nlmsg_free(msg);
+    }
+    if (msg_len != 0)
+    {
+        SWSS_LOG_WARN("Truncated netlink payload in FPM message: %zu bytes remain", msg_len);
     }
 }
 

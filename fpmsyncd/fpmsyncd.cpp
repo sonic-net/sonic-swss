@@ -140,6 +140,16 @@ int main(int argc, char **argv)
              */
             pipeline.flush();
 
+            // Protection restarts cold even while ordinary routes reconcile
+            // warmly. Publish withdrawals before accepting replay; this does
+            // not wait for orchagent consumption or physical SAI retirement.
+            // Caveat: recovery currently
+            // assumes BGP and orchagent restart together, clearing old caches.
+            // FPM-only reconnect/restart with a surviving orchagent is deferred:
+            // immediate same-ID replay can coalesce DEL/SET into SET only.
+                    sync.resetFpmProtectionState(db);
+            pipeline.flush();
+
             cout << "Waiting for fpm-client connection..." << endl;
             fpm.accept();
             cout << "Connected!" << endl;
@@ -276,6 +286,7 @@ int main(int argc, char **argv)
         }
         catch (FpmLink::FpmConnectionClosedException &e)
         {
+            SWSS_LOG_NOTICE("FPM connection closed by peer, reconnecting");
             cout << "Connection lost, reconnecting..." << endl;
         }
     }
