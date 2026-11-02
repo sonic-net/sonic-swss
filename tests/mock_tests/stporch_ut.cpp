@@ -287,4 +287,45 @@ namespace stporch_test
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
     }
+
+    TEST_F(StpOrchTest, RejectsMalformedAppDbValues) {
+        _hook_sai_stp_api();
+
+        StrictMock<MockSaiStp> mock_sai_stp_;
+        mock_sai_stp = &mock_sai_stp_;
+        sai_stp_api->create_stp = mock_create_stp;
+        sai_stp_api->create_stp_port = mock_create_stp_port;
+        sai_stp_api->set_stp_port_attribute = mock_set_stp_port_attribute;
+
+        auto runEntry = [&](const string &table_name,
+                            const KeyOpFieldsValuesTuple &entry)
+        {
+            deque<KeyOpFieldsValuesTuple> entries = {entry};
+            auto consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor(table_name));
+            ASSERT_NE(consumer, nullptr);
+
+            consumer->addToSync(entries);
+            ASSERT_EQ(consumer->m_toSync.size(), 1u);
+            EXPECT_NO_THROW(static_cast<Orch *>(gStpOrch)->doTask());
+            EXPECT_TRUE(consumer->m_toSync.empty());
+        };
+
+        for (const auto &instance : {"", "not_a_number", "1abc", "+1", " 1", "-1", "65535", "65536"})
+        {
+            runEntry(APP_STP_VLAN_INSTANCE_TABLE_NAME,
+                     {VLAN_1000, "SET", {{"stp_instance", instance}}});
+            runEntry(APP_STP_PORT_STATE_TABLE_NAME,
+                     {ETHERNET0 + ":" + instance, "SET", {{"state", "1"}}});
+            runEntry(APP_STP_INST_PORT_FLUSH_TABLE_NAME,
+                     {string(instance) + ":" + ETHERNET0, "SET", {{"state", "true"}}});
+        }
+
+        for (const auto &state : {"", "not_a_number", "4x", "+1", " 1", "-1", "5", "256"})
+        {
+            runEntry(APP_STP_PORT_STATE_TABLE_NAME,
+                     {ETHERNET0 + ":1", "SET", {{"state", state}}});
+        }
+
+        _unhook_sai_stp_api();
+    }
 }
