@@ -10,6 +10,8 @@
 #include "srv6orch.h"
 
 #include "ipaddress.h"
+#include <chrono>
+#include <cstdint>
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nexthopgroupkey.h"
@@ -245,7 +247,9 @@ public:
 
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoute(RouteBulkContext& ctx);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    // ctx is mutable: on SAI resource exhaustion addRoutePost() records a
+    // RETRY_CST_SAI_RESOURCE constraint on ctx.retry_cst so doTask() can park the task.
+    bool addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoutePost(const RouteBulkContext& ctx);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
@@ -267,6 +271,18 @@ public:
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
     bool isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix);
     bool removeRoutePrefix(const IpPrefix& prefix);
+
+    // Wake route creates parked on SAI resource (route-table) exhaustion so they
+    // are retried on the next doTask cycle. Called from every path that frees a
+    // route entry (route DEL, excluded-interface SET, removeRoutePrefix, and
+    // IntfsOrch::removeIp2MeRoute via gRouteOrch). Cheap no-op when nothing parked.
+    void notifyRouteResourceRetry();
+
+    // doTask helper: park a route create that failed with SAI resource exhaustion
+    // on its retry constraint and re-arm it so a single resource release wakes at
+    // most one bounded batch. Returns true if the task was parked.
+    bool parkRouteCreateOnResourceExhaustion(ConsumerBase& consumer,
+            const RouteBulkContext& ctx, const swss::KeyOpFieldsValuesTuple& task);
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
@@ -294,6 +310,10 @@ private:
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
+
+    // Throttled logging for route-table (SAI resource) exhaustion
+    uint64_t m_routeResourceFullCount = 0;
+    std::chrono::steady_clock::time_point m_lastRouteResourceFullLog;
 
     std::set<NextHopKey> v4_active_default_route_nhops;
     std::set<NextHopKey> v6_active_default_route_nhops;

@@ -96,6 +96,19 @@ public:
         Recorder::Instance().retry.record(ss.str());
     }
 
+    /** Re-arm a constraint: drop it from the resolved set WITHOUT discarding the
+     * parked tasks. Used for partial (quantitative) constraints such as SAI
+     * resource exhaustion, where resolving (freeing one slot) lets only a bounded
+     * number of parked tasks proceed. Re-arming after renewed exhaustion stops the
+     * framework from re-draining the whole backlog every cycle; retries resume only
+     * on the next genuine resource-release notification.
+     * @param cst a constraint to stop retrying until the next resolution event
+     */
+    void rearm(const Constraint &cst)
+    {
+        m_resolvedConstraints.erase(cst);
+    }
+
     /** Insert a failed task with its constraint to m_toRetry and m_retryKeys
      * @param task the task that has failed
      * @param cst constraint needs to be resolved for the task to succeed

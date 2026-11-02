@@ -218,6 +218,14 @@ public:
      */
     bool addToRetry(const Task &task, const Constraint &cst);
 
+    /**
+     * @brief Re-arm a constraint on this consumer's RetryCache: stop retrying its
+     * parked tasks until the next resolution notification. Used for partial
+     * resource constraints to bound wakeups on renewed exhaustion.
+     * @param cst - the constraint to re-arm
+     */
+    void rearmRetry(const Constraint &cst);
+
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
 
