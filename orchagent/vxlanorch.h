@@ -580,28 +580,34 @@ public:
         return source_vtep_ptr;
     }
 
-    // Called while a VXLAN_TUNNEL DEL waits for this NVO's source VTEP: queues a DEL and SET of the
-    // NVO, so it lets go of the tunnel once it is idle and binds the tunnel configured next.
-    void releaseForTunnelDelete();
+    // True while the NVO waits to bind its source VTEP: its users retry their adds instead of dropping them.
+    bool isBindPending() const
+    {
+        return !source_vtep_ptr && !m_pendingVtep.empty();
+    }
+
+    // Called by a VXLAN_TUNNEL DEL of the source VTEP: lets go of the tunnel once nothing uses it, with any
+    // pending hw delete finished, and waits for the tunnel configured next under that name. False while the
+    // tunnel must stay.
+    bool releaseForTunnelDelete();
+    // Called once a tunnel is created: binds it if the NVO waits for it.
+    void bindCreatedTunnel(const std::string& tunnel_name);
 
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    bool holdDelete(const std::string& nvo_name, const std::string& reason, bool error = false);
-
-    struct HeldDelete
-    {
-        // The reason last logged, so each retry logs only a new reason.
-        std::string reason;
-        // The earliest retry of a source tunnel bridge port removal that the SAI refused.
-        std::chrono::steady_clock::time_point bridgePortRetryAt;
-    };
+    bool holdDelete(const std::string& nvo_name, const std::string& reason);
+    std::string finishPendingHwDelete();
+    void unbind();
 
     EvpnNvoRequest request_;
     Table m_nvoTable;
     VxlanTunnel* source_vtep_ptr=NULL;
-    // The NVO that source_vtep_ptr belongs to.
-    std::string m_boundNvo;
-    std::map<std::string, HeldDelete> m_heldDeletes;
+    // The source VTEP the NVO waits to bind; each wait is logged once.
+    std::string m_pendingVtep;
+    // Held DELs and the reason last logged, so each retry logs only a new reason.
+    std::map<std::string, std::string> m_heldDeletes;
+    // The earliest retry of a source tunnel bridge port removal that the SAI refused.
+    std::chrono::steady_clock::time_point m_bridgePortRetryAt;
 };
