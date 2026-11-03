@@ -776,8 +776,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
                 attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
                 attrs.push_back(attr);
+                attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+                attr.value.booldata = true;
+                attrs.push_back(attr);
+                m_entries[update.entry].allow_mac_move = true;
                 attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-                attr.value.oid = bridge_port_id;
+                attr.value.oid = existing_entry->second.bridge_port_id;
                 attrs.push_back(attr);
                 auto status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)

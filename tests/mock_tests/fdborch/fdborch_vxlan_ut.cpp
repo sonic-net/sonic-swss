@@ -4490,4 +4490,70 @@ namespace fdborch_vxlan_ut
         EXPECT_LT(move_it - fdbSetAttrIds.begin(), type_it - fdbSetAttrIds.begin());
     }
 
+    /*
+     * A MAC learned on Ethernet4 is also advertised by the ES peer on the same port (C+D).
+     * A stale AGED event that carries Ethernet0, as one left from an earlier move would,
+     * turns it into C on Ethernet4, where orchagent keeps it, and lets it move again.
+     */
+    TEST_F(VxlanFdbOrchTest, StaleAgeOfControlLearnedMacReAddsItOnItsPort)
+    {
+        setUpLocalAndTunnelMembers(m_app_db.get(), m_portsOrch.get());
+
+        const string eth4 = "Ethernet4";
+        const sai_object_id_t eth4_bp = 0x3a000000002c36;
+        m_portsOrch->m_portList[eth4].m_bridge_port_id = eth4_bp;
+        m_portsOrch->m_portList[eth4].m_oper_status = SAI_PORT_OPER_STATUS_UP;
+        m_portsOrch->saiOidToAlias[eth4_bp] = eth4;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(eth4);
+
+        const sai_object_id_t eth0_bp = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
+        const sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        ASSERT_NE(eth0_bp, eth4_bp);
+
+        vector<vector<sai_attribute_t>> created;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillRepeatedly(testing::Invoke(
+                [&](const sai_fdb_entry_t *, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    created.emplace_back(attr_list, attr_list + attr_count);
+                    return SAI_STATUS_SUCCESS;
+                }));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_)).Times(0);
+
+        vector<uint8_t> mac_addr = {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xf0};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, mac_addr, eth4_bp, vlan_oid);
+
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set("Vlan40:7c:fe:90:12:22:f0", {
+            {"vni", "40"},
+            {"type", "dynamic"},
+            {"ifname", eth4}
+        });
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        FdbEntry key;
+        key.mac = MacAddress("7c:fe:90:12:22:f0");
+        key.bv_id = vlan_oid;
+        ASSERT_EQ(gFdbOrch->m_entries.count(key), 1);
+        ASSERT_EQ(gFdbOrch->m_entries[key].type, "dynamic_control_learn");
+        ASSERT_EQ(gFdbOrch->m_entries[key].bridge_port_id, eth4_bp);
+        ASSERT_TRUE(created.empty());
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr, eth0_bp, vlan_oid);
+
+        ASSERT_EQ(gFdbOrch->m_entries.count(key), 1);
+        EXPECT_EQ(gFdbOrch->m_entries[key].type, "dynamic");
+        EXPECT_EQ(gFdbOrch->m_entries[key].origin, FDB_ORIGIN_VXLAN_ADVERTIZED);
+        EXPECT_EQ(gFdbOrch->m_entries[key].bridge_port_id, eth4_bp);
+
+        ASSERT_EQ(created.size(), 1);
+        auto bp_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID);
+        ASSERT_NE(bp_attr, nullptr);
+        EXPECT_EQ(bp_attr->value.oid, eth4_bp);
+        auto move_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE);
+        ASSERT_NE(move_attr, nullptr);
+        EXPECT_TRUE(move_attr->value.booldata);
+        EXPECT_TRUE(gFdbOrch->m_entries[key].allow_mac_move);
+    }
+
 }
