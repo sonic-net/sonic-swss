@@ -10,9 +10,10 @@
 struct EsCacheEntry
 {
     /*
-     * Lifecycle of the DF role attribute (SAI_BRIDGE_PORT_ATTR_NON_DF):
-     * - Port Creation/deletion: Handled by portsorch querying evpnMhOrch
-     * - EVPN_DF_TABLE Updates: Handled by evpnMhOrch querying portsorch
+     * Lifecycle of the DF role, programmed as SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP
+     * (true on the non-DF):
+     * - VLAN member creation: Handled by portsorch querying evpnMhOrch
+     * - EVPN_DF_TABLE and EVPN_ETHERNET_SEGMENT Updates: Handled by evpnMhOrch querying portsorch
      */
     bool is_df;
 
