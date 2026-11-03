@@ -622,7 +622,7 @@ bool EvpnMhOrch::detachEsBackup(EsBackupEntry &entry, const std::string &port_na
         Port port;
         if (gFdbOrch && gPortsOrch->getPort(port_name, port) && isEsPortDown(port))
         {
-            gFdbOrch->flushFDBEntries(entry.bridge_port_id, SAI_NULL_OBJECT_ID);
+            gFdbOrch->flushPortFdbEntries(port);
         }
     }
     return true;

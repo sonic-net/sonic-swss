@@ -147,6 +147,8 @@ public:
                             sai_object_id_t vlan_oid);
     void flushFdbByVlan(const string &);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
+    /* Flushes the port's dynamic MACs and notifies the FDB flush observers for each of its VLANs. */
+    void flushPortFdbEntries(Port &port);
 
     MacMoveGuard* getMacMoveGuard() { return m_macMoveGuard.get(); }
 
