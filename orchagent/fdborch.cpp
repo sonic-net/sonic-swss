@@ -1272,6 +1272,12 @@ void FdbOrch::doTask(Consumer& consumer)
                         VxlanTunnel* sip_tunnel = evpn_nvo_orch->getEVPNVtep();
                         if (sip_tunnel == NULL)
                         {
+                            // Kept while the NVO waits to bind its source VTEP.
+                            if (evpn_nvo_orch->isBindPending())
+                            {
+                                it++;
+                                continue;
+                            }
                             it = consumer.m_toSync.erase(it);
                             continue;
                         }
