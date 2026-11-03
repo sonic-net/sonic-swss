@@ -99,6 +99,15 @@ TEST_F(VxlanMgrTest, SwitchTableConfigReadsCustomDstPort)
     ASSERT_EQ(mgr.m_VxlanSwitchTableConfig.m_vxlanDstPort, "4788");
 }
 
+TEST_F(VxlanMgrTest, SwitchTableConfigFallsBackForInvalidDstPort)
+{
+    setSwitch({{"vxlan_router_mac", "aa:bb:cc:dd:ee:ff"},
+               {"vxlan_port", "0"}});
+    VxlanMgr mgr(m_cfg_db.get(), m_app_db.get(), m_state_db.get(), m_tables);
+    ASSERT_TRUE(mgr.getSwitchTableVxlanConfig());
+    ASSERT_EQ(mgr.m_VxlanSwitchTableConfig.m_vxlanDstPort, "4789");
+}
+
 TEST_F(VxlanMgrTest, SwitchTableConfigComputesSrcPortRange)
 {
     setSwitch({{"vxlan_router_mac", "aa:bb:cc:dd:ee:ff"},

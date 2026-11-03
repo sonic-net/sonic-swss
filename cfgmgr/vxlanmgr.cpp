@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <algorithm>
+#include <cstdlib>
 #include <regex>
 #include <sstream>
 #include <string>
@@ -855,7 +856,18 @@ bool VxlanMgr::getSwitchTableVxlanConfig()
             }
             else if (fv.first == VXLAN_PORT)
             {
-                m_VxlanSwitchTableConfig.m_vxlanDstPort = fv.second;
+                char *end = nullptr;
+                unsigned long portUL = std::strtoul(fv.second.c_str(), &end, 10);
+                if (fv.second.empty() || !isdigit(static_cast<unsigned char>(fv.second[0])) || *end != '\0' || portUL == 0 || portUL > 0xFFFF)
+                {
+                    SWSS_LOG_WARN("Invalid VXLAN destination port %s, must be in range 1-65535, default %s will be used",
+                                  fv.second.c_str(), VXLAN_DEFAULT_UDP_PORT);
+                    m_VxlanSwitchTableConfig.m_vxlanDstPort = VXLAN_DEFAULT_UDP_PORT;
+                }
+                else
+                {
+                    m_VxlanSwitchTableConfig.m_vxlanDstPort = std::to_string(portUL);
+                }
             }
             else if (fv.first == VXLAN_SPORT)
             {
