@@ -118,17 +118,15 @@ def check_deleted_object(db, table, key):
 
 
 def create_vnet_local_routes(dvs, prefix, vnet_name, ifname, nexthop=""):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    create_entry_tbl(
-        conf_db,
-        "VNET_ROUTE", '|', "%s|%s" % (vnet_name, prefix),
+    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    create_entry_pst(
+        app_db,
+        "VNET_ROUTE_TABLE", ':', "%s:%s" % (vnet_name, prefix),
         [
             ("ifname", ifname),
             ("nexthop", nexthop),
         ]
     )
-
     time.sleep(2)
 
 
