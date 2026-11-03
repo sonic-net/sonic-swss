@@ -614,12 +614,17 @@ bool EvpnMhOrch::detachEsBackup(EsBackupEntry &entry, const std::string &port_na
     return true;
 }
 
+/* The port's traffic goes to its protection group. */
+static bool isSwitchedOver(const EsBackupEntry &entry)
+{
+    return entry.switchover && entry.nhg_oid != SAI_NULL_OBJECT_ID;
+}
+
 /* Switched over, and the port does not forward yet (down, or within the switchback hold). */
 bool EvpnMhOrch::isEsBackupInUse(const EsBackupEntry &entry, const std::string &port_name,
                                  const Port &port) const
 {
-    return entry.switchover && entry.nhg_oid != SAI_NULL_OBJECT_ID &&
-           (isEsPortDown(port) || m_esBackupSwitchback.count(port_name));
+    return isSwitchedOver(entry) && (isEsPortDown(port) || m_esBackupSwitchback.count(port_name));
 }
 
 /*
@@ -692,6 +697,12 @@ bool EvpnMhOrch::isEsBackupAttached(const std::string &port_name) const
 {
     auto e = m_esBackup.find(port_name);
     return e != m_esBackup.end() && e->second.nhg_oid != SAI_NULL_OBJECT_ID;
+}
+
+bool EvpnMhOrch::isEsSwitchedOver(const std::string &port_name) const
+{
+    auto e = m_esBackup.find(port_name);
+    return e != m_esBackup.end() && isSwitchedOver(e->second);
 }
 
 /*

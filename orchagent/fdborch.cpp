@@ -493,7 +493,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
         /* Drop it if port is down */
         if (m_portsOrch->getPort(update.port.m_alias, learn_port))
         {
-            if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+            /* A down ES port switched over to its backup group keeps its MACs, and a MAC heard on it
+             * forwards through the group too. Not switched over, it is flushed as any down port. */
+            if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN && gEvpnMhOrch &&
+                gEvpnMhOrch->isEsSwitchedOver(learn_port.m_alias))
+            {
+                SWSS_LOG_INFO("update: ES port %s is down and switched over, its fdb entries kept: "
+                              "learnt mac=%s bv_id=0x%" PRIx64,
+                              update.port.m_alias.c_str(), update.entry.mac.to_string().c_str(), entry->bv_id);
+            }
+            else if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
             {
                 SWSS_LOG_NOTICE("update: Port %s is still down for the learnt mac. Flush to remove mac=%s bv_id=0x%" PRIx64,
 						update.port.m_alias.c_str(), update.entry.mac.to_string().c_str(), entry->bv_id);

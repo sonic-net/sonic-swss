@@ -64,6 +64,8 @@ public:
     /* True while the port's bridge port has a protection group: its MACs stay
      * reachable through the group when the port goes down, so they are kept. */
     bool isEsBackupAttached(const std::string &port_name) const;
+    /* True while the port's traffic is switched over to its protection group. */
+    bool isEsSwitchedOver(const std::string &port_name) const;
     /* L2NhgOrch created the group's bridge port: attach ES ports waiting for it. */
     void onL2NhgActive(const std::string &nhg_id);
 
