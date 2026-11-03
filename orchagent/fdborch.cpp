@@ -1878,29 +1878,35 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
             return;
         }
 
-        if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
-        {
-            flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
-        }
-
-        // Get BVID of each VLAN that this port is a member of
-        // and call notifyObserversFDBFlush
-        vlan_members_t vlan_members;
-        m_portsOrch->getPortVlanMembers(p, vlan_members);
-        for (const auto& vlan_member: vlan_members)
-        {
-            swss::Port vlan;
-            string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);
-            if (!m_portsOrch->getPort(vlan_alias, vlan))
-            {
-                SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
-                continue;
-            }
-            notifyObserversFDBFlush(p, vlan.m_vlan_info.vlan_oid);
-        }
-
+        flushPortFdbEntries(p);
     }
     return;
+}
+
+void FdbOrch::flushPortFdbEntries(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    }
+
+    // Get BVID of each VLAN that this port is a member of
+    // and call notifyObserversFDBFlush
+    vlan_members_t vlan_members;
+    m_portsOrch->getPortVlanMembers(port, vlan_members);
+    for (const auto& vlan_member: vlan_members)
+    {
+        swss::Port vlan;
+        string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);
+        if (!m_portsOrch->getPort(vlan_alias, vlan))
+        {
+            SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
+            continue;
+        }
+        notifyObserversFDBFlush(port, vlan.m_vlan_info.vlan_oid);
+    }
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)

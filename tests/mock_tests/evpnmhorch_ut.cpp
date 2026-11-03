@@ -1472,6 +1472,46 @@ namespace evpnmhorch_test
         ASSERT_EQ(fdbPortOf(mac), "");
     }
 
+    /* Records the FDB flushes FdbOrch reports to its observers (NeighOrch among them). */
+    struct FdbFlushObserver : public Observer
+    {
+        std::vector<FdbFlushUpdate> flushes;
+        void update(SubjectType type, void *cntx) override
+        {
+            if (type == SUBJECT_TYPE_FDB_FLUSH_CHANGE)
+            {
+                flushes.push_back(*static_cast<FdbFlushUpdate *>(cntx));
+            }
+        }
+    };
+
+    /*
+     * The group is removed while the port is still down: the MACs kept for it are flushed, and the
+     * FDB flush observers are told of them per VLAN, as when a port without a group goes down.
+     */
+    TEST_F(EvpnMhEsBackupTest, DetachWhileDownNotifiesTheFlush)
+    {
+        const MacAddress mac("00:cc:cc:cc:cc:03");
+        learnOnEsPort(mac);
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_TRUE(gEvpnMhOrch->isEsSwitchedOver(TEST_INTERFACE_1));
+
+        FdbFlushObserver observer;
+        gFdbOrch->attach(&observer);
+        removeGroupBridgePort();
+        gFdbOrch->detach(&observer);
+
+        ASSERT_FALSE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(observer.flushes.size(), 1u);
+        ASSERT_EQ(observer.flushes[0].port.m_alias, TEST_INTERFACE_1);
+        ASSERT_EQ(observer.flushes[0].entries.size(), 1u);
+        ASSERT_EQ(observer.flushes[0].entries[0].mac, mac);
+        ASSERT_EQ(observer.flushes[0].entries[0].bv_id, gPortsOrch->m_portList[VLAN_NAME_1].m_vlan_info.vlan_oid);
+    }
+
     TEST_F(EvpnMhEsBackupTest, FlapWithinTheHoldStaysSwitchedOver)
     {
         activateBackupNhg();
