@@ -2297,6 +2297,38 @@ TEST_F(BpProtectionFsmTest, FailedInterfaceYieldsToIndependentInterfaceTasks)
     row(CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME, DEL_COMMAND, {});
     row(APP_BP_PROTECTION_BINDING_TABLE_NAME, DEL_COMMAND, {});
 }
+TEST_F(BpProtectionFsmTest, StaggeredWtrDeadlinesAreIndependentWhenAnotherPortFlaps)
+{
+    start("AUTO", true, 100); link(false); link(true);
+    const auto firstDeadline = runtime().wtrDeadline;
+    Port other("PortChannel1", Port::LAG);
+    other.m_bridge_port_id = 0xdef; other.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+    gPortsOrch->setPort(other.m_alias, other);
+    auto row = [&](const string &table, const string &op, const vector<FieldValueTuple> &fields) {
+        Table db(table == CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME ? m_config_db.get() : m_app_db.get(), table);
+        if (op == DEL_COMMAND) db.del(other.m_alias); else db.set(other.m_alias, fields);
+        auto consumer = dynamic_cast<Consumer *>(protection->getConsumerBase(table));
+        consumer->addToSync(KeyOpFieldsValuesTuple{other.m_alias, op, fields});
+        protection->doTask(*consumer);
+    };
+    auto otherLink = [&](sai_port_oper_status_t status) {
+        Port current; ASSERT_TRUE(gPortsOrch->getPort(other.m_alias, current));
+        gPortsOrch->updatePortOperStatus(current, status);
+    };
+    row(CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME, SET_COMMAND,
+        {{"admin_mode", "AUTO"}, {"revertive", "true"}, {"wait_to_restore_time_ms", "200"}});
+    row(APP_BP_PROTECTION_BINDING_TABLE_NAME, SET_COMMAND, {{"nexthop_group", "2147483649"}});
+    tick(25); otherLink(SAI_PORT_OPER_STATUS_UP);
+    tick(25); otherLink(SAI_PORT_OPER_STATUS_DOWN); otherLink(SAI_PORT_OPER_STATUS_UP);
+    EXPECT_EQ(runtime().wtrDeadline, firstDeadline);
+    EXPECT_EQ(protection->m_attachments.at(other.m_alias).wtrDeadline, now+200);
+    tick(50); EXPECT_EQ(runtime().programmed, "PRIMARY");
+    EXPECT_EQ(protection->m_attachments.at(other.m_alias).programmed, "PROTECTION");
+    tick(149); EXPECT_EQ(protection->m_attachments.at(other.m_alias).programmed, "PROTECTION");
+    tick(1); EXPECT_EQ(protection->m_attachments.at(other.m_alias).programmed, "PRIMARY");
+    row(CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME, DEL_COMMAND, {});
+    row(APP_BP_PROTECTION_BINDING_TABLE_NAME, DEL_COMMAND, {});
+}
 TEST_F(BpProtectionFsmTest, ReadFirstRechecksPolicyBindingAndBridgeBeforeCorrecting)
 {
     for (unsigned change = 0; change < 8; ++change)
