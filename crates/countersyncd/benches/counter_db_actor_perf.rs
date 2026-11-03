@@ -1,4 +1,3 @@
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
@@ -47,21 +46,9 @@ fn seed_port_name_map(port_count: usize) {
 }
 
 fn flush_counters_db() {
-    let output = Command::new("redis-cli")
-        .args([
-            "-s",
-            SOCK_PATH,
-            "-n",
-            &COUNTERS_DB_ID.to_string(),
-            "FLUSHDB",
-        ])
-        .stdout(Stdio::null())
-        .output()
-        .expect("spawn redis-cli for flush");
-
-    if !output.status.success() {
-        panic!("redis-cli FLUSHDB failed with status {}", output.status);
-    }
+    let db = DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
+        .expect("connect counter db for flush");
+    assert!(db.flush_db().expect("flush counters DB"));
 }
 
 async fn run_stream(prepared: PreparedDataset) -> (Duration, usize) {
