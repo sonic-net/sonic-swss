@@ -1541,6 +1541,46 @@ TEST_F(FpmSyncdResponseTest, TestGetNextHopWt)
     EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "1,1");
 }
 
+// Checks that a nonzero raw netlink weight (rtnh_hops, which encodes
+// true_weight - 1 per netlink convention) is converted back to the true
+// weight by adding 1, rather than being passed through unconverted.
+TEST_F(FpmSyncdResponseTest, TestGetNextHopWtNonZero)
+{
+    auto test_route = create_route("10.1.1.0");
+
+    // Raw netlink weights 126 and 254 should become true weights 127 and 255
+    rtnl_nexthop* nh1 = create_nexthop(test_gateway);
+    rtnl_route_nh_set_weight(nh1, 126);
+    rtnl_nexthop* nh2 = create_nexthop(test_gateway_);
+    rtnl_route_nh_set_weight(nh2, 254);
+
+    // Add new nexthops to the route
+    rtnl_route_add_nexthop(test_route.get(), nh1);
+    rtnl_route_add_nexthop(test_route.get(), nh2);
+
+    EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "127,255");
+}
+
+// Minimal adjacent-value case: a prior version of this function only
+// special-cased raw weight 0 -> 1 and passed every other raw value through
+// unconverted, so true weights 1:2 (raw 0:1) collapsed to "1,1" -- the UCMP
+// ratio was silently lost and the route became plain ECMP. This pins the
+// exact smallest input that demonstrates that failure mode.
+TEST_F(FpmSyncdResponseTest, TestGetNextHopWtAdjacentValues)
+{
+    auto test_route = create_route("10.1.1.0");
+
+    rtnl_nexthop* nh1 = create_nexthop(test_gateway);
+    rtnl_route_nh_set_weight(nh1, 0);
+    rtnl_nexthop* nh2 = create_nexthop(test_gateway_);
+    rtnl_route_nh_set_weight(nh2, 1);
+
+    rtnl_route_add_nexthop(test_route.get(), nh1);
+    rtnl_route_add_nexthop(test_route.get(), nh2);
+
+    EXPECT_EQ(m_mockRouteSync.getNextHopWt(test_route.get()), "1,2");
+}
+
 class WarmRestartRouteSyncTest : public ::testing::Test
 {
 public:
