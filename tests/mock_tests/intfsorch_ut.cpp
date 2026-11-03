@@ -395,7 +395,7 @@ namespace intfsorch_test
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
     }
 
-    TEST_F(IntfsOrchTest, IntfsOrchOverlapIpSuccess)
+    TEST_F(IntfsOrchTest, IntfsOrchSameInterfaceOverlapRetry)
     {
         // Create an interface (RIF) on Ethernet0
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -406,36 +406,169 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_create_count + 1, create_rif_count);
 
-        // Add IP address 10.0.0.1/24 to Ethernet0
+        // Simulate the temporary /8 address installed during a netmask change.
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/8", "SET", {{"scope", "global"},{"family", "IPv4"}}});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/8")), 1);
+
+        // Retry a same-interface overlap until the original address is removed.
         entries.clear();
         entries.push_back({"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"},{"family", "IPv4"}}});
         consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
-        // Verify 10.0.0.1/24 was added to the synced interfaces
-        auto m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
-        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+        ASSERT_EQ(consumer->m_toSync.count("Ethernet0:10.0.0.1/24"), 1);
 
-        // Now add an overlapping IP 10.0.0.2/24 to Ethernet0
-        // This overlaps with 10.0.0.1/24 (same subnet).
-        // With the change, this should return success (true) and the entry
-        // should be consumed from m_toSync (not retried).
+        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/24")), 0);
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/8")), 1);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(consumer->m_toSync.count("Ethernet0:10.0.0.1/24"), 1);
+
         entries.clear();
-        entries.push_back({"Ethernet0:10.0.0.2/24", "SET", {{"scope", "global"},{"family", "IPv4"}}});
-        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        entries.push_back({"Ethernet0:10.0.0.1/8", "DEL", {}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/8")), 0);
+        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+    }
+
+    struct OverlapTestCase
+    {
+        string first_alias;
+        string first_prefix;
+        string second_alias;
+        string second_prefix;
+    };
+
+    struct IntfsOrchCrossInterfaceOverlapTest :
+        public IntfsOrchTest,
+        public ::testing::WithParamInterface<OverlapTestCase>
+    {
+    };
+
+    TEST_P(IntfsOrchCrossInterfaceOverlapTest, RejectOverlapWithoutRetry)
+    {
+        const auto &test = GetParam();
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        if (test.first_alias == "Vlan100" || test.second_alias == "Vlan100")
+        {
+            Table vlan_table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+            vlan_table.set("Vlan100", {{"admin_status", "up"}, {"mtu", "9100"}});
+            gPortsOrch->addExistingData(&vlan_table);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan100", port));
+        }
+
+        std::deque<KeyOpFieldsValuesTuple> entries = {
+            {test.first_alias, "SET", {{"mtu", "9100"}}},
+            {test.second_alias, "SET", {{"mtu", "9100"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        const string family = IpPrefix(test.first_prefix).isV4() ? "IPv4" : "IPv6";
+        entries = {{test.first_alias + ":" + test.first_prefix, "SET",
+                    {{"scope", "global"}, {"family", family}}}};
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(test.first_alias).ip_addresses.count(IpPrefix(test.first_prefix)), 1);
+
+        entries = {{test.second_alias + ":" + test.second_prefix, "SET",
+                    {{"scope", "global"}, {"family", family}}}};
         consumer->addToSync(entries);
         static_cast<Orch *>(gIntfsOrch)->doTask();
 
-        // Verify the entry was consumed (not left in m_toSync for retry)
         ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(test.second_alias).ip_addresses.size(), 0);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(test.first_alias).ip_addresses.count(IpPrefix(test.first_prefix)), 1);
 
-        // The overlapping IP should NOT have been inserted into ip_addresses
-        // because the overlap path returns true before reaching the insert.
-        m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
-        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.2/24")), 0);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(test.second_alias).ip_addresses.size(), 0);
 
-        // The original IP should still be present
-        ASSERT_EQ(m_syncdIntfses["Ethernet0"].ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+        // Removing the accepted address does not resurrect the rejected SET.
+        entries = {{test.first_alias + ":" + test.first_prefix, "DEL", {}}};
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at(test.first_alias).ip_addresses.empty());
+        ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at(test.second_alias).ip_addresses.empty());
+
+        entries = {{test.second_alias + ":" + test.second_prefix, "SET",
+                    {{"scope", "global"}, {"family", family}}}};
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at(test.second_alias).ip_addresses.count(IpPrefix(test.second_prefix)), 1);
+    }
+
+    INSTANTIATE_TEST_CASE_P(
+        IntfsOrchOverlap,
+        IntfsOrchCrossInterfaceOverlapTest,
+        ::testing::Values(
+            OverlapTestCase{"Ethernet0", "10.0.0.1/24", "Ethernet4", "10.0.0.2/24"},
+            OverlapTestCase{"Ethernet4", "10.0.0.2/24", "Ethernet0", "10.0.0.1/24"},
+            OverlapTestCase{"Ethernet0", "2603:10b2:50a:1801:0:207c:200:1/126",
+                           "Vlan100", "2603:10b2:50a:1801:0:207c:200:1/104"},
+            OverlapTestCase{"Vlan100", "2603:10b2:50a:1801:0:207c:200:1/104",
+                           "Ethernet0", "2603:10b2:50a:1801:0:207c:200:1/126"}));
+
+    TEST_F(IntfsOrchTest, IntfsOrchOverlapAcrossVrfs)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries = {
+            {"Vrf-Blue", "SET", {{"NULL", "NULL"}}}
+        };
+        auto vrf_consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        ASSERT_NE(vrf_consumer, nullptr);
+        vrf_consumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        entries = {
+            {"Ethernet0", "SET", {{"mtu", "9100"}}},
+            {"Ethernet4", "SET", {{"mtu", "9100"}, {"vrf_name", "Vrf-Blue"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_NE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id,
+                  gIntfsOrch->getSyncdIntfses().at("Ethernet4").vrf_id);
+
+        entries = {
+            {"Ethernet0:10.0.0.1/24", "SET", {{"scope", "global"}, {"family", "IPv4"}}},
+            {"Ethernet4:10.0.0.1/24", "SET",
+             {{"scope", "global"}, {"family", "IPv4"}, {"vrf_name", "Vrf-Blue"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet4").ip_addresses.count(IpPrefix("10.0.0.1/24")), 1);
+
+        // An exact duplicate SET must remain idempotent.
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.size(), 1);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet4").ip_addresses.size(), 1);
     }
 }
