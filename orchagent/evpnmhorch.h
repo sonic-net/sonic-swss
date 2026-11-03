@@ -34,7 +34,8 @@ struct EsCacheEntry
  * EVPN_ES_BACKUP_NHG_TABLE entry of a local ES port: zebra's backup L2 next hop
  * group (the ES's peer VTEPs), set as the port bridge port's protection group
  * (SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID). While the port
- * is oper down, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER sends traffic for
+ * is oper down, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_ADMIN_MODE (or the
+ * deprecated SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER) sends traffic for
  * the port's MACs to that group.
  */
 struct EsBackupEntry
@@ -90,12 +91,14 @@ private:
     swss::SelectableTimer *m_esBackupSwitchbackTimer = nullptr;
     bool m_esBackupCapChecked = false;
     bool m_esBackupSupported = false;
+    /* Switch over with PROTECTION_ADMIN_MODE, else with the deprecated SET_SWITCHOVER. */
+    bool m_esBackupAdminMode = false;
 
     bool isEsBackupSupported();
     void doEvpnEsBackupNhgTask(Consumer &consumer);
     bool applyEsBackup(const std::string &port_name);
-    bool setEsBackupAttr(EsBackupEntry &entry, const std::string &port_name,
-                         sai_attr_id_t id, bool value, sai_object_id_t oid);
+    bool setEsBackupNhg(EsBackupEntry &entry, const std::string &port_name, sai_object_id_t oid);
+    bool setEsBackupSwitchover(EsBackupEntry &entry, const std::string &port_name, bool on);
     bool detachEsBackup(EsBackupEntry &entry, const std::string &port_name);
     bool isEsBackupInUse(const EsBackupEntry &entry, const std::string &port_name,
                          const Port &port) const;

@@ -20,6 +20,7 @@
 #include "logger.h"
 
 #include "saispy.h"
+#include "mock_sai_capability_wrap.h"
 
 namespace evpnmhorch_test
 {
@@ -695,6 +696,9 @@ namespace evpnmhorch_test
     static const string ES_BACKUP_NHG_2 = "9200";
     static const sai_object_id_t ES_BACKUP_NHG_2_OID = 0x5000000000abdULL;
 
+    /* The switchover attribute a SAI that implements it is driven with. */
+    static const sai_attr_id_t ES_SWITCHOVER = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_ADMIN_MODE;
+
     static int es_flush_calls;
     static sai_fdb_api_t es_ut_fdb_api;
     static sai_fdb_api_t *es_org_fdb_api;
@@ -726,7 +730,7 @@ namespace evpnmhorch_test
         std::vector<EsBridgePortCall> bp_calls;
         /* A bridge port the test made up: its calls succeed without reaching the SAI. */
         sai_object_id_t fake_bp = SAI_NULL_OBJECT_ID;
-        int fail_switchover = 0; /* SET_SWITCHOVER calls to refuse */
+        int fail_switchover = 0; /* switchover attribute sets to refuse */
         std::shared_ptr<SaiSpyFunctor<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT, sai_status_t,
                                       sai_object_id_t, const sai_attribute_t *>> bpSpy;
 
@@ -770,13 +774,23 @@ namespace evpnmhorch_test
                 {
                     return SAI_STATUS_SUCCESS;
                 }
-                if (attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER && fail_switchover > 0)
+                bool swo = attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_ADMIN_MODE ||
+                           attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER;
+                if (swo && fail_switchover > 0)
                 {
                     fail_switchover--;
                     return SAI_STATUS_FAILURE;
                 }
-                if (attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID ||
-                    attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER)
+                if (attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_ADMIN_MODE)
+                {
+                    /* Switched over is ADMIN_MODE_PROTECTION, switched back ADMIN_MODE_AUTO. */
+                    EXPECT_TRUE(attr->value.s32 == SAI_BRIDGE_PORT_PROTECTION_ADMIN_MODE_PROTECTION ||
+                                attr->value.s32 == SAI_BRIDGE_PORT_PROTECTION_ADMIN_MODE_AUTO);
+                    set_calls.push_back({ attr->id, attr->value.s32 == SAI_BRIDGE_PORT_PROTECTION_ADMIN_MODE_PROTECTION,
+                                          SAI_NULL_OBJECT_ID });
+                    return SAI_STATUS_SUCCESS;
+                }
+                if (swo || attr->id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID)
                 {
                     set_calls.push_back({ attr->id, attr->value.booldata, attr->value.oid });
                     return SAI_STATUS_SUCCESS;
@@ -787,6 +801,7 @@ namespace evpnmhorch_test
             /* The capability query is not answered by the mock SAI. */
             gEvpnMhOrch->m_esBackupCapChecked = true;
             gEvpnMhOrch->m_esBackupSupported = true;
+            gEvpnMhOrch->m_esBackupAdminMode = true;
 
             ApplyDualTorConfigs();
             ASSERT_NE(gPortsOrch->m_portList[TEST_INTERFACE_1].m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -914,7 +929,7 @@ namespace evpnmhorch_test
         /* Down: switch over, and keep the port's MACs (they forward through the group). */
         setOper(SAI_PORT_OPER_STATUS_DOWN);
         ASSERT_EQ(set_calls.size(), 2u);
-        ASSERT_EQ(set_calls[1].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[1].id, ES_SWITCHOVER);
         ASSERT_TRUE(set_calls[1].value);
         ASSERT_EQ(es_flush_calls, 0);
 
@@ -923,7 +938,7 @@ namespace evpnmhorch_test
         ASSERT_EQ(set_calls.size(), 2u);
         expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 3u);
-        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[2].id, ES_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
 
         /* DEL takes the group off the bridge port. */
@@ -937,6 +952,76 @@ namespace evpnmhorch_test
         setOper(SAI_PORT_OPER_STATUS_DOWN);
         ASSERT_EQ(es_flush_calls, 1);
         ASSERT_EQ(set_calls.size(), 4u);
+    }
+
+    /* A SAI without PROTECTION_ADMIN_MODE is switched over with SET_SWITCHOVER. */
+    TEST_F(EvpnMhEsBackupTest, SetSwitchoverWhenTheSaiLacksAdminMode)
+    {
+        gEvpnMhOrch->m_esBackupAdminMode = false;
+        activateBackupNhg();
+        pushBackup("SET");
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(set_calls.size(), 2u);
+        ASSERT_EQ(set_calls[1].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_TRUE(set_calls[1].value);
+
+        setOper(SAI_PORT_OPER_STATUS_UP);
+        expireSwitchbackHold();
+        ASSERT_EQ(set_calls.size(), 3u);
+        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_FALSE(set_calls[2].value);
+    }
+
+    /* The bridge port attributes the SAI reports as settable, as isEsBackupSupported() sees them. */
+    static void checkEsBackupCapability(const std::set<sai_attr_id_t> &settable, bool supported, bool admin_mode)
+    {
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [&settable](sai_object_type_t object_type, sai_attr_id_t attr_id,
+                        sai_attr_capability_t *cap, sai_status_t *status) -> bool {
+                if (object_type != SAI_OBJECT_TYPE_BRIDGE_PORT)
+                {
+                    return false;
+                }
+                if (!settable.count(attr_id))
+                {
+                    *status = SAI_STATUS_NOT_SUPPORTED;
+                    return true;
+                }
+                cap->create_implemented = true;
+                cap->set_implemented = true;
+                cap->get_implemented = true;
+                *status = SAI_STATUS_SUCCESS;
+                return true;
+            });
+        gEvpnMhOrch->m_esBackupCapChecked = false;
+        gEvpnMhOrch->m_esBackupSupported = false;
+        gEvpnMhOrch->m_esBackupAdminMode = false;
+        ASSERT_EQ(gEvpnMhOrch->isEsBackupSupported(), supported);
+        if (supported)
+        {
+            ASSERT_EQ(gEvpnMhOrch->m_esBackupAdminMode, admin_mode);
+        }
+    }
+
+    TEST_F(EvpnMhEsBackupTest, CapabilityPrefersAdminModeOverSetSwitchover)
+    {
+        const char *platform = getenv("platform");
+        std::string saved = platform ? platform : "";
+        unsetenv("platform");
+
+        const sai_attr_id_t nhg = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID;
+        const sai_attr_id_t admin = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_ADMIN_MODE;
+        const sai_attr_id_t swo = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER;
+        checkEsBackupCapability({ nhg, admin, swo }, true, true);
+        checkEsBackupCapability({ nhg, admin }, true, true);
+        checkEsBackupCapability({ nhg, swo }, true, false);
+        checkEsBackupCapability({ nhg }, false, false);
+        checkEsBackupCapability({ admin, swo }, false, false);
+
+        if (platform)
+        {
+            setenv("platform", saved.c_str(), 1);
+        }
     }
 
     TEST_F(EvpnMhEsBackupTest, FlapWithinTheHoldStaysSwitchedOver)
@@ -993,7 +1078,7 @@ namespace evpnmhorch_test
         gEvpnMhOrch->onL2NhgActive(ES_BACKUP_NHG);
         ASSERT_EQ(set_calls.size(), 2u);
         ASSERT_EQ(set_calls[0].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
-        ASSERT_EQ(set_calls[1].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[1].id, ES_SWITCHOVER);
         ASSERT_TRUE(set_calls[1].value);
 
         static_cast<Orch *>(gEvpnMhOrch)->doTask();
@@ -1012,7 +1097,7 @@ namespace evpnmhorch_test
         removeGroupBridgePort();
 
         ASSERT_EQ(set_calls.size(), 4u);
-        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[2].id, ES_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
         ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
         ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
@@ -1074,7 +1159,7 @@ namespace evpnmhorch_test
         for (int i = 0; i < (int)bp_calls.size(); i++)
         {
             const auto &c = bp_calls[i];
-            if (!c.remove && c.bridge_port_id == es_bp && c.id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER)
+            if (!c.remove && c.bridge_port_id == es_bp && c.id == ES_SWITCHOVER)
             {
                 switchback_at = i;
             }
@@ -1119,11 +1204,11 @@ namespace evpnmhorch_test
 
         ASSERT_FALSE(removed);
         ASSERT_EQ(set_calls.size(), 6u);
-        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[2].id, ES_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
         ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
         ASSERT_EQ(set_calls[4].oid, ES_BACKUP_NHG_OID);
-        ASSERT_EQ(set_calls[5].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[5].id, ES_SWITCHOVER);
         ASSERT_TRUE(set_calls[5].value);
         ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
     }
@@ -1200,7 +1285,7 @@ namespace evpnmhorch_test
         ASSERT_EQ(set_calls.size(), 2u);
         expireSwitchbackHold();
         ASSERT_EQ(set_calls.size(), 4u);
-        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[2].id, ES_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
         ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
         ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
@@ -1275,7 +1360,7 @@ namespace evpnmhorch_test
 
         removeGroupBridgePort();
         ASSERT_EQ(set_calls.size(), 4u);
-        ASSERT_EQ(set_calls[2].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER);
+        ASSERT_EQ(set_calls[2].id, ES_SWITCHOVER);
         ASSERT_FALSE(set_calls[2].value);
         ASSERT_EQ(set_calls[3].id, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID);
         ASSERT_EQ(set_calls[3].oid, SAI_NULL_OBJECT_ID);
@@ -1490,7 +1575,7 @@ namespace evpnmhorch_test
             size_t n = 0;
             for (const auto &c : set_calls)
             {
-                n += c.id == SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_SET_SWITCHOVER && c.value == value;
+                n += c.id == ES_SWITCHOVER && c.value == value;
             }
             return n;
         }
