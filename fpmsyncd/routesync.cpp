@@ -832,7 +832,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s", h->nlmsg_type,
                             nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || rmac.empty() || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
             {
                 return false;
             }
@@ -851,6 +851,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             for (;;) 
             {
                 uint16_t encap = 0;
+                /* A next hop without its own VNI or router MAC must not take the previous one's */
+                encap_value = 0;
+                rmac.clear();
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
                 {
                     break;
@@ -952,7 +955,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || rmac.empty() || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                     {
                         return false;
                     }
