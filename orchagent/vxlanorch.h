@@ -382,6 +382,8 @@ public:
     {
         return m_heldDeletes.count(tunnelName) != 0;
     }
+    // True when APPL_DB holds this tunnel again with other attributes than it was created with.
+    bool isTunnelRowReplaced(const std::string& tunnel_name);
 
     bool isDipTunnelsSupported(void)
     {
@@ -450,6 +452,8 @@ public:
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+    bool removeMap(const std::string& tunnel_name, const std::string& tunnel_map_entry_name,
+                   const std::string& full_tunnel_map_entry_name);
 
     VxlanTunnelMapTable vxlan_tunnel_map_table_;
     VxlanTunnelMapRequest request_;
