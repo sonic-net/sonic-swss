@@ -184,6 +184,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_warmStartHelper.registerTable(pipeline, &m_srv6MySidTable, APP_SRV6_MY_SID_TABLE_NAME);
+    /* Label routes are reconciled into LABEL_ROUTE_TABLE, not ROUTE_TABLE */
+    m_warmStartHelper.registerTable(pipeline, m_label_routeTable.get(), APP_LABEL_ROUTE_TABLE_NAME);
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
@@ -3259,9 +3261,9 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     if (nlmsg_type == RTM_DELROUTE)
     {
         SWSS_LOG_INFO("LabelRouteTable del msg: %s", destaddr);
-        delWithWarmRestart(
+        delTableWithWarmRestart(
             LabelRouteTableFieldValueTupleWrapper{std::move(destaddr), std::string(), isNbZmqEnabled()},
-            *m_label_routeTable);
+            *m_label_routeTable, APP_LABEL_ROUTE_TABLE_NAME);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -3293,7 +3295,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
             SWSS_LOG_INFO("LabelRouteTable set blackhole msg: %s", destaddr);
             LabelRouteTableFieldValueTupleWrapper fvw{std::move(destaddr), std::move(proto_str), isNbZmqEnabled()};
             fvw.blackhole = "true";
-            setRouteWithWarmRestart(fvw, *m_label_routeTable);
+            setTableWithWarmRestart(fvw, *m_label_routeTable, APP_LABEL_ROUTE_TABLE_NAME);
             return;
         }
         case RTN_UNICAST:
@@ -3333,7 +3335,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
         fvw.mpls_nh = std::move(mpls_list);
     }
 
-    setRouteWithWarmRestart(fvw, *m_label_routeTable);
+    setTableWithWarmRestart(fvw, *m_label_routeTable, APP_LABEL_ROUTE_TABLE_NAME);
 }
 
 /*
