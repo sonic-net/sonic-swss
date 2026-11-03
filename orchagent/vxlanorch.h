@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <unordered_map>
 #include <set>
@@ -193,6 +194,11 @@ public:
     const IpAddress getSrcIP()
     {
         return src_ip_;
+    }
+
+    bool hasConfig(const IpAddress& src_ip, const IpAddress& dst_ip, VxlanTunnelTTLMode ttl_mode) const
+    {
+        return src_ip_ == src_ip && dst_ip_ == dst_ip && decap_ttl_mode_ == ttl_mode;
     }
 
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
@@ -391,6 +397,8 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
     void doTask(swss::SelectableTimer&);
+    // True when APPL_DB holds this tunnel again with the attributes it was created with.
+    bool isTunnelRowBack(const std::string& tunnel_name, const VxlanTunnel& tunnel);
 
     VxlanTunnelTable vxlan_tunnel_table_;
     VxlanTunnelRequest request_;
@@ -577,15 +585,28 @@ public:
         return source_vtep_ptr;
     }
 
+    // Called while a VXLAN_TUNNEL DEL waits for this NVO's source VTEP: queues a DEL and SET of the
+    // NVO, so it lets go of the tunnel once it is idle and binds the tunnel configured next.
+    void releaseForTunnelDelete();
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
     bool holdDelete(const std::string& nvo_name, const std::string& reason, bool error = false);
 
+    struct HeldDelete
+    {
+        // The reason last logged, so each retry logs only a new reason.
+        std::string reason;
+        // The earliest retry of a source tunnel bridge port removal that the SAI refused.
+        std::chrono::steady_clock::time_point bridgePortRetryAt;
+    };
+
     EvpnNvoRequest request_;
     Table m_nvoTable;
     VxlanTunnel* source_vtep_ptr=NULL;
-    // Held NVO DELs and the reason last logged, so each retry logs only a new reason.
-    std::map<std::string, std::string> m_heldDeletes;
+    // The NVO that source_vtep_ptr belongs to.
+    std::string m_boundNvo;
+    std::map<std::string, HeldDelete> m_heldDeletes;
 };
