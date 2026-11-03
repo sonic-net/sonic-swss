@@ -1,4 +1,4 @@
-from .dvs_common import PollingConfig
+from .dvs_common import PollingConfig, wait_for_result
 
 class DVSVlan(object):
     def __init__(self, adb, cdb, sdb, cntrdb, appdb):
