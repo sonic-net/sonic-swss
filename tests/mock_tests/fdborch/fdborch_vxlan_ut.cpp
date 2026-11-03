@@ -4556,4 +4556,49 @@ namespace fdborch_vxlan_ut
         EXPECT_TRUE(gFdbOrch->m_entries[key].allow_mac_move);
     }
 
+    /* A static MAC that drops, such as a port access control entry, still drops once re-added */
+    TEST_F(VxlanFdbOrchTest, AgeOfDiscardStaticMacKeepsDrop)
+    {
+        setUpLocalAndTunnelMembers(m_app_db.get(), m_portsOrch.get());
+
+        const sai_object_id_t local_bp = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
+        const sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        vector<vector<sai_attribute_t>> created;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillRepeatedly(testing::Invoke(
+                [&](const sai_fdb_entry_t *, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    created.emplace_back(attr_list, attr_list + attr_count);
+                    return SAI_STATUS_SUCCESS;
+                }));
+
+        Table fdbTable = Table(m_app_db.get(), APP_FDB_TABLE_NAME);
+        fdbTable.set("Vlan40:7c:fe:90:12:22:f1", {
+            {"port", ETH0},
+            {"type", "static"},
+            {"discard", "true"}
+        });
+        gFdbOrch->addExistingData(&fdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+        ASSERT_EQ(created.size(), 1);
+
+        created.clear();
+        vector<uint8_t> mac_addr = {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xf1};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr, local_bp, vlan_oid);
+
+        ASSERT_EQ(created.size(), 1);
+        auto action_attr = findFdbAttr(created[0], SAI_FDB_ENTRY_ATTR_PACKET_ACTION);
+        ASSERT_NE(action_attr, nullptr);
+        EXPECT_EQ(action_attr->value.s32, SAI_PACKET_ACTION_DROP);
+
+        /* Aged while its port is out of the VLAN, it is saved with the same action */
+        created.clear();
+        m_portsOrch->m_portList[VLAN40].m_members.erase(ETH0);
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, mac_addr, local_bp, vlan_oid);
+
+        EXPECT_TRUE(created.empty());
+        ASSERT_EQ(gFdbOrch->saved_fdb_entries[ETH0].size(), 1);
+        EXPECT_EQ(gFdbOrch->saved_fdb_entries[ETH0][0].fdbData.discard, "true");
+    }
+
 }
