@@ -3617,6 +3617,17 @@ protected:
     }
     BpProtectionStatus status() { return protection->isProtectedBridgePort("PortChannel0"); }
     void down() { link(false); }
+    FdbEntry lateLearn(const string &mac = "00:11:22:33:44:99") {
+        const auto value = port();
+        gPortsOrch->saiOidToAlias[value.m_bridge_port_id] = value.m_alias;
+        FdbEntry learned{MacAddress(mac), 0x710000+1000, value.m_alias};
+        sai_fdb_entry_t event{};
+        event.switch_id = gSwitchId; event.bv_id = learned.bv_id;
+        memcpy(event.mac_address, learned.mac.getMac(), sizeof(sai_mac_t));
+        gFdbOrch->update(SAI_FDB_EVENT_LEARNED, &event, value.m_bridge_port_id,
+            SAI_FDB_ENTRY_TYPE_DYNAMIC);
+        return learned;
+    }
     void expectPreserved() {
         EXPECT_TRUE(protectionFdbCalls.empty()); EXPECT_TRUE(listener.events.empty());
         EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME),0u);
@@ -3637,6 +3648,42 @@ TEST_F(BpProtectionFdbTest, AttachedProtectionSuppressesSaiFdbAndRealNeighborRes
     start("AUTO",false); ASSERT_EQ(status(),BpProtectionStatus::PROTECTED); down(); path("PROTECTION"); expectPreserved();
     for (int i=0;i<3;++i) gFdbOrch->updatePortOperState({port(),SAI_PORT_OPER_STATUS_DOWN});
     expectPreserved();
+}
+TEST_F(BpProtectionFdbTest, LateLearnWhileSwitchedOverKeepsExistingMacsAndLearnsNewMac)
+{
+    start("AUTO", false); down(); path("PROTECTION"); expectPreserved();
+    const auto learned = lateLearn();
+    expectPreserved();
+    ASSERT_TRUE(gFdbOrch->m_entries.count(learned));
+    EXPECT_EQ(gFdbOrch->m_entries.at(learned).bridge_port_id, port().m_bridge_port_id);
+}
+TEST_F(BpProtectionFdbTest, LateLearnWithPendingProtectionPreservesExistingMacs)
+{
+    config(); down(); ASSERT_EQ(status(), BpProtectionStatus::PENDING);
+    const auto learned = lateLearn();
+    expectPreserved();
+    EXPECT_TRUE(gFdbOrch->m_entries.count(learned));
+}
+TEST_F(BpProtectionFdbTest, LateLearnAfterFinalIntentWithdrawalKeepsLegacyFlush)
+{
+    start("AUTO", false); down(); config(DEL_COMMAND);
+    apply(APP_BP_PROTECTION_BINDING_TABLE_NAME, DEL_COMMAND);
+    ASSERT_EQ(status(), BpProtectionStatus::NONE); expectNormal();
+    const auto learned = lateLearn();
+    EXPECT_EQ(protectionFdbCalls.size(), 2u);
+    EXPECT_FALSE(gFdbOrch->m_entries.count(learned));
+}
+TEST_F(BpProtectionFdbTest, LateLearnOnUnprotectedDownPortKeepsLegacyFlush)
+{
+    down(); ASSERT_EQ(status(), BpProtectionStatus::NONE); expectNormal();
+    const auto learned = lateLearn();
+    EXPECT_EQ(protectionFdbCalls.size(), 2u);
+    EXPECT_FALSE(gFdbOrch->m_entries.count(learned));
+}
+TEST_F(BpProtectionFdbTest, LearnOnProtectedUpPortStillUsesNormalLearning)
+{
+    start("AUTO", false); const auto learned = lateLearn();
+    expectPreserved(); EXPECT_TRUE(gFdbOrch->m_entries.count(learned));
 }
 TEST_F(BpProtectionFdbTest, PolicyBeforeBindingAndAllPinnedModesSuppressDown)
 {
