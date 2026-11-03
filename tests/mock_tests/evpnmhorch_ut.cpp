@@ -759,6 +759,11 @@ namespace evpnmhorch_test
             gL2NhgOrch = new L2NhgOrch(m_appl_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME);
             ut_orch_list.push_back((Orch **)&gL2NhgOrch);
 
+            /* FdbOrch counts a learnt entry in CRM. */
+            ASSERT_EQ(gCrmOrch, nullptr);
+            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+            ut_orch_list.push_back((Orch **)&gCrmOrch);
+
             es_org_fdb_api = sai_fdb_api;
             es_ut_fdb_api = *sai_fdb_api;
             es_ut_fdb_api.flush_fdb_entries = _ut_count_fdb_flush;
@@ -1022,6 +1027,74 @@ namespace evpnmhorch_test
         {
             setenv("platform", saved.c_str(), 1);
         }
+    }
+
+    /* A LEARN on an ES port as the SAI reports it, in VLAN_NAME_1. */
+    static void learnOnEsPort(const MacAddress &mac, const string &port = TEST_INTERFACE_1)
+    {
+        sai_fdb_entry_t fdb = {};
+        fdb.switch_id = gSwitchId;
+        fdb.bv_id = gPortsOrch->m_portList[VLAN_NAME_1].m_vlan_info.vlan_oid;
+        memcpy(fdb.mac_address, mac.getMac(), sizeof(fdb.mac_address));
+        gFdbOrch->update(SAI_FDB_EVENT_LEARNED, &fdb, gPortsOrch->m_portList[port].m_bridge_port_id,
+                         SAI_FDB_ENTRY_TYPE_DYNAMIC);
+    }
+
+    /* The port FdbOrch has the MAC on in VLAN_NAME_1, empty if it has none. */
+    static string fdbPortOf(const MacAddress &mac)
+    {
+        Port port;
+        if (!gFdbOrch->getPort(mac, gPortsOrch->m_portList[VLAN_NAME_1].m_vlan_info.vlan_id, port))
+        {
+            return "";
+        }
+        return port.m_alias;
+    }
+
+    /*
+     * A MAC learnt on the ES port while it is down and switched over (its member is back and learning
+     * before the port is oper up): the port is not flushed, and the MAC is taken on it like its other MACs.
+     */
+    TEST_F(EvpnMhEsBackupTest, LearnWhileDownKeepsThePortMacs)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        const MacAddress kept("00:cc:cc:cc:cc:03");
+        learnOnEsPort(kept);
+        ASSERT_EQ(fdbPortOf(kept), TEST_INTERFACE_1);
+
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_TRUE(gEvpnMhOrch->isEsSwitchedOver(TEST_INTERFACE_1));
+        ASSERT_EQ(es_flush_calls, 0);
+
+        const MacAddress mac("00:cc:cc:cc:cc:01");
+        learnOnEsPort(mac);
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(fdbPortOf(mac), TEST_INTERFACE_1);
+        ASSERT_EQ(fdbPortOf(kept), TEST_INTERFACE_1);
+    }
+
+    /* Down with the group attached but the switchover refused: nothing carries the port, so a LEARN on it
+     * flushes the port and is dropped, as on any down port. */
+    TEST_F(EvpnMhEsBackupTest, LearnWhileDownNotSwitchedOverFlushes)
+    {
+        activateBackupNhg();
+        pushBackup("SET");
+        const MacAddress kept("00:cc:cc:cc:cc:04");
+        learnOnEsPort(kept);
+        ASSERT_EQ(fdbPortOf(kept), TEST_INTERFACE_1);
+
+        fail_switchover = 1;
+        setOper(SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_TRUE(gEvpnMhOrch->isEsBackupAttached(TEST_INTERFACE_1));
+        ASSERT_FALSE(gEvpnMhOrch->isEsSwitchedOver(TEST_INTERFACE_1));
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(fdbPortOf(kept), TEST_INTERFACE_1);
+
+        const MacAddress mac("00:cc:cc:cc:cc:02");
+        learnOnEsPort(mac);
+        ASSERT_EQ(es_flush_calls, 1);
+        ASSERT_EQ(fdbPortOf(mac), "");
     }
 
     TEST_F(EvpnMhEsBackupTest, FlapWithinTheHoldStaysSwitchedOver)
@@ -1525,6 +1598,7 @@ namespace evpnmhorch_test
             lag.m_members = { TEST_INTERFACE_1, TEST_INTERFACE_2 };
             lag.m_oper_status = SAI_PORT_OPER_STATUS_UP;
             gPortsOrch->m_portList[ES_LAG] = lag;
+            gPortsOrch->saiOidToAlias[ES_LAG_BRIDGE_PORT_OID] = ES_LAG;
             gEvpnMhOrch->m_esIntfMap[ES_LAG] = true;
             sai_object_id_t member_oid = 0x1b000000000001ULL;
             for (const auto &alias : { TEST_INTERFACE_1, TEST_INTERFACE_2 })
@@ -1544,6 +1618,7 @@ namespace evpnmhorch_test
         void TearDown() override
         {
             lagMemberSpy.reset();
+            gPortsOrch->saiOidToAlias.erase(ES_LAG_BRIDGE_PORT_OID);
             gPortsOrch->m_portList.erase(ES_LAG);
             for (const auto &alias : { TEST_INTERFACE_1, TEST_INTERFACE_2 })
             {
@@ -1727,6 +1802,40 @@ namespace evpnmhorch_test
         gEvpnMhOrch->m_esBackupSwitchback[ES_LAG] = std::chrono::steady_clock::now();
         expireSwitchbackHold();
         ASSERT_EQ(switchoverCalls(false), 0u);
+    }
+
+    /*
+     * The LAG is oper down and switched over while a member is back and learning: a LEARN on the
+     * LAG's bridge port does not flush it, and the MAC lands on the LAG with its other MACs.
+     */
+    TEST_F(EvpnMhEsBackupLagTest, LearnWhileTheLagIsDownWithAMemberBack)
+    {
+        activateBackupNhg();
+        pushBackup("SET", ES_LAG);
+        const MacAddress kept("00:cc:cc:cc:cc:11");
+        learnOnEsPort(kept, ES_LAG);
+        ASSERT_EQ(fdbPortOf(kept), ES_LAG);
+
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_DOWN);
+        setPortOper(TEST_INTERFACE_2, SAI_PORT_OPER_STATUS_DOWN);
+        ASSERT_EQ(switchoverCalls(true), 1u);
+        Port lag = gPortsOrch->m_portList[ES_LAG];
+        lag.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+        PortOperStateUpdate update = { lag, SAI_PORT_OPER_STATUS_DOWN };
+        gFdbOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+        gEvpnMhOrch->update(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+        gPortsOrch->m_portList[ES_LAG] = lag;
+        ASSERT_EQ(es_flush_calls, 0);
+
+        /* A member is back, the LAG is not oper up yet: still switched over. */
+        setPortOper(TEST_INTERFACE_1, SAI_PORT_OPER_STATUS_UP);
+        ASSERT_TRUE(gEvpnMhOrch->isEsSwitchedOver(ES_LAG));
+
+        const MacAddress learnt("00:cc:cc:cc:cc:12");
+        learnOnEsPort(learnt, ES_LAG);
+        ASSERT_EQ(es_flush_calls, 0);
+        ASSERT_EQ(fdbPortOf(learnt), ES_LAG);
+        ASSERT_EQ(fdbPortOf(kept), ES_LAG);
     }
 
     /*
