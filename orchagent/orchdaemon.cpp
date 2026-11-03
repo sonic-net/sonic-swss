@@ -5,6 +5,7 @@
 #include <errno.h>
 #include <signal.h>
 #include "orchdaemon.h"
+#include "notifier.h"
 #include "logger.h"
 #include <sairedis.h>
 #include "namelabelmapper.h"
@@ -1081,6 +1082,19 @@ void OrchDaemon::handleTaskStatsQuery()
     }
 }
 
+void OrchDaemon::drainNotifications()
+{
+    for (Orch *orch : m_orchList)
+    {
+        for (Selectable *selectable : orch->getSelectables())
+        {
+            auto *notifier = dynamic_cast<Notifier *>(selectable);
+            if (notifier)
+                notifier->drain();
+        }
+    }
+}
+
 void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
@@ -1171,6 +1185,10 @@ void OrchDaemon::start(long heartBeatInterval)
                     for (Orch *o : m_orchList)
                         o->doTask();
                 }
+            }
+            else
+            {
+                drainNotifications();
             }
 
             continue;
