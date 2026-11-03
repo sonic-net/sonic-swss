@@ -111,7 +111,9 @@ private:
     swss::SelectableTimer *m_fsmTimer = nullptr; // Owned by ExecutableTimer/Orch.
     void resetFsm(Attachment &attachment);
     void evaluatePath(Attachment &attachment, const BpProtEntry &policy, bool up);
-    void reconcilePath(const std::string &ifname, Attachment &attachment, sai_object_id_t group);
+    void reconcilePath(const std::string &ifname, Attachment &attachment, sai_object_id_t group,
+        bool pendingReplacement = false);
+    bool getRetainedGroup(const std::string &ifname, const Attachment &attachment, sai_object_id_t &group) const;
     bool reconcileProgramming(const std::string &ifname, Attachment &attachment, sai_object_id_t group, bool attaching);
     PortsOrch *m_ports;
     L2NhgOrch *m_groups;

@@ -2329,6 +2329,41 @@ TEST_F(BpProtectionFsmTest, StaggeredWtrDeadlinesAreIndependentWhenAnotherPortFl
     row(CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME, DEL_COMMAND, {});
     row(APP_BP_PROTECTION_BINDING_TABLE_NAME, DEL_COMMAND, {});
 }
+TEST_F(BpProtectionFsmTest, UnreadyReplacementKeepsWorkingBackupUntilNewGroupIsReady)
+{
+    start("AUTO", false); link(false); const auto oldGroup = runtime().reference.oid;
+    const auto writes = bridgeWrites.size(); bind("2147483650");
+    EXPECT_EQ(refs(), 1u); EXPECT_EQ(bridgeWrites.size(), writes);
+    EXPECT_EQ(bridgeValues[port().m_bridge_port_id][SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID].value.oid, oldGroup);
+    EXPECT_EQ(runtime().programmed, "PROTECTION");
+    EXPECT_EQ(state().at("reconciliation_state"), "INCONSISTENT");
+    group("2147483650", "1073741825"); step();
+    EXPECT_EQ(refs(), 0u); EXPECT_EQ(refs("2147483650"), 1u);
+    EXPECT_EQ(runtime().programmed, "PROTECTION");
+    EXPECT_EQ(state().at("reconciliation_state"), "STEADY");
+}
+TEST_F(BpProtectionFsmTest, UnreadyReplacementStillHonorsLinkAndManualPolicyOnOldGroup)
+{
+    start("AUTO", false); const auto oldGroup = runtime().reference.oid;
+    bind("2147483650"); link(false);
+    EXPECT_EQ(refs(), 1u); EXPECT_EQ(runtime().programmed, "PROTECTION");
+    policy("PRIMARY", false); EXPECT_EQ(runtime().programmed, "PRIMARY");
+    EXPECT_EQ(bridgeValues[port().m_bridge_port_id][SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID].value.oid, oldGroup);
+    // A withdrawal remains authoritative even while a replacement is pending.
+    apply(APP_BP_PROTECTION_BINDING_TABLE_NAME, DEL_COMMAND);
+    EXPECT_EQ(refs(), 0u);
+    EXPECT_EQ(bridgeValues[port().m_bridge_port_id][SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID].value.oid, SAI_NULL_OBJECT_ID);
+}
+TEST_F(BpProtectionFsmTest, OldGroupWithdrawalDuringUnreadyReplacementStillDrains)
+{
+    start("AUTO", false); link(false); bind("2147483650");
+    builder->deleteProtectionRow("2147483649"); step();
+    EXPECT_FALSE(builder->m_protectionGroups.count("2147483649"));
+    EXPECT_EQ(bridgeValues[port().m_bridge_port_id][SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID].value.oid, SAI_NULL_OBJECT_ID);
+    group("2147483650", "1073741825"); step();
+    EXPECT_EQ(refs("2147483650"), 1u); EXPECT_EQ(runtime().programmed, "PROTECTION");
+}
+
 TEST_F(BpProtectionFsmTest, ReadFirstRechecksPolicyBindingAndBridgeBeforeCorrecting)
 {
     for (unsigned change = 0; change < 8; ++change)

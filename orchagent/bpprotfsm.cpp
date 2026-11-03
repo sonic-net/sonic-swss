@@ -156,8 +156,11 @@ bool BpProtOrch::reconcileProgramming(const std::string &ifname, Attachment &att
         Port current; sai_object_id_t live;
         auto binding = m_bindings.find(ifname);
         auto config = m_entries.find(ifname);
+        const bool targetReady = binding != m_bindings.end() && m_groups->getNhgOid(binding->second, live);
+        const bool groupMatches = targetReady ? live == group :
+            !attaching && getRetainedGroup(ifname, attachment, live) && live == group;
         if (attachment.removing || binding == m_bindings.end() || config == m_entries.end() ||
-            !m_groups->getNhgOid(binding->second, live) || live != group ||
+            !groupMatches ||
             !m_ports->getPort(ifname, current) || current.m_bridge_port_id != port ||
             current.m_bridge_port_generation != generation ||
             (current.m_oper_status == SAI_PORT_OPER_STATUS_UP) != up || config->second.adminMode != policy.adminMode ||
@@ -248,15 +251,18 @@ bool BpProtOrch::reconcileProgramming(const std::string &ifname, Attachment &att
     return false;
 }
 
-void BpProtOrch::reconcilePath(const std::string &ifname, Attachment &attachment, sai_object_id_t group)
+void BpProtOrch::reconcilePath(const std::string &ifname, Attachment &attachment, sai_object_id_t group,
+    bool pendingReplacement)
 {
     if (!attachment.pathPending)
     {
-        publishRuntime(ifname, "STEADY", attachment.wtrRunning ? "wtr_started" : "path_confirmed",
+        publishRuntime(ifname, pendingReplacement ? "INCONSISTENT" : "STEADY",
+            pendingReplacement ? "replacement_nhg_pending" : attachment.wtrRunning ? "wtr_started" : "path_confirmed",
             attachment.observed, attachment.programmed);
         return;
     }
     if (!reconcileProgramming(ifname, attachment, group, false)) return;
     attachment.pathPending = false; attachment.verificationPending = false; attachment.repairAttributes = false;
-    publishRuntime(ifname, "STEADY", "path_confirmed", attachment.observed, attachment.programmed);
+    publishRuntime(ifname, pendingReplacement ? "INCONSISTENT" : "STEADY",
+        pendingReplacement ? "replacement_nhg_pending" : "path_confirmed", attachment.observed, attachment.programmed);
 }

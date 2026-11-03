@@ -271,6 +271,21 @@ void BpProtOrch::doTask()
     for (const auto &name : work) reconcile(name);
 }
 
+bool BpProtOrch::getRetainedGroup(const std::string &ifname, const Attachment &attachment,
+    sai_object_id_t &group) const
+{
+    const auto binding = m_bindings.find(ifname);
+    sai_object_id_t desired;
+    // Only a replacement SET may keep a confirmed working attachment. A DEL,
+    // group withdrawal, partial programming or teardown must still drain it.
+    return binding != m_bindings.end() && attachment.active && !attachment.blocked &&
+        !attachment.removing && !attachment.cleanupPending && attachment.reference.token &&
+        !attachment.replacement.token && !attachment.next.token &&
+        binding->second != attachment.reference.nhg_id &&
+        !m_groups->getNhgOid(binding->second, desired) &&
+        m_groups->getNhgOid(attachment.reference.nhg_id, group) && group == attachment.reference.oid;
+}
+
 void BpProtOrch::reconcileAttachment(const std::string &ifname)
 {
     auto policy = m_entries.find(ifname);
@@ -296,6 +311,15 @@ void BpProtOrch::reconcileAttachment(const std::string &ifname)
         evaluatePath(attachment, policy->second, port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
     bool portChanged = portReady && attachment.port &&
         (attachment.port != port.m_bridge_port_id || attachment.generation != port.m_bridge_port_generation);
+    sai_object_id_t retainedGroup = SAI_NULL_OBJECT_ID;
+    if (policy != m_entries.end() && portReady && !portChanged && !groupReady &&
+        getRetainedGroup(ifname, attachment, retainedGroup))
+    {
+        // Keep honoring current link/policy on the old usable group while the
+        // requested replacement resolves. The requested association is not steady.
+        reconcilePath(ifname, attachment, retainedGroup, true);
+        return;
+    }
     bool heldUnready = false;
     if (attachment.blocked && attachment.active)
         for (const auto &reference : {attachment.reference, attachment.replacement})
