@@ -1177,7 +1177,8 @@ void FdbOrch::doTask(Consumer& consumer)
                         VxlanTunnel* sip_tunnel = evpn_nvo_orch->getEVPNVtep();
                         if (sip_tunnel == NULL)
                         {
-                            it = consumer.m_toSync.erase(it);
+                            // The EVPN NVO can come after the remote MACs: keep the entry until it does.
+                            it++;
                             continue;
                         }
                         port = tunnel_orch->getTunnelPortName(sip_tunnel->getSrcIP().to_string(), true);
