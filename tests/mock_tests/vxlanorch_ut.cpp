@@ -1669,6 +1669,29 @@ namespace vxlanorch_test
         g_removeBridgePortInUseCalls++;
         return SAI_STATUS_OBJECT_IN_USE;
     }
+    decltype(sai_tunnel_api->remove_tunnel_map_entry) g_savedRemoveTunnelMapEntry = nullptr;
+    sai_object_id_t g_refusedTunnelMapEntryId = SAI_NULL_OBJECT_ID;
+    int g_refusedTunnelMapEntryRemoves = 0;
+    sai_status_t stubRemoveTunnelMapEntryRefused(sai_object_id_t id)
+    {
+        if (id != g_refusedTunnelMapEntryId)
+        {
+            return g_savedRemoveTunnelMapEntry(id);
+        }
+        g_refusedTunnelMapEntryRemoves++;
+        return SAI_STATUS_OBJECT_IN_USE;
+    }
+
+    decltype(sai_tunnel_api->create_tunnel_map_entry) g_savedCreateTunnelMapEntry = nullptr;
+    sai_status_t g_tunnelMapEntryCreateStatus = SAI_STATUS_SUCCESS;
+    // The output of a failed create is no id the SAI created: a non-null value catches its use.
+    const sai_object_id_t g_unknownTunnelMapEntryId = 0x3b00000000dead;
+    sai_status_t stubCreateTunnelMapEntryFails(sai_object_id_t *id, sai_object_id_t, uint32_t,
+                                               const sai_attribute_t *)
+    {
+        *id = g_unknownTunnelMapEntryId;
+        return g_tunnelMapEntryCreateStatus;
+    }
 
     // The EVPN NVO must outlive the remote VTEP users of its source VTEP: their DELs release
     // the VTEP through EvpnNvoOrch::getEVPNVtep(). Each step is the APPL_DB change vxlanmgrd
@@ -1689,6 +1712,18 @@ namespace vxlanorch_test
                 sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
                 g_savedRemoveBridgePort = nullptr;
             }
+            if (g_savedRemoveTunnelMapEntry)
+            {
+                sai_tunnel_api->remove_tunnel_map_entry = g_savedRemoveTunnelMapEntry;
+                g_savedRemoveTunnelMapEntry = nullptr;
+                g_refusedTunnelMapEntryId = SAI_NULL_OBJECT_ID;
+            }
+            if (g_savedCreateTunnelMapEntry)
+            {
+                sai_tunnel_api->create_tunnel_map_entry = g_savedCreateTunnelMapEntry;
+                g_savedCreateTunnelMapEntry = nullptr;
+            }
+            Table(m_app_db.get(), APP_VLAN_TABLE_NAME).del("Vlan200");
             Table(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME).del("nvo1");
             Table(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME).del(m_mapKey);
             Table(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME).del(m_newMapKey);
@@ -1924,6 +1959,7 @@ namespace vxlanorch_test
         void heldTunnelDelKeptForOtherSourceIp()
         {
             setRemoteVni();
+            mapDel();
             nvoDel();
             tunnelDel();
             tunnelSet("10.1.1.9");
@@ -2162,9 +2198,307 @@ namespace vxlanorch_test
             retryNvo();
             EXPECT_FALSE(nvoHeld());
             retryTunnel();
+            EXPECT_TRUE(tunnelHeld());
+            EXPECT_TRUE(vtep()->isActive());
+            mapDel();
+            retryTunnel();
             EXPECT_FALSE(tunnelHeld());
             ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
             EXPECT_TRUE(vtep()->hasConfig(IpAddress("10.1.1.1"), dst_ip, ttl_mode));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        }
+
+        bool saiTunnelExists(sai_object_id_t id)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_TUNNEL_ATTR_TYPE;
+            return sai_tunnel_api->get_tunnel_attribute(id, 1, &attr) == SAI_STATUS_SUCCESS;
+        }
+
+        // A VTEP without an NVO: vxlanmgrd writes the map DEL, then the VXLAN_TUNNEL DEL, and orchagent can take
+        // the tunnel DEL first (two consumers ready at one select). The tunnel DEL waits for the map, so the last
+        // map DEL still removes the SAI tunnel, and the VTEP can be configured again.
+        void tunnelDelWaitsForItsMaps()
+        {
+            nvoDel();
+            ASSERT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            ASSERT_TRUE(saiTunnelExists(tunnel_id));
+
+            tunnelDel();
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(tunnelHeld());
+            retryTunnel();
+            EXPECT_EQ(m_VxlanTunnelOrch->m_heldDeletes.size(), 1u);
+
+            mapDel();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_FALSE(saiTunnelExists(tunnel_id));
+
+            retryTunnel();
+            EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_FALSE(tunnelHeld());
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+
+            tunnelSet("10.1.1.1");
+            mapSet();
+            EXPECT_FALSE(mapHeld());
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(vtep()->isActive());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+        }
+
+        // As above with the NVO still bound and idle: the tunnel DEL waits for the map and the NVO stays bound,
+        // since a DEL dropped as stale later would leave nothing to bind it again. The last map DEL removes the
+        // SAI tunnel, then the DEL goes and the NVO waits for the tunnel to be configured again.
+        void tunnelDelWithNvoWaitsForItsMaps()
+        {
+            ASSERT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            ASSERT_TRUE(saiTunnelExists(tunnel_id));
+            ASSERT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+
+            tunnelDel();
+            retryTunnel();
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(tunnelHeld());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            EXPECT_FALSE(m_nvoOrch->isBindPending());
+            EXPECT_TRUE(saiTunnelExists(tunnel_id));
+
+            mapDel();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 0u);
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_FALSE(saiTunnelExists(tunnel_id));
+            Port tunnelPort;
+            EXPECT_FALSE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+            EXPECT_TRUE(m_nvoOrch->isBindPending());
+
+            tunnelSet("10.1.1.1");
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            mapSet();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_TRUE(vtep()->isActive());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+        }
+
+        // A tunnel DEL held for its maps is dropped when the same tunnel is configured again behind it: the
+        // tunnel and its map stay, and a later map DEL alone removes only the hw.
+        void heldForMapsDroppedOnRecreate()
+        {
+            nvoDel();
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+
+            tunnelSet("10.1.1.1");
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(vtep()->isActive());
+
+            mapDel();
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        }
+
+        // The VLAN DEL can also come before the map DEL: the map DEL still removes the tunnel hw, so the held
+        // tunnel DEL then goes.
+        void vlanGoneBeforeMapDel()
+        {
+            nvoDel();
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+
+            Table(m_app_db.get(), APP_VLAN_TABLE_NAME).del("Vlan100");
+            consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME)->addToSync(
+                deque<KeyOpFieldsValuesTuple>{{"Vlan100", DEL_COMMAND, {}}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            Port vlanPort;
+            ASSERT_FALSE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+
+            mapDel();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_FALSE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_FALSE(saiTunnelExists(tunnel_id));
+            retryTunnel();
+            EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        }
+
+        // The VTEP is configured again with another ttl_mode. The tunnel's DEL and SET reach orchagent apart, so
+        // the DEL is held for the map and the SET waits behind it, but the map's DEL and SET merged into one SET.
+        // Once the new tunnel row is there, that SET removes the map, so the held DEL goes, and the map goes on the
+        // tunnel created next.
+        void mergedMapSetReattachesToTheNewTunnel(bool tunnel_set_first)
+        {
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            const KeyOpFieldsValuesTuple map{m_mapKey, SET_COMMAND, {{"vni", "1000"}, {"vlan", "Vlan100"}}};
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+            ASSERT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            if (!tunnel_set_first)
+            {
+                apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, map);
+                EXPECT_TRUE(mapHeld());
+                EXPECT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+                EXPECT_TRUE(saiTunnelExists(tunnel_id));
+            }
+            apply(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME,
+                  {"vtep1", SET_COMMAND, {{"src_ip", "10.1.1.1"}, {"ttl_mode", "pipe"}}});
+            ASSERT_TRUE(tunnelHeld());
+
+            if (tunnel_set_first)
+            {
+                apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, map);
+            }
+            else
+            {
+                static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            }
+            EXPECT_TRUE(mapHeld());
+            EXPECT_FALSE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 0u);
+            EXPECT_FALSE(saiTunnelExists(tunnel_id));
+
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(vtep()->hasConfig(IpAddress("10.1.1.1"), IpAddress("0.0.0.0"), VxlanTunnelTTLMode::PIPE));
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_TRUE(vtep()->isActive());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+            EXPECT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+        }
+
+        // As above with the tunnel back as it was: the held DEL is stale, so the merged map SET waits for it to be
+        // dropped and then keeps the map and the SAI tunnel as they are, also when it comes before the tunnel SET.
+        void mergedMapSetKeepsTheSameTunnel(bool tunnel_set_first)
+        {
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+            if (tunnel_set_first)
+            {
+                Table(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME).set("vtep1", {{"src_ip", "10.1.1.1"}});
+            }
+
+            mapSet();
+            EXPECT_TRUE(mapHeld());
+            EXPECT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+            EXPECT_TRUE(saiTunnelExists(tunnel_id));
+
+            if (tunnel_set_first)
+            {
+                retryTunnel();
+            }
+            else
+            {
+                tunnelSet("10.1.1.1");
+            }
+            EXPECT_FALSE(tunnelHeld());
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_EQ(vtep()->getTunnelId(), tunnel_id);
+            EXPECT_TRUE(saiTunnelExists(tunnel_id));
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+            EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+        }
+
+        // The SAI refuses the map entry remove of a merged map SET behind a held tunnel DEL: it is logged, not
+        // retried on the SET's later passes, and the held DEL finishes with the map going on the new tunnel.
+        void mergedMapSetWithRefusedMapEntryRemove()
+        {
+            const KeyOpFieldsValuesTuple map{m_mapKey, SET_COMMAND, {{"vni", "1000"}, {"vlan", "Vlan100"}}};
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+            apply(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME,
+                  {"vtep1", SET_COMMAND, {{"src_ip", "10.1.1.1"}, {"ttl_mode", "pipe"}}});
+            ASSERT_TRUE(tunnelHeld());
+
+            g_refusedTunnelMapEntryId = m_tunnelMapOrch->vxlan_tunnel_map_table_[m_mapKey].map_entry_id;
+            ASSERT_NE(g_refusedTunnelMapEntryId, SAI_NULL_OBJECT_ID);
+            g_refusedTunnelMapEntryRemoves = 0;
+            g_savedRemoveTunnelMapEntry = sai_tunnel_api->remove_tunnel_map_entry;
+            sai_tunnel_api->remove_tunnel_map_entry = stubRemoveTunnelMapEntryRefused;
+
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, map);
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            EXPECT_EQ(g_refusedTunnelMapEntryRemoves, 1);
+            EXPECT_TRUE(mapHeld());
+            EXPECT_FALSE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 0u);
+
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(vtep()->hasConfig(IpAddress("10.1.1.1"), IpAddress("0.0.0.0"), VxlanTunnelTTLMode::PIPE));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_TRUE(vtep()->isActive());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+            EXPECT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+            EXPECT_EQ(g_refusedTunnelMapEntryRemoves, 1);
+        }
+
+        // A second VLAN-VNI map whose SAI entry create fails: the map is still recorded and counted, so its DEL
+        // undoes the count, and the held tunnel DEL goes once the last map DEL has removed the tunnel hw.
+        void failedMapEntryCreateKeepsMapCount(sai_status_t status)
+        {
+            const vector<FieldValueTuple> vlanFvs = {{"admin_status", "up"}, {"mtu", "9100"}};
+            Table(m_app_db.get(), APP_VLAN_TABLE_NAME).set("Vlan200", vlanFvs);
+            consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME)->addToSync(
+                deque<KeyOpFieldsValuesTuple>{{"Vlan200", SET_COMMAND, vlanFvs}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            nvoDel();
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            ASSERT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+
+            g_tunnelMapEntryCreateStatus = status;
+            g_savedCreateTunnelMapEntry = sai_tunnel_api->create_tunnel_map_entry;
+            sai_tunnel_api->create_tunnel_map_entry = stubCreateTunnelMapEntryFails;
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME,
+                  {m_newMapKey, SET_COMMAND, {{"vni", "2000"}, {"vlan", "Vlan200"}}});
+            sai_tunnel_api->create_tunnel_map_entry = g_savedCreateTunnelMapEntry;
+            g_savedCreateTunnelMapEntry = nullptr;
+            EXPECT_FALSE(mapHeld());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 2u);
+            ASSERT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_newMapKey));
+            EXPECT_EQ(m_tunnelMapOrch->vxlan_tunnel_map_table_[m_newMapKey].map_entry_id, SAI_NULL_OBJECT_ID);
+
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, {m_newMapKey, DEL_COMMAND, {}});
+            EXPECT_FALSE(mapHeld());
+            EXPECT_EQ(vtep()->vlan_vrf_vni_count, 1u);
+            EXPECT_TRUE(vtep()->isActive());
+            retryTunnel();
+            EXPECT_TRUE(tunnelHeld());
+
+            mapDel();
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_FALSE(saiTunnelExists(tunnel_id));
+            retryTunnel();
+            EXPECT_FALSE(tunnelHeld());
+            EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
             EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
         }
     };
@@ -2210,6 +2544,37 @@ namespace vxlanorch_test
     TEST_F(EvpnNvoDelP2mpTest, VrfMapWaitsForHeldTunnelDelete) { mapWaitsForHeldTunnelDel(true); }
     TEST_F(EvpnNvoDelTest, RemoteVniWaitsForTheNvoToBind) { remoteVniWaitsForNvoBind(); }
     TEST_F(EvpnNvoDelP2mpTest, RemoteVniWaitsForTheNvoToBind) { remoteVniWaitsForNvoBind(); }
+    TEST_F(EvpnNvoDelTest, TunnelDeleteWaitsForItsMaps) { tunnelDelWaitsForItsMaps(); }
+    TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteWaitsForItsMaps) { tunnelDelWaitsForItsMaps(); }
+    TEST_F(EvpnNvoDelTest, TunnelDeleteWithTheNvoWaitsForItsMaps) { tunnelDelWithNvoWaitsForItsMaps(); }
+    TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteWithTheNvoWaitsForItsMaps) { tunnelDelWithNvoWaitsForItsMaps(); }
+    TEST_F(EvpnNvoDelTest, TunnelDeleteHeldForMapsDroppedOnRecreate) { heldForMapsDroppedOnRecreate(); }
+    TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteHeldForMapsDroppedOnRecreate) { heldForMapsDroppedOnRecreate(); }
+    TEST_F(EvpnNvoDelTest, VlanRemovedBeforeMapDelStillReleasesTheTunnel) { vlanGoneBeforeMapDel(); }
+    TEST_F(EvpnNvoDelP2mpTest, VlanRemovedBeforeMapDelStillReleasesTheTunnel) { vlanGoneBeforeMapDel(); }
+    TEST_F(EvpnNvoDelTest, MergedMapSetReattachesToTheNewTunnel) { mergedMapSetReattachesToTheNewTunnel(true); }
+    TEST_F(EvpnNvoDelP2mpTest, MergedMapSetReattachesToTheNewTunnel) { mergedMapSetReattachesToTheNewTunnel(true); }
+    TEST_F(EvpnNvoDelTest, MergedMapSetBeforeTunnelSetReattaches) { mergedMapSetReattachesToTheNewTunnel(false); }
+    TEST_F(EvpnNvoDelP2mpTest, MergedMapSetBeforeTunnelSetReattaches) { mergedMapSetReattachesToTheNewTunnel(false); }
+    TEST_F(EvpnNvoDelTest, MergedMapSetKeepsTheSameTunnel) { mergedMapSetKeepsTheSameTunnel(true); }
+    TEST_F(EvpnNvoDelP2mpTest, MergedMapSetKeepsTheSameTunnel) { mergedMapSetKeepsTheSameTunnel(true); }
+    TEST_F(EvpnNvoDelTest, MergedMapSetBeforeTunnelSetKeepsTheSameTunnel) { mergedMapSetKeepsTheSameTunnel(false); }
+    TEST_F(EvpnNvoDelP2mpTest, MergedMapSetBeforeTunnelSetKeepsTheSameTunnel) { mergedMapSetKeepsTheSameTunnel(false); }
+    TEST_F(EvpnNvoDelTest, MergedMapSetWithRefusedMapEntryRemove) { mergedMapSetWithRefusedMapEntryRemove(); }
+    TEST_F(EvpnNvoDelP2mpTest, MergedMapSetWithRefusedMapEntryRemove) { mergedMapSetWithRefusedMapEntryRemove(); }
+    TEST_F(EvpnNvoDelTest, FailedMapEntryCreateKeepsMapCount) { failedMapEntryCreateKeepsMapCount(SAI_STATUS_FAILURE); }
+    TEST_F(EvpnNvoDelP2mpTest, FailedMapEntryCreateKeepsMapCount)
+    {
+        failedMapEntryCreateKeepsMapCount(SAI_STATUS_FAILURE);
+    }
+    TEST_F(EvpnNvoDelTest, MapEntryCreateAlreadyExistsKeepsMapCount)
+    {
+        failedMapEntryCreateKeepsMapCount(SAI_STATUS_ITEM_ALREADY_EXISTS);
+    }
+    TEST_F(EvpnNvoDelP2mpTest, MapEntryCreateAlreadyExistsKeepsMapCount)
+    {
+        failedMapEntryCreateKeepsMapCount(SAI_STATUS_ITEM_ALREADY_EXISTS);
+    }
     TEST_F(EvpnNvoDelTest, HeldTunnelDeleteKeptForOtherTtlMode)
     {
         heldTunnelDelKeptForOtherAttributes({{"src_ip", "10.1.1.1"}, {"ttl_mode", "pipe"}}, IpAddress("0.0.0.0"),
@@ -2344,6 +2709,80 @@ namespace vxlanorch_test
 
     // P2MP, NVO DEL first: the remote VNI DEL cannot remove the bridge port, and FdbOrch's
     // notification that the tunnel port has no MAC left finishes the delete through the NVO's VTEP.
+    // The last map DEL cannot remove the P2MP tunnel's bridge port: the hw delete is left pending, so the held
+    // tunnel DEL waits instead of erasing the tunnel, and finishes the hw delete once the bridge port can go.
+    // The map DEL also stays queued to retry it.
+    TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteWaitsForTheTunnelPortRelease)
+    {
+        const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+        tunnelDel();
+        ASSERT_TRUE(tunnelHeld());
+
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        mapDel();
+        EXPECT_TRUE(mapHeld());
+        EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+        retryTunnel();
+        EXPECT_TRUE(tunnelHeld());
+        ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+        EXPECT_TRUE(saiTunnelExists(tunnel_id));
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+
+        expireBridgePortRetry();
+        retryTunnel();
+        EXPECT_FALSE(tunnelHeld());
+        EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        EXPECT_FALSE(saiTunnelExists(tunnel_id));
+        Port tunnelPort;
+        EXPECT_FALSE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+        EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+        EXPECT_TRUE(m_nvoOrch->isBindPending());
+        static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+        EXPECT_FALSE(mapHeld());
+    }
+
+    // P2MP, the NVO already released the tunnel: the last map DEL cannot remove the bridge port, so the hw delete
+    // stays pending. The map DEL and the held tunnel DEL retry it: the tunnel DEL stays held while the SAI
+    // refuses, and finishes once the SAI accepts.
+    TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteFinishesPendingHwDeleteWithoutTheNvo)
+    {
+        nvoDel();
+        ASSERT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+        const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+        tunnelDel();
+        ASSERT_TRUE(tunnelHeld());
+
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        mapDel();
+        EXPECT_TRUE(mapHeld());
+        EXPECT_EQ(vtep()->vlan_vrf_vni_count, 0u);
+        EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+
+        g_removeBridgePortInUseCalls = 0;
+        retryTunnel();
+        EXPECT_GT(g_removeBridgePortInUseCalls, 0);
+        EXPECT_TRUE(tunnelHeld());
+        ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        EXPECT_TRUE(vtep()->del_tnl_hw_pending);
+        EXPECT_TRUE(saiTunnelExists(tunnel_id));
+
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+        retryTunnel();
+        EXPECT_FALSE(tunnelHeld());
+        EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        EXPECT_FALSE(saiTunnelExists(tunnel_id));
+        Port tunnelPort;
+        EXPECT_FALSE(m_VxlanTunnelOrch->getTunnelPort("10.1.1.1", tunnelPort, true));
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+        EXPECT_FALSE(mapHeld());
+    }
+
     TEST_F(EvpnNvoDelP2mpTest, NvoDelBeforeLastMapWaitsForTunnelPortRelease)
     {
         setRemoteVni();
