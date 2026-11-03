@@ -17,7 +17,12 @@
 #include "producerstatetable.h"
 #include <stddef.h>
 #include <algorithm>
+// The IPC structs are packed on purpose; some would have the same layout
+// without it, which -Wpacked reports.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpacked"
 #include <stp_ipc.h>
+#pragma GCC diagnostic pop
 
 #define STPMGRD_SOCK_NAME "/var/run/stpmgrd.sock"
 
