@@ -45,6 +45,13 @@
 
 namespace stpmgr_ut
 {
+    // View a received IPC buffer as a message struct. The buffers are 8-byte
+    // aligned; going through void * keeps -Wcast-align quiet on 32-bit ARM.
+    template <typename T, typename P>
+    T *ipcAs(P *p)
+    {
+        return static_cast<T *>(static_cast<void *>(p));
+    }
     using namespace swss;
     using namespace std;
 
@@ -171,7 +178,7 @@ namespace stpmgr_ut
         // and expects EAGAIN/EWOULDBLOCK (nothing queued).
         void assertNoMoreIpc()
         {
-            uint8_t buf[1024];
+            alignas(8) uint8_t buf[1024];
             ssize_t got = recv(m_fakeStpdFd, buf, sizeof(buf), MSG_DONTWAIT);
             EXPECT_EQ(got, (ssize_t)-1) << "unexpected extra IPC message (" << got << " bytes)";
             if (got == -1)
@@ -194,7 +201,7 @@ namespace stpmgr_ut
         // Drain n datagrams emitted by setup steps we don't assert on.
         void drainN(int n)
         {
-            uint8_t buf[1024];
+            alignas(8) uint8_t buf[1024];
             for (int i = 0; i < n; i++)
             {
                 ssize_t got = recvIpc(buf, sizeof(buf));
@@ -210,10 +217,10 @@ namespace stpmgr_ut
         {
             applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                         {{"mode", mode}, {"rootguard_timeout", "30"}}, m_config_db);
-            uint8_t buf[512];
+            alignas(8) uint8_t buf[512];
             ssize_t n = recvIpc(buf, sizeof(buf));
             ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-            ASSERT_EQ(reinterpret_cast<STP_IPC_MSG *>(buf)->msg_type, STP_BRIDGE_CONFIG);
+            ASSERT_EQ(ipcAs<STP_IPC_MSG>(buf)->msg_type, STP_BRIDGE_CONFIG);
         }
         void enableMst()  { enableMode("mst"); }
         void enablePvst() { enableMode("pvst"); }
@@ -241,18 +248,18 @@ namespace stpmgr_ut
             ssize_t n = recvIpc(buf, len);
             if (n <= (ssize_t)offsetof(STP_IPC_MSG, data))
                 return nullptr;
-            return reinterpret_cast<STP_IPC_MSG *>(buf);
+            return ipcAs<STP_IPC_MSG>(buf);
         }
 
         // One STP_PORT_CONFIG for this interface, read and discarded.
         void expectPortConfig(const char *ifname)
         {
-            uint8_t buf[1024];
+            alignas(8) uint8_t buf[1024];
             ssize_t n = recvIpc(buf, sizeof(buf));
             ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no STP_PORT_CONFIG from stpmgrd";
-            auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+            auto *ipc = ipcAs<STP_IPC_MSG>(buf);
             EXPECT_EQ(ipc->msg_type, STP_PORT_CONFIG);
-            auto *msg = reinterpret_cast<STP_PORT_CONFIG_MSG *>(ipc->data);
+            auto *msg = ipcAs<STP_PORT_CONFIG_MSG>(ipc->data);
             EXPECT_STREQ(msg->intf_name, ifname);
         }
     };
@@ -266,13 +273,13 @@ namespace stpmgr_ut
         m_stpMgr->deliverDel(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL");
         m_stpMgr->doTask();
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message for the disable";
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
-        EXPECT_EQ(reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data)->opcode, STP_DEL_COMMAND);
+        EXPECT_EQ(ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data)->opcode, STP_DEL_COMMAND);
     }
 
     TEST_F(StpMgrTest, DoStpGlobalTask_DisablePvstReachesStpd)
@@ -281,13 +288,13 @@ namespace stpmgr_ut
         m_stpMgr->deliverDel(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL");
         m_stpMgr->doTask();
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message for the disable";
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
-        EXPECT_EQ(reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data)->opcode, STP_DEL_COMMAND);
+        EXPECT_EQ(ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data)->opcode, STP_DEL_COMMAND);
     }
 
     // CONFIG_DB `STP|GLOBAL` -> STP_BRIDGE_CONFIG_MSG. Covers doStpGlobalTask.
@@ -296,16 +303,16 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                     {{"mode", "mst"}, {"rootguard_timeout", "30"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
         EXPECT_EQ(ipc->msg_len, (unsigned int)sizeof(STP_BRIDGE_CONFIG_MSG));
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
 
-        auto *msg = reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->stp_mode, L2_MSTP);
         EXPECT_EQ(msg->rootguard_timeout, 30);
@@ -337,15 +344,15 @@ namespace stpmgr_ut
         map<string, LinkType> got;
         for (int i = 0; i < 3; i++)
         {
-            uint8_t buf[1024];
+            alignas(8) uint8_t buf[1024];
             ssize_t n = recvIpc(buf, sizeof(buf));
             ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data))
                 << "expected 3 STP_PORT_CONFIG messages, got " << i
                 << " (regression: link_type parsing threw and dropped config)";
-            auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+            auto *ipc = ipcAs<STP_IPC_MSG>(buf);
             ASSERT_EQ(ipc->msg_type, STP_PORT_CONFIG);
             EXPECT_EQ(ipc->proto_mode, L2_MSTP);
-            auto *msg = reinterpret_cast<STP_PORT_CONFIG_MSG *>(ipc->data);
+            auto *msg = ipcAs<STP_PORT_CONFIG_MSG>(ipc->data);
             got[msg->intf_name] = msg->link_type;
         }
 
@@ -370,15 +377,15 @@ namespace stpmgr_ut
         applyAndRun(STATE_VLAN_MEMBER_TABLE_NAME, "Vlan10|Ethernet0",
                     {{"state", "ok"}}, m_state_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_VLAN_PORT_LIST_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
 
-        auto *msg = reinterpret_cast<STP_MST_VLAN_PORT_MAP *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_VLAN_PORT_MAP>(ipc->data);
         EXPECT_EQ(msg->vlan_id, 10);
         EXPECT_EQ(msg->port_count, 1);
         EXPECT_EQ(msg->stp_mode, L2_MSTP);
@@ -410,16 +417,16 @@ namespace stpmgr_ut
         // replays the pre-existing membership as STP_MST_VLAN_PORT_LIST_CONFIG.
         enableMst();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data))
             << "no enrolment on MSTP enable: pre-existing VLAN member was not replayed";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_VLAN_PORT_LIST_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
 
-        auto *msg = reinterpret_cast<STP_MST_VLAN_PORT_MAP *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_VLAN_PORT_MAP>(ipc->data);
         EXPECT_EQ(msg->vlan_id, 10);
         EXPECT_EQ(msg->add, 1);
         ASSERT_EQ(msg->port_count, 1);
@@ -452,14 +459,14 @@ namespace stpmgr_ut
         // Re-enable: the member must enrol again (no member event re-fired).
         enableMst();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data))
             << "no re-enrolment after MSTP -> NONE -> MSTP toggle";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_VLAN_PORT_LIST_CONFIG);
-        auto *msg = reinterpret_cast<STP_MST_VLAN_PORT_MAP *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_VLAN_PORT_MAP>(ipc->data);
         EXPECT_EQ(msg->vlan_id, 10);
         EXPECT_EQ(msg->add, 1);
         ASSERT_EQ(msg->port_count, 1);
@@ -476,15 +483,15 @@ namespace stpmgr_ut
                     {{"name", "region1"}, {"revision", "5"}, {"forward_delay", "15"},
                      {"hello_time", "2"}, {"max_age", "20"}, {"max_hops", "20"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_GLOBAL_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
 
-        auto *msg = reinterpret_cast<STP_MST_GLOBAL_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_GLOBAL_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_STREQ(msg->name, "region1");
         EXPECT_EQ(msg->revision_number, 5u);
@@ -509,15 +516,15 @@ namespace stpmgr_ut
         applyAndRun("STP_MST_INST", "1",
                     {{"bridge_priority", "8192"}, {"vlan@", "10,20,30"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_INST_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
 
-        auto *msg = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_INST_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->mst_id, 1);
         EXPECT_EQ(msg->priority, 8192);
@@ -540,12 +547,12 @@ namespace stpmgr_ut
         applyAndRun("STP_MST_INST", "1",
                     {{"bridge_priority", "8192"}, {"vlan_list", "10,20,30"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
-        auto *msg = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(ipc->data);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
+        auto *msg = ipcAs<STP_MST_INST_CONFIG_MSG>(ipc->data);
         ASSERT_EQ(msg->vlan_count, 3);
         EXPECT_EQ(msg->vlan_list[0].vlan_id, 10);
         EXPECT_EQ(msg->vlan_list[2].vlan_id, 30);
@@ -562,12 +569,12 @@ namespace stpmgr_ut
         applyAndRun("STP_MST_INST", "1",
                     {{"vlan_list", "10,20,30"}, {"vlan", "40"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
-        auto *msg = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(ipc->data);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
+        auto *msg = ipcAs<STP_MST_INST_CONFIG_MSG>(ipc->data);
         ASSERT_EQ(msg->vlan_count, 1);
         EXPECT_EQ(msg->vlan_list[0].vlan_id, 40);
 
@@ -583,12 +590,12 @@ namespace stpmgr_ut
         applyAndRun("STP_MST_INST", "1",
                     {{"bridge_priority", "8192"}, {"vlan", "10,20-22"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
-        auto *msg = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(ipc->data);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
+        auto *msg = ipcAs<STP_MST_INST_CONFIG_MSG>(ipc->data);
         ASSERT_EQ(msg->vlan_count, 4);
         EXPECT_EQ(msg->vlan_list[0].vlan_id, 10);
         EXPECT_EQ(msg->vlan_list[1].vlan_id, 20);
@@ -615,15 +622,15 @@ namespace stpmgr_ut
         applyAndRun("STP_MST_PORT", "1|Ethernet0",
                     {{"path_cost", "200"}, {"priority", "112"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_INST_PORT_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
 
-        auto *msg = reinterpret_cast<STP_MST_INST_PORT_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_INST_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->mst_id, 1);
         EXPECT_STREQ(msg->intf_name, "Ethernet0");
@@ -649,12 +656,12 @@ namespace stpmgr_ut
 
         applyAndRun("STP_MST_PORT", "1|Ethernet0", {{"priority", "112"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
-        auto *msg = reinterpret_cast<STP_MST_INST_PORT_CONFIG_MSG *>(ipc->data);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
+        auto *msg = ipcAs<STP_MST_INST_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->priority, 112);
         EXPECT_EQ(msg->path_cost, STP_MST_PORT_ATTR_UNSET);
 
@@ -674,12 +681,12 @@ namespace stpmgr_ut
 
         applyAndRun("STP_MST_PORT", "1|Ethernet0", {{"path_cost", "200"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
-        auto *msg = reinterpret_cast<STP_MST_INST_PORT_CONFIG_MSG *>(ipc->data);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
+        auto *msg = ipcAs<STP_MST_INST_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->path_cost, 200);
         EXPECT_EQ(msg->priority, STP_MST_PORT_ATTR_UNSET);
 
@@ -702,12 +709,12 @@ namespace stpmgr_ut
 
         applyAndRun("STP_VLAN_PORT", "Vlan100|Ethernet0", {{"priority", "112"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
-        auto *msg = reinterpret_cast<STP_VLAN_PORT_CONFIG_MSG *>(ipc->data);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
+        auto *msg = ipcAs<STP_VLAN_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->priority, 112);
         EXPECT_EQ(msg->path_cost, 0) << "PVST treats 0 as unset; -1 would configure a cost";
 
@@ -746,19 +753,19 @@ namespace stpmgr_ut
         setOneAndRun(CFG_STP_VLAN_TABLE_NAME, "Vlan200", {{"enabled", "false"}}, m_config_db);
         m_stpMgr->doTask();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_VLAN_CONFIG) << "first message type " << ipc->msg_type << " len " << n;
-        auto *del = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *del = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(del->opcode, STP_DEL_COMMAND);
         EXPECT_EQ(del->inst_id, 1);  // the delete names the instance, VLAN 200's was the second
 
         n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "VLAN 300 never got the freed instance";
         EXPECT_EQ(ipc->msg_type, STP_VLAN_CONFIG) << "second message type " << ipc->msg_type << " len " << n;
-        auto *set = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *set = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(set->opcode, STP_SET_COMMAND);
         EXPECT_EQ(set->vlan_id, 300);
         EXPECT_EQ((int)set->newInstance, 1);
@@ -817,16 +824,16 @@ namespace stpmgr_ut
         m_stpMgr->doTask();
         m_stpMgr->doTask();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-        auto *del = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(reinterpret_cast<STP_IPC_MSG *>(buf)->data);
+        auto *del = ipcAs<STP_MST_INST_CONFIG_MSG>(ipcAs<STP_IPC_MSG>(buf)->data);
         EXPECT_EQ(del->opcode, STP_DEL_COMMAND);
         EXPECT_EQ(del->mst_id, 2);
 
         n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "instance 3 never got the freed instance";
-        auto *set = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(reinterpret_cast<STP_IPC_MSG *>(buf)->data);
+        auto *set = ipcAs<STP_MST_INST_CONFIG_MSG>(ipcAs<STP_IPC_MSG>(buf)->data);
         EXPECT_EQ(set->opcode, STP_SET_COMMAND);
         EXPECT_EQ(set->mst_id, 3);
         ASSERT_EQ(set->vlan_count, 1);
@@ -871,11 +878,11 @@ namespace stpmgr_ut
         enableMst();
         m_stpMgr->doTask();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the region never went out after the mode";
         EXPECT_EQ(ipc->msg_type, STP_MST_GLOBAL_CONFIG);
-        auto *msg = reinterpret_cast<STP_MST_GLOBAL_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_GLOBAL_CONFIG_MSG>(ipc->data);
         EXPECT_STREQ(msg->name, "nh-region");
         EXPECT_EQ(msg->revision_number, 1);
         assertNoMoreIpc();
@@ -892,11 +899,11 @@ namespace stpmgr_ut
         enableMst();
         m_stpMgr->doTask();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the instance never went out after the mode";
         EXPECT_EQ(ipc->msg_type, STP_MST_INST_CONFIG);
-        auto *msg = reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_INST_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->mst_id, 1);
         assertNoMoreIpc();
     }
@@ -914,12 +921,12 @@ namespace stpmgr_ut
         enableMst();
         m_stpMgr->doTask();
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the port never went out after the mode";
         EXPECT_EQ(ipc->msg_type, STP_PORT_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
-        auto *msg = reinterpret_cast<STP_PORT_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_STREQ(msg->intf_name, "Ethernet0");
         assertNoMoreIpc();
     }
@@ -935,18 +942,18 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                     {{"mode", "mst"}, {"rootguard_timeout", "30"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "no delete for the old mode";
         EXPECT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
-        EXPECT_EQ(reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data)->opcode, STP_DEL_COMMAND);
+        EXPECT_EQ(ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data)->opcode, STP_DEL_COMMAND);
 
         ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "no set for the new mode";
         EXPECT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
-        auto *msg = reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->stp_mode, L2_MSTP);
         assertNoMoreIpc();
@@ -959,16 +966,16 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                     {{"mode", "pvst"}, {"rootguard_timeout", "30"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "no delete for the old mode";
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
-        EXPECT_EQ(reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data)->opcode, STP_DEL_COMMAND);
+        EXPECT_EQ(ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data)->opcode, STP_DEL_COMMAND);
 
         ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "no set for the new mode";
         EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
-        EXPECT_EQ(reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data)->opcode, STP_SET_COMMAND);
+        EXPECT_EQ(ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data)->opcode, STP_SET_COMMAND);
         assertNoMoreIpc();
     }
 
@@ -980,12 +987,12 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                     {{"mode", "mst"}, {"rootguard_timeout", "40"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr);
         EXPECT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_MSTP);
-        auto *msg = reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->rootguard_timeout, 40);
         assertNoMoreIpc();
@@ -1005,12 +1012,12 @@ namespace stpmgr_ut
                     {{"mode", "pvst"}, {"rootguard_timeout", "30"}}, m_config_db);
         drainN(2);  // the delete and the set
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the VLAN never went out again after the mode";
         EXPECT_EQ(ipc->msg_type, STP_VLAN_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
-        auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->vlan_id, 100);
         EXPECT_EQ((int)msg->newInstance, 1);
@@ -1038,7 +1045,7 @@ namespace stpmgr_ut
                     {{"mode", "mst"}, {"rootguard_timeout", "30"}}, m_config_db);
         drainN(2);  // the delete and the set
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         auto *ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the port never went out again after the mode";
         EXPECT_EQ(ipc->msg_type, STP_PORT_CONFIG);
@@ -1047,12 +1054,12 @@ namespace stpmgr_ut
         ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the region never went out again after the mode";
         EXPECT_EQ(ipc->msg_type, STP_MST_GLOBAL_CONFIG);
-        EXPECT_STREQ(reinterpret_cast<STP_MST_GLOBAL_CONFIG_MSG *>(ipc->data)->name, "nh-region");
+        EXPECT_STREQ(ipcAs<STP_MST_GLOBAL_CONFIG_MSG>(ipc->data)->name, "nh-region");
 
         ipc = recvMsg(buf, sizeof(buf));
         ASSERT_NE(ipc, nullptr) << "the instance never went out again after the mode";
         EXPECT_EQ(ipc->msg_type, STP_MST_INST_CONFIG);
-        EXPECT_EQ(reinterpret_cast<STP_MST_INST_CONFIG_MSG *>(ipc->data)->mst_id, 1);
+        EXPECT_EQ(ipcAs<STP_MST_INST_CONFIG_MSG>(ipc->data)->mst_id, 1);
         assertNoMoreIpc();
     }
 
@@ -1070,15 +1077,15 @@ namespace stpmgr_ut
                     {{"enabled", "true"}, {"forward_delay", "15"}, {"hello_time", "2"},
                      {"max_age", "20"}, {"priority", "32768"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_VLAN_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
 
-        auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->vlan_id, 100);
         EXPECT_EQ((int)msg->newInstance, 1);  // first time this VLAN is instanced
@@ -1101,12 +1108,12 @@ namespace stpmgr_ut
 
         applyAndRun(CFG_STP_VLAN_TABLE_NAME, "Vlan110", {{"enabled", "true"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         ASSERT_EQ(ipc->msg_type, STP_VLAN_CONFIG);
-        auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->vlan_id, 110);
         EXPECT_EQ(msg->forward_delay, 15);
         EXPECT_EQ(msg->hello_time, 2);
@@ -1129,10 +1136,10 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_VLAN_TABLE_NAME, "Vlan110",
                     {{"enabled", "true"}, {"hello_time", "3"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
-        auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(reinterpret_cast<STP_IPC_MSG *>(buf)->data);
+        auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipcAs<STP_IPC_MSG>(buf)->data);
         EXPECT_EQ(msg->priority, 4096);
         EXPECT_EQ(msg->forward_delay, 10);
         EXPECT_EQ(msg->hello_time, 3);
@@ -1157,19 +1164,19 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                     {{"mode", "pvst"}, {"rootguard_timeout", "30"}, {"priority", "4096"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-        ASSERT_EQ(reinterpret_cast<STP_IPC_MSG *>(buf)->msg_type, STP_BRIDGE_CONFIG);
+        ASSERT_EQ(ipcAs<STP_IPC_MSG>(buf)->msg_type, STP_BRIDGE_CONFIG);
 
         std::map<int, int> priorityByVlan;
         for (int i = 0; i < 2; i++)
         {
             n = recvIpc(buf, sizeof(buf));
             ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "missing VLAN refresh #" << (i + 1);
-            auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+            auto *ipc = ipcAs<STP_IPC_MSG>(buf);
             ASSERT_EQ(ipc->msg_type, STP_VLAN_CONFIG);
-            auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+            auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
             EXPECT_EQ((int)msg->newInstance, 0);
             priorityByVlan[msg->vlan_id] = msg->priority;
         }
@@ -1193,12 +1200,12 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_GLOBAL_TABLE_NAME, "GLOBAL",
                     {{"mode", "pvst"}, {"rootguard_timeout", "60"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         ASSERT_EQ(ipc->msg_type, STP_BRIDGE_CONFIG);
-        EXPECT_EQ(reinterpret_cast<STP_BRIDGE_CONFIG_MSG *>(ipc->data)->rootguard_timeout, 60);
+        EXPECT_EQ(ipcAs<STP_BRIDGE_CONFIG_MSG>(ipc->data)->rootguard_timeout, 60);
         assertNoMoreIpc();
 
         // The same row written again: still nothing for the VLANs.
@@ -1206,7 +1213,7 @@ namespace stpmgr_ut
                     {{"mode", "pvst"}, {"rootguard_timeout", "60"}}, m_config_db);
         n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-        ASSERT_EQ(reinterpret_cast<STP_IPC_MSG *>(buf)->msg_type, STP_BRIDGE_CONFIG);
+        ASSERT_EQ(ipcAs<STP_IPC_MSG>(buf)->msg_type, STP_BRIDGE_CONFIG);
         assertNoMoreIpc();
     }
 
@@ -1223,12 +1230,12 @@ namespace stpmgr_ut
 
         applyAndRun(CFG_STP_VLAN_TABLE_NAME, "Vlan110", {{"enabled", "true"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "the VLAN was dropped with the bad global field";
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         ASSERT_EQ(ipc->msg_type, STP_VLAN_CONFIG);
-        auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->vlan_id, 110);
         EXPECT_EQ(msg->priority, STP_DFLT_BRIDGE_PRIORITY);
         assertNoMoreIpc();
@@ -1262,14 +1269,14 @@ namespace stpmgr_ut
                     {{"enabled", "true"}, {"forward_delay", "15"}, {"hello_time", "2"},
                      {"max_age", "20"}, {"priority", "32768"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data))
             << "daemon did not recover after dropping a malformed entry";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_VLAN_CONFIG);
-        auto *msg = reinterpret_cast<STP_VLAN_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_VLAN_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->vlan_id, 200);
         EXPECT_EQ(msg->forward_delay, 15);
 
@@ -1296,15 +1303,15 @@ namespace stpmgr_ut
         applyAndRun(CFG_STP_VLAN_PORT_TABLE_NAME, "Vlan100|Ethernet0",
                     {{"path_cost", "150"}, {"priority", "128"}}, m_config_db);
 
-        uint8_t buf[512];
+        alignas(8) uint8_t buf[512];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_VLAN_PORT_CONFIG);
         EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
 
-        auto *msg = reinterpret_cast<STP_VLAN_PORT_CONFIG_MSG *>(ipc->data);
+        auto *msg = ipcAs<STP_VLAN_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
         EXPECT_EQ(msg->vlan_id, 100);
         EXPECT_STREQ(msg->intf_name, "Ethernet0");
@@ -1331,12 +1338,12 @@ namespace stpmgr_ut
         stateVlanMember.set("Vlan10|PortChannel1", {{"state", "ok"}});
 
         auto expectLagInVlan10 = [&]() {
-            uint8_t buf[1024];
+            alignas(8) uint8_t buf[1024];
             ssize_t n = recvIpc(buf, sizeof(buf));
             ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
-            auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+            auto *ipc = ipcAs<STP_IPC_MSG>(buf);
             EXPECT_EQ(ipc->msg_type, STP_MST_VLAN_PORT_LIST_CONFIG);
-            auto *msg = reinterpret_cast<STP_MST_VLAN_PORT_MAP *>(ipc->data);
+            auto *msg = ipcAs<STP_MST_VLAN_PORT_MAP>(ipc->data);
             EXPECT_EQ(msg->vlan_id, 10);
             EXPECT_EQ(msg->port_count, 1);
             EXPECT_EQ(msg->add, 1);
@@ -1383,13 +1390,13 @@ namespace stpmgr_ut
         stateVlanMember.set("Vlan10|PortChannel1", {{"state", "ok"}});
 
         auto expectLagInVlan10 = [&]() {
-            uint8_t buf[1024];
+            alignas(8) uint8_t buf[1024];
             ssize_t n = recvIpc(buf, sizeof(buf));
             ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
-            auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+            auto *ipc = ipcAs<STP_IPC_MSG>(buf);
             EXPECT_EQ(ipc->msg_type, STP_VLAN_MEM_CONFIG);
             EXPECT_EQ(ipc->proto_mode, L2_PVSTP);
-            auto *msg = reinterpret_cast<STP_VLAN_MEM_CONFIG_MSG *>(ipc->data);
+            auto *msg = ipcAs<STP_VLAN_MEM_CONFIG_MSG>(ipc->data);
             EXPECT_EQ(msg->opcode, STP_SET_COMMAND);
             EXPECT_EQ(msg->vlan_id, 10);
             EXPECT_STREQ(msg->intf_name, "PortChannel1");
@@ -1442,29 +1449,29 @@ namespace stpmgr_ut
         applyAndRun(CFG_LAG_MEMBER_TABLE_NAME, "PortChannel1|Ethernet0",
                     {{"NULL", "NULL"}}, m_config_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no STP_PORT_CONFIG from stpmgrd";
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_PORT_CONFIG);
-        auto *pmsg = reinterpret_cast<STP_PORT_CONFIG_MSG *>(ipc->data);
+        auto *pmsg = ipcAs<STP_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_STREQ(pmsg->intf_name, "PortChannel1");
         EXPECT_EQ(pmsg->enabled, 1);
         EXPECT_EQ(pmsg->bpdu_guard, 1);
 
         n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no membership message from stpmgrd";
-        ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_VLAN_MEM_CONFIG);
-        auto *mmsg = reinterpret_cast<STP_VLAN_MEM_CONFIG_MSG *>(ipc->data);
+        auto *mmsg = ipcAs<STP_VLAN_MEM_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(mmsg->vlan_id, 10);
         EXPECT_STREQ(mmsg->intf_name, "PortChannel1");
 
         n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no STP_VLAN_PORT_CONFIG from stpmgrd";
-        ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_VLAN_PORT_CONFIG);
-        auto *vmsg = reinterpret_cast<STP_VLAN_PORT_CONFIG_MSG *>(ipc->data);
+        auto *vmsg = ipcAs<STP_VLAN_PORT_CONFIG_MSG>(ipc->data);
         EXPECT_EQ(vmsg->vlan_id, 10);
         EXPECT_STREQ(vmsg->intf_name, "PortChannel1");
         EXPECT_EQ(vmsg->path_cost, 300);
@@ -1485,13 +1492,13 @@ namespace stpmgr_ut
         applyAndRun(STATE_VLAN_MEMBER_TABLE_NAME, "Vlan10|Ethernet0",
                     {{"state", "ok"}}, m_state_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_VLAN_PORT_LIST_CONFIG);
-        auto *msg = reinterpret_cast<STP_MST_VLAN_PORT_MAP *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_VLAN_PORT_MAP>(ipc->data);
         ASSERT_EQ(msg->port_count, 1);
         EXPECT_STREQ(msg->port_list[0].intf_name, "Ethernet0");
         EXPECT_EQ(msg->port_list[0].tagging_mode, UNTAGGED_MODE);
@@ -1510,13 +1517,13 @@ namespace stpmgr_ut
         applyAndRun(STATE_VLAN_MEMBER_TABLE_NAME, "Vlan10|Ethernet0",
                     {{"state", "ok"}}, m_state_db);
 
-        uint8_t buf[1024];
+        alignas(8) uint8_t buf[1024];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message received from stpmgrd";
 
-        auto *ipc = reinterpret_cast<STP_IPC_MSG *>(buf);
+        auto *ipc = ipcAs<STP_IPC_MSG>(buf);
         EXPECT_EQ(ipc->msg_type, STP_MST_VLAN_PORT_LIST_CONFIG);
-        auto *msg = reinterpret_cast<STP_MST_VLAN_PORT_MAP *>(ipc->data);
+        auto *msg = ipcAs<STP_MST_VLAN_PORT_MAP>(ipc->data);
         ASSERT_EQ(msg->port_count, 1);
         EXPECT_STREQ(msg->port_list[0].intf_name, "Ethernet0");
         EXPECT_EQ(msg->port_list[0].tagging_mode, UNTAGGED_MODE);
@@ -1565,10 +1572,10 @@ namespace stpmgr_ut
         ASSERT_GE(m_fakeStpdFd, 0) << "late fake stpd bind failed";
 
         EXPECT_GT(rc, 0) << "the send was dropped instead of retried";
-        uint8_t buf[256];
+        alignas(8) uint8_t buf[256];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data)) << "no IPC message reached the late stpd";
-        EXPECT_EQ(reinterpret_cast<STP_IPC_MSG *>(buf)->msg_type, STP_INIT_READY);
+        EXPECT_EQ(ipcAs<STP_IPC_MSG>(buf)->msg_type, STP_INIT_READY);
         assertNoMoreIpc();
     }
 
@@ -1602,10 +1609,10 @@ namespace stpmgr_ut
         ASSERT_GE(m_fakeStpdFd, 0);
         rc = m_stpMgr->sendMsgStpd(STP_INIT_READY, sizeof(ready), (void *)&ready);
         EXPECT_GT(rc, 0) << "stpd is back but the send was not delivered";
-        uint8_t buf[256];
+        alignas(8) uint8_t buf[256];
         ssize_t n = recvIpc(buf, sizeof(buf));
         ASSERT_GT(n, (ssize_t)offsetof(STP_IPC_MSG, data));
-        EXPECT_EQ(reinterpret_cast<STP_IPC_MSG *>(buf)->msg_type, STP_INIT_READY);
+        EXPECT_EQ(ipcAs<STP_IPC_MSG>(buf)->msg_type, STP_INIT_READY);
         assertNoMoreIpc();
     }
 
