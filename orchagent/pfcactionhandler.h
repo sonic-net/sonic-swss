@@ -52,7 +52,7 @@ class PfcWdActionHandler
         uint8_t m_queueId = 0;
         string m_portAlias;
         shared_ptr<Table> m_countersTable = nullptr;
-        PfcWdHwStats m_hwStats;
+        PfcWdHwStats m_hwStats = {};
 };
 
 // Pfc queue that implements forward action by disabling PFC on queue
