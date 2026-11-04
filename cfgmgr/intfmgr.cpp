@@ -157,7 +157,8 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         res = e.what();
     }
 
-    const bool present = isIntfIpPresent(alias, ipPrefix);
+    const bool fallback = opCmd == "del";
+    const bool present = isIntfIpPresent(alias, ipPrefix, fallback);
     if ((opCmd == "add" && present) || (opCmd == "del" && !present))
     {
         SWSS_LOG_INFO("Address %s is already %s on interface %s",
@@ -364,7 +365,7 @@ int IntfMgr::getIntfIpCount(const string &alias)
     return std::stoi(res);
 }
 
-bool IntfMgr::isIntfIpPresent(const string &alias, const IpPrefix &ipPrefix)
+bool IntfMgr::isIntfIpPresent(const string &alias, const IpPrefix &ipPrefix, bool fallback)
 {
     string res;
     try
@@ -376,7 +377,7 @@ bool IntfMgr::isIntfIpPresent(const string &alias, const IpPrefix &ipPrefix)
     catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query addresses on interface %s: %s", alias.c_str(), e.what());
-        return false;
+        return fallback;
     }
 }
 

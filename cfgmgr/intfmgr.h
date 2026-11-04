@@ -65,7 +65,7 @@ private:
     bool isIntfCreated(const std::string &alias);
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);
-    bool isIntfIpPresent(const std::string &alias, const IpPrefix &ipPrefix);
+    bool isIntfIpPresent(const std::string &alias, const IpPrefix &ipPrefix, bool fallback);
     void buildIntfReplayList(void);
     void setWarmReplayDoneState();
 

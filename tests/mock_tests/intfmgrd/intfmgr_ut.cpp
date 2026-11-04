@@ -490,22 +490,34 @@ namespace intfmgr_ut
         EXPECT_TRUE(interfaceLookups.empty());
     }
 
-    TEST_F(IntfMgrTest, testFailedAddressQueryReturnsNotPresent)
+    TEST_F(IntfMgrTest, testFailedAddressQueryUsesFallbackOnException)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         FailAddressAdd = FailAddressDelete = true;
         AddressQueryResult = 1;
-        for (int failure : {0, 1, 2})
+        for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
+        {
+            SCOPED_TRACE(prefix + " nonzero result");
+            AddressQueryOutput = addressLine(prefix);
+            EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), false));
+            EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), true));
+            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
+            EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
+        }
+
+        AddressQueryResult = 0;
+        for (int failure : {1, 2})
         {
             ThrowAddressQuery = failure == 1;
             ThrowAddressQueryInvalidArgument = failure == 2;
             for (const std::string prefix : {"192.0.2.1/31", "2001:db8::1/64"})
             {
-                SCOPED_TRACE(prefix);
+                SCOPED_TRACE(prefix + " exception " + std::to_string(failure));
                 AddressQueryOutput = addressLine(prefix);
-                EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix)));
+                EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), false));
+                EXPECT_TRUE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), true));
                 EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
-                EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
+                EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
             }
         }
         EXPECT_TRUE(interfaceLookups.empty());
@@ -687,6 +699,15 @@ namespace intfmgr_ut
         EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
 
         AddressQueryOutput.clear();
+        ThrowAddressQuery = true;
+        testing_db::resetOperationCounters();
+        mockCallArgs.clear();
+        intfmgr.doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(mockCallArgs.size(), 2u);
+        EXPECT_EQ(testing_db::getProducerDelCount(APP_INTF_TABLE_NAME), 0u);
+
+        ThrowAddressQuery = false;
         testing_db::resetOperationCounters();
         mockCallArgs.clear();
         intfmgr.doTask(*consumer);
