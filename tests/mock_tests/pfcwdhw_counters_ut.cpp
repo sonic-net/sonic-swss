@@ -852,6 +852,47 @@ namespace pfcwdhworch_test
         EXPECT_TRUE(stats.operational);        // reset to operational
     }
 
+    // A storm that was open when the watchdog went down has lost its RECOVERED,
+    // so initialization closes it. Left open, the next storm's detect would be
+    // swallowed by the resume guard in beginStormCounters.
+    TEST_F(PfcWdHwCountersTest, InitializeQueueStats_ClosesStormLeftOpenAcrossRestart)
+    {
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        const uint8_t tc = 3;
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+        string queueIdStr = sai_serialize_object_id(queueId);
+
+        resetQueueStats(queueId);
+        setupQueuePortMapping(queueId, port, tc);
+
+        PfcWdQueueStats persisted;
+        memset(&persisted, 0, sizeof(persisted));
+        persisted.detectCount = 3;
+        persisted.restoreCount = 2;   // last storm never restored
+        persisted.txPkt = 1234;
+        persisted.operational = false;
+        m_pfcwd_hw_orch->updateQueueStats(queueIdStr, persisted);
+
+        m_pfcwd_hw_orch->initializeQueueStats(port, { tc });
+
+        auto stats = m_pfcwd_hw_orch->getQueueStats(queueIdStr);
+        EXPECT_EQ(stats.detectCount, 3u);
+        EXPECT_EQ(stats.restoreCount, 3u);     // closed
+        EXPECT_EQ(stats.txPkt, 1234u);         // accumulation preserved
+        EXPECT_TRUE(stats.operational);
+
+        // The next storm is a distinct one again: it bumps the detect count
+        // and starts a fresh _LAST window.
+        setQueueHwCounters(queueId, 5000, 250);
+        m_pfcwd_hw_orch->initQueueCounters(queueIdStr, queueId);
+
+        stats = m_pfcwd_hw_orch->getQueueStats(queueIdStr);
+        EXPECT_EQ(stats.detectCount, 4u);
+        EXPECT_EQ(stats.restoreCount, 3u);
+        EXPECT_FALSE(stats.operational);
+    }
+
     // ========================================================================
     // Test Cases: FlexCounter registration and teardown
     // ========================================================================

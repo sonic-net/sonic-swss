@@ -1210,8 +1210,18 @@ void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& los
         }
 
         // Mark the queue operational without clearing its accumulated counters,
-        // as PfcWdActionHandler::initWdCounters does.
+        // as PfcWdActionHandler::initWdCounters does. A storm the stats show as
+        // still open was interrupted by a restart: its RECOVERED cannot arrive
+        // any more, and left open it would swallow the next storm's detect
+        // count. Close it; a storm that is in fact still running is re-detected
+        // by the hardware and counted as a new one.
         auto stats = getQueueStats(queueIdStr);
+        if (stats.detectCount > stats.restoreCount)
+        {
+            SWSS_LOG_NOTICE("Closing PFC storm left open across a restart on queue %s",
+                            queueIdStr.c_str());
+            stats.restoreCount = stats.detectCount;
+        }
         stats.operational = true;
         updateQueueStats(queueIdStr, stats);
     }
