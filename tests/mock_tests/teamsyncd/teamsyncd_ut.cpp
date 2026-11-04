@@ -18,6 +18,7 @@
 
 namespace teamsync_test
 {
+    void setTeamSyncInitFailureMocks();
     void setTeamSyncSuccessMocks();
     void resetTeamSyncMocks();
 }
@@ -248,7 +249,7 @@ namespace teamsyncd_ut
         sync.m_warmstart = true;
         sync.m_start_time = steady_clock::now();
         sync.m_pending_timeout = DEFAULT_WR_PENDING_TIMEOUT;
-        teamsync_test::resetTeamSyncMocks();
+        teamsync_test::setTeamSyncInitFailureMocks();
 
         // Zero is an invalid ifindex, so the real team_init must fail.
         linkEvent(sync, RTM_NEWLINK, 0);
@@ -267,7 +268,7 @@ namespace teamsyncd_ut
         swss::Select select;
         swss::TeamSync sync(m_app_db.get(), m_state_db.get(), &select);
         linkEvent(sync, RTM_NEWLINK, 10);
-        teamsync_test::resetTeamSyncMocks();
+        teamsync_test::setTeamSyncInitFailureMocks();
 
         linkEvent(sync, RTM_NEWLINK, 0);
         ASSERT_EQ(sync.m_teamSelectables.size(), 1u);
@@ -339,7 +340,7 @@ namespace teamsyncd_ut
         linkEvent(sync, RTM_NEWLINK, 10);
         sync.addLag({"PortChannel2", 20}, true, true, 1500);
         sync.periodic();
-        teamsync_test::resetTeamSyncMocks();
+        teamsync_test::setTeamSyncInitFailureMocks();
         sync.addLag({"PortChannel3", 0}, true, true, 1500);
         sync.cleanTeamSync();
         sync.periodic();

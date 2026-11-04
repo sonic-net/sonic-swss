@@ -204,6 +204,12 @@ namespace teamsync_test
         callback_teamdctl_disconnect = NULL;
     }
 
+    void setTeamSyncInitFailureMocks()
+    {
+        resetTeamSyncMocks();
+        callback_sleep = cb_sleep;
+    }
+
     void setTeamSyncSuccessMocks()
     {
         callback_sleep = cb_sleep;
