@@ -13,7 +13,16 @@
 
 #include "../mock_table.h"
 #include "linkcache.h"
+#include "dbconnector.h"
+#include "producerstatetable.h"
+#include "subscriberstatetable.h"
+#include "netmsg.h"
+#include "warmRestartAssist.h"
+
+// Limit private-member access to NeighSync rather than its dependencies.
+#define private public
 #include "neighsyncd/neighsync.h"
+#undef private
 #include "redisutility.h"
 
 using namespace swss;
@@ -122,18 +131,15 @@ class NeighSyncTest : public ::testing::Test
         m_stateDb = std::make_shared<DBConnector>("STATE_DB", 0);
         m_configDb = std::make_shared<DBConnector>("CONFIG_DB", 0);
         m_pipeline = std::make_shared<RedisPipeline>(m_appDb.get());
+        m_sync = std::make_unique<NeighSync>(
+            m_pipeline.get(), m_stateDb.get(), m_configDb.get(), m_appDb.get());
     }
 
     void enableDualTor()
     {
         Table peerSwitchTable(m_configDb.get(), CFG_PEER_SWITCH_TABLE_NAME);
         peerSwitchTable.set("peer_switch_hostname", {{"address_ipv4", "10.0.0.1"}});
-    }
-
-    void createNeighSync()
-    {
-        m_sync = std::make_unique<NeighSync>(
-            m_pipeline.get(), m_stateDb.get(), m_configDb.get(), m_appDb.get());
+        m_sync->m_isDualToR = true;
     }
 
     bool failedNeighborExists(const std::string& ip, std::vector<FieldValueTuple>* fields = nullptr)
@@ -171,7 +177,6 @@ class NeighSyncTest : public ::testing::Test
 TEST_F(NeighSyncTest, PublishesDualTorFailedIpv6Neighbor)
 {
     enableDualTor();
-    createNeighSync();
     auto neigh = createNeighbor(AF_INET6, "2001:db8::1", NUD_FAILED);
     ASSERT_TRUE(neigh.get() != nullptr);
     EXPECT_EQ(rtnl_neigh_get_family(neigh.get()), AF_INET6);
@@ -194,7 +199,6 @@ TEST_F(NeighSyncTest, PublishesDualTorFailedIpv6Neighbor)
 TEST_F(NeighSyncTest, FiltersUnsupportedFailedNeighborEvents)
 {
     enableDualTor();
-    createNeighSync();
 
     auto ipv4 = createNeighbor(AF_INET, "192.0.2.1", NUD_FAILED);
     ASSERT_TRUE(ipv4.get() != nullptr);
@@ -211,7 +215,6 @@ TEST_F(NeighSyncTest, FiltersUnsupportedFailedNeighborEvents)
 TEST_F(NeighSyncTest, KeepsFailedNeighborEntryWhileIncomplete)
 {
     enableDualTor();
-    createNeighSync();
     auto failed = createNeighbor(AF_INET6, "2001:db8::3", NUD_FAILED);
     ASSERT_TRUE(failed.get() != nullptr);
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(failed.get()));
@@ -227,7 +230,6 @@ TEST_F(NeighSyncTest, KeepsFailedNeighborEntryWhileIncomplete)
 TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenResolved)
 {
     enableDualTor();
-    createNeighSync();
     auto failed = createNeighbor(AF_INET6, "2001:db8::4", NUD_FAILED);
     ASSERT_TRUE(failed.get() != nullptr);
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(failed.get()));
@@ -243,7 +245,6 @@ TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenResolved)
 TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenDeleted)
 {
     enableDualTor();
-    createNeighSync();
     auto failed = createNeighbor(AF_INET6, "2001:db8::5", NUD_FAILED);
     ASSERT_TRUE(failed.get() != nullptr);
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(failed.get()));
@@ -258,7 +259,6 @@ TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenDeleted)
 
 TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)
 {
-    createNeighSync();
     auto neigh = createNeighbor(AF_INET6, "2001:db8::6", NUD_FAILED);
     ASSERT_TRUE(neigh.get() != nullptr);
 
@@ -270,7 +270,6 @@ TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)
 TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborOnNonVlanInterface)
 {
     enableDualTor();
-    createNeighSync();
     mockInterfaceName = "PortChannel101";
     auto neigh = createNeighbor(AF_INET6, "2001:db8::7", NUD_FAILED);
     ASSERT_TRUE(neigh.get() != nullptr);
@@ -283,7 +282,6 @@ TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborOnNonVlanInterface)
 TEST_F(NeighSyncTest, RemovesStaleFailedNeighborOnNonVlanInterface)
 {
     enableDualTor();
-    createNeighSync();
     mockInterfaceName = "PortChannel101";
     Table failedNeighborTable(m_appDb.get(), APP_NEIGH_FAILED_TABLE_NAME);
     failedNeighborTable.set("PortChannel101:2001:db8:3::1", {{"NULL", "NULL"}});
