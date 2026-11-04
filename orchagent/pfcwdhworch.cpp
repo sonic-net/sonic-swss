@@ -398,11 +398,6 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
         return task_process_status::task_invalid_entry;
     }
-    if (restorationTime == 0)
-    {
-        SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);
-        return task_process_status::task_invalid_entry;
-    }
 
     // Hardware detection and recovery are one SAI attribute, so a queue cannot
     // be watched without also being recovered. Only drop and forward are
@@ -414,8 +409,7 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         return task_process_status::task_invalid_entry;
     }
 
-    // Both times are checked here rather than while parsing, so that a field
-    // left out of the configuration is still validated.
+    // Checked after parsing so a missing detection time is caught; restoration time is optional
     if (m_timerRangesValid)
     {
         if (detectionTime < m_detectionTimeMin || detectionTime > m_detectionTimeMax)
@@ -425,7 +419,8 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
             return task_process_status::task_invalid_entry;
         }
 
-        if (restorationTime < m_restorationTimeMin || restorationTime > m_restorationTimeMax)
+        if (restorationTime != 0 &&
+            (restorationTime < m_restorationTimeMin || restorationTime > m_restorationTimeMax))
         {
             SWSS_LOG_ERROR("Restoration time %u ms is outside the supported range [%u-%u] ms on port %s",
                            restorationTime, m_restorationTimeMin, m_restorationTimeMax, key.c_str());
@@ -617,7 +612,8 @@ bool PfcWdHwOrch::readBackTimerValue(const Port& port, sai_port_attr_t attrId,
             }
         }
 
-        if (actual != expected)
+        // 0: none configured, the hardware keeps its timer
+        if (expected != 0 && actual != expected)
         {
             SWSS_LOG_WARN("%s time mismatch on port %s: sent %u, hardware has %u",
                           timerName.c_str(), port.m_alias.c_str(), expected, actual);
@@ -671,8 +667,10 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
         return false;
     }
 
-    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%ums, action=%s",
-                    port.m_alias.c_str(), detectionTime, restorationTime, serializeAction(action).c_str());
+    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%s, action=%s",
+                    port.m_alias.c_str(), detectionTime,
+                    restorationTime ? (to_string(restorationTime) + "ms").c_str() : "unchanged",
+                    serializeAction(action).c_str());
 
     // Cleanup handler called on configuration failure
     auto handleFailure = [this, &port](const string& errorMsg) -> bool {
@@ -727,7 +725,10 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     fvs.emplace_back("hw_detection_time", to_string(actualHwDetectionTime));
     fvs.emplace_back("hw_restoration_time", to_string(actualHwRestorationTime));
     fvs.emplace_back("configured_detection_time", to_string(detectionTime));
-    fvs.emplace_back("configured_restoration_time", to_string(restorationTime));
+    if (restorationTime != 0)
+    {
+        fvs.emplace_back("configured_restoration_time", to_string(restorationTime));
+    }
 
     fvs.emplace_back("action", serializeAction(action));
     m_pfcWdHwStateTable->set(port.m_alias, fvs);
@@ -820,6 +821,14 @@ bool PfcWdHwOrch::configureTimerIntervals(const Port& port, const set<uint8_t>& 
     SWSS_LOG_NOTICE("Set PFC DLD (detection) interval on port %s to %u ms for %zu TCs",
                    port.m_alias.c_str(), detectionTime, losslessTc.size());
 
+    // Optional: DLDR arms on detection alone; without one the port keeps the timer the hardware holds
+    if (restorationTime == 0)
+    {
+        SWSS_LOG_NOTICE("No restoration time on port %s, keeping the recovery timer the hardware holds",
+                        port.m_alias.c_str());
+        return true;
+    }
+
     // Set restoration interval on port
     sai_attribute_t attr_dlr;
     attr_dlr.id = SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL;
@@ -869,8 +878,9 @@ bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t
                                sai_serialize_object_id(queueId) + "): " + to_string(status));
         }
 
-        SWSS_LOG_NOTICE("Enabled PFC DLDR on port %s TC %d queue 0x%" PRIx64 " (detection: %u ms, restoration: %u ms)",
-                       port.m_alias.c_str(), tc, queueId, detectionTime, restorationTime);
+        SWSS_LOG_NOTICE("Enabled PFC DLDR on port %s TC %d queue 0x%" PRIx64 " (detection: %u ms, restoration: %s)",
+                       port.m_alias.c_str(), tc, queueId, detectionTime,
+                       restorationTime ? (to_string(restorationTime) + " ms").c_str() : "unchanged");
     }
 
     return true;

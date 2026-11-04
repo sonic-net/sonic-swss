@@ -173,6 +173,9 @@ namespace pfcwdhworch_test
         sai_object_id_t queueId = port.m_queue_ids[queueIndex];
         string queueIdStr = sai_serialize_object_id(queueId);
 
+        // Other suites leave storm counters on this queue
+        resetQueueStats(queueId);
+
         // Setup: Populate HW counters in COUNTERS_DB
         setQueueHwCounters(queueId, 1000, 50);
 
@@ -987,5 +990,174 @@ namespace pfcwdhworch_test
         EXPECT_EQ(stats.txDropPkt, 5u);
     }
 
-}
+    // Optional restoration time
 
+    // Timer the stubbed SAI reports when none was written
+    const uint32_t PLATFORM_DLR_MS = 100;
+
+    sai_port_api_t restoration_sai_port_api;
+    sai_port_api_t *restoration_old_sai_port_api;
+    sai_queue_api_t restoration_sai_queue_api;
+    sai_queue_api_t *restoration_old_sai_queue_api;
+    sai_switch_api_t restoration_sai_switch_api;
+    sai_switch_api_t *restoration_old_sai_switch_api;
+
+    bool dlr_written;
+    uint32_t programmed_dlr_ms;
+
+    sai_status_t _restoration_set_port_attribute(sai_object_id_t port_id, const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL || attr->id == SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL)
+        {
+            // Teardown clears the intervals with an empty list; only count programming
+            if (attr->id == SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL && attr->value.maplist.count > 0)
+            {
+                dlr_written = true;
+                programmed_dlr_ms = attr->value.maplist.list[0].value;
+            }
+            return SAI_STATUS_SUCCESS;
+        }
+        return restoration_old_sai_port_api->set_port_attribute(port_id, attr);
+    }
+
+    sai_status_t _restoration_get_port_attribute(sai_object_id_t port_id, uint32_t attr_count, sai_attribute_t *attr_list)
+    {
+        if (attr_count == 1 &&
+            (attr_list[0].id == SAI_PORT_ATTR_PFC_TC_DLD_INTERVAL || attr_list[0].id == SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL))
+        {
+            uint32_t value = attr_list[0].id == SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL ? programmed_dlr_ms : 400;
+            for (uint32_t i = 0; i < attr_list[0].value.maplist.count; i++)
+            {
+                attr_list[0].value.maplist.list[i].value = value;
+            }
+            return SAI_STATUS_SUCCESS;
+        }
+        return restoration_old_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
+    }
+
+    sai_status_t _restoration_set_queue_attribute(sai_object_id_t queue_id, const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_QUEUE_ATTR_ENABLE_PFC_DLDR)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+        return restoration_old_sai_queue_api->set_queue_attribute(queue_id, attr);
+    }
+
+    sai_status_t _restoration_set_switch_attribute(sai_object_id_t switch_id, const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+        return restoration_old_sai_switch_api->set_switch_attribute(switch_id, attr);
+    }
+
+    class PfcWdHwRestorationTest : public PfcWdHwCountersTest
+    {
+    protected:
+        shared_ptr<swss::DBConnector> m_state_db;
+
+        void SetUp() override
+        {
+            PfcWdHwCountersTest::SetUp();
+
+            // PFC watchdog on TC3 and TC4 of Ethernet0
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+            ASSERT_TRUE(gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, (1 << 3) | (1 << 4)));
+
+            restoration_sai_port_api = *sai_port_api;
+            restoration_old_sai_port_api = sai_port_api;
+            restoration_sai_port_api.set_port_attribute = _restoration_set_port_attribute;
+            restoration_sai_port_api.get_port_attribute = _restoration_get_port_attribute;
+            sai_port_api = &restoration_sai_port_api;
+
+            restoration_sai_queue_api = *sai_queue_api;
+            restoration_old_sai_queue_api = sai_queue_api;
+            restoration_sai_queue_api.set_queue_attribute = _restoration_set_queue_attribute;
+            sai_queue_api = &restoration_sai_queue_api;
+
+            restoration_sai_switch_api = *sai_switch_api;
+            restoration_old_sai_switch_api = sai_switch_api;
+            restoration_sai_switch_api.set_switch_attribute = _restoration_set_switch_attribute;
+            sai_switch_api = &restoration_sai_switch_api;
+
+            m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+            dlr_written = false;
+            programmed_dlr_ms = PLATFORM_DLR_MS;
+        }
+
+        void TearDown() override
+        {
+            sai_port_api = restoration_old_sai_port_api;
+            sai_queue_api = restoration_old_sai_queue_api;
+            sai_switch_api = restoration_old_sai_switch_api;
+            PfcWdHwCountersTest::TearDown();
+        }
+
+        bool hwState(const string &field, string *value)
+        {
+            swss::Table hwState(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+            return hwState.hget("Ethernet0", field, *value);
+        }
+    };
+
+    TEST_F(PfcWdHwRestorationTest, StartsWithoutRestorationTime)
+    {
+        auto status = m_pfcwd_hw_orch->createEntry("Ethernet0", {
+            { PFC_WD_ACTION, "drop" },
+            { PFC_WD_DETECTION_TIME, "400" },
+        });
+
+        ASSERT_EQ(status, task_process_status::task_success);
+        EXPECT_FALSE(dlr_written);
+
+        string value;
+        ASSERT_TRUE(hwState("status", &value));
+        EXPECT_EQ(value, "configured");
+        ASSERT_TRUE(hwState("hw_restoration_time", &value));
+        EXPECT_EQ(value, to_string(PLATFORM_DLR_MS));
+        EXPECT_FALSE(hwState("configured_restoration_time", &value));
+    }
+
+    TEST_F(PfcWdHwRestorationTest, ProgramsConfiguredRestorationTime)
+    {
+        auto status = m_pfcwd_hw_orch->createEntry("Ethernet0", {
+            { PFC_WD_ACTION, "drop" },
+            { PFC_WD_DETECTION_TIME, "400" },
+            { PFC_WD_RESTORATION_TIME, "600" },
+        });
+
+        ASSERT_EQ(status, task_process_status::task_success);
+        EXPECT_TRUE(dlr_written);
+        EXPECT_EQ(programmed_dlr_ms, 600u);
+
+        string value;
+        ASSERT_TRUE(hwState("configured_restoration_time", &value));
+        EXPECT_EQ(value, "600");
+        ASSERT_TRUE(hwState("hw_restoration_time", &value));
+        EXPECT_EQ(value, "600");
+    }
+
+    TEST_F(PfcWdHwRestorationTest, RangeCheckSkipsMissingRestorationTime)
+    {
+        m_pfcwd_hw_orch->m_timerRangesValid = true;
+        m_pfcwd_hw_orch->m_detectionTimeMin = 100;
+        m_pfcwd_hw_orch->m_detectionTimeMax = 1500;
+        m_pfcwd_hw_orch->m_restorationTimeMin = 100;
+        m_pfcwd_hw_orch->m_restorationTimeMax = 1000;
+
+        EXPECT_EQ(m_pfcwd_hw_orch->createEntry("Ethernet0", {
+            { PFC_WD_ACTION, "drop" },
+            { PFC_WD_DETECTION_TIME, "400" },
+            { PFC_WD_RESTORATION_TIME, "1200" },
+        }), task_process_status::task_invalid_entry);
+
+        EXPECT_EQ(m_pfcwd_hw_orch->createEntry("Ethernet0", {
+            { PFC_WD_ACTION, "drop" },
+            { PFC_WD_DETECTION_TIME, "400" },
+        }), task_process_status::task_success);
+        EXPECT_FALSE(dlr_written);
+    }
+}
