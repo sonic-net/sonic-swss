@@ -16,6 +16,49 @@ namespace pfcwdhworch_test
     using namespace std;
     using namespace mock_orch_test;
 
+    // What the hooked SAI queue stat get returns; a queue with no entry fails
+    map<sai_object_id_t, pair<uint64_t, uint64_t>> _ut_sai_queue_stats;
+    uint32_t _ut_sai_queue_stat_reads = 0;
+
+    sai_queue_api_t ut_sai_queue_api;
+    sai_queue_api_t *pold_sai_queue_api;
+
+    sai_status_t _ut_stub_sai_get_queue_stats(
+        sai_object_id_t queue_id,
+        uint32_t number_of_counters,
+        const sai_stat_id_t *counter_ids,
+        uint64_t *counters)
+    {
+        _ut_sai_queue_stat_reads++;
+        auto it = _ut_sai_queue_stats.find(queue_id);
+        if (it == _ut_sai_queue_stats.end())
+        {
+            return SAI_STATUS_FAILURE;
+        }
+
+        for (uint32_t i = 0; i < number_of_counters; i++)
+        {
+            counters[i] = counter_ids[i] == SAI_QUEUE_STAT_PACKETS ? it->second.first :
+                          counter_ids[i] == SAI_QUEUE_STAT_DROPPED_PACKETS ? it->second.second : 0;
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    void _hook_sai_queue_stats()
+    {
+        ut_sai_queue_api = *sai_queue_api;
+        pold_sai_queue_api = sai_queue_api;
+        ut_sai_queue_api.get_queue_stats = _ut_stub_sai_get_queue_stats;
+        sai_queue_api = &ut_sai_queue_api;
+    }
+
+    void _unhook_sai_queue_stats()
+    {
+        sai_queue_api = pold_sai_queue_api;
+        _ut_sai_queue_stats.clear();
+        _ut_sai_queue_stat_reads = 0;
+    }
+
         class PfcWdHwCountersTest : public MockOrchTest
         {
         protected:
@@ -26,6 +69,7 @@ namespace pfcwdhworch_test
             void SetUp() override
             {
                 MockOrchTest::SetUp();
+                _hook_sai_queue_stats();
 
                 // Bring up ports so gPortsOrch can resolve Ethernet0 and its queues/PGs.
                 bringUpPorts();
@@ -56,6 +100,7 @@ namespace pfcwdhworch_test
             void TearDown() override
             {
                 delete m_pfcwd_hw_orch;
+                _unhook_sai_queue_stats();
                 MockOrchTest::TearDown();
             }
 
@@ -79,15 +124,10 @@ namespace pfcwdhworch_test
                 ASSERT_TRUE(gPortsOrch->allPortsReady());
             }
 
-            // Helper: Set hardware counter values in COUNTERS_DB for a queue
+            // Helper: Set the hardware counter values SAI returns for a queue
             void setQueueHwCounters(sai_object_id_t queueId, uint64_t txPkt, uint64_t txDropPkt)
             {
-                string queueIdStr = sai_serialize_object_id(queueId);
-                vector<FieldValueTuple> fvs = {
-                    {"SAI_QUEUE_STAT_PACKETS", to_string(txPkt)},
-                    {"SAI_QUEUE_STAT_DROPPED_PACKETS", to_string(txDropPkt)}
-                };
-                m_counters_table->set(queueIdStr, fvs);
+                _ut_sai_queue_stats[queueId] = { txPkt, txDropPkt };
             }
 
             // Helper: Set hardware counter values in COUNTERS_DB for a priority group
@@ -130,6 +170,7 @@ namespace pfcwdhworch_test
 
                 // Delete the stats entry from COUNTERS_DB
                 m_counters_table->del(queueIdStr);
+                _ut_sai_queue_stats.erase(queueId);
 
                 // Clear baseline so next initQueueCounters starts fresh
                 m_pfcwd_hw_orch->m_queueBaselineStats.erase(queueId);
@@ -630,16 +671,15 @@ namespace pfcwdhworch_test
         EXPECT_EQ(hwStats.rxDropPkt, 0);
     }
 
-    TEST_F(PfcWdHwCountersTest, ReadHwCounters_MissingQueueCounters)
+    TEST_F(PfcWdHwCountersTest, ReadHwCounters_SaiReadFailureIsUnreadable)
     {
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
 
         uint8_t queueIndex = 3;
         sai_object_id_t queueId = port.m_queue_ids[queueIndex];
-        string queueIdStr = sai_serialize_object_id(queueId);
 
-        m_counters_table->del(queueIdStr);
+        _ut_sai_queue_stats.erase(queueId);
 
         PfcWdHwStats hwStats;
         EXPECT_FALSE(m_pfcwd_hw_orch->readHwCounters(queueId, hwStats));
@@ -648,60 +688,52 @@ namespace pfcwdhworch_test
         EXPECT_EQ(hwStats.txDropPkt, 0);
     }
 
-    // The storm writes the watchdog's own fields into the same hash, so an entry
-    // carrying no packet counter is not a sample.
-    TEST_F(PfcWdHwCountersTest, ReadHwCounters_NoPacketCounterIsNotASample)
+    // The queue is read from SAI, so a stale copy another counter group left in
+    // COUNTERS_DB is not a source.
+    TEST_F(PfcWdHwCountersTest, ReadHwCounters_IgnoresCountersDbCopy)
     {
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
 
         uint8_t queueIndex = 3;
         sai_object_id_t queueId = port.m_queue_ids[queueIndex];
-        string queueIdStr = sai_serialize_object_id(queueId);
 
-        m_counters_table->del(queueIdStr);
-        m_counters_table->set(queueIdStr, { { PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_STORMED } });
-
-        PfcWdHwStats hwStats;
-        EXPECT_FALSE(m_pfcwd_hw_orch->readHwCounters(queueId, hwStats));
-    }
-
-    // A drop counter the SAI does not report stays zero without failing the read.
-    TEST_F(PfcWdHwCountersTest, ReadHwCounters_MissingDropCounterTolerated)
-    {
-        Port port;
-        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-
-        uint8_t queueIndex = 3;
-        sai_object_id_t queueId = port.m_queue_ids[queueIndex];
-        string queueIdStr = sai_serialize_object_id(queueId);
-
-        m_counters_table->del(queueIdStr);
-        m_counters_table->set(queueIdStr, { { "SAI_QUEUE_STAT_PACKETS", "1000" } });
+        setQueueHwCounters(queueId, 1000, 50);
+        m_counters_table->set(sai_serialize_object_id(queueId), {
+            { "SAI_QUEUE_STAT_PACKETS", "7" },
+            { "SAI_QUEUE_STAT_DROPPED_PACKETS", "3" } });
 
         PfcWdHwStats hwStats;
-        EXPECT_TRUE(m_pfcwd_hw_orch->readHwCounters(queueId, hwStats));
+        ASSERT_TRUE(m_pfcwd_hw_orch->readHwCounters(queueId, hwStats));
 
         EXPECT_EQ(hwStats.txPkt, 1000);
-        EXPECT_EQ(hwStats.txDropPkt, 0);
+        EXPECT_EQ(hwStats.txDropPkt, 50);
     }
 
-    // A malformed value fails the sample rather than throwing out of the timer.
-    TEST_F(PfcWdHwCountersTest, ReadHwCounters_MalformedValueFailsTheSample)
+    // Only the queues in storm are read; nothing else touches SAI.
+    TEST_F(PfcWdHwCountersTest, PeriodicTimer_ReadsOnlyStormedQueues)
     {
         Port port;
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
 
-        uint8_t queueIndex = 3;
-        sai_object_id_t queueId = port.m_queue_ids[queueIndex];
-        string queueIdStr = sai_serialize_object_id(queueId);
+        sai_object_id_t stormed = port.m_queue_ids[3];
+        sai_object_id_t idle = port.m_queue_ids[4];
 
-        m_counters_table->del(queueIdStr);
-        m_counters_table->set(queueIdStr, { { "SAI_QUEUE_STAT_PACKETS", "not-a-number" } });
+        resetQueueStats(stormed);
+        resetQueueStats(idle);
+        setupQueuePortMapping(stormed, port, 3);
+        setupQueuePortMapping(idle, port, 4);
+        setQueueHwCounters(stormed, 1000, 50);
+        setQueueHwCounters(idle, 2000, 0);
+        m_pfcwd_hw_orch->m_stormedQueues.insert(stormed);
 
-        PfcWdHwStats hwStats;
-        EXPECT_NO_FATAL_FAILURE(m_pfcwd_hw_orch->readHwCounters(queueId, hwStats));
-        EXPECT_FALSE(m_pfcwd_hw_orch->readHwCounters(queueId, hwStats));
+        _ut_sai_queue_stat_reads = 0;
+        swss::SelectableTimer timer(timespec { .tv_sec = 1, .tv_nsec = 0 });
+        m_pfcwd_hw_orch->doTask(timer);
+
+        EXPECT_EQ(_ut_sai_queue_stat_reads, 1u);
+
+        m_pfcwd_hw_orch->m_stormedQueues.erase(stormed);
     }
 
     // ========================================================================
@@ -930,8 +962,8 @@ namespace pfcwdhworch_test
         EXPECT_FALSE(getQueueStats(queueId).operational);
         EXPECT_EQ(m_pfcwd_hw_orch->m_queueBaselineStats.count(queueId), 0u);
 
-        // FlexCounter publishes the lifetime counters. They seed the baseline
-        // instead of being charged to the storm.
+        // The counters become readable. They seed the baseline instead of
+        // being charged to the storm.
         setQueueHwCounters(queueId, 5000, 250);
         m_pfcwd_hw_orch->updateQueueCounters(queueIdStr, queueId, true);
 
@@ -972,7 +1004,7 @@ namespace pfcwdhworch_test
         m_pfcwd_hw_orch->initQueueCounters(queueIdStr, queueId);
         ASSERT_EQ(m_pfcwd_hw_orch->m_queueBaselineStats.count(queueId), 0u);
 
-        // FlexCounter publishes. The timer must still visit this queue.
+        // The counters become readable. The timer must still visit this queue.
         setQueueHwCounters(queueId, 5000, 250);
 
         swss::SelectableTimer countersTimer(timespec { .tv_sec = 1, .tv_nsec = 0 });

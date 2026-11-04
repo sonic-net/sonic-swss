@@ -67,8 +67,8 @@ private:
         PfcWdBaseOrch::updateQueueStats(getCountersTable(), queueIdStr, stats);
     }
 
-    // Read the hardware counters FlexCounter publishes for a queue. False when
-    // the sample cannot be used as a baseline.
+    // Read the queue's TX counters from SAI; RX is left at 0. False when the
+    // read fails, in which case the sample cannot be used as a baseline.
     bool readHwCounters(sai_object_id_t queueId, PfcWdHwStats& counters);
 
     // Baseline the counters when a storm is detected

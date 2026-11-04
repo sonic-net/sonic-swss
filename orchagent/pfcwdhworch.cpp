@@ -1061,74 +1061,37 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
     return cleanupOk;
 }
 
-// A malformed value fails the sample instead of throwing out of the watchdog
-// timer.
-static bool parseHwStat(const string& field, const string& value, uint64_t& out)
-{
-    try
-    {
-        out = stoull(value);
-        return true;
-    }
-    catch (const logic_error&)
-    {
-        SWSS_LOG_ERROR("Bad PFC WD hardware counter value %s=%s", field.c_str(), value.c_str());
-        return false;
-    }
-}
-
 bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, PfcWdHwStats& counters)
 {
     SWSS_LOG_ENTER();
 
-    // FlexCounter publishes these to COUNTERS_DB, so SAI is not queried here.
-    string queueIdStr = sai_serialize_object_id(queueId);
-    vector<FieldValueTuple> fieldValues;
+    // Zeroed up front so a failed read leaves no stale value behind.
+    counters = {};
 
-    memset(&counters, 0, sizeof(PfcWdHwStats));
-
-    auto countersTable = getCountersTable();
-    if (!countersTable || !countersTable->get(queueIdStr, fieldValues))
+    // Read the queue from SAI, as the software watchdog does. This runs only on
+    // DETECTED, on RECOVERED and once a second while the queue is in storm, and
+    // an ASIC-fresh sample cannot be reordered against another counter group's
+    // publish the way a COUNTERS_DB read can.
+    static const vector<sai_stat_id_t> queueStatIds =
     {
-        SWSS_LOG_DEBUG("No counter entry found for queue 0x%" PRIx64, queueId);
-        return false;
-    }
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_DROPPED_PACKETS,
+    };
+    vector<uint64_t> queueStats(queueStatIds.size());
 
-    // Both come from the PFC_WD group and publish together; a drop counter the
-    // SAI does not report stays 0.
-    bool havePackets = false;
-    for (const auto& fv : fieldValues)
+    sai_status_t status = sai_queue_api->get_queue_stats(
+            queueId, static_cast<uint32_t>(queueStatIds.size()), queueStatIds.data(), queueStats.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        const auto field = fvField(fv);
-        const auto value = fvValue(fv);
-
-        if (field == "SAI_QUEUE_STAT_PACKETS")
-        {
-            if (!parseHwStat(field, value, counters.txPkt))
-            {
-                return false;
-            }
-            havePackets = true;
-        }
-        else if (field == "SAI_QUEUE_STAT_DROPPED_PACKETS")
-        {
-            if (!parseHwStat(field, value, counters.txDropPkt))
-            {
-                return false;
-            }
-        }
-    }
-
-    // A storm writes the watchdog's own fields into this hash, so the entry can
-    // exist before the flex counters have published into it.
-    if (!havePackets)
-    {
-        SWSS_LOG_DEBUG("No packet counter yet for queue 0x%" PRIx64, queueId);
+        SWSS_LOG_WARN("Failed to read queue 0x%" PRIx64 " stats: %d", queueId, status);
         return false;
     }
 
     // RX stays 0: the hardware watchdog acts only on the egress queue and has
     // no ingress action to count.
+    counters.txPkt = queueStats[0];
+    counters.txDropPkt = queueStats[1];
+
     SWSS_LOG_DEBUG("Read HW counters for queue 0x%" PRIx64 ": txPkt=%" PRIu64 ", txDropPkt=%" PRIu64,
                    queueId, counters.txPkt, counters.txDropPkt);
 
