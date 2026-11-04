@@ -490,7 +490,7 @@ namespace intfmgr_ut
         EXPECT_TRUE(interfaceLookups.empty());
     }
 
-    TEST_F(IntfMgrTest, testFailedAddressQueryUsesFallbackOnException)
+    TEST_F(IntfMgrTest, testFailedAddressQueryUsesFallbackUnlessInterfaceMissing)
     {
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
         FailAddressAdd = FailAddressDelete = true;
@@ -500,9 +500,16 @@ namespace intfmgr_ut
             SCOPED_TRACE(prefix + " nonzero result");
             AddressQueryOutput = addressLine(prefix);
             EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), false));
+            EXPECT_TRUE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), true));
+            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
+            EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
+
+            MissingSubInterfaces.insert("PortChannel1");
+            EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), false));
             EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix(prefix), true));
             EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "add", swss::IpPrefix(prefix)));
             EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
+            MissingSubInterfaces.clear();
         }
 
         AddressQueryResult = 0;
@@ -520,7 +527,12 @@ namespace intfmgr_ut
                 EXPECT_FALSE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix(prefix)));
             }
         }
-        EXPECT_TRUE(interfaceLookups.empty());
+
+        ThrowAddressQuery = true;
+        MissingSubInterfaces.insert("PortChannel1");
+        EXPECT_FALSE(intfmgr.isIntfIpPresent("PortChannel1", swss::IpPrefix("192.0.2.1/31"), true));
+        EXPECT_TRUE(intfmgr.setIntfIp("PortChannel1", "del", swss::IpPrefix("192.0.2.1/31")));
+        EXPECT_FALSE(interfaceLookups.empty());
     }
 
     TEST_F(IntfMgrTest, testAddressLaunchFailuresUseFinalState)

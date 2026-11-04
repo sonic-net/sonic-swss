@@ -372,13 +372,19 @@ bool IntfMgr::isIntfIpPresent(const string &alias, const IpPrefix &ipPrefix, boo
     {
         const string cmd = string(IP_CMD) + " -o address show dev " + shellquote(alias);
         const string address = string(ipPrefix.isV4() ? " inet " : " inet6 ") + ipPrefix.to_string() + " ";
-        return swss::exec(cmd, res) == 0 && res.find(address) != string::npos;
+        if (swss::exec(cmd, res) == 0)
+            return res.find(address) != string::npos;
     }
     catch (const exception &e)
     {
         SWSS_LOG_WARN("Cannot query addresses on interface %s: %s", alias.c_str(), e.what());
-        return fallback;
     }
+
+    errno = 0;
+    if (if_nametoindex(alias.c_str()) == 0 &&
+        (errno == ENODEV || errno == ENXIO))
+        return false;
+    return fallback;
 }
 
 void IntfMgr::buildIntfReplayList(void)
