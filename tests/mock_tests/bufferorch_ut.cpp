@@ -490,6 +490,20 @@ namespace bufferorch_test
         gMockResponsePublisher.reset();
     }
 
+    TEST_F(BufferOrchTest, MalformedPoolSizeDoesNotTerminateOrchagent)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+        auto *consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"bad_pool", SET_COMMAND,
+                           {{"size", "not-a-number"}, {"mode", "dynamic"}, {"type", "ingress"}}});
+        consumer->addToSync(entries);
+        EXPECT_NO_THROW(static_cast<Orch *>(gBufferOrch)->doTask(*consumer));
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        gMockResponsePublisher.reset();
+    }
+
     TEST_F(BufferOrchTest, BufferOrchTestLosslessBufferProfilePublish)
     {
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
