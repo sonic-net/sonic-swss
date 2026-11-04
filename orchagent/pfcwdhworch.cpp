@@ -10,8 +10,9 @@
 #include <algorithm>
 #include <set>
 
-// Counter poll interval for the hardware watchdog, in milliseconds.
-#define PFC_HW_WD_POLL_MSECS             50
+// Counter poll interval for the hardware watchdog, in milliseconds. It bounds
+// how stale a storm edge sample can be; nothing polls these counters in between.
+#define PFC_HW_WD_POLL_MSECS             100
 #define PFC_WD_COUNTER_POLL_TIMEOUT_SEC  1
 
 extern sai_object_id_t gSwitchId;

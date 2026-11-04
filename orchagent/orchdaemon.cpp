@@ -814,6 +814,8 @@ bool OrchDaemon::init()
 
         // Only the hardware watchdog scores a storm by queue drops. The software
         // watchdog's detect plugin never reads them, so they are not polled for it.
+        // Support varies by ASIC: syncd polls only the stats the ASIC reports as
+        // supported, and the watchdog treats a missing counter as an unreadable queue.
         static const vector<sai_queue_stat_t> hwQueueStatIds =
         {
             SAI_QUEUE_STAT_PACKETS,
