@@ -6398,6 +6398,79 @@ TEST_F(PfcWdHwOrchTest, ActionMismatchRejected)
     ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet8"), 0u);
 }
 
+// A stop followed by a start with a new action. The start's SET sorts before
+// the stop's DEL, so it is processed while the old action is still held; it
+// must be kept for the next pass.
+TEST_F(PfcWdHwOrchTest, StartWithNewActionWaitsForStop)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    enablePfcOnPort("Ethernet8");
+    ASSERT_EQ(gPfcWdHwOrch->createEntry("Ethernet8",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } }),
+        task_process_status::task_success);
+
+    auto consumer = dynamic_cast<Consumer *>(gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    consumer->addToSync(deque<KeyOpFieldsValuesTuple>{
+        { "Ethernet8", DEL_COMMAND, {} },
+        { "Ethernet0", SET_COMMAND,
+            { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } } } });
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcwd_ports.empty());
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_UNKNOWN);
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+    ASSERT_EQ(kfvOp(consumer->m_toSync.begin()->second), SET_COMMAND);
+    ASSERT_EQ(consumer->m_toSync.begin()->first, "Ethernet0");
+}
+
+TEST_F(PfcWdHwOrchTest, StartWithNewActionRejectedWithoutStop)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    enablePfcOnPort("Ethernet8");
+    ASSERT_EQ(gPfcWdHwOrch->createEntry("Ethernet8",
+        { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } }),
+        task_process_status::task_success);
+
+    auto consumer = dynamic_cast<Consumer *>(gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    consumer->addToSync(deque<KeyOpFieldsValuesTuple>{
+        { "Ethernet0", SET_COMMAND,
+            { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } } } });
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports, set<string>({ "Ethernet8" }));
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_DROP);
+}
+
+// A port that keeps the old action makes the mismatch permanent, so the entry
+// must not be retried forever.
+TEST_F(PfcWdHwOrchTest, StartWithNewActionRejectedWhenAPortKeepsOldAction)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+    enablePfcOnPort("Ethernet4");
+    enablePfcOnPort("Ethernet8");
+    for (const auto &alias : { "Ethernet4", "Ethernet8" })
+    {
+        ASSERT_EQ(gPfcWdHwOrch->createEntry(alias,
+            { { "action", "drop" }, { "detection_time", "200" }, { "restoration_time", "200" } }),
+            task_process_status::task_success);
+    }
+
+    auto consumer = dynamic_cast<Consumer *>(gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    consumer->addToSync(deque<KeyOpFieldsValuesTuple>{
+        { "Ethernet4", DEL_COMMAND, {} },
+        { "Ethernet0", SET_COMMAND,
+            { { "action", "forward" }, { "detection_time", "200" }, { "restoration_time", "200" } } } });
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports, set<string>({ "Ethernet8" }));
+    ASSERT_EQ(gPfcWdHwOrch->getPfcDlrPacketAction(), PfcWdAction::PFC_WD_ACTION_DROP);
+}
+
 TEST_F(PfcWdHwOrchTest, DeleteAfterLosslessSetShrinksClearsDroppedQueue)
 {
     bringUpPorts();
