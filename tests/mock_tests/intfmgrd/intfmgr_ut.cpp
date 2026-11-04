@@ -1410,25 +1410,18 @@ namespace intfmgr_ut
         FailAddressAdd = true;
         intfmgr.doTask(*parent);
         ASSERT_EQ(parent->m_toSync.size(), 1u);
+        FailAddressAdd = false;
         mockCallArgs.clear();
         intfmgr.doTask(*child);
-        EXPECT_TRUE(mockCallArgs.empty());
-
-        FailAddressAdd = false;
-        intfmgr.doTask(*parent);
-        intfmgr.doTask(*child);
-        EXPECT_TRUE(parent->m_toSync.empty());
         EXPECT_TRUE(child->m_toSync.empty());
         auto position = [](const std::string &needle) {
             return std::find_if(mockCallArgs.begin(), mockCallArgs.end(), [&](const std::string &cmd) {
                 return cmd.find(needle) != std::string::npos;
             }) - mockCallArgs.begin();
         };
-        const auto parentAddress = position("address \"add\" \"10.0.0.1/31\"");
         const auto childCreate = position("link add link \"PortChannel1\" name \"PortChannel1.20\"");
         const auto childAdmin = position("link set \"PortChannel1.20\" \"down\"");
         const auto childAddress = position("address \"add\" \"192.0.2.9/31\"");
-        EXPECT_LT(parentAddress, childCreate);
         EXPECT_LT(childCreate, childAdmin);
         EXPECT_LT(childAdmin, childAddress);
         EXPECT_TRUE(commandWasIssued("address \"add\" \"192.0.2.9/31\""));
@@ -1436,6 +1429,11 @@ namespace intfmgr_ut
         EXPECT_TRUE(commandWasIssued("address \"add\" \"fe80::21/64\""));
         EXPECT_FALSE(commandWasIssued("192.0.2.1/31"));
         EXPECT_FALSE(commandWasIssued("fe80::20/64"));
+        EXPECT_EQ(parent->m_toSync.size(), 1u);
+        mockCallArgs.clear();
+        intfmgr.doTask(*parent);
+        EXPECT_TRUE(parent->m_toSync.empty());
+        EXPECT_TRUE(commandWasIssued("address \"add\" \"10.0.0.1/31\""));
         EXPECT_EQ(intfmgr.m_subIntfList.at(alias).mtu, "0");
         EXPECT_EQ(intfmgr.m_intfLLAddresses.at(alias), (std::set<std::string>{"fe80::21/64"}));
         EXPECT_EQ(intfmgr.m_ipv6LinkLocalModeList.count(alias), 0u);

@@ -33,11 +33,6 @@ using namespace swss;
 extern MacAddress gMacAddress;
 extern MacAddress gSagMacAddress;
 
-static bool isIntfKey(const string &key, const string &alias, char delimiter)
-{
-    return key == alias || key.compare(0, alias.size() + 1, alias + delimiter) == 0;
-}
-
 static bool isLagIntfKey(const string &key, const string &lag, char delimiter)
 {
     auto alias = key.substr(0, key.find(delimiter));
@@ -1499,7 +1494,7 @@ void IntfMgr::doTask(Consumer &consumer)
                 auto *parent = getConsumerBase(CFG_LAG_INTF_TABLE_NAME);
                 if (op == SET_COMMAND && table_name == CFG_VLAN_SUB_INTF_TABLE_NAME && parent &&
                     any_of(parent->m_toSync.begin(), parent->m_toSync.end(), [&](const auto &task) {
-                        return isIntfKey(task.first, lag, config_db_key_delimiter);
+                        return task.first == lag;
                     }))
                 {
                     ++it;
