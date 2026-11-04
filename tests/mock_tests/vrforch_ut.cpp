@@ -140,7 +140,7 @@ TEST_F(VrfOrchTest, DefaultVrfDeleteOnlyRemovesLogicalEntry)
     EXPECT_EQ(gVrfOrch->getVRFid("default"), gVirtualRouterId);
 }
 
-TEST_F(VrfOrchTest, DefaultVrfLiveVniReplacementIsRejected)
+TEST_F(VrfOrchTest, DefaultVrfCoalescedVniReplacementUnmapsOldBeforeMappingNew)
 {
     provisionEvpnVtep();
     auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
@@ -155,17 +155,18 @@ TEST_F(VrfOrchTest, DefaultVrfLiveVniReplacementIsRejected)
     ASSERT_EQ(gVrfOrch->getVRFmappedVNI("default"), 1000u);
     ASSERT_TRUE(gVrfOrch->isL3VniVlan(1000));
 
-    // A live SET to another VNI is invalid and must be consumed without
-    // disturbing the programmed mapping.
+    // APP_DB can coalesce an explicit CONFIG_DB delete followed by an add
+    // into a single old-to-new SET. OrchAgent must preserve that supported
+    // lifecycle by unmapping the old VNI before mapping the new one.
     entries = {
         {"default", "SET", {{"vni", "2000"}}},
     };
     consumer->addToSync(entries);
     static_cast<Orch *>(gVrfOrch)->doTask();
     EXPECT_TRUE(consumer->m_toSync.empty());
-    EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 1000u);
-    EXPECT_TRUE(gVrfOrch->isL3VniVlan(1000));
-    EXPECT_FALSE(gVrfOrch->isL3VniVlan(2000));
+    EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 2000u);
+    EXPECT_FALSE(gVrfOrch->isL3VniVlan(1000));
+    EXPECT_TRUE(gVrfOrch->isL3VniVlan(2000));
 }
 
 TEST_F(VrfOrchTest, DefaultVrfPendingVniCanBeDeleted)
@@ -357,9 +358,21 @@ TEST_F(VrfOrchTest, NamedVrfVniLifecycleMatchesDefaultVrf)
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_EQ(gVrfOrch->getVRFmappedVNI("VrfTenant"), 4500u);
     EXPECT_TRUE(gVrfOrch->isL3VniVlan(4500));
+
+    // The same APP_DB coalescing rule applies to named VRFs: clean the old
+    // mapping before accepting the final desired VNI.
+    entries = {
+        {"VrfTenant", "SET", {{"vni", "4550"}}},
+    };
+    consumer->addToSync(entries);
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(gVrfOrch->getVRFmappedVNI("VrfTenant"), 4550u);
+    EXPECT_FALSE(gVrfOrch->isL3VniVlan(4500));
+    EXPECT_TRUE(gVrfOrch->isL3VniVlan(4550));
 }
 
-TEST_F(VrfOrchTest, DefaultVrfRejectsVniOwnedByTenantVrf)
+TEST_F(VrfOrchTest, DefaultVrfWaitsWhileVniIsOwnedByTenantVrf)
 {
     provisionEvpnVtep();
     auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
@@ -381,13 +394,17 @@ TEST_F(VrfOrchTest, DefaultVrfRejectsVniOwnedByTenantVrf)
     consumer->addToSync(entries);
     static_cast<Orch *>(gVrfOrch)->doTask();
 
-    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(consumer->m_toSync.size(), 1u);
     EXPECT_FALSE(gVrfOrch->isVRFexists("default"));
     EXPECT_EQ(gVrfOrch->getVRFmappedVNI("VrfTenant"), 4500u);
     EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 0u);
+
+    consumer->addToSync({{"default", "DEL", {}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
 }
 
-TEST_F(VrfOrchTest, TenantVrfRejectsVniOwnedByDefaultVrf)
+TEST_F(VrfOrchTest, TenantVrfWaitsWhileVniIsOwnedByDefaultVrf)
 {
     provisionEvpnVtep();
     auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
@@ -407,10 +424,46 @@ TEST_F(VrfOrchTest, TenantVrfRejectsVniOwnedByDefaultVrf)
     consumer->addToSync(entries);
     static_cast<Orch *>(gVrfOrch)->doTask();
 
-    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(consumer->m_toSync.size(), 1u);
     EXPECT_FALSE(gVrfOrch->isVRFexists("VrfTenant"));
     EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 4600u);
     EXPECT_EQ(gVrfOrch->getVRFmappedVNI("VrfTenant"), 0u);
+
+    consumer->addToSync({{"VrfTenant", "DEL", {}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
+}
+
+TEST_F(VrfOrchTest, VrfVniMoveWaitsForOldOwnerRelease)
+{
+    provisionEvpnVtep();
+    auto consumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    EXPECT_CALL(*mock_sai_virtual_router_api, create_virtual_router(_, _, _, _)).Times(1);
+
+    consumer->addToSync({{"default", "SET", {{"vni", "4700"}}}});
+    static_cast<Orch *>(gVrfOrch)->doTask();
+    ASSERT_EQ(gVrfOrch->getVRFmappedVNI("default"), 4700u);
+
+    // Lexicographic key ordering processes VrfTenant before default. The new
+    // owner must remain pending until the old owner releases the VNI later in
+    // the same pass; consuming the SET loses valid CONFIG_DB intent.
+    consumer->addToSync({
+        {"VrfTenant", "SET", {{"vni", "4700"}}},
+        {"default", "SET", {{"vni", "0"}}},
+    });
+    static_cast<Orch *>(gVrfOrch)->doTask();
+
+    EXPECT_EQ(gVrfOrch->getVRFmappedVNI("default"), 0u);
+    EXPECT_FALSE(gVrfOrch->isVRFexists("VrfTenant"));
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+    EXPECT_NE(consumer->m_toSync.find("VrfTenant"), consumer->m_toSync.end());
+
+    static_cast<Orch *>(gVrfOrch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(gVrfOrch->getVRFmappedVNI("VrfTenant"), 4700u);
+    EXPECT_TRUE(gVrfOrch->isL3VniVlan(4700));
 }
 
 TEST_F(VrfOrchTest, DefaultVrfDeleteWaitsForLogicalReferences)
@@ -505,22 +558,34 @@ TEST_F(VrfOrchTest, VxlanVrfMapRejectsDuplicateDefaultAndVniOwnership)
     ASSERT_TRUE(consumer->m_toSync.empty());
     ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(first_map));
 
-    // A second map for the default VRF is rejected even if it uses another VNI.
+    // A second map for the default VRF is retained for retry because it can be
+    // the SET half of an explicit delete-then-add replacement whose old DEL
+    // has not been processed yet.
     const string duplicate_default = "EVPN_2.2.2.2:map_default_5001";
     consumer->addToSync({{duplicate_default, "SET", {{"vni", "5001"}, {"vrf", "default"}}}});
     static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
-    EXPECT_TRUE(consumer->m_toSync.empty());
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
     EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(duplicate_default));
+
+    // A newer DEL cancels a replacement that is no longer desired.
+    consumer->addToSync({{duplicate_default, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
 
     addVrf("VrfTenant");
 
-    // The VNI owned by the default VRF cannot be assigned to another VRF.
+    // A conflicting VNI remains pending. Normal configuration paths reject
+    // permanent duplicates, while retry permits a valid SET-before-DEL move.
     const string duplicate_vni = "EVPN_2.2.2.2:map_tenant_5000";
     consumer->addToSync({{duplicate_vni, "SET", {{"vni", "5000"}, {"vrf", "VrfTenant"}}}});
     static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
-    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(consumer->m_toSync.size(), 1u);
     EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(duplicate_vni));
     EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(first_map));
+
+    consumer->addToSync({{duplicate_vni, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
 }
 
 TEST_F(VrfOrchTest, VxlanVrfMapSameKeyReplayIsIdempotent)
@@ -541,6 +606,8 @@ TEST_F(VrfOrchTest, VxlanVrfMapSameKeyReplayIsIdempotent)
     ASSERT_TRUE(consumer->m_toSync.empty());
     ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
     ASSERT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+    auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
+    ASSERT_EQ(tunnel->vlan_vrf_vni_count, 1u);
 
     // The exact same APP_DB key is handled by the initial existence check.
     // It must not reach duplicate-default validation or create another pair
@@ -551,6 +618,169 @@ TEST_F(VrfOrchTest, VxlanVrfMapSameKeyReplayIsIdempotent)
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
     EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 1u);
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapReplacementWaitsForOldDefaultDelete)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    // Use a replacement key that sorts before the existing key. When both
+    // operations are queued, Orch processes the replacement SET while the
+    // old mapping still exists, followed by the old mapping DEL.
+    const string old_map = "EVPN_2.2.2.2:map_default_6000";
+    const string replacement_map = "EVPN_2.2.2.2:map_default_5000";
+
+    consumer->addToSync(
+        {{old_map, "SET", {{"vni", "6000"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(old_map));
+
+    consumer->addToSync({
+        {replacement_map, "SET", {{"vni", "5000"}, {"vrf", "default"}}},
+        {old_map, "DEL", {}},
+    });
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    // The transient duplicate must remain pending while the old DEL succeeds.
+    ASSERT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(old_map));
+    ASSERT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+    EXPECT_NE(consumer->m_toSync.find(replacement_map),
+              consumer->m_toSync.end());
+
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapReplacementWaitsForOldNamedVrfDelete)
+{
+    provisionEvpnVtep();
+    addVrf("VrfTenant");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    // Named and default VRFs must use the same replacement lifecycle.  Make
+    // the replacement key sort before the existing key so its SET is seen
+    // before the old DEL in the same consumer pass.
+    const string old_map = "EVPN_2.2.2.2:map_VrfTenant_6000";
+    const string replacement_map = "EVPN_2.2.2.2:map_VrfTenant_5000";
+
+    consumer->addToSync(
+        {{old_map, "SET", {{"vni", "6000"}, {"vrf", "VrfTenant"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(old_map));
+
+    consumer->addToSync({
+        {replacement_map, "SET", {{"vni", "5000"}, {"vrf", "VrfTenant"}}},
+        {old_map, "DEL", {}},
+    });
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(old_map));
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+    EXPECT_NE(consumer->m_toSync.find(replacement_map),
+              consumer->m_toSync.end());
+
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfTenant"), 2);
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapMoveWaitsForOldOwnerDelete)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+    addVrf("VrfTenant");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+
+    const string old_map = "EVPN_2.2.2.2:map_5100_default";
+    const string new_map = "EVPN_2.2.2.2:map_5100_VrfTenant";
+
+    consumer->addToSync(
+        {{old_map, "SET", {{"vni", "5100"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(old_map));
+
+    // The new key sorts before the old key. Keep its SET pending until the
+    // old owner's DEL is processed, then accept it on the next pass.
+    consumer->addToSync({
+        {new_map, "SET", {{"vni", "5100"}, {"vrf", "VrfTenant"}}},
+        {old_map, "DEL", {}},
+    });
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(old_map));
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(new_map));
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+    EXPECT_NE(consumer->m_toSync.find(new_map), consumer->m_toSync.end());
+
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(new_map));
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfTenant"), 2);
+}
+
+TEST_F(VrfOrchTest, DefaultAndNamedVrfMapsShareTunnelLifetimeAccounting)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+    addVrf("VrfTenant");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+    auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
+
+    const string default_map = "EVPN_2.2.2.2:map_default_5200";
+    const string tenant_map = "EVPN_2.2.2.2:map_VrfTenant_5300";
+    consumer->addToSync({
+        {default_map, "SET", {{"vni", "5200"}, {"vrf", "default"}}},
+        {tenant_map, "SET", {{"vni", "5300"}, {"vrf", "VrfTenant"}}},
+    });
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(default_map));
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(tenant_map));
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 2u);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfTenant"), 2);
+
+    consumer->addToSync({{default_map, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(default_map));
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(tenant_map));
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 1u);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfTenant"), 2);
+
+    consumer->addToSync({{tenant_map, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(tenant_map));
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfTenant"), 0);
 }
 
 TEST_F(VrfOrchTest, VxlanVrfMapDeleteUsesStoredDefaultVrfName)
@@ -569,6 +799,8 @@ TEST_F(VrfOrchTest, VxlanVrfMapDeleteUsesStoredDefaultVrfName)
     ASSERT_TRUE(consumer->m_toSync.empty());
     ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
     ASSERT_EQ(gVrfOrch->getVrfRefCount("default"), 2);
+    auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
+    ASSERT_EQ(tunnel->vlan_vrf_vni_count, 1u);
 
     consumer->addToSync({{map_key, "DEL", {}}});
     static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
@@ -576,6 +808,7 @@ TEST_F(VrfOrchTest, VxlanVrfMapDeleteUsesStoredDefaultVrfName)
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
     EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
 }
 
 TEST_F(VrfOrchTest, VxlanVrfMapNewerSetSupersedesPendingDelete)
