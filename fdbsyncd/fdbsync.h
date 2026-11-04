@@ -8,9 +8,20 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
+#include "table.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "lib/fdb_defs.h"
+
+#ifndef CFG_FDB_SYNC_TABLE_NAME
+// TODO: drop once sonic-net/sonic-buildimage#30365 is merged.
+#define CFG_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
+
+/* The mode fpmsyncd runs, which fdbsyncd follows. */
+#ifndef STATE_FDB_SYNC_TABLE_NAME
+#define STATE_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
 
 /*
  * Default timer interval for fdbsyncd reconcillation
@@ -78,19 +89,33 @@ public:
         return &m_cfgEvpnNvoTable;
     }
 
+    SubscriberStateTable *getStateFdbSyncTable()
+    {
+        return &m_stateFdbSyncTable;
+    }
+
     void processStateFdb();
 
     void processStateMclagRemoteFdb();
 
     void processCfgEvpnNvo();
 
+    void processStateFdbSync();
+
+    /* True when fpmsyncd owns MAC synchronization over the FPM channel. */
+    bool isFpmMacSync() const
+    {
+        return m_fpmMacSync;
+    }
+
+    /* Apply a mac_sync_mode change held during warm-restart reconciliation. */
+    void applyPendingMacSyncMode();
+
     bool m_reconcileDone = false;
 
     bool m_isEvpnNvoExist = false;
 
 private:
-    bool m_isFdbProtoSupported = false;
-    bool checkFdbProtoSupport();
     static bool parseFdbStateKey(
         const std::string &key,
         std::string &vlanName,
@@ -100,14 +125,28 @@ private:
         const KeyOpFieldsValuesTuple &entry,
         bool remote
     );
+    void readMacSyncMode();
+    void processStateFdbSyncEntry(const KeyOpFieldsValuesTuple& entry);
+    void setMacSyncMode(const std::string& mode);
+    void adoptRemoteMacs();
+
+    bool m_fpmMacSync = false;
+    /* An L3EvpnMH device always syncs MACs over FPM, whatever FDB_SYNC says. */
+    bool m_l3EvpnMh = false;
+    bool m_macSyncModePending = false;
+    std::string m_pendingMacSyncMode;
 
     ProducerStateTable m_fdbTable;
+    Table m_fdbTableRead;
     ProducerStateTable m_imetTable;
     ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
     SubscriberStateTable m_mclagRemoteFdbStateTable;
-    AppRestartAssist  *m_AppRestartAssist;
+    AppRestartAssist  *m_AppRestartAssist = nullptr;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    SubscriberStateTable m_stateFdbSyncTable;
+    Table m_stateFdbSyncTableRead;
+    Table m_cfgFdbSyncTableRead;
 
     struct m_local_fdb_info
     {
@@ -129,11 +168,11 @@ private:
 
     void updateAllLocalMac();
 
-    void macRefreshStateDB(int vlan, std::string kmac, uint8_t protocol);
+    void macRefreshStateDB(int vlan, std::string kmac);
 
     void updateMclagRemoteMac(struct m_fdb_info *info);
 
-    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac, uint8_t protocol);
+    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac);
 
     void macUpdateMclagRemoteCache(struct m_fdb_info *info);
 
@@ -147,7 +186,6 @@ private:
         std::string type;
         unsigned int vni;
         std::string ifname;
-        uint8_t protocol;
 
         // Nexthop destination value - interpretation depends on nhtype:
         // - nhtype == VTEP: contains remote VTEP IP address
@@ -171,7 +209,7 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type, uint8_t protocol);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
     void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
