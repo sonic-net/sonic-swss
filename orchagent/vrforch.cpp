@@ -99,14 +99,6 @@ bool VRFOrch::addOperation(const Request& request)
 
     const std::string& vrf_name = request.getKeyString(0);
     auto it = vrf_table_.find(vrf_name);
-    const uint32_t old_vni = getVRFmappedVNI(vrf_name);
-
-    if (vni_present && (old_vni != 0) && (vni != 0) && (vni != old_vni))
-    {
-        SWSS_LOG_ERROR("Rejecting live VNI reconfiguration for VRF '%s': old %u, requested %u",
-                       vrf_name.c_str(), old_vni, vni);
-        return true;
-    }
 
     if (vni_present && (vni != 0))
     {
@@ -114,9 +106,9 @@ bool VRFOrch::addOperation(const Request& request)
         {
             if ((mapping.first != vrf_name) && (mapping.second == vni))
             {
-                SWSS_LOG_ERROR("Rejecting VNI %u for VRF '%s'; it is already owned by VRF '%s'",
-                               vni, vrf_name.c_str(), mapping.first.c_str());
-                return true;
+                SWSS_LOG_NOTICE("Deferring VNI %u for VRF '%s'; it is currently owned by VRF '%s'",
+                                vni, vrf_name.c_str(), mapping.first.c_str());
+                return false;
             }
         }
     }
@@ -324,36 +316,39 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
     old_vni = getVRFmappedVNI(vrf_name);
     SWSS_LOG_INFO("VRF '%s' vni %d old_vni %d", vrf_name.c_str(), vni, old_vni);
 
-    if ((old_vni != 0) && (vni != 0) && (vni != old_vni))
-    {
-        SWSS_LOG_ERROR("Rejecting live VNI reconfiguration for VRF '%s': old %u, requested %u",
-                       vrf_name.c_str(), old_vni, vni);
-        return true;
-    }
-
     if (vni != 0)
     {
         for (const auto& mapping : vrf_vni_map_table_)
         {
             if ((mapping.first != vrf_name) && (mapping.second == vni))
             {
-                SWSS_LOG_ERROR("Rejecting VNI %u for VRF '%s'; it is already owned by VRF '%s'",
-                               vni, vrf_name.c_str(), mapping.first.c_str());
-                return true;
+                SWSS_LOG_NOTICE("Deferring VNI %u for VRF '%s'; it is currently owned by VRF '%s'",
+                                vni, vrf_name.c_str(), mapping.first.c_str());
+                return false;
             }
         }
     }
 
     if (old_vni != vni)
     {
-        if (vni == 0)
+        /*
+         * Configuration interfaces require an explicit delete followed by an
+         * add to replace a VRF VNI. APP_DB is desired-state storage, so that
+         * valid sequence can be coalesced into a nonzero-to-nonzero SET before
+         * OrchAgent observes the intermediate delete. Reconcile it by cleaning
+         * the old mapping before adding the new one.
+         */
+        if (old_vni != 0)
         {
             error = delVrfVNIMap(vrf_name, old_vni);
             if (error == false)
             {
                 return false;
             }
-        } else {
+        }
+
+        if (vni != 0)
+        {
             auto evpn_vtep_ptr = evpn_orch->getEVPNVtep();
             if (!evpn_vtep_ptr)
             {

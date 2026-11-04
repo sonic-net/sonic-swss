@@ -2348,16 +2348,23 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         const auto& existing = mapping.second;
         if ((existing.vni_id == vni_id) && (existing.vrf_name != vrf_name))
         {
-            SWSS_LOG_ERROR("Rejecting VNI %u for VRF '%s'; VXLAN map '%s' already assigns it to VRF '%s'",
-                           vni_id, vrf_name.c_str(), mapping.first.c_str(), existing.vrf_name.c_str());
-            return true;
+            SWSS_LOG_NOTICE("Deferring VNI %u for VRF '%s'; VXLAN map '%s' currently assigns it to VRF '%s'",
+                            vni_id, vrf_name.c_str(), mapping.first.c_str(), existing.vrf_name.c_str());
+            return false;
         }
 
-        if ((vrf_name == "default") && (existing.vrf_name == vrf_name))
+        if (existing.vrf_name == vrf_name)
         {
-            SWSS_LOG_ERROR("Rejecting duplicate default-VRF VXLAN mapping '%s'; existing map is '%s'",
-                           full_map_entry_name.c_str(), mapping.first.c_str());
-            return true;
+            /*
+             * A supported VNI replacement is expressed as an explicit DEL of
+             * the old mapping followed by a SET for a different key.  APP_DB
+             * key ordering can present that SET before the old DEL.  Keep the
+             * SET pending so it is retried after the old mapping is removed;
+             * consuming it here would leave APP_DB intent without hardware.
+             */
+            SWSS_LOG_NOTICE("Deferring VXLAN mapping '%s' for VRF '%s' while existing map '%s' is removed",
+                            full_map_entry_name.c_str(), vrf_name.c_str(), mapping.first.c_str());
+            return false;
         }
     }
 
@@ -2421,6 +2428,18 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
          * supported.
          */
         vrf_orch->markVniAsL3(vni_id);
+
+        /*
+         * A VRF-to-VNI map is a live user of the shared SIP tunnel just like
+         * a VLAN-to-VNI map.  Baseline VxlanVrfMapOrch did not account for
+         * this reference, so deleting the last L2 map could drive the count
+         * to zero and delete/recreate the tunnel underneath live L3 mapper
+         * entries.  The recreated tunnel owns different mapper OIDs, leaving
+         * the surviving VRF entries attached to the deleted mapper objects.
+         */
+        tunnel_obj->vlan_vrf_vni_count++;
+        SWSS_LOG_INFO("vni count increased to %d",
+                      tunnel_obj->vlan_vrf_vni_count);
 
         SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
@@ -2516,6 +2535,18 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
 
         vxlan_vrf_table_.erase(full_map_entry_name);
         vxlan_vrf_tunnel_.erase(vrf_name);
+
+        if (tunnel_obj->vlan_vrf_vni_count == 0)
+        {
+            SWSS_LOG_ERROR("VxlanVrfMapOrch tunnel '%s' has no reference for VRF map '%s'",
+                           tunnel_name.c_str(), full_map_entry_name.c_str());
+        }
+        else
+        {
+            tunnel_obj->vlan_vrf_vni_count--;
+            SWSS_LOG_NOTICE("vni count = %d",
+                            tunnel_obj->vlan_vrf_vni_count);
+        }
     }
     catch(const std::runtime_error& error)
     {
