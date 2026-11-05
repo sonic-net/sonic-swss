@@ -455,6 +455,34 @@ static uint64_t parseQueueStat(const string& field, const string& value)
     }
 }
 
+bool PfcWdBaseOrch::readQueueSaiStats(sai_object_id_t queueId, PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    // Zeroed up front so a failed read leaves no stale value behind.
+    counters = {};
+
+    static const vector<sai_stat_id_t> queueStatIds =
+    {
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_DROPPED_PACKETS,
+    };
+    vector<uint64_t> queueStats(queueStatIds.size());
+
+    sai_status_t status = sai_queue_api->get_queue_stats(
+            queueId, static_cast<uint32_t>(queueStatIds.size()), queueStatIds.data(), queueStats.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", queueId, status);
+        return false;
+    }
+
+    counters.txPkt = queueStats[0];
+    counters.txDropPkt = queueStats[1];
+
+    return true;
+}
+
 PfcWdQueueStats PfcWdBaseOrch::getQueueStats(const shared_ptr<Table>& countersTable,
                                              const string& queueIdStr)
 {

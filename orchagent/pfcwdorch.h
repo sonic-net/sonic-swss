@@ -108,6 +108,11 @@ public:
                                  const string& queueIdStr,
                                  const PfcWdQueueStats& stats);
 
+    // Read a queue's TX counters from SAI; RX is left at 0, the ingress side
+    // being the caller's to fill. False when the read fails, in which case the
+    // sample cannot be used.
+    static bool readQueueSaiStats(sai_object_id_t queueId, PfcWdHwStats& counters);
+
     // Record the start of a storm. A storm already in progress
     // (detectCount > restoreCount) is treated as the same storm.
     static void beginStormCounters(const shared_ptr<Table>& countersTable,

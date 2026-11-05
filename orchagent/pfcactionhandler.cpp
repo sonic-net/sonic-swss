@@ -494,32 +494,16 @@ bool PfcWdActionHandler::getHwCounters(PfcWdHwStats& counters)
 {
     SWSS_LOG_ENTER();
 
-    static const vector<sai_stat_id_t> queueStatIds =
+    if (!PfcWdBaseOrch::readQueueSaiStats(getQueue(), counters))
     {
-        SAI_QUEUE_STAT_PACKETS,
-        SAI_QUEUE_STAT_DROPPED_PACKETS,
-    };
+        return false;
+    }
 
     static const vector<sai_stat_id_t> pgStatIds =
     {
         SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS,
         SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS,
     };
-
-    vector<uint64_t> queueStats;
-    queueStats.resize(queueStatIds.size());
-
-    sai_status_t status = sai_queue_api->get_queue_stats(
-            getQueue(),
-            static_cast<uint32_t>(queueStatIds.size()),
-            queueStatIds.data(),
-            queueStats.data());
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", getQueue(), status);
-        return false;
-    }
 
     // PG counters not yet supported in Mellanox platform
     Port portInstance;
@@ -533,7 +517,7 @@ bool PfcWdActionHandler::getHwCounters(PfcWdHwStats& counters)
     vector<uint64_t> pgStats;
     pgStats.resize(pgStatIds.size());
 
-    status = sai_buffer_api->get_ingress_priority_group_stats(
+    sai_status_t status = sai_buffer_api->get_ingress_priority_group_stats(
             pg,
             static_cast<uint32_t>(pgStatIds.size()),
             pgStatIds.data(),
@@ -545,8 +529,6 @@ bool PfcWdActionHandler::getHwCounters(PfcWdHwStats& counters)
         return false;
     }
 
-    counters.txPkt = queueStats[0];
-    counters.txDropPkt = queueStats[1];
     counters.rxPkt = pgStats[0];
     counters.rxDropPkt = pgStats[1];
 

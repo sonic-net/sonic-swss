@@ -1065,37 +1065,12 @@ bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, PfcWdHwStats& counters
 {
     SWSS_LOG_ENTER();
 
-    // Zeroed up front so a failed read leaves no stale value behind.
-    counters = {};
-
-    // Read the queue from SAI, as the software watchdog does. This runs only on
+    // The shared SAI read, as the software watchdog uses. It runs only on
     // DETECTED, on RECOVERED and once a second while the queue is in storm, and
     // an ASIC-fresh sample cannot be reordered against another counter group's
-    // publish the way a COUNTERS_DB read can.
-    static const vector<sai_stat_id_t> queueStatIds =
-    {
-        SAI_QUEUE_STAT_PACKETS,
-        SAI_QUEUE_STAT_DROPPED_PACKETS,
-    };
-    vector<uint64_t> queueStats(queueStatIds.size());
-
-    sai_status_t status = sai_queue_api->get_queue_stats(
-            queueId, static_cast<uint32_t>(queueStatIds.size()), queueStatIds.data(), queueStats.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("Failed to read queue 0x%" PRIx64 " stats: %d", queueId, status);
-        return false;
-    }
-
-    // RX stays 0: the hardware watchdog acts only on the egress queue and has
-    // no ingress action to count.
-    counters.txPkt = queueStats[0];
-    counters.txDropPkt = queueStats[1];
-
-    SWSS_LOG_DEBUG("Read HW counters for queue 0x%" PRIx64 ": txPkt=%" PRIu64 ", txDropPkt=%" PRIu64,
-                   queueId, counters.txPkt, counters.txDropPkt);
-
-    return true;
+    // publish the way a COUNTERS_DB read can. RX stays 0: the hardware watchdog
+    // acts only on the egress queue and has no ingress action to count.
+    return PfcWdBaseOrch::readQueueSaiStats(queueId, counters);
 }
 
 void PfcWdHwOrch::initQueueCounters(const string& queueIdStr, sai_object_id_t queueId)
