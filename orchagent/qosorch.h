@@ -131,6 +131,17 @@ private:
     typedef map<string, qos_wred_thresholds_t> qos_wred_thresholds_store_t;
 
     static qos_wred_thresholds_store_t m_wredProfiles;
+
+    /* The enables and ECN mark mode last sent to SAI, which decide whether a colour's thresholds can be sent */
+    typedef struct {
+        bool green_enable;
+        bool yellow_enable;
+        bool red_enable;
+        sai_ecn_mark_mode_t ecn_mark_mode;
+    } qos_wred_modes_t;
+    typedef map<string, qos_wred_modes_t> qos_wred_modes_store_t;
+
+    static qos_wred_modes_store_t m_wredModes;
 };
 
 
