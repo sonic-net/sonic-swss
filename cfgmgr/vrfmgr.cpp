@@ -298,6 +298,10 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             SWSS_LOG_DEBUG("Event for mgmt VRF op %s", op.c_str());
         }
+        const bool is_default_vrf =
+            (consumer.getTableName() == CFG_VRF_TABLE_NAME) &&
+            (vrfName == DEFAULT_VRF);
+
         SWSS_LOG_DEBUG("Event for table %s vrf netdev %s id %s", consumer.getTableName().c_str(), vrfName.c_str(), op.c_str());
         if (op == SET_COMMAND)
         {
@@ -374,7 +378,7 @@ void VrfMgr::doTask(Consumer &consumer)
                     }
                 }
 
-                if (vrfName != DEFAULT_VRF)
+                if (!is_default_vrf)
                 {
                     if (!setLink(vrfName))
                     {
@@ -469,7 +473,7 @@ void VrfMgr::doTask(Consumer &consumer)
 
             if (consumer.getTableName() != CFG_VXLAN_EVPN_NVO_TABLE_NAME)
             {
-                if (vrfName != DEFAULT_VRF)
+                if (!is_default_vrf)
                 {
                     if (!delLink(vrfName))
                     {
