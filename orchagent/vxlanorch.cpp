@@ -1629,6 +1629,79 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
     return true;
 }
 
+bool VxlanTunnelOrch::removeTunnelMapReference(const string& tunnelName)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isTunnelExists(tunnelName))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' doesn't exist", tunnelName.c_str());
+        return false;
+    }
+
+    auto tunnel_obj = getVxlanTunnel(tunnelName);
+    if (tunnel_obj->vlan_vrf_vni_count == 0)
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' has no map reference to remove", tunnelName.c_str());
+        return true;
+    }
+
+    tunnel_obj->vlan_vrf_vni_count--;
+    SWSS_LOG_NOTICE("Vxlan tunnel '%s' VNI map reference count = %u",
+                    tunnelName.c_str(), tunnel_obj->vlan_vrf_vni_count);
+
+    if (tunnel_obj->vlan_vrf_vni_count != 0)
+    {
+        return true;
+    }
+
+    Port tunnelPort;
+    const auto src_vtep = tunnel_obj->getSrcIP().to_string();
+    const auto port_tunnel_name = getTunnelPortName(src_vtep, true);
+
+    // A referenced SIP tunnel cannot be removed yet.  The existing remote
+    // tunnel cleanup paths complete the deferred deletion when the final
+    // reference is released.
+    if (tunnel_obj->isTunnelReferenced())
+    {
+        tunnel_obj->del_tnl_hw_pending = true;
+        if (isDipTunnelsSupported())
+        {
+            SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion DIP Tunnel count = %d",
+                          tunnel_obj->getDipTunnelCnt());
+        }
+        else
+        {
+            gPortsOrch->getPort(port_tunnel_name, tunnelPort);
+            SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
+                          gPortsOrch->getBridgePortReferenceCount(tunnelPort));
+        }
+        return true;
+    }
+
+    if (!isDipTunnelsSupported())
+    {
+        if (!gPortsOrch->getPort(port_tunnel_name, tunnelPort))
+        {
+            SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
+            return true;
+        }
+        if (!gPortsOrch->removeBridgePort(tunnelPort))
+        {
+            SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
+                           port_tunnel_name.c_str(), tunnelPort.m_fdb_count);
+            return true;
+        }
+        gPortsOrch->removeTunnel(tunnelPort);
+    }
+
+    uint8_t mapper_list = 0;
+    TUNNELMAP_SET_VLAN(mapper_list);
+    TUNNELMAP_SET_VRF(mapper_list);
+    tunnel_obj->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+    return true;
+}
+
 bool VxlanTunnelOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -2227,63 +2300,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
         return false;
     }
 
-    auto tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
-    tunnel_obj->vlan_vrf_vni_count--;
-
-    SWSS_LOG_NOTICE("vni count = %d",tunnel_obj->vlan_vrf_vni_count);
-
-    // Update the map count and if this is the last mapping entry 
-    // make SAI calls to delete the tunnel and tunnel termination objects.
-
-    if (tunnel_obj->vlan_vrf_vni_count == 0)
-    {
-      Port tunnelPort;
-      auto src_vtep = tunnel_obj->getSrcIP().to_string();
-      auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
-      bool ret;
-
-      // If there are Dynamic DIP Tunnels referring to this SIP Tunnel 
-      // then mark it as pending for delete. 
-      if (!tunnel_obj->isTunnelReferenced())
-      {
-          if (!tunnel_orch->isDipTunnelsSupported())
-          {
-              ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
-              if (!ret)
-              {
-                  SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
-                  return true;
-              }
-              ret = gPortsOrch->removeBridgePort(tunnelPort);
-              if (!ret)
-              {
-                  SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
-                                 port_tunnel_name.c_str(), tunnelPort.m_fdb_count);
-                  return true;
-              }
-              gPortsOrch->removeTunnel(tunnelPort);
-          }
-          uint8_t mapper_list=0;
-          TUNNELMAP_SET_VLAN(mapper_list);
-          TUNNELMAP_SET_VRF(mapper_list);
-          tunnel_obj->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-      }
-      else
-      {
-          tunnel_obj->del_tnl_hw_pending = true;
-          if (tunnel_orch->isDipTunnelsSupported())
-          {
-              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion DIP Tunnel count = %d",
-                          tunnel_obj->getDipTunnelCnt());
-          }
-          else
-          {
-              gPortsOrch->getPort(port_tunnel_name, tunnelPort);
-              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
-                            gPortsOrch->getBridgePortReferenceCount(tunnelPort));
-          }
-      }
-    }
+    tunnel_orch->removeTunnelMapReference(tunnel_name);
 
     vector<string> map_entries = tokenize(tunnel_map_entry_name, '_');
     SWSS_LOG_INFO("Vxlan tunnel map '%s' size %zu", tunnel_map_entry_name.c_str(), 
@@ -2348,8 +2365,8 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         const auto& existing = mapping.second;
         if ((existing.vni_id == vni_id) && (existing.vrf_name != vrf_name))
         {
-            SWSS_LOG_NOTICE("Deferring VNI %u for VRF '%s'; VXLAN map '%s' currently assigns it to VRF '%s'",
-                            vni_id, vrf_name.c_str(), mapping.first.c_str(), existing.vrf_name.c_str());
+            SWSS_LOG_INFO("Deferring VNI %u for VRF '%s'; VXLAN map '%s' currently assigns it to VRF '%s'",
+                          vni_id, vrf_name.c_str(), mapping.first.c_str(), existing.vrf_name.c_str());
             return false;
         }
 
@@ -2362,8 +2379,8 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
              * SET pending so it is retried after the old mapping is removed;
              * consuming it here would leave APP_DB intent without hardware.
              */
-            SWSS_LOG_NOTICE("Deferring VXLAN mapping '%s' for VRF '%s' while existing map '%s' is removed",
-                            full_map_entry_name.c_str(), vrf_name.c_str(), mapping.first.c_str());
+            SWSS_LOG_INFO("Deferring VXLAN mapping '%s' for VRF '%s' while existing map '%s' is removed",
+                          full_map_entry_name.c_str(), vrf_name.c_str(), mapping.first.c_str());
             return false;
         }
     }
@@ -2536,17 +2553,7 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         vxlan_vrf_table_.erase(full_map_entry_name);
         vxlan_vrf_tunnel_.erase(vrf_name);
 
-        if (tunnel_obj->vlan_vrf_vni_count == 0)
-        {
-            SWSS_LOG_ERROR("VxlanVrfMapOrch tunnel '%s' has no reference for VRF map '%s'",
-                           tunnel_name.c_str(), full_map_entry_name.c_str());
-        }
-        else
-        {
-            tunnel_obj->vlan_vrf_vni_count--;
-            SWSS_LOG_NOTICE("vni count = %d",
-                            tunnel_obj->vlan_vrf_vni_count);
-        }
+        tunnel_orch->removeTunnelMapReference(tunnel_name);
     }
     catch(const std::runtime_error& error)
     {

@@ -52,8 +52,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_appVxlanVrfTableProducer(appDb, APP_VXLAN_VRF_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME),
-        m_cfgVrfTable(cfgDb, CFG_VRF_TABLE_NAME),
-        m_appEvpnNvoTable(appDb, APP_VXLAN_EVPN_NVO_TABLE_NAME)
+        m_cfgVrfTable(cfgDb, CFG_VRF_TABLE_NAME)
 {
     for (uint32_t i = VRF_TABLE_START; i < VRF_TABLE_END; i++)
     {
@@ -498,29 +497,36 @@ bool VrfMgr::doVrfEvpnNvoAddTask(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
     const auto& nvo_name = kfvKey(t);
-    string tunnel_name = "";
-    const vector<FieldValueTuple>& data = kfvFieldsValues(t);
-    for (auto idx : data)
+    string tunnel_name;
+    for (const auto& field_value : kfvFieldsValues(t))
     {
-        const auto &field = fvField(idx);
-        const auto &value = fvValue(idx);
-
+        const auto& field = fvField(field_value);
         if (field == "source_vtep")
         {
-            tunnel_name = value;
+            tunnel_name = fvValue(field_value);
         }
     }
 
-    if (m_evpnVxlanTunnel.empty())
+    if (tunnel_name.empty())
     {
+        SWSS_LOG_ERROR("EVPN NVO %s has no source_vtep", nvo_name.c_str());
+        return true;
+    }
+
+    if (m_evpnVxlanNvo.empty())
+    {
+        m_evpnVxlanNvo = nvo_name;
         m_evpnVxlanTunnel = tunnel_name;
         VrfVxlanTableSync(true);
         SWSS_LOG_INFO("Added evpn nvo %s with tunnel %s", nvo_name.c_str(), tunnel_name.c_str());
     }
     else
     {
-        SWSS_LOG_NOTICE("Ignoring update for existing EVPN NVO %s: active tunnel is %s, requested tunnel is %s",
-                        nvo_name.c_str(), m_evpnVxlanTunnel.c_str(), tunnel_name.c_str());
+        if (tunnel_name != m_evpnVxlanTunnel)
+        {
+            SWSS_LOG_NOTICE("Ignoring update for existing EVPN NVO %s: active tunnel is %s, requested tunnel is %s",
+                            nvo_name.c_str(), m_evpnVxlanTunnel.c_str(), tunnel_name.c_str());
+        }
     }
 
     return true;
@@ -530,30 +536,23 @@ bool VrfMgr::doVrfEvpnNvoDelTask(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
     const auto& nvo_name = kfvKey(t);
-    string app_nvo_name = nvo_name;
-    replace(app_nvo_name.begin(), app_nvo_name.end(), config_db_key_delimiter, delimiter);
 
-    vector<FieldValueTuple> accepted_nvo;
-    if (m_appEvpnNvoTable.get(app_nvo_name, accepted_nvo))
+    if (nvo_name != m_evpnVxlanNvo)
     {
-        /*
-         * vxlanmgrd owns NVO acceptance and retains the APP_DB entry while
-         * dependent VXLAN maps exist.  Keep this CONFIG_DB delete pending so
-         * all VRF-to-VNI mappings remain aligned with that accepted state.
-         */
-        SWSS_LOG_NOTICE("EVPN NVO %s deletion pending while accepted APP_DB state remains",
-                        nvo_name.c_str());
-        return false;
+        SWSS_LOG_INFO("Ignoring deletion of inactive EVPN NVO %s; active NVO is %s",
+                      nvo_name.c_str(), m_evpnVxlanNvo.c_str());
+        return true;
     }
 
-    if (!m_evpnVxlanTunnel.empty())
+    const string tunnel_name = m_evpnVxlanTunnel;
+    if (!tunnel_name.empty())
     {
-        const string tunnel_name = m_evpnVxlanTunnel;
         VrfVxlanTableSync(false);
-        m_evpnVxlanTunnel.clear();
-
-        SWSS_LOG_INFO("Removed evpn nvo %s with tunnel %s", nvo_name.c_str(), tunnel_name.c_str());
     }
+
+    m_evpnVxlanNvo.clear();
+    m_evpnVxlanTunnel.clear();
+    SWSS_LOG_INFO("Removed evpn nvo %s with tunnel %s", nvo_name.c_str(), tunnel_name.c_str());
     return true;
 }
 
@@ -581,14 +580,6 @@ bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vn
         break;
     }
 
-    const uint32_t old_vni = getVRFmappedVNI(vrf_name);
-    if ((old_vni != 0) && (vni != 0) && (vni != old_vni))
-    {
-        SWSS_LOG_ERROR("Live VNI reconfiguration for VRF %s is not supported: old %u, requested %u",
-                       vrf_name.c_str(), old_vni, vni);
-        return false;
-    }
-
     if (vni != 0)
     {
         for (const auto& mapping : m_vrfVniMapTable)
@@ -602,8 +593,8 @@ bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vn
                  * Supported CLIs reject permanent duplicate ownership before
                  * writing CONFIG_DB.
                  */
-                SWSS_LOG_NOTICE("Deferring VNI %u for VRF %s; it is currently mapped to VRF %s",
-                                vni, vrf_name.c_str(), mapping.first.c_str());
+                SWSS_LOG_INFO("Deferring VNI %u for VRF %s; it is currently mapped to VRF %s",
+                              vni, vrf_name.c_str(), mapping.first.c_str());
                 retry = true;
                 return false;
             }
@@ -639,6 +630,19 @@ bool VrfMgr::doVrfVxlanTableCreateTask(const KeyOpFieldsValuesTuple & t)
     if (vni == 0)
     {
         return doVrfVxlanTableRemoveTask(t);
+    }
+
+    if (old_vni != 0)
+    {
+        /*
+         * SubscriberStateTable can coalesce an explicit VNI removal and the
+         * following add into one final SET.  Preserve the intended
+         * break-before-make lifecycle instead of rejecting the SET and
+         * leaving CONFIG_DB and APP_DB on different VNIs.
+         */
+        SWSS_LOG_NOTICE("Replacing VRF %s VNI mapping: remove %u before adding %u",
+                        vrf_name.c_str(), old_vni, vni);
+        doVrfVxlanTableRemoveTask(t);
     }
 
     m_vrfVniMapTable[vrf_name] = vni;

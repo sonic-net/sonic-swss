@@ -106,8 +106,8 @@ bool VRFOrch::addOperation(const Request& request)
         {
             if ((mapping.first != vrf_name) && (mapping.second == vni))
             {
-                SWSS_LOG_NOTICE("Deferring VNI %u for VRF '%s'; it is currently owned by VRF '%s'",
-                                vni, vrf_name.c_str(), mapping.first.c_str());
+                SWSS_LOG_INFO("Deferring VNI %u for VRF '%s'; it is currently owned by VRF '%s'",
+                              vni, vrf_name.c_str(), mapping.first.c_str());
                 return false;
             }
         }
@@ -322,8 +322,8 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
         {
             if ((mapping.first != vrf_name) && (mapping.second == vni))
             {
-                SWSS_LOG_NOTICE("Deferring VNI %u for VRF '%s'; it is currently owned by VRF '%s'",
-                                vni, vrf_name.c_str(), mapping.first.c_str());
+                SWSS_LOG_INFO("Deferring VNI %u for VRF '%s'; it is currently owned by VRF '%s'",
+                              vni, vrf_name.c_str(), mapping.first.c_str());
                 return false;
             }
         }
