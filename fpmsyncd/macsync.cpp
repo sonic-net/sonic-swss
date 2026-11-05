@@ -1277,7 +1277,10 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     {
         fvVector.emplace_back("remote_vtep", vtep);
     }
-    fvVector.emplace_back("type", (ndm->ndm_state & NUD_NOARP) ? "static" : "dynamic");
+    /* zebra pins an Ethernet Segment port MAC with NUD_NOARP only to stop it ageing; "dynamic"
+     * makes FdbOrch install a static entry that a local learn may move. */
+    const bool isStatic = esInterface.empty() && (ndm->ndm_state & NUD_NOARP);
+    fvVector.emplace_back("type", isStatic ? "static" : "dynamic");
     fvVector.emplace_back("vni", to_string(vni));
 
     /* zebra creates a group in the kernel before it sends MACs on it, and the

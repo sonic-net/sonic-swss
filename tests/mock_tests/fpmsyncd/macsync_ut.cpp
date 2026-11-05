@@ -621,7 +621,8 @@ TEST_F(MacSyncTest, LocalMacOnAnUnresolvedPortSendsNothing)
  * A MAC on an Ethernet Segment we also hold locally is reachable through our own
  * access port, so zebra sends it against that port with neither a VTEP nor a
  * nexthop group. It must be programmed against the port, not discarded as the
- * bridge-side duplicate, and FdbOrch disables ageing on it.
+ * bridge-side duplicate. zebra's NUD_NOARP only keeps it from ageing: the row is
+ * dynamic, so FdbOrch installs a static entry that a local learn may move.
  */
 TEST_F(MacSyncTest, MacOnLocalEthernetSegmentProgrammedAgainstItsPort)
 {
@@ -640,7 +641,7 @@ TEST_F(MacSyncTest, MacOnLocalEthernetSegmentProgrammedAgainstItsPort)
     EXPECT_EQ(fieldValue(values, "ifname"), "lo");
     EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
     EXPECT_EQ(fieldValue(values, "nexthop_group"), "");
-    EXPECT_EQ(fieldValue(values, "type"), "static");
+    EXPECT_EQ(fieldValue(values, "type"), "dynamic");
 
     cfgEs.del("lo");
 }
