@@ -4,9 +4,11 @@
 #include "crmorch.h"
 #include "routeorch.h"
 #include "srv6orch.h"
+#include "switchorch.h"
 #include "bulker.h"
 #include "logger.h"
 #include "swssnet.h"
+#include "sai_serialize.h"
 
 extern sai_object_id_t gSwitchId;
 
@@ -15,11 +17,13 @@ extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch *gSrv6Orch;
+extern SwitchOrch *gSwitchOrch;
 
 extern size_t gMaxBulkSize;
 
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
+extern sai_switch_api_t*           sai_switch_api;
 
 NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
@@ -382,6 +386,11 @@ void NhgOrch::doTask(Consumer& consumer)
                 {
                     success = nhg_ptr->update(nhg_key);
 
+                    if (success)
+                    {
+                        updateProtNhgMembers(index);
+                    }
+
                     /* Keep the msg in loop if any member path is not available yet */
                     if (is_recursive && non_existent_member)
                     {
@@ -485,6 +494,31 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
         }
     }
 
+    /*
+     * Also validate the next hop in any protection groups containing it.  This
+     * is what completes deferred member resolution: a protection NHG may be
+     * created before its next hops resolve, and its members stay unsynced until
+     * the next hop turns up here.
+     *
+     * There is deliberately no counterpart in invalidateNextHop(); see the
+     * comment there.
+     */
+    for (auto& it : m_protNhgs)
+    {
+        auto& nhg = it.second.nhg;
+
+        /* Members are keyed by role, so there is no membership test to make
+         * here: the group decides for itself which of its members, if any,
+         * this next hop unblocks. */
+        if (!nhg->validateNextHop(nh_key))
+        {
+            SWSS_LOG_ERROR("Failed to validate next hop %s in protection group %s",
+                            nh_key.to_string().c_str(),
+                            it.first.c_str());
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -521,6 +555,14 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
             }
         }
     }
+
+    /*
+     * Protection NHGs are deliberately skipped: both legs stay programmed and
+     * switching to the standby is the owning application's decision, applied
+     * with SAI_NEXT_HOP_GROUP_ATTR_SET_SWITCHOVER or left to the hardware via
+     * the monitored object.  Dropping a member here would pre-empt that, and
+     * would delete the primary's monitored object with it.
+     */
 
     return true;
 }
@@ -946,6 +988,18 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
             continue;
         }
 
+        /*
+         * getNhId() may create the next hop over NeighOrch, whose
+         * addNextHop() calls NhgOrch::validateNextHop() and reenters this
+         * group, syncing this member.  Re-check, as creating a member for an
+         * already-synced key would leak a duplicate SAI member that m_members
+         * does not track and this group can never remove.
+         */
+        if (nhgm.isSynced())
+        {
+            continue;
+        }
+
         /* If the neighbor's interface is down, skip from being syncd. */
         if (gNeighOrch->isNextHopFlagSet(nh_key, NHFLAGS_IFDOWN))
         {
@@ -1160,4 +1214,771 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
     }
 
     return true;
+}
+
+/* ----------------------------------------------------------------------- */
+/* Protection NHG management APIs                                          */
+/* ----------------------------------------------------------------------- */
+
+void NhgOrch::probeProtectionCapabilities()
+{
+    if (m_protCapChecked)
+    {
+        return;
+    }
+
+    m_protCapChecked = true;
+
+    /*
+     * Protection support, and separately the backup-group hint. The hint is
+     * the only use of SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION: it marks the
+     * standby leg's recursive NHG as a backup group and carries no protection
+     * or switchover semantics of its own.
+     */
+    const auto *meta = sai_metadata_get_attr_metadata(
+                           SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                           SAI_NEXT_HOP_GROUP_ATTR_TYPE);
+    if (!meta || !meta->isenum)
+    {
+        SWSS_LOG_NOTICE("Cannot query NHG type enum metadata");
+    }
+    else
+    {
+        vector<int32_t> values_list(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(values_list.size());
+        values.list = values_list.data();
+
+        sai_status_t status = sai_query_attribute_enum_values_capability(
+                                  gSwitchId,
+                                  SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                  SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                                  &values);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to query NHG type capabilities, rv: %d", status);
+        }
+        else
+        {
+            for (uint32_t i = 0; i < values.count; i++)
+            {
+                if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_PROTECTION)
+                {
+                    m_protectionSupported = true;
+                }
+                else if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_HW_PROTECTION)
+                {
+                    m_backupGroupHintSupported = true;
+                }
+            }
+        }
+    }
+
+    probeMonitoredObjectTypes();
+
+    SWSS_LOG_NOTICE("Protection NHG support: protection %s, HW switchover %s "
+                    "(%zu monitored object type(s)), backup-group hint %s",
+                    m_protectionSupported ? "yes" : "no",
+                    m_monitoredObjectTypes.empty() ? "no" : "yes",
+                    m_monitoredObjectTypes.size(),
+                    m_backupGroupHintSupported ? "yes" : "no");
+
+    /* Publish to STATE_DB|SWITCH_CAPABILITY so consumers and CLI can discover
+     * what is available before creating NHGs or building monitored objects. */
+    if (gSwitchOrch)
+    {
+        gSwitchOrch->set_switch_capability(
+            { swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_PROTECTION_CAPABLE,
+                                    m_protectionSupported ? "true" : "false"),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_HW_SWITCHOVER_CAPABLE,
+                                    m_monitoredObjectTypes.empty() ? "false" : "true"),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_MONITORED_OBJECT_TYPES,
+                                    monitoredObjectTypesToString()),
+              swss::FieldValueTuple(SWITCH_CAPABILITY_TABLE_NHG_BACKUP_GROUP_HINT_CAPABLE,
+                                    m_backupGroupHintSupported ? "true" : "false") });
+    }
+}
+
+/*
+ * Hardware switchover support is a property of the monitored object, not of a
+ * next hop group type: read the object types SAI accepts as a
+ * SAI_NEXT_HOP_GROUP_MEMBER_ATTR_MONITORED_OBJECT. A non-empty list means the
+ * hardware can switch over on its own, and the list is the accepted type set.
+ * Empty, unimplemented, or errored all leave every protection NHG SW-driven.
+ */
+void NhgOrch::probeMonitoredObjectTypes()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<int32_t> types(SAI_OBJECT_TYPE_MAX);
+
+    attr.id = SAI_SWITCH_ATTR_SUPPORTED_PROTECTED_OBJECT_TYPE;
+    attr.value.s32list.count = static_cast<uint32_t>(types.size());
+    attr.value.s32list.list = types.data();
+
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+            status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            SWSS_LOG_NOTICE("Monitored objects not supported by the platform; "
+                            "protection NHGs will be software driven");
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to query supported protected object types, "
+                          "rv: %d; protection NHGs will be software driven",
+                          status);
+        }
+        return;
+    }
+
+    for (uint32_t i = 0; i < attr.value.s32list.count; i++)
+    {
+        m_monitoredObjectTypes.insert(
+            static_cast<sai_object_type_t>(attr.value.s32list.list[i]));
+    }
+}
+
+string NhgOrch::monitoredObjectTypesToString() const
+{
+    string types;
+
+    for (const auto &type : m_monitoredObjectTypes)
+    {
+        if (!types.empty())
+        {
+            types += ",";
+        }
+        types += sai_serialize_object_type(type);
+    }
+
+    return types;
+}
+
+bool NhgOrch::isProtectionSupported()
+{
+    probeProtectionCapabilities();
+    return m_protectionSupported;
+}
+
+bool NhgOrch::isHwSwitchoverSupported()
+{
+    probeProtectionCapabilities();
+    return !m_monitoredObjectTypes.empty();
+}
+
+const set<sai_object_type_t>& NhgOrch::getSupportedMonitoredObjectTypes()
+{
+    probeProtectionCapabilities();
+    return m_monitoredObjectTypes;
+}
+
+bool NhgOrch::isBackupGroupHintSupported()
+{
+    probeProtectionCapabilities();
+    return m_backupGroupHintSupported;
+}
+
+bool NhgOrch::createProtNhg(const string &key,
+                             const NextHopKey &primary_nh,
+                             const NextHopKey &standby_nh)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_INFO("Protection NHG %s already exists", key.c_str());
+        return true;
+    }
+
+    if (!isProtectionSupported())
+    {
+        SWSS_LOG_ERROR("Protection NHGs not supported by ASIC, cannot create "
+                       "protection NHG %s", key.c_str());
+        return false;
+    }
+
+    if (!hasNhgCapacity(1))
+    {
+        SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s",
+                       key.c_str());
+        return false;
+    }
+
+    auto nhg = make_unique<ProtNhg>(key, primary_nh, standby_nh);
+
+    return finalizeProtNhg(key, move(nhg),
+                           "primary: " + primary_nh.to_string() +
+                           ", standby: " + standby_nh.to_string());
+}
+
+string NhgOrch::buildProtNhgKey(const NextHopKey &primary_nh,
+                                 const NextHopKey &standby_nh)
+{
+    return "prot:" + primary_nh.to_string() + "|" + standby_nh.to_string();
+}
+
+string NhgOrch::buildProtNhgKey(const NextHopGroupKey &primary_nhg_key,
+                                 const NextHopGroupKey &standby_nhg_key)
+{
+    return "prot:" + primary_nhg_key.to_string() + "|" + standby_nhg_key.to_string();
+}
+
+/* Indices live in a different key space than membership, so they get their own
+ * prefix: two protection groups built from the same next hops, one owning its
+ * legs and one sharing them, are different objects and must not collide. */
+string NhgOrch::buildProtNhgSharedKey(const string &primary_nhg_index,
+                                       const string &standby_nhg_index)
+{
+    return "prot-shared:" + primary_nhg_index + "|" + standby_nhg_index;
+}
+
+bool NhgOrch::createProtNhg(const NextHopKey &primary_nh,
+                             const NextHopKey &standby_nh)
+{
+    return createProtNhg(buildProtNhgKey(primary_nh, standby_nh),
+                         primary_nh, standby_nh);
+}
+
+bool NhgOrch::hasNhgCapacity(unsigned count) const
+{
+    SWSS_LOG_ENTER();
+
+    return gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() + count <=
+           gRouteOrch->getMaxNhgCount();
+}
+
+unique_ptr<NextHopGroup> NhgOrch::createOwnedNhg(const NextHopGroupKey &nhg_key,
+                                                  const string &prot_key,
+                                                  const char *role)
+{
+    SWSS_LOG_ENTER();
+
+    auto nhg = make_unique<NextHopGroup>(nhg_key, false);
+
+    if (!nhg->sync())
+    {
+        SWSS_LOG_WARN("Owned %s NHG %s of protection NHG %s is not fully "
+                      "resolved yet; it will be completed as its next hops "
+                      "are validated",
+                      role, nhg_key.to_string().c_str(), prot_key.c_str());
+    }
+
+    return nhg;
+}
+
+void NhgOrch::updateProtNhgMembers(const string &nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it : m_protNhgs)
+    {
+        if (!it.second.nhg->updateSharedMember(nhg_index))
+        {
+            SWSS_LOG_ERROR("Failed to update protection NHG %s after NHG %s "
+                           "changed", it.first.c_str(), nhg_index.c_str());
+        }
+    }
+}
+
+bool NhgOrch::finalizeProtNhg(const string &key,
+                               unique_ptr<ProtNhg> nhg,
+                               const string &desc)
+{
+    SWSS_LOG_ENTER();
+
+    bool synced = nhg->sync();
+
+    /* The SAI group itself is what makes the NHG usable/registerable; a
+     * member left unresolved doesn't fail creation, it self-heals later
+     * via validateNextHop(). */
+    if (!nhg->isSynced())
+    {
+        SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
+        return false;
+    }
+
+    if (!synced)
+    {
+        SWSS_LOG_WARN("Protection NHG %s created with unresolved member(s); "
+                      "will complete once the next hop(s) are validated",
+                      key.c_str());
+    }
+
+    m_protNhgs.emplace(key, NhgEntry<ProtNhg>(move(nhg)));
+
+    SWSS_LOG_NOTICE("Created protection NHG %s (%s)", key.c_str(), desc.c_str());
+
+    return true;
+}
+
+bool NhgOrch::createProtNhg(const NextHopGroupKey &primary_nhg_key,
+                             const NextHopGroupKey &standby_nhg_key)
+{
+    return createProtNhg(buildProtNhgKey(primary_nhg_key, standby_nhg_key),
+                         primary_nhg_key, standby_nhg_key);
+}
+
+bool NhgOrch::createProtNhg(const string &key,
+                             const NextHopGroupKey &primary_nhg_key,
+                             const NextHopGroupKey &standby_nhg_key)
+{
+    SWSS_LOG_ENTER();
+
+    if (primary_nhg_key.getSize() == 0)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s primary group key is empty", key.c_str());
+        return false;
+    }
+
+    if (standby_nhg_key.getSize() == 0)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s standby group key is empty", key.c_str());
+        return false;
+    }
+
+    /*
+     * Owning the legs means identical membership produces two distinct SAI
+     * groups with different IDs, which ProtNhg::sync()'s same-ID check cannot
+     * see. Reject it here instead: legs carrying the same next hops protect
+     * nothing.
+     */
+    if (primary_nhg_key == standby_nhg_key)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s primary and standby group keys are "
+                       "identical", key.c_str());
+        return false;
+    }
+
+    /* Idempotent re-create: short-circuit before capacity checks so a repeat
+     * call still returns success, matching the individual-NH overload's
+     * contract. */
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_INFO("Protection NHG %s already exists", key.c_str());
+        return true;
+    }
+
+    if (!isProtectionSupported())
+    {
+        SWSS_LOG_ERROR("Protection NHGs not supported by ASIC, cannot create "
+                       "protection NHG %s", key.c_str());
+        return false;
+    }
+
+    /*
+     * Three groups: one per owned leg, plus the protection group itself. A
+     * single-next-hop leg may end up aliasing its next hop instead of taking a
+     * group, so this can over-reserve, but under-reserving would fail halfway
+     * through and leave the caller with nothing usable.
+     */
+    if (!hasNhgCapacity(3))
+    {
+        SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s "
+                       "with owned member groups", key.c_str());
+        return false;
+    }
+
+    auto primary_nhg = createOwnedNhg(primary_nhg_key, key, "primary");
+    auto standby_nhg = createOwnedNhg(standby_nhg_key, key, "standby");
+
+    auto nhg = make_unique<ProtNhg>(
+        key,
+        ProtNhgMember::ownedNhg(ProtNhgRole::PRIMARY, move(primary_nhg)),
+        ProtNhgMember::ownedNhg(ProtNhgRole::STANDBY, move(standby_nhg)));
+
+    return finalizeProtNhg(key, move(nhg),
+                           "owned primary NHG: " + primary_nhg_key.to_string() +
+                           ", owned standby NHG: " + standby_nhg_key.to_string());
+}
+
+bool NhgOrch::createProtNhgShared(const string &key,
+                                   const string &primary_nhg_index,
+                                   const string &standby_nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    if (primary_nhg_index.empty() || standby_nhg_index.empty())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s: member NHG index is empty", key.c_str());
+        return false;
+    }
+
+    /* Idempotent re-create: short-circuit before reference / capacity checks
+     * so a repeat call after a transient member-NHG removal still returns
+     * success, matching the individual-NH overload's contract. */
+    if (m_protNhgs.find(key) != m_protNhgs.end())
+    {
+        SWSS_LOG_INFO("Protection NHG %s already exists", key.c_str());
+        return true;
+    }
+
+    if (!isProtectionSupported())
+    {
+        SWSS_LOG_ERROR("Protection NHGs not supported by ASIC, cannot create "
+                       "protection NHG %s", key.c_str());
+        return false;
+    }
+
+    /*
+     * Both legs must already exist, and neither may be recursive or temporary:
+     * a temporary group stands for a single next hop of the set the caller
+     * asked for, and it is replaced by a different SAI object when it is
+     * promoted. NhgOrch applies the same rule to its own nested groups.
+     */
+    auto checkLeg = [&](const char *role, const string &index) -> bool
+    {
+        if (!hasNhg(index))
+        {
+            SWSS_LOG_ERROR("Protection NHG %s: %s NHG %s does not exist",
+                           key.c_str(), role, index.c_str());
+            return false;
+        }
+
+        const NextHopGroup &member_nhg = getNhg(index);
+
+        if (member_nhg.isRecursive() || member_nhg.isTemp())
+        {
+            SWSS_LOG_ERROR("Protection NHG %s: %s NHG %s is %s and cannot back "
+                           "a protection leg",
+                           key.c_str(), role, index.c_str(),
+                           member_nhg.isTemp() ? "temporary" : "recursive");
+            return false;
+        }
+
+        return true;
+    };
+
+    if (!checkLeg("primary", primary_nhg_index) ||
+        !checkLeg("standby", standby_nhg_index))
+    {
+        return false;
+    }
+
+    if (!hasNhgCapacity(1))
+    {
+        SWSS_LOG_ERROR("NHG capacity exhausted, cannot create protection NHG %s",
+                       key.c_str());
+        return false;
+    }
+
+    auto nhg = make_unique<ProtNhg>(
+        key,
+        ProtNhgMember::sharedNhg(ProtNhgRole::PRIMARY, primary_nhg_index),
+        ProtNhgMember::sharedNhg(ProtNhgRole::STANDBY, standby_nhg_index));
+
+    return finalizeProtNhg(key, move(nhg),
+                           "shared primary NHG: " + primary_nhg_index +
+                           ", shared standby NHG: " + standby_nhg_index);
+}
+
+bool NhgOrch::createProtNhgShared(const string &primary_nhg_index,
+                                   const string &standby_nhg_index)
+{
+    SWSS_LOG_ENTER();
+
+    return createProtNhgShared(
+        buildProtNhgSharedKey(primary_nhg_index, standby_nhg_index),
+        primary_nhg_index, standby_nhg_index);
+}
+
+bool NhgOrch::removeProtNhg(const string &key)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    if (it->second.ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Protection NHG %s still referenced (ref_count=%u)",
+                       key.c_str(), it->second.ref_count);
+        return false;
+    }
+
+    if (!it->second.nhg->remove())
+    {
+        SWSS_LOG_ERROR("Failed to remove protection NHG %s from SAI", key.c_str());
+        return false;
+    }
+
+    m_protNhgs.erase(it);
+
+    SWSS_LOG_NOTICE("Removed protection NHG %s", key.c_str());
+
+    return true;
+}
+
+bool NhgOrch::hasProtNhg(const string &key) const
+{
+    SWSS_LOG_ENTER();
+    return m_protNhgs.find(key) != m_protNhgs.end();
+}
+
+const ProtNhg& NhgOrch::getProtNhg(const string &key) const
+{
+    SWSS_LOG_ENTER();
+    return *m_protNhgs.at(key).nhg;
+}
+
+sai_object_id_t NhgOrch::getProtNhgId(const string &key) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return it->second.nhg->getId();
+}
+
+bool NhgOrch::setProtNhgAdminRole(const string &key,
+                                   sai_next_hop_group_admin_role_t admin_role)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->setAdminRole(admin_role);
+}
+
+bool NhgOrch::setProtNhgSwitchover(const string &key, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->setSwitchover(enable);
+}
+
+bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
+                                            ProtNhgRole role,
+                                            sai_object_id_t monitored_oid)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    if (monitored_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Cannot attach a null monitored object to protection "
+                       "NHG %s; use detachProtNhgMonitoredObject()", key.c_str());
+        return false;
+    }
+
+    /* The advertised type list is authoritative, so an unsupported object is
+     * refused here rather than by a failing SAI call. */
+    sai_object_type_t obj_type = sai_object_type_query(monitored_oid);
+
+    if (getSupportedMonitoredObjectTypes().count(obj_type) == 0)
+    {
+        SWSS_LOG_ERROR("Object type %s is not supported as a monitored object, "
+                       "cannot attach it to protection NHG %s",
+                       sai_serialize_object_type(obj_type).c_str(), key.c_str());
+        return false;
+    }
+
+    /*
+     * Clear any standing software switchover first: once the monitored object
+     * is attached the hardware owns the choice of active leg, and a leftover
+     * SET_SWITCHOVER would fight it.
+     */
+    ProtNhg &nhg = *it->second.nhg;
+
+    if (!nhg.isHwAutonomous() && !nhg.setSwitchover(false))
+    {
+        SWSS_LOG_ERROR("Failed to clear switchover on protection NHG %s before "
+                       "attaching monitored object", key.c_str());
+        return false;
+    }
+
+    if (!nhg.updateMemberMonitoredObject(role, monitored_oid))
+    {
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Attached monitored object %s to the %s member of protection "
+                    "NHG %s; switchover is now HW-autonomous",
+                    sai_serialize_object_id(monitored_oid).c_str(),
+                    (role == ProtNhgRole::PRIMARY) ? "primary" : "standby",
+                    key.c_str());
+
+    return true;
+}
+
+bool NhgOrch::attachProtNhgMonitoredObject(const string &key,
+                                            const NextHopKey &nh_key,
+                                            sai_object_id_t monitored_oid)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    ProtNhgRole role;
+
+    if (!it->second.nhg->getMemberRole(nh_key, role))
+    {
+        SWSS_LOG_ERROR("Next hop %s does not address a member of protection "
+                       "NHG %s", nh_key.to_string().c_str(), key.c_str());
+        return false;
+    }
+
+    return attachProtNhgMonitoredObject(key, role, monitored_oid);
+}
+
+bool NhgOrch::detachProtNhgMonitoredObject(const string &key, ProtNhgRole role)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    /*
+     * Drop the admin-role override while it is still writable, so the group
+     * does not carry a stale override into SW-driven mode.
+     */
+    ProtNhg &nhg = *it->second.nhg;
+
+    if (nhg.isHwAutonomous() &&
+        !nhg.setAdminRole(SAI_NEXT_HOP_GROUP_ADMIN_ROLE_AUTO))
+    {
+        SWSS_LOG_ERROR("Failed to clear the admin role on protection NHG %s "
+                       "before detaching its monitored object", key.c_str());
+        return false;
+    }
+
+    if (!nhg.updateMemberMonitoredObject(role, SAI_NULL_OBJECT_ID))
+    {
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Detached monitored object from the %s member of protection "
+                    "NHG %s; switchover is now SW-driven",
+                    (role == ProtNhgRole::PRIMARY) ? "primary" : "standby",
+                    key.c_str());
+
+    return true;
+}
+
+bool NhgOrch::detachProtNhgMonitoredObject(const string &key,
+                                            const NextHopKey &nh_key)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    ProtNhgRole role;
+
+    if (!it->second.nhg->getMemberRole(nh_key, role))
+    {
+        SWSS_LOG_ERROR("Next hop %s does not address a member of protection "
+                       "NHG %s", nh_key.to_string().c_str(), key.c_str());
+        return false;
+    }
+
+    return detachProtNhgMonitoredObject(key, role);
+}
+
+bool NhgOrch::getProtNhgMemberObservedRole(
+    const string &key,
+    ProtNhgRole role,
+    sai_next_hop_group_member_observed_role_t &observed_role) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->getMemberObservedRole(role, observed_role);
+}
+
+bool NhgOrch::getProtNhgMemberObservedRole(
+    const string &key,
+    const NextHopKey &nh_key,
+    sai_next_hop_group_member_observed_role_t &observed_role) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->getMemberObservedRole(nh_key, observed_role);
+}
+
+bool NhgOrch::getProtNhgAllObservedRoles(
+    const string &key,
+    map<ProtNhgRole, sai_next_hop_group_member_observed_role_t> &observed_roles) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_protNhgs.find(key);
+    if (it == m_protNhgs.end())
+    {
+        SWSS_LOG_ERROR("Protection NHG %s does not exist", key.c_str());
+        return false;
+    }
+
+    return it->second.nhg->getAllMemberObservedRoles(observed_roles);
+}
+
+void NhgOrch::incProtNhgRefCount(const string &key)
+{
+    SWSS_LOG_ENTER();
+    ++m_protNhgs.at(key).ref_count;
+}
+
+void NhgOrch::decProtNhgRefCount(const string &key)
+{
+    SWSS_LOG_ENTER();
+
+    auto &entry = m_protNhgs.at(key);
+    assert(entry.ref_count > 0);
+    --entry.ref_count;
 }
