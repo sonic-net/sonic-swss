@@ -3,12 +3,16 @@
 
 #include <vector>
 #include <set>
+#include <map>
 #include <unordered_map>
 #include <algorithm>
 #include <bitset>
+#include <deque>
 #include <tuple>
 
 #include "aclorch.h"
+#include "bulker.h"
+#include "macaddress.h"
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
@@ -463,6 +467,128 @@ struct MonitorUpdate
     std::string vnet;
 };
 
+struct RouteOrchContext
+{
+    RouteBulkContext ctx;
+    NextHopGroupKey nhg;
+    bool is_set_op;
+    RouteOrchContext(const std::string& key, bool is_set, const NextHopGroupKey& nexthops)
+        : ctx(key, is_set), nhg(nexthops), is_set_op(is_set) {}
+};
+
+struct TunnelRouteContext
+{
+    enum class SaiOp
+    {
+        NONE,
+        ADD,
+        UPDATE,
+        DEL
+    };
+
+    std::deque<sai_status_t> object_statuses;
+    IpPrefix ip_prefix;
+    string vnet;
+    sai_object_id_t vr_id;
+    NextHopGroupKey nhg;
+    NextHopGroupKey primary;
+    NextHopGroupKey secondary;
+    string profile;
+    IpPrefix adv_prefix;
+    string monitoring;
+    bool is_set_op;
+    SaiOp sai_op;
+    bool is_fg_route = false;
+    bool was_fg = false;
+    bool is_type_transition = false;
+    bool route_deferred = false;
+    bool is_next_hop_id_changed = false;
+    bool custom_monitor_ep_updated = false;
+    bool is_custom_monitor_pinned_state_updated = false;
+    std::map<NextHopKey, IpAddress> origin_primary_monitors;
+    std::map<NextHopKey, IpAddress> origin_secondary_monitors;
+    bool collision = false;
+    sai_object_id_t old_nh_id_for_fg = SAI_NULL_OBJECT_ID;
+    bool old_group_has_active_members = false;
+    NextHopGroupKey old_nhg_key;
+    NextHopGroupInfo saved_old_nhg_info;
+    TunnelRouteContext(const string& vnet_name, sai_object_id_t vrf_id, const IpPrefix& pfx,
+                       bool set_op, SaiOp op)
+        : ip_prefix(pfx), vnet(vnet_name), vr_id(vrf_id), nhg("", true), primary("", true), secondary("", true),
+          is_set_op(set_op), sai_op(op), is_fg_route(false) {}
+
+    TunnelRouteContext(const TunnelRouteContext&) = delete;
+    TunnelRouteContext(TunnelRouteContext&&) = delete;
+};
+
+struct VNetRouteBulkContext {
+    std::string key;
+    std::string op;
+    bool processable = false;
+    std::deque<RouteOrchContext> non_subnet_contexts;
+    std::deque<TunnelRouteContext> tunnel_contexts;
+};
+
+struct PendingNhgMember
+{
+    NextHopKey nhk;
+    bool is_local;
+};
+
+struct PendingNhgCreate
+{
+    std::string vnet;
+    NextHopGroupKey nexthops;
+    std::string monitoring;
+    bool is_local_ep;
+    std::map<NextHopKey, uint32_t> nh_seq_id;
+    std::vector<PendingNhgMember> members;
+};
+
+struct PendingFgNhgCreate
+{
+    std::string vnet;
+    IpPrefix ip_prefix;
+    NextHopGroupKey nexthops;
+    uint16_t consistent_hashing_buckets;
+    std::vector<NextHopKey> members;
+    std::vector<NextHopKey> queued_members;
+};
+
+struct PendingTunnelNhKey
+{
+    std::string tunnel_name;
+    IpAddress ip_addr;
+    MacAddress mac_address;
+    uint32_t vni = 0;
+
+    bool operator<(const PendingTunnelNhKey& rhs) const
+    {
+        if (tunnel_name != rhs.tunnel_name)
+        {
+            return tunnel_name < rhs.tunnel_name;
+        }
+        if (ip_addr != rhs.ip_addr)
+        {
+            return ip_addr < rhs.ip_addr;
+        }
+        if (mac_address != rhs.mac_address)
+        {
+            return mac_address < rhs.mac_address;
+        }
+        return vni < rhs.vni;
+    }
+};
+
+struct PendingTunnelNhRemove
+{
+    PendingTunnelNhKey key;
+    std::string tun_name;
+    NextHopKey nh;
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    sai_status_t status = SAI_STATUS_FAILURE;
+};
+
 struct VNetTunnelRouteEntry
 {
     // The nhg_key is the key for the next hop group which is currently active in hardware.
@@ -527,6 +653,7 @@ public:
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
     void updateCustomBfdState(const IpAddress& monitoring_ip, const string& state);
     void updateAllMonitoringSession(const string& vnet);
+    virtual void doTask(Consumer &consumer) override;
 
 private:
     virtual bool addOperation(const Request& request);
@@ -543,12 +670,58 @@ private:
     bool hasFgNextHopGroup(const string&, const IpPrefix&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring, const bool isLocalEp=false);
-    bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool queueNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
+                           const string& monitoring, const bool isLocalEp=false);
+    bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
+                            bool release_tunnel_nhs = true, bool queue_tunnel_nh_remove = false);
     void releaseTunnelNextHops(VNetVrfObject *vrf_obj, const std::map<sai_object_id_t, NextHopKey>& nexthops, const bool isLocalEp);
-    bool removeNextHopGroupDirectly(const string&, NextHopGroupInfo&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool removeFgNextHopGroup(const string&, const NextHopGroupKey&, const IpPrefix&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
+    bool queueNextHopGroupCreate(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
+                                 const string& monitoring);
+
+    sai_object_id_t queueTunnelNextHop(const std::string& vnet,
+                                       const NextHopKey& nhk,
+                                       VNetVrfObject* vrf_obj);
+    bool flushPendingTunnelNextHops();
+    bool queueTunnelNextHopRemove(const std::string& vnet,
+                                  VNetVrfObject* vrf_obj,
+                                  NextHopKey& nh);
+    bool flushPendingTunnelNextHopRemoves();
+    void clearStalePendingTunnelNextHopRemoves();
+    void resolveDeferredSingleNextHopGroups();
+    bool finalizePendingNextHopGroups();
+    bool finalizePendingFgNextHopGroups();
+    void queueTunnelRoutes();
+    sai_object_id_t resolveTunnelRouteNhId(const TunnelRouteContext& tr_ctx) const;
+    void cleanupFailedBulkRouteDependencies(const VNetRouteBulkContext& bulk_ctx);
+    void reapBulkReducedNhgs();
+    bool isTunnelNextHopFailed(const std::string& vnet, const NextHopKey& nh) const;
+    void releaseTunnelNextHopBindings(const std::string& vnet,
+                                      const std::vector<PendingNhgMember>& members);
+    void rollbackPartialEcmpNhg(sai_object_id_t nhg_id,
+                                const std::vector<sai_object_id_t>& member_ids);
+    void erasePendingNhgPlaceholder(const std::string& vnet, const NextHopGroupKey& nexthops);
+    void cleanupFailedPendingFgNhgEntry(const PendingFgNhgCreate& pending, VNetVrfObject* vrf_obj);
+    void abortUnprocessableBulkCreates();
+    bool bulkCreateNhgMembersForGroup(sai_object_id_t next_hop_group_id,
+                                      const std::vector<sai_object_id_t>& next_hop_ids,
+                                      const std::map<sai_object_id_t, NextHopKey>& nhopgroup_members_set,
+                                      const std::map<NextHopKey, uint32_t>& nh_seq_id,
+                                      std::map<NextHopKey, sai_object_id_t>& active_members,
+                                      std::vector<sai_object_id_t>& created_member_ids);
+    bool bulkRemoveNhgMembersForGroup(const std::map<NextHopKey, sai_object_id_t>& active_members);
+    bool removeNextHopGroupMembers(const std::string& vnet,
+                                   std::map<NextHopKey, sai_object_id_t>& active_members,
+                                   VNetVrfObject* vrf_obj,
+                                   bool release_tunnel_nhs,
+                                   bool queue_tunnel_nh_remove = false);
+    bool removeNextHopGroupDirectly(const std::string& vnet,
+                                    NextHopGroupInfo& nhg_info,
+                                    const NextHopGroupKey& nexthops,
+                                    VNetVrfObject* vrf_obj);
+
     NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, const int32_t, const int32_t, IpPrefix&,
@@ -609,6 +782,11 @@ private:
 
     bool setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id, const IpPrefix& ipPrefix,
                                         const NextHopGroupKey& nhg, const string& op);
+    void queueTunnelRouteBulk(TunnelRouteContext& tr_ctx,
+                              TunnelRouteContext::SaiOp op,
+                              sai_object_id_t nh_id = SAI_NULL_OBJECT_ID);
+    bool addTunnelRoutePost(const TunnelRouteContext& tr_ctx);
+    bool delTunnelRoutePost(const TunnelRouteContext& tr_ctx);
 
     bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id);
     bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx);
@@ -649,6 +827,23 @@ private:
     std::set<IpPrefix> subnet_decap_terms_created_;
     ProducerStateTable bfd_session_producer_;
     ProducerStateTable app_tunnel_decap_term_producer_;
+    std::deque<VNetRouteBulkContext> toBulk_;
+    // Last-user NHGs in this doTask; SAI-remove after posts if ref is still 0.
+    std::set<std::pair<std::string, NextHopGroupKey>> bulk_nhg_reduced_ref_cnt_;
+    EntityBulker<sai_route_api_t> tunnel_route_bulker_;
+    ObjectBulker<sai_next_hop_api_t> tunnel_nh_bulker_;
+    ObjectBulker<sai_next_hop_group_api_t> nhg_member_bulker_;
+    std::deque<sai_object_id_t> tunnel_nh_slots_;
+    PendingTunnelNhKey makePendingTunnelNhKey(const std::string& tun_name, const NextHopKey& nhk) const;
+    std::map<PendingTunnelNhKey, sai_object_id_t*> pending_tunnel_nh_slots_;
+    std::map<PendingTunnelNhKey, uint32_t> pending_tunnel_nh_bindings_;
+    std::set<PendingTunnelNhKey> failed_tunnel_nh_keys_;
+    std::set<PendingTunnelNhKey> pending_tunnel_nh_remove_keys_;
+    std::deque<PendingTunnelNhRemove> pending_tunnel_nh_remove_commit_;
+    std::vector<PendingNhgCreate> pending_nhg_creates_;
+    std::vector<PendingFgNhgCreate> pending_fg_nhg_creates_;
+    std::vector<std::pair<std::string, NextHopGroupKey>> deferred_single_nhgs_;
+    std::map<std::pair<std::string, IpPrefix>, sai_object_id_t> finalized_fg_nhg_ids_;
     unique_ptr<Table> monitor_session_producer_;
     shared_ptr<DBConnector> config_db_;
     shared_ptr<DBConnector> state_db_;
