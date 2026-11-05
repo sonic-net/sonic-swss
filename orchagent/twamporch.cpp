@@ -157,8 +157,8 @@ TwampOrch::TwampOrch(TableConnector confDbConnector, TableConnector stateDbConne
     register_event_notif = false;
 
     /* Initialize DB connectors */
-    m_asicDb = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
-    m_countersDb = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_asicDb = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0, false, "", true));
+    m_countersDb = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0, false, "", true));
 
     /* Initialize VIDTORID table */
     m_vidToRidTable = unique_ptr<Table>(new Table(m_asicDb.get(), "VIDTORID"));

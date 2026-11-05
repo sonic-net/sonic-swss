@@ -647,9 +647,9 @@ int main(int argc, char **argv)
     Recorder::Instance().retry.startRec(true);
 
     // Instantiate database connectors
-    DBConnector appl_db("APPL_DB", 0);
+    DBConnector appl_db("APPL_DB", 0, false, "", true);
     DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
+    DBConnector state_db("STATE_DB", 0, false, "", true);
 
     // Get switch_type
     getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);

@@ -53,7 +53,7 @@ std::map<string, std::map<size_t, string>> queue_port_flags;
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
     m_counterNameMapUpdater(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_BUFFER_POOL_NAME_MAP)),
-    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0, false, "", true)),
     m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
     SWSS_LOG_ENTER();

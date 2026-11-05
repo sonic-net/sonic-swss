@@ -28,8 +28,8 @@ void sig_handler(int signo)
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative(TEAMSYNCD_APP_NAME);
-    DBConnector db("APPL_DB", 0);
-    DBConnector stateDb("STATE_DB", 0);
+    DBConnector db("APPL_DB", 0, false, "", true);
+    DBConnector stateDb("STATE_DB", 0, false, "", true);
     Select s;
     TeamSync sync(&db, &stateDb, &s);
 

@@ -219,7 +219,7 @@ def build_arp_ns_pkt(family, smac, src_ip, dst_ip):
 
 # Set the statedb "NEIGH_RESTORE_TABLE|Flags", so neighsyncd can start reconciliation
 def set_statedb_neigh_restore_done():
-    db = swsscommon.SonicV2Connector(use_unix_socket_path=True)
+    db = swsscommon.SonicV2Connector(use_unix_socket_path=True, authenticate=True)
     db.connect(db.STATE_DB, False)
     db.set(db.STATE_DB, 'NEIGH_RESTORE_TABLE|Flags', 'restored', 'true')
     db.close(db.STATE_DB)

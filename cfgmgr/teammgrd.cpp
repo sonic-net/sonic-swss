@@ -46,8 +46,8 @@ int main(int argc, char **argv)
     try
     {
         DBConnector conf_db("CONFIG_DB", 0);
-        DBConnector app_db("APPL_DB", 0);
-        DBConnector state_db("STATE_DB", 0);
+        DBConnector app_db("APPL_DB", 0, false, "", true);
+        DBConnector state_db("STATE_DB", 0, false, "", true);
 
         WarmStart::initialize("teammgrd", "teamd");
         WarmStart::checkWarmStart("teammgrd", "teamd");
