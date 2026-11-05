@@ -653,16 +653,25 @@ mod tests {
         );
         batch.push_record(20, [SAIStat::new("Ethernet8", 1, 2, 5)]);
 
-        let records: Vec<_> = batch.iter().collect();
+        let mut records = batch.iter();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records.size_hint(), (2, Some(2)));
+        let first = records.next().unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records.size_hint(), (1, Some(1)));
+        let second = records.next().unwrap();
+        assert!(records.next().is_none());
+        assert_eq!(records.len(), 0);
+        assert_eq!(records.size_hint(), (0, Some(0)));
         assert_eq!(batch.record_count(), 2);
         assert_eq!(batch.counter_count(), 3);
-        assert_eq!(records[0].observation_time, 10);
+        assert_eq!(first.observation_time, 10);
         assert_eq!(
-            records[0].stats.get(1).unwrap().object_name.as_ref(),
+            first.stats.get(1).unwrap().object_name.as_ref(),
             "Ethernet4"
         );
-        assert_eq!(records[1].observation_time, 20);
-        assert_eq!(records[1].stats.get(0).unwrap().counter, 5);
+        assert_eq!(second.observation_time, 20);
+        assert_eq!(second.stats.get(0).unwrap().counter, 5);
     }
 
     #[test]

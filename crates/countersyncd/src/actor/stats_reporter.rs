@@ -796,604 +796,239 @@ fn format_timestamp(timestamp_ns: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
-    use tokio::{spawn, sync::mpsc::channel, time::sleep};
+    use tokio::sync::mpsc::{channel, unbounded_channel, UnboundedReceiver, UnboundedSender};
+    use tokio::time::timeout;
 
-    use crate::message::saistats::{SAIStat, SAIStats, SAIStatsBatch};
+    use crate::message::saistats::{SAIStat, SAIStatsBatch};
 
-    /// Helper function to create test SAI statistics
-    fn create_test_stats(observation_time: u64, stat_count: usize) -> SAIStats {
-        let stats = (0..stat_count)
-            .map(|i| {
-                SAIStat::new(
-                    format!("Ethernet{}", i),
-                    (i * 100) as u32,
-                    (i * 10) as u32,
-                    (i * 1000) as u64,
-                )
-            })
-            .collect();
+    fn reporter(config: StatsReporterConfig) -> StatsReporterActor<TestWriter> {
+        let (_, receiver) = channel(1);
+        StatsReporterActor::new(receiver, config, TestWriter::new())
+    }
 
-        SAIStats {
-            observation_time,
-            stats,
+    #[tokio::test]
+    async fn owned_and_shared_batches_preserve_record_order() {
+        for shared in [false, true] {
+            let mut actor = reporter(StatsReporterConfig::default());
+            let metadata: Arc<[SAIStatMetadata]> =
+                vec![SAIStatMetadata::new("Ethernet0", 1, 2)].into();
+            let mut batch = SAIStatsBatch::default();
+            for (time, counter) in [(10, 100), (20, 200)] {
+                if shared {
+                    batch.push_shared_record(time, Arc::clone(&metadata), [counter]);
+                } else {
+                    batch.push_record(time, [SAIStat::new("Ethernet0", 1, 2, counter)]);
+                }
+            }
+            actor.update_stats(Arc::new(batch));
+
+            let key = CounterKey::new("Ethernet0".into(), 1, 2);
+            assert_eq!(actor.total_messages_received, 2);
+            assert_eq!(actor.messages_per_counter().get(&key), Some(&2));
+            let latest = actor.latest_counters();
+            assert_eq!(
+                (latest[&key].counter, latest[&key].last_observation_time),
+                (200, 20)
+            );
         }
     }
 
     #[tokio::test]
-    async fn test_update_stats_counts_and_processes_batch_records_in_order() {
-        let (_sender, receiver) = channel(1);
-        let mut actor =
-            StatsReporterActor::new(receiver, StatsReporterConfig::default(), TestWriter::new());
-        let mut batch = SAIStatsBatch::with_capacity(2, 2);
-        batch.push_record(10, [SAIStat::new("Ethernet0", 1, 2, 100)]);
-        batch.push_record(20, [SAIStat::new("Ethernet0", 1, 2, 200)]);
-
+    async fn latest_record_wins_when_observation_time_decreases() {
+        let mut actor = reporter(StatsReporterConfig::default());
+        let metadata: Arc<[SAIStatMetadata]> = vec![SAIStatMetadata::new("Ethernet0", 1, 0)].into();
+        let mut batch = SAIStatsBatch::default();
+        batch.push_shared_record(300, Arc::clone(&metadata), [10]);
+        batch.push_record(200, [SAIStat::new("Ethernet0", 1, 0, 20)]);
+        batch.push_shared_record(100, metadata, [30]);
         actor.update_stats(Arc::new(batch));
 
-        let key = CounterKey::new("Ethernet0".into(), 1, 2);
-        assert_eq!(actor.total_messages_received, 2);
-        assert_eq!(actor.messages_per_counter().get(&key), Some(&2));
-        let latest_counters = actor.latest_counters();
-        let latest = latest_counters.get(&key).unwrap();
-        assert_eq!(latest.counter, 200);
-        assert_eq!(latest.last_observation_time, 20);
-    }
-
-    #[tokio::test]
-    async fn shared_metadata_batches_preserve_reporting_semantics() {
-        use crate::message::saistats::SAIStatMetadata;
-        let (_,rx)=channel(1);
-        let mut actor=StatsReporterActor::new(rx,StatsReporterConfig::default(),TestWriter::new());
-        let metadata=Arc::from(vec![SAIStatMetadata::new("Ethernet0",1,0)]);
-        let mut batch=SAIStatsBatch::default();
-        batch.push_shared_record(10,Arc::clone(&metadata),[123]);
-        batch.push_shared_record(20,metadata,[456]);
-        actor.update_stats(Arc::new(batch));
-        let key=CounterKey::new(Arc::from("Ethernet0"),1,0);
-        assert_eq!(actor.total_messages_received,2);
-        assert_eq!(actor.messages_per_counter().get(&key),Some(&2));
-        assert_eq!(actor.latest_counters()[&key].counter,456);
-        assert_eq!(actor.latest_counters()[&key].last_observation_time,20);
-    }
-
-    #[tokio::test]
-    async fn test_stats_reporter_basic_functionality() {
-        let (sender, receiver) = channel(10);
-        let test_writer = TestWriter::new();
-
-        let config = StatsReporterConfig {
-            interval: Duration::from_millis(200),
-            detailed: true,
-            max_stats_per_report: Some(3),
-        };
-
-        // Create actor with test writer
-        let actor = StatsReporterActor::new(receiver, config, test_writer);
-        let handle = spawn(StatsReporterActor::run(actor));
-
-        // Send test statistics
-        let test_stats = create_test_stats(12345, 5);
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
-            .await
-            .unwrap();
-
-        // Wait for processing
-        sleep(Duration::from_millis(50)).await;
-
-        // Wait for at least one report
-        sleep(Duration::from_millis(250)).await;
-
-        // Send another set of statistics
-        let test_stats2 = create_test_stats(67890, 2);
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats2)))
-            .await
-            .unwrap();
-
-        // Wait for processing
-        sleep(Duration::from_millis(50)).await;
-
-        // Close the channel to terminate the actor
-        drop(sender);
-
-        // Wait for actor to finish
-        let _finished_actor = handle.await.expect("Actor should complete successfully");
-    }
-
-    #[tokio::test]
-    async fn test_stats_reporter_with_shared_writer() {
-        use std::sync::{Arc, Mutex};
-
-        // Shared writer that can be accessed from multiple places
-        #[derive(Clone)]
-        struct SharedTestWriter {
-            lines: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl SharedTestWriter {
-            fn new() -> Self {
-                Self {
-                    lines: Arc::new(Mutex::new(Vec::new())),
-                }
-            }
-
-            fn get_lines(&self) -> Vec<String> {
-                self.lines.lock().unwrap().clone()
-            }
-        }
-
-        impl OutputWriter for SharedTestWriter {
-            fn write_line(&mut self, line: &str) {
-                self.lines.lock().unwrap().push(line.to_string());
-            }
-        }
-
-        let (sender, receiver) = channel(10);
-        let shared_writer = SharedTestWriter::new();
-        let writer_clone = shared_writer.clone();
-
-        let config = StatsReporterConfig {
-            interval: Duration::from_millis(200),
-            detailed: true,
-            max_stats_per_report: Some(3),
-        };
-
-        // Create actor with shared writer
-        let actor = StatsReporterActor::new(receiver, config, shared_writer);
-        let handle = spawn(StatsReporterActor::run(actor));
-
-        // Send test statistics
-        let test_stats = create_test_stats(12345, 5);
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
-            .await
-            .unwrap();
-
-        // Wait for processing
-        sleep(Duration::from_millis(50)).await;
-
-        // Wait for at least one report
-        sleep(Duration::from_millis(250)).await;
-
-        // Send another set of statistics
-        let test_stats2 = create_test_stats(67890, 2);
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats2)))
-            .await
-            .unwrap();
-
-        // Wait for processing
-        sleep(Duration::from_millis(50)).await;
-
-        // Close the channel to terminate the actor
-        drop(sender);
-
-        // Wait for actor to finish
-        handle.await.expect("Actor should complete successfully");
-
-        // Now we can check the output
-        let output = writer_clone.get_lines();
-
-        // Verify we have some output
-        assert!(!output.is_empty(), "Should have captured some output");
-
-        // Verify report header is present (now "SAI Counters Report")
-        let has_report_header = output
-            .iter()
-            .any(|line| line.contains("SAI Counters Report"));
-        assert!(has_report_header, "Should contain counters report header");
-
-        // Verify counter count for all unique counters (first 5 + 2 overlapping = 5 unique)
-        let has_counter_count = output
-            .iter()
-            .any(|line| line.contains("Total Unique Counters: 5"));
-        assert!(
-            has_counter_count,
-            "Should show correct unique counters count"
-        );
-
-        // Verify detailed output
-        let has_detailed = output
-            .iter()
-            .any(|line| line.contains("Detailed Counters:"));
-        assert!(has_detailed, "Should show detailed counters");
-
-        // Verify individual counter entries with new format
-        let has_counter_entry = output.iter().any(|line| {
-            line.contains("Object:") && line.contains("Stat:") && line.contains("Msg/s:")
-        });
-        assert!(
-            has_counter_entry,
-            "Should show individual counter entries with message counts"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_stats_reporter_summary_mode() {
-        use std::sync::{Arc, Mutex};
-
-        #[derive(Clone)]
-        struct SharedTestWriter {
-            lines: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl SharedTestWriter {
-            fn new() -> Self {
-                Self {
-                    lines: Arc::new(Mutex::new(Vec::new())),
-                }
-            }
-
-            fn get_lines(&self) -> Vec<String> {
-                self.lines.lock().unwrap().clone()
-            }
-        }
-
-        impl OutputWriter for SharedTestWriter {
-            fn write_line(&mut self, line: &str) {
-                self.lines.lock().unwrap().push(line.to_string());
-            }
-        }
-
-        let (sender, receiver) = channel(10);
-        let shared_writer = SharedTestWriter::new();
-        let writer_clone = shared_writer.clone();
-
-        let config = StatsReporterConfig {
-            interval: Duration::from_millis(100),
-            detailed: false, // Summary mode
-            max_stats_per_report: None,
-        };
-
-        let actor = StatsReporterActor::new(receiver, config, shared_writer);
-        let handle = spawn(StatsReporterActor::run(actor));
-
-        // Send test statistics with known values
-        let test_stats = create_test_stats(99999, 3);
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
-            .await
-            .unwrap();
-
-        // Wait for processing and one report
-        sleep(Duration::from_millis(150)).await;
-
-        // Close and finish
-        drop(sender);
-        handle.await.expect("Actor should complete successfully");
-
-        // Verify captured output
-        let output = writer_clone.get_lines();
-
-        // Verify we have output
-        assert!(!output.is_empty(), "Should have captured some output");
-
-        // Verify summary mode elements
-        let has_summary_header = output.iter().any(|line| line.contains("Summary:"));
-        assert!(has_summary_header, "Should contain summary header");
-
-        // Verify total counter calculation (0 + 1000 + 2000 = 3000)
-        let has_total_counter = output
-            .iter()
-            .any(|line| line.contains("Total Counter Value: 3000"));
-        assert!(has_total_counter, "Should show correct total counter value");
-
-        // Verify unique counts
-        let has_unique_types = output.iter().any(|line| line.contains("Unique Types: 3"));
-        assert!(has_unique_types, "Should show correct unique types count");
-
-        let has_unique_labels = output.iter().any(|line| line.contains("Unique Objects: 3"));
-        assert!(
-            has_unique_labels,
-            "Should show correct unique objects count"
-        );
-
-        // Should NOT have detailed counters
-        let has_detailed = output
-            .iter()
-            .any(|line| line.contains("Detailed Counters:"));
-        assert!(
-            !has_detailed,
-            "Should NOT show detailed counters in summary mode"
-        );
-
-        // Should show messages per second
-        let has_messages_per_second = output
-            .iter()
-            .any(|line| line.contains("Messages per Second:"));
-        assert!(
-            has_messages_per_second,
-            "Should show messages per second in summary mode"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_stats_reporter_no_data() {
-        use std::sync::{Arc, Mutex};
-
-        #[derive(Clone)]
-        struct SharedTestWriter {
-            lines: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl SharedTestWriter {
-            fn new() -> Self {
-                Self {
-                    lines: Arc::new(Mutex::new(Vec::new())),
-                }
-            }
-
-            fn get_lines(&self) -> Vec<String> {
-                self.lines.lock().unwrap().clone()
-            }
-        }
-
-        impl OutputWriter for SharedTestWriter {
-            fn write_line(&mut self, line: &str) {
-                self.lines.lock().unwrap().push(line.to_string());
-            }
-        }
-
-        let (sender, receiver) = channel(10);
-        let shared_writer = SharedTestWriter::new();
-        let writer_clone = shared_writer.clone();
-
-        let config = StatsReporterConfig {
-            interval: Duration::from_millis(50),
-            detailed: true,
-            max_stats_per_report: None,
-        };
-
-        let actor = StatsReporterActor::new(receiver, config, shared_writer);
-        let handle = spawn(StatsReporterActor::run(actor));
-
-        // Don't send any data, just wait for a report
-        sleep(Duration::from_millis(100)).await;
-
-        // Close the channel
-        drop(sender);
-        handle.await.expect("Actor should complete successfully");
-
-        // Verify captured output
-        let output = writer_clone.get_lines();
-
-        // Verify we have output
-        assert!(!output.is_empty(), "Should have captured some output");
-
-        // Verify "no data" message
-        let has_no_data_msg = output
-            .iter()
-            .any(|line| line.contains("No statistics data available yet"));
-        assert!(has_no_data_msg, "Should show 'no data available' message");
-
-        // Verify message count is 0
-        let has_zero_messages = output
-            .iter()
-            .any(|line| line.contains("Total Messages Received: 0"));
-        assert!(has_zero_messages, "Should show 0 total messages received");
-    }
-
-    #[tokio::test]
-    async fn test_stats_reporter_max_stats_limit() {
-        use std::sync::{Arc, Mutex};
-
-        #[derive(Clone)]
-        struct SharedTestWriter {
-            lines: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl SharedTestWriter {
-            fn new() -> Self {
-                Self {
-                    lines: Arc::new(Mutex::new(Vec::new())),
-                }
-            }
-
-            fn get_lines(&self) -> Vec<String> {
-                self.lines.lock().unwrap().clone()
-            }
-        }
-
-        impl OutputWriter for SharedTestWriter {
-            fn write_line(&mut self, line: &str) {
-                self.lines.lock().unwrap().push(line.to_string());
-            }
-        }
-
-        let (sender, receiver) = channel(10);
-        let shared_writer = SharedTestWriter::new();
-        let writer_clone = shared_writer.clone();
-
-        let config = StatsReporterConfig {
-            interval: Duration::from_millis(500), // Longer interval to avoid multiple reports
-            detailed: true,
-            max_stats_per_report: Some(2), // Limit to 2 stats
-        };
-
-        let actor = StatsReporterActor::new(receiver, config, shared_writer);
-        let handle = spawn(StatsReporterActor::run(actor));
-
-        // Send stats with more entries than the limit
-        let test_stats = create_test_stats(55555, 5);
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
-            .await
-            .unwrap();
-
-        // Wait for processing but not long enough for multiple reports
-        sleep(Duration::from_millis(50)).await;
-
-        // Close and finish quickly to avoid multiple timer ticks
-        drop(sender);
-        handle.await.expect("Actor should complete successfully");
-
-        // Verify captured output
-        let output = writer_clone.get_lines();
-
-        // Find the first detailed counters section
-        let mut in_detailed_section = false;
-        let mut counter_entries = Vec::new();
-
-        for line in &output {
-            if line.contains("Detailed Counters:") {
-                in_detailed_section = true;
-                continue;
-            }
-
-            if in_detailed_section {
-                if line.contains("] Object:") && line.contains("Stat:") {
-                    counter_entries.push(line);
-                } else if line.contains("[Report") || line.trim().is_empty() {
-                    // End of this detailed section
-                    break;
-                }
-            }
-        }
-
-        // Should show exactly 2 counter entries in the first report
+        let key = CounterKey::new("Ethernet0".into(), 1, 0);
+        let latest = actor.latest_counters();
         assert_eq!(
-            counter_entries.len(),
-            2,
-            "Should show exactly 2 counter entries due to limit"
+            (latest[&key].counter, latest[&key].last_observation_time),
+            (30, 100)
         );
+        assert_eq!(actor.messages_per_counter().get(&key), Some(&3));
+    }
 
-        // Verify "more counters" message
-        let has_more_msg = output
-            .iter()
-            .any(|line| line.contains("and 3 more counters"));
-        assert!(has_more_msg, "Should show 'more counters' message");
+    struct ReportWriter(UnboundedSender<String>);
 
-        // Verify total count is still correct
-        let has_total_count = output
+    impl OutputWriter for ReportWriter {
+        fn write_line(&mut self, line: &str) {
+            self.0.send(line.to_owned()).unwrap();
+        }
+    }
+
+    async fn read_report(lines: &mut UnboundedReceiver<String>) -> Vec<String> {
+        timeout(Duration::from_secs(20), async {
+            let mut report = Vec::new();
+            loop {
+                let line = lines
+                    .recv()
+                    .await
+                    .expect("writer closed before report ended");
+                if line.is_empty() {
+                    return report;
+                }
+                report.push(line);
+            }
+        })
+        .await
+        .expect("report timed out")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn run_reports_periodically_and_on_shutdown() {
+        let (sender, receiver) = channel(1);
+        let (output, mut lines) = unbounded_channel();
+        let config = StatsReporterConfig {
+            detailed: false,
+            ..StatsReporterConfig::default()
+        };
+        let mut actor = StatsReporterActor::new(receiver, config, ReportWriter(output));
+        // Consume the immediate tick so the first report follows the first batch.
+        actor.report_timer.tick().await;
+        let handle = tokio::spawn(StatsReporterActor::run(actor));
+        let batch = |value| {
+            let mut batch = SAIStatsBatch::default();
+            batch.push_record(value, [SAIStat::new("Ethernet0", 1, 0, value)]);
+            Arc::new(batch)
+        };
+        sender.send(batch(10)).await.unwrap();
+        let periodic = read_report(&mut lines).await;
+        assert_eq!(periodic[0], "[Report #1] SAI Counters Report");
+        assert!(periodic
             .iter()
-            .any(|line| line.contains("Total Unique Counters: 5"));
-        assert!(
-            has_total_count,
-            "Should show correct total unique counters count"
+            .any(|line| line == "   Total Messages Received: 1"));
+        assert!(periodic
+            .iter()
+            .any(|line| line == "      Total Counter Value: 10"));
+
+        sender.send(batch(20)).await.unwrap();
+        drop(sender);
+        timeout(Duration::from_secs(20), handle)
+            .await
+            .unwrap()
+            .unwrap();
+        let final_report = read_report(&mut lines).await;
+        assert_eq!(final_report[0], "[Report #2] SAI Counters Report");
+        assert!(final_report
+            .iter()
+            .any(|line| line == "   Total Messages Received: 2"));
+        assert!(final_report
+            .iter()
+            .any(|line| line == "      Total Counter Value: 20"));
+        assert!(lines.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn detailed_reports_preserve_order_names_rates_and_limits() {
+        let metadata: Arc<[SAIStatMetadata]> = vec![
+            SAIStatMetadata::new("Ethernet16", 1, 0),
+            SAIStatMetadata::new("Ethernet0", 1, 1),
+            SAIStatMetadata::new("Ethernet0", 1, 0),
+            SAIStatMetadata::new("Queue0", 21, 0),
+            SAIStatMetadata::new("mystery", 999, 9999),
+            SAIStatMetadata::new("Ethernet0", 1, 9999),
+        ]
+        .into();
+        let mut batch = SAIStatsBatch::default();
+        batch.push_shared_record(1_000_000_123, Arc::clone(&metadata), [1, 2, 3, 4, 5, 6]);
+        batch.push_shared_record(2_000_000_456, metadata, [10, 20, 30, 40, 50, 60]);
+        let batch = Arc::new(batch);
+        let expected = [
+            "[Report #1] SAI Counters Report",
+            "   Total Unique Counters: 6",
+            "   Total Messages Received: 2",
+            "   Detailed Counters:",
+            "      Type: SAI_OBJECT_TYPE_PORT (1)",
+            "         [  1] Object: Ethernet0      , Stat: IF_IN_OCTETS             , Counter:              30, Msg/s:    0.2, LastTime: 1970-01-01 00:00:02.000000456 UTC",
+            "         [  2] Object: Ethernet0      , Stat: IF_IN_UCAST_PKTS         , Counter:              20, Msg/s:    0.2, LastTime: 1970-01-01 00:00:02.000000456 UTC",
+            "         [  3] Object: Ethernet0      , Stat: UNKNOWN_PORT_STAT_9999   , Counter:              60, Msg/s:    0.2, LastTime: 1970-01-01 00:00:02.000000456 UTC",
+            "         [  4] Object: Ethernet16     , Stat: IF_IN_OCTETS             , Counter:              10, Msg/s:    0.2, LastTime: 1970-01-01 00:00:02.000000456 UTC",
+            "      Type: SAI_OBJECT_TYPE_QUEUE (21)",
+            "         [  1] Object: Queue0         , Stat: PACKETS                  , Counter:              40, Msg/s:    0.2, LastTime: 1970-01-01 00:00:02.000000456 UTC",
+            "      Type: UNKNOWN(999) (999)",
+            "         [  1] Object: mystery        , Stat: INVALID_TYPE_999_STAT_9999, Counter:              50, Msg/s:    0.2, LastTime: 1970-01-01 00:00:02.000000456 UTC",
+            "",
+        ];
+        // Truncate within a type and after crossing a type boundary.
+        for (limit, expected) in [
+            (None, expected.to_vec()),
+            (Some(2), [&expected[..7], &[
+                "         ... and 4 more counters (use max_stats_per_report: None to show all)", "",
+            ]].concat()),
+            (Some(5), [&expected[..11], &[
+                "         ... and 1 more counters (use max_stats_per_report: None to show all)", "",
+            ]].concat()),
+        ] {
+            let mut actor = reporter(StatsReporterConfig {
+                max_stats_per_report: limit,
+                ..StatsReporterConfig::default()
+            });
+            actor.update_stats(Arc::clone(&batch));
+            actor.generate_report();
+            assert_eq!(actor.writer.lines, expected, "limit={limit:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn summary_report_uses_wide_totals_and_counts_all_fields() {
+        let mut actor = reporter(StatsReporterConfig {
+            interval: Duration::from_secs(4),
+            detailed: false,
+            max_stats_per_report: None,
+        });
+        let metadata = vec![
+            SAIStatMetadata::new("shared", 1, 0),
+            SAIStatMetadata::new("shared", 21, 0),
+        ]
+        .into();
+        let mut batch = SAIStatsBatch::default();
+        batch.push_shared_record(1, metadata, [u64::MAX, u64::MAX]);
+        batch.push_record(2, [SAIStat::new("other", 1, 1, 1)]);
+        actor.update_stats(Arc::new(batch));
+        actor.generate_report();
+        assert_eq!(
+            actor.writer.lines,
+            [
+                "[Report #1] SAI Counters Report",
+                "   Total Unique Counters: 3",
+                "   Total Messages Received: 2",
+                "   Summary:",
+                "      Total Counter Value: 36893488147419103231",
+                "      Unique Types: 2",
+                "      Unique Objects: 2",
+                "      Messages per Second: 0.8",
+                "",
+            ]
         );
     }
 
     #[tokio::test]
-    async fn test_stats_reporter_sai_stat_names() {
-        use std::sync::{Arc, Mutex};
-
-        #[derive(Clone)]
-        struct SharedTestWriter {
-            lines: Arc<Mutex<Vec<String>>>,
-        }
-
-        impl SharedTestWriter {
-            fn new() -> Self {
-                Self {
-                    lines: Arc::new(Mutex::new(Vec::new())),
-                }
-            }
-
-            fn get_lines(&self) -> Vec<String> {
-                self.lines.lock().unwrap().clone()
-            }
-        }
-
-        impl OutputWriter for SharedTestWriter {
-            fn write_line(&mut self, line: &str) {
-                self.lines.lock().unwrap().push(line.to_string());
-            }
-        }
-
-        let (sender, receiver) = channel(10);
-        let shared_writer = SharedTestWriter::new();
-        let writer_clone = shared_writer.clone();
-
-        let config = StatsReporterConfig {
-            interval: Duration::from_millis(100),
-            detailed: true,
-            max_stats_per_report: None,
-        };
-
-        let actor = StatsReporterActor::new(receiver, config, shared_writer);
-        let handle = spawn(StatsReporterActor::run(actor));
-
-        // Create stats with known SAI types and stat IDs
-        let stats = vec![
-            SAIStat::new("Ethernet0", 1, 0, 832),   // Port, IfInOctets
-            SAIStat::new("Ethernet16", 1, 1, 1664), // Port, IfInUcastPkts
-        ];
-
-        let test_stats = SAIStats {
-            observation_time: 12345,
-            stats,
-        };
-
-        sender
-            .send(Arc::new(SAIStatsBatch::from_stats(test_stats)))
-            .await
-            .unwrap();
-
-        // Wait for processing and one report
-        sleep(Duration::from_millis(150)).await;
-
-        // Close and finish
-        drop(sender);
-        handle.await.expect("Actor should complete successfully");
-
-        // Verify captured output
-        let output = writer_clone.get_lines();
-
-        // Find the line that should contain IF_IN_OCTETS (without SAI_PORT_STAT_ prefix)
-        let has_if_in_octets = output.iter().any(|line| line.contains("IF_IN_OCTETS"));
-        assert!(
-            has_if_in_octets,
-            "Should show IF_IN_OCTETS without SAI_PORT_STAT_ prefix"
+    async fn report_without_data() {
+        let mut actor = reporter(StatsReporterConfig::default());
+        actor.generate_report();
+        assert_eq!(
+            actor.writer.lines,
+            [
+                "[Report #1] No statistics data available yet",
+                "   Total Messages Received: 0",
+                "",
+            ]
         );
-
-        // Find the line that should contain IF_IN_UCAST_PKTS (without SAI_PORT_STAT_ prefix)
-        let has_if_in_ucast_pkts = output.iter().any(|line| line.contains("IF_IN_UCAST_PKTS"));
-        assert!(
-            has_if_in_ucast_pkts,
-            "Should show IF_IN_UCAST_PKTS without SAI_PORT_STAT_ prefix"
-        );
-
-        // Should NOT have full SAI prefixes
-        let has_sai_prefix = output.iter().any(|line| {
-            line.contains("SAI_PORT_STAT_IF_IN_OCTETS")
-                || line.contains("SAI_PORT_STAT_IF_IN_UCAST_PKTS")
-        });
-        assert!(
-            !has_sai_prefix,
-            "Should NOT show full SAI_PORT_STAT_ prefixes"
-        );
-
-        // Should NOT have generic STAT_ prefixes
-        let has_generic_stat = output
-            .iter()
-            .any(|line| line.contains("STAT_0") || line.contains("STAT_1"));
-        assert!(!has_generic_stat, "Should NOT show generic STAT_ names");
     }
 
-    /// The previous per-counter implementation, kept as the reference model.
-    struct LegacyReporter<W: OutputWriter> {
-        config: StatsReporterConfig,
+    /// Independent per-counter reference model for the previous behavior.
+    #[derive(Default)]
+    struct PerCounterModel {
         latest_counters: HashMap<CounterKey, CounterInfo>,
         messages_per_counter: HashMap<CounterKey, u64>,
         total_messages_received: u64,
-        reports_generated: u64,
-        writer: W,
     }
 
-    impl<W: OutputWriter> LegacyReporter<W> {
-        fn new(config: StatsReporterConfig, writer: W) -> Self {
-            Self {
-                config,
-                latest_counters: HashMap::new(),
-                messages_per_counter: HashMap::new(),
-                total_messages_received: 0,
-                reports_generated: 0,
-                writer,
-            }
-        }
-
+    impl PerCounterModel {
         fn update_stats(&mut self, stats_batch: &SAIStatsBatch) {
             for stats in stats_batch.iter() {
                 self.total_messages_received += 1;
@@ -1409,136 +1044,6 @@ mod tests {
                     self.latest_counters.insert(key.clone(), counter_info);
                     *self.messages_per_counter.entry(key).or_insert(0) += 1;
                 }
-            }
-        }
-
-        fn generate_report(&mut self) {
-            self.reports_generated += 1;
-            if self.latest_counters.is_empty() {
-                self.writer.write_line(&format!(
-                    "[Report #{}] No statistics data available yet",
-                    self.reports_generated
-                ));
-                self.writer.write_line(&format!(
-                    "   Total Messages Received: {}",
-                    self.total_messages_received
-                ));
-            } else {
-                self.print_counters_report();
-            }
-            self.messages_per_counter.clear();
-            self.writer.write_line("");
-        }
-
-        fn print_counters_report(&mut self) {
-            self.writer.write_line(&format!(
-                "[Report #{}] SAI Counters Report",
-                self.reports_generated
-            ));
-            self.writer.write_line(&format!(
-                "   Total Unique Counters: {}",
-                self.latest_counters.len()
-            ));
-            self.writer.write_line(&format!(
-                "   Total Messages Received: {}",
-                self.total_messages_received
-            ));
-
-            if self.config.detailed && !self.latest_counters.is_empty() {
-                use std::collections::BTreeMap;
-                let mut grouped_counters: BTreeMap<u32, Vec<(&CounterKey, &CounterInfo)>> =
-                    BTreeMap::new();
-                for (key, counter_info) in &self.latest_counters {
-                    grouped_counters
-                        .entry(key.type_id)
-                        .or_insert_with(Vec::new)
-                        .push((key, counter_info));
-                }
-                self.writer.write_line("   Detailed Counters:");
-                let mut total_shown = 0;
-                for (type_id, mut counters) in grouped_counters {
-                    counters.sort_by(|a, b| {
-                        a.0.object_name
-                            .cmp(&b.0.object_name)
-                            .then_with(|| a.0.stat_id.cmp(&b.0.stat_id))
-                    });
-                    let type_name = counters
-                        .first()
-                        .and_then(|(_, info)| info.type_name)
-                        .map(std::borrow::Cow::Borrowed)
-                        .unwrap_or_else(|| std::borrow::Cow::Owned(type_id_to_string(type_id)));
-                    self.writer
-                        .write_line(&format!("      Type: {} ({})", type_name, type_id));
-                    let counters_to_show = if let Some(max) = self.config.max_stats_per_report {
-                        let remaining = max.saturating_sub(total_shown);
-                        &counters[..std::cmp::min(remaining, counters.len())]
-                    } else {
-                        &counters
-                    };
-                    for (index, (key, counter_info)) in counters_to_show.iter().enumerate() {
-                        let messages_in_period = self.messages_per_counter.get(key).unwrap_or(&0);
-                        let messages_per_second =
-                            *messages_in_period as f64 / self.config.interval.as_secs_f64();
-                        let stat_name = counter_info
-                            .stat_name
-                            .map(remove_sai_prefix)
-                            .unwrap_or_else(|| stat_id_to_string(key.type_id, key.stat_id));
-                        let formatted_time = format_timestamp(counter_info.last_observation_time);
-                        self.writer.write_line(&format!(
-                            "         [{:3}] Object: {:15}, Stat: {:25}, Counter: {:15}, Msg/s: {:6.1}, LastTime: {}",
-                            index + 1,
-                            key.object_name,
-                            stat_name,
-                            counter_info.counter,
-                            messages_per_second,
-                            formatted_time
-                        ));
-                    }
-                    total_shown += counters_to_show.len();
-                    if let Some(max) = self.config.max_stats_per_report {
-                        if total_shown >= max && self.latest_counters.len() > max {
-                            self.writer.write_line(&format!(
-                                "         ... and {} more counters (use max_stats_per_report: None to show all)",
-                                self.latest_counters.len() - max
-                            ));
-                            break;
-                        }
-                    }
-                }
-            } else if !self.config.detailed && !self.latest_counters.is_empty() {
-                let total_counter_value: u128 = self
-                    .latest_counters
-                    .values()
-                    .map(|info| info.counter as u128)
-                    .sum();
-                let unique_types = self
-                    .latest_counters
-                    .keys()
-                    .map(|k| k.type_id)
-                    .collect::<std::collections::HashSet<_>>()
-                    .len();
-                let unique_objects = self
-                    .latest_counters
-                    .keys()
-                    .map(|k| &k.object_name)
-                    .collect::<std::collections::HashSet<_>>()
-                    .len();
-                let total_messages_in_period: u64 = self.messages_per_counter.values().sum();
-                let messages_per_second =
-                    total_messages_in_period as f64 / self.config.interval.as_secs_f64();
-                self.writer.write_line("   Summary:");
-                self.writer.write_line(&format!(
-                    "      Total Counter Value: {}",
-                    total_counter_value
-                ));
-                self.writer
-                    .write_line(&format!("      Unique Types: {}", unique_types));
-                self.writer
-                    .write_line(&format!("      Unique Objects: {}", unique_objects));
-                self.writer.write_line(&format!(
-                    "      Messages per Second: {:.1}",
-                    messages_per_second
-                ));
             }
         }
     }
@@ -1563,10 +1068,7 @@ mod tests {
         (name, type_id, stat_id)
     }
 
-    fn random_template(
-        rng: &mut Rng,
-    ) -> Arc<[crate::message::saistats::SAIStatMetadata]> {
-        use crate::message::saistats::SAIStatMetadata;
+    fn random_template(rng: &mut Rng) -> Arc<[SAIStatMetadata]> {
         let fields = 1 + rng.next(6) as usize;
         let mut metadata: Vec<SAIStatMetadata> = (0..fields)
             .map(|_| {
@@ -1582,112 +1084,97 @@ mod tests {
         metadata.into()
     }
 
-    fn assert_same_state(
-        actor: &mut StatsReporterActor<TestWriter>,
-        legacy: &LegacyReporter<TestWriter>,
-    ) {
+    fn assert_same_state(actor: &mut StatsReporterActor<TestWriter>, model: &PerCounterModel) {
         let latest = actor.latest_counters();
-        assert_eq!(latest.len(), legacy.latest_counters.len());
-        for (key, info) in &legacy.latest_counters {
+        assert_eq!(latest.len(), model.latest_counters.len());
+        for (key, info) in &model.latest_counters {
             let mine = &latest[key];
             assert_eq!(
-                (mine.counter, mine.last_observation_time, mine.type_name, mine.stat_name),
-                (info.counter, info.last_observation_time, info.type_name, info.stat_name),
+                (
+                    mine.counter,
+                    mine.last_observation_time,
+                    mine.type_name,
+                    mine.stat_name
+                ),
+                (
+                    info.counter,
+                    info.last_observation_time,
+                    info.type_name,
+                    info.stat_name
+                ),
                 "{key:?}"
             );
         }
-        let messages = actor.messages_per_counter();
-        assert_eq!(messages.len(), legacy.messages_per_counter.len());
-        for (key, count) in &legacy.messages_per_counter {
-            assert_eq!(messages.get(key), Some(count), "{key:?}");
-        }
-        assert_eq!(actor.total_messages_received, legacy.total_messages_received);
+        assert_eq!(actor.messages_per_counter(), model.messages_per_counter);
+        assert_eq!(actor.total_messages_received, model.total_messages_received);
+    }
+
+    fn check_report(actor: &mut StatsReporterActor<TestWriter>, model: &mut PerCounterModel) {
+        // Compare period counts before the report clears them, then verify the reset.
+        assert_same_state(actor, model);
+        actor.generate_report();
+        model.messages_per_counter.clear();
+        assert_same_state(actor, model);
+        actor.writer.lines.clear();
     }
 
     #[tokio::test]
-    async fn template_slots_report_exactly_like_per_counter_updates() {
-        let configs = [
-            StatsReporterConfig {
-                interval: Duration::from_secs(10),
-                detailed: true,
-                max_stats_per_report: None,
-            },
-            StatsReporterConfig {
-                interval: Duration::from_secs(10),
-                detailed: true,
-                max_stats_per_report: Some(7),
-            },
-            StatsReporterConfig {
-                interval: Duration::from_secs(4),
-                detailed: false,
-                max_stats_per_report: None,
-            },
-        ];
-        for (round, config) in configs.into_iter().enumerate() {
-            let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ (round as u64 + 1));
-            let (_sender, receiver) = channel(1);
-            let mut actor = StatsReporterActor::new(receiver, config.clone(), TestWriter::new());
-            let mut legacy = LegacyReporter::new(config, TestWriter::new());
-            let mut templates: Vec<_> = (0..6).map(|_| random_template(&mut rng)).collect();
-            let mut time = 1_700_000_000_000_000_000u64;
-            let mut reports = 0;
-            for step in 0..800 {
-                if rng.next(20) == 0 {
-                    let index = rng.next(templates.len() as u64) as usize;
-                    templates[index] = if rng.next(2) == 0 {
-                        // Same content in a new allocation, like a re-registered template.
-                        Arc::from(templates[index].to_vec())
-                    } else {
-                        random_template(&mut rng)
-                    };
-                }
-                let mut batch = SAIStatsBatch::default();
-                for _ in 0..1 + rng.next(12) {
-                    time += 1 + rng.next(1_000_000_000);
-                    if rng.next(5) == 0 {
-                        let count = 1 + rng.next(4);
-                        let stats: Vec<SAIStat> = (0..count)
-                            .map(|_| {
-                                let (name, type_id, stat_id) = random_key(&mut rng);
-                                SAIStat::new(name, type_id, stat_id, rng.next(u64::MAX))
-                            })
-                            .collect();
-                        batch.push_record(time, stats);
-                    } else {
-                        let template =
-                            Arc::clone(&templates[rng.next(templates.len() as u64) as usize]);
-                        let values: Vec<u64> =
-                            (0..template.len()).map(|_| rng.next(u64::MAX)).collect();
-                        batch.push_shared_record(time, template, values);
-                    }
-                }
-                legacy.update_stats(&batch);
-                actor.update_stats(Arc::new(batch));
-                if rng.next(8) == 0 {
-                    legacy.generate_report();
-                    actor.generate_report();
-                    reports += 1;
-                    // Replaced templates are referenced by nothing but their slot.
-                    assert!(actor.slots.len() <= templates.len());
-                }
-                if step % 40 == 0 {
-                    assert_same_state(&mut actor, &legacy);
+    async fn template_slots_match_per_counter_updates() {
+        let mut rng = Rng(0x9e37_79b9_7f4a_7c15 ^ 1);
+        let mut actor = reporter(StatsReporterConfig::default());
+        let mut model = PerCounterModel::default();
+        let mut templates: Vec<_> = (0..6).map(|_| random_template(&mut rng)).collect();
+        let mut time = 1_700_000_000_000_000_000u64;
+        let mut reports = 0;
+        for step in 0..800 {
+            if rng.next(20) == 0 {
+                let index = rng.next(templates.len() as u64) as usize;
+                templates[index] = if rng.next(2) == 0 {
+                    // Same content in a new allocation, like a re-registered template.
+                    Arc::from(templates[index].to_vec())
+                } else {
+                    random_template(&mut rng)
+                };
+            }
+            let mut batch = SAIStatsBatch::default();
+            for _ in 0..1 + rng.next(12) {
+                time += 1 + rng.next(1_000_000_000);
+                if rng.next(5) == 0 {
+                    let count = 1 + rng.next(4);
+                    let stats: Vec<SAIStat> = (0..count)
+                        .map(|_| {
+                            let (name, type_id, stat_id) = random_key(&mut rng);
+                            SAIStat::new(name, type_id, stat_id, rng.next(u64::MAX))
+                        })
+                        .collect();
+                    batch.push_record(time, stats);
+                } else {
+                    let template =
+                        Arc::clone(&templates[rng.next(templates.len() as u64) as usize]);
+                    let values: Vec<u64> =
+                        (0..template.len()).map(|_| rng.next(u64::MAX)).collect();
+                    batch.push_shared_record(time, template, values);
                 }
             }
-            legacy.generate_report();
-            actor.generate_report();
-            assert!(reports > 50);
-            assert!(actor.writer.lines.len() > 6 * reports);
-            assert_eq!(actor.writer.lines, legacy.writer.lines);
+            model.update_stats(&batch);
+            actor.update_stats(Arc::new(batch));
+            if rng.next(8) == 0 {
+                check_report(&mut actor, &mut model);
+                reports += 1;
+                // Replaced templates are referenced by nothing but their slot.
+                assert!(actor.slots.len() <= templates.len());
+            }
+            if step % 40 == 0 {
+                assert_same_state(&mut actor, &model);
+            }
         }
+        check_report(&mut actor, &mut model);
+        assert!(reports > 50);
     }
 
     #[tokio::test]
     async fn retired_template_slot_is_dropped_but_its_counters_are_kept() {
-        use crate::message::saistats::SAIStatMetadata;
-        let (_sender, receiver) = channel(1);
-        let mut actor =
-            StatsReporterActor::new(receiver, StatsReporterConfig::default(), TestWriter::new());
+        let mut actor = reporter(StatsReporterConfig::default());
         let metadata: Arc<[SAIStatMetadata]> = Arc::from(vec![
             SAIStatMetadata::new("Ethernet0", 1, 0),
             SAIStatMetadata::new("Ethernet0", 1, 1),
@@ -1703,24 +1190,19 @@ mod tests {
         assert!(actor.table.iter().all(|entry| entry.address == 0));
         let latest = actor.latest_counters();
         assert_eq!(latest.len(), 2);
-        assert_eq!(latest[&CounterKey::new("Ethernet0".into(), 1, 1)].counter, 2);
+        assert_eq!(
+            latest[&CounterKey::new("Ethernet0".into(), 1, 1)].counter,
+            2
+        );
     }
 
     #[tokio::test]
     async fn hot_table_growth_and_retirement_keep_every_template() {
-        use crate::message::saistats::SAIStatMetadata;
-        let config = StatsReporterConfig {
-            interval: Duration::from_secs(10),
-            detailed: true,
-            max_stats_per_report: None,
-        };
-        let (_sender, receiver) = channel(1);
-        let mut actor = StatsReporterActor::new(receiver, config.clone(), TestWriter::new());
-        let mut legacy = LegacyReporter::new(config, TestWriter::new());
-        let mut rng = Rng(0x2545_f491_4f6c_dd1d);
-        // 600 templates of 1..5 fields with distinct counters; some fields are
-        // shared between neighbouring templates.
-        let mut templates: Vec<Option<Arc<[SAIStatMetadata]>>> = (0..600)
+        const TEMPLATE_COUNT: usize = 64;
+        let mut actor = reporter(StatsReporterConfig::default());
+        let mut model = PerCounterModel::default();
+        // Exercise inline and boxed values, with overlap between neighbouring templates.
+        let mut templates: Vec<Option<Arc<[SAIStatMetadata]>>> = (0..TEMPLATE_COUNT)
             .map(|template| {
                 let fields = 1 + template % 5;
                 let metadata: Vec<SAIStatMetadata> = (0..fields)
@@ -1736,36 +1218,41 @@ mod tests {
             })
             .collect();
         let mut time = 1_700_000_000_000_000_000u64;
-        for round in 0..6 {
-            if round == 3 {
+        for round in 0..3 {
+            if round == 1 {
                 // Retire every other template.
                 for template in templates.iter_mut().step_by(2) {
                     *template = None;
                 }
             }
-            for _ in 0..40 {
-                let mut batch = SAIStatsBatch::default();
-                for _ in 0..200 {
-                    let live: Vec<_> = templates.iter().flatten().collect();
-                    let template = Arc::clone(live[rng.next(live.len() as u64) as usize]);
-                    time += 1 + rng.next(1_000_000);
-                    let values: Vec<u64> = (0..template.len()).map(|_| rng.next(u64::MAX)).collect();
-                    batch.push_shared_record(time, template, values);
+            let mut batch = SAIStatsBatch::default();
+            // Earlier templates keep pending counts and values across later expansions.
+            for template in templates.iter().flatten().rev() {
+                for _ in 0..2 {
+                    time += 1;
+                    let values = (0..template.len()).map(|field| time + field as u64);
+                    batch.push_shared_record(time, Arc::clone(template), values);
                 }
-                legacy.update_stats(&batch);
-                actor.update_stats(Arc::new(batch));
             }
-            legacy.generate_report();
-            actor.generate_report();
-            assert_same_state(&mut actor, &legacy);
+            model.update_stats(&batch);
+            actor.update_stats(Arc::new(batch));
+            if round == 0 {
+                assert!(
+                    actor.table.len() >= 2 * TEMPLATE_COUNT,
+                    "multiple table expansions"
+                );
+            }
+            check_report(&mut actor, &mut model);
             assert_eq!(actor.slots.len(), templates.iter().flatten().count());
             assert!(2 * actor.slots.len() <= actor.table.len());
             assert_eq!(
-                actor.table.iter().filter(|entry| entry.address != 0).count(),
+                actor
+                    .table
+                    .iter()
+                    .filter(|entry| entry.address != 0)
+                    .count(),
                 actor.slots.len()
             );
         }
-        assert!(actor.table.len() >= 1024, "the table grew past its initial capacity");
-        assert_eq!(actor.writer.lines, legacy.writer.lines);
     }
 }
