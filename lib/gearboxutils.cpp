@@ -160,6 +160,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 {
                     phy.lib_name = val.second;
                 }
+                else if (val.first == "phy_access_lib_name")
+                {
+                    phy.phy_access_lib_name = val.second;
+                }
                 else if (val.first == "firmware_path")
                 {
                     phy.firmware = val.second;
