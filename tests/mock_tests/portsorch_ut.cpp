@@ -6002,6 +6002,7 @@ namespace portsorch_test
 
         ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
     }
+
 // ============================================================================
 // PFC Hardware Watchdog Tests
 // ============================================================================
@@ -7055,4 +7056,136 @@ TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
     resetPfcWdFailureFlags();
 }
 
+
+    struct GearboxKeyTest : public PortsOrchTest {};
+
+    TEST_F(GearboxKeyTest, InterfaceKeyUsesAliasWhenPresent)
+    {
+        gearbox_interface_t intf = {};
+        intf.alias = "Eth1/1";
+        intf.index = 0;
+        intf.phy_id = 1;
+        gPortsOrch->m_gearboxInterfaceMap["Eth1/1"] = intf;
+
+        Port port = {};
+        port.m_alias = "Eth1/1";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port), "Eth1/1");
+
+        gPortsOrch->m_gearboxInterfaceMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, InterfaceKeyFallsBackToIndex)
+    {
+        gearbox_interface_t intf = {};
+        intf.alias = "0";
+        intf.index = 0;
+        intf.phy_id = 1;
+        gPortsOrch->m_gearboxInterfaceMap["0"] = intf;
+
+        Port port = {};
+        port.m_alias = "Ethernet0";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port), "0");
+
+        gPortsOrch->m_gearboxInterfaceMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, PortKeyUsesAliasWhenPresent)
+    {
+        gearbox_port_t gport = {};
+        gport.alias = "Eth1/1";
+        gport.index = 0;
+        gPortsOrch->m_gearboxPortMap["Eth1/1"] = gport;
+
+        Port port = {};
+        port.m_alias = "Eth1/1";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port), "Eth1/1");
+
+        gPortsOrch->m_gearboxPortMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, PortKeyFallsBackToIndex)
+    {
+        gearbox_port_t gport = {};
+        gport.alias = "0";
+        gport.index = 0;
+        gPortsOrch->m_gearboxPortMap["0"] = gport;
+
+        Port port = {};
+        port.m_alias = "Ethernet0";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port), "0");
+
+        gPortsOrch->m_gearboxPortMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, BreakoutTwoInterfacesSameIndexDistinctAlias)
+    {
+        gearbox_interface_t intf1 = {};
+        intf1.alias = "Eth1/1";
+        intf1.index = 0;
+        intf1.phy_id = 1;
+
+        gearbox_interface_t intf2 = {};
+        intf2.alias = "Eth1/2";
+        intf2.index = 0;
+        intf2.phy_id = 1;
+
+        gPortsOrch->m_gearboxInterfaceMap["Eth1/1"] = intf1;
+        gPortsOrch->m_gearboxInterfaceMap["Eth1/2"] = intf2;
+
+        ASSERT_EQ(gPortsOrch->m_gearboxInterfaceMap.size(), 2u);
+        ASSERT_EQ(gPortsOrch->m_gearboxInterfaceMap["Eth1/1"].index, 0);
+        ASSERT_EQ(gPortsOrch->m_gearboxInterfaceMap["Eth1/2"].index, 0);
+
+        Port port1 = {};
+        port1.m_alias = "Eth1/1";
+        port1.m_index = 0;
+
+        Port port2 = {};
+        port2.m_alias = "Eth1/2";
+        port2.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port1), "Eth1/1");
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port2), "Eth1/2");
+
+        gPortsOrch->m_gearboxInterfaceMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, BreakoutTwoPortsSameIndexDistinctAlias)
+    {
+        gearbox_port_t gport1 = {};
+        gport1.alias = "Eth1/1";
+        gport1.index = 0;
+
+        gearbox_port_t gport2 = {};
+        gport2.alias = "Eth1/2";
+        gport2.index = 0;
+
+        gPortsOrch->m_gearboxPortMap["Eth1/1"] = gport1;
+        gPortsOrch->m_gearboxPortMap["Eth1/2"] = gport2;
+
+        ASSERT_EQ(gPortsOrch->m_gearboxPortMap.size(), 2u);
+        ASSERT_EQ(gPortsOrch->m_gearboxPortMap["Eth1/1"].index, 0);
+        ASSERT_EQ(gPortsOrch->m_gearboxPortMap["Eth1/2"].index, 0);
+
+        Port port1 = {};
+        port1.m_alias = "Eth1/1";
+        port1.m_index = 0;
+
+        Port port2 = {};
+        port2.m_alias = "Eth1/2";
+        port2.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port1), "Eth1/1");
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port2), "Eth1/2");
+
+        gPortsOrch->m_gearboxPortMap.clear();
+    }
 }

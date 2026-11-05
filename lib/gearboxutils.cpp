@@ -208,7 +208,7 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
     return gearboxPhyMap;
 }
 
-std::map<int, gearbox_interface_t> GearboxUtils::loadInterfaceMap(Table *gearboxTable)
+std::map<std::string, gearbox_interface_t> GearboxUtils::loadInterfaceMap(Table *gearboxTable)
 {
     std::vector<FieldValueTuple> ovalues;
     std::tuple <std::string, std::string, std::string> keyt;
@@ -235,10 +235,15 @@ std::map<int, gearbox_interface_t> GearboxUtils::loadInterfaceMap(Table *gearbox
             gearboxTable->get(k, ovalues);
             for (auto &val : ovalues)
             {
-                if (val.first == "index")
+                if (val.first == "alias")
+                {
+                    interface.alias = val.second;
+                    SWSS_LOG_DEBUG("BOX alias = %d", interface.index);
+                }
+                else if (val.first == "index")
                 {
                     interface.index = std::stoi(val.second);
-                    SWSS_LOG_DEBUG("BOX interface = %d", interface.index);
+                    SWSS_LOG_DEBUG("BOX index = %d", interface.index);
                 }
                 else if (val.first == "phy_id")
                 {
@@ -279,7 +284,7 @@ std::map<int, gearbox_interface_t> GearboxUtils::loadInterfaceMap(Table *gearbox
                     interface.tx_firs[val.first] = val.second;
                 }
             }
-            gearboxInterfaceMap[interface.index] = interface;
+            gearboxInterfaceMap[interface.alias] = interface;
         }
     }
 
@@ -353,7 +358,7 @@ std::map<int, gearbox_lane_t> GearboxUtils::loadLaneMap(Table *gearboxTable)
     return gearboxLaneMap;
 }
 
-std::map<int, gearbox_port_t> GearboxUtils::loadPortMap(Table *gearboxTable)
+std::map<std::string, gearbox_port_t> GearboxUtils::loadPortMap(Table *gearboxTable)
 {
     std::vector<FieldValueTuple> ovalues;
     std::tuple <std::string, std::string, std::string> keyt;
@@ -380,7 +385,12 @@ std::map<int, gearbox_port_t> GearboxUtils::loadPortMap(Table *gearboxTable)
             gearboxTable->get(k, ovalues);
             for (auto &val : ovalues)
             {
-                if (val.first == "index")
+                if (val.first == "alias")
+                {
+                    port.alias = val.second;
+                    SWSS_LOG_DEBUG("BOX port alias = %s", port.alias.c_str());
+                }
+                else if (val.first == "index")
                 {
                     port.index = std::stoi(val.second);
                 }
@@ -473,7 +483,7 @@ std::map<int, gearbox_port_t> GearboxUtils::loadPortMap(Table *gearboxTable)
                     port.line_adver_media_type = val.second;
                 }
             }
-            gearboxPortMap[port.index] = port;
+            gearboxPortMap[port.alias] = port;
         }
     }
     return gearboxPortMap;
