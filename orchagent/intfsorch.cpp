@@ -600,7 +600,10 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         }
     }
 
-    addIp2MeRoute(port.m_vr_id, *ip_prefix);
+    if (!addIp2MeRoute(port.m_vr_id, *ip_prefix))
+    {
+        return false;
+    }
 
     if(gMySwitchType == "voq")
     {
@@ -632,7 +635,10 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
 
     if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
-        removeIp2MeRoute(port.m_vr_id, *ip_prefix);
+        if (!removeIp2MeRoute(port.m_vr_id, *ip_prefix))
+        {
+            return false;
+        }
 
         if(gMySwitchType == "voq")
         {
@@ -926,8 +932,12 @@ void IntfsOrch::doTask(Consumer &consumer)
                     }
                     if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
                     {
+                        if (!addIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix))
+                        {
+                            it++;
+                            continue;
+                        }
                         m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
-                        addIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix);
                     }
                 }
 
@@ -1162,8 +1172,12 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
                         {
+                            if (!removeIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix))
+                            {
+                                it++;
+                                continue;
+                            }
                             m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
-                            removeIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix);
                         }
                     }
                 }
@@ -1508,7 +1522,12 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
     {
         SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
                 port.m_alias.c_str(), status);
-        if (handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status == task_need_retry)
+        {
+            return false;
+        }
+        if (handle_status != task_success)
         {
             throw runtime_error("Failed to create router interface.");
         }
@@ -1560,7 +1579,12 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
-        if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status == task_need_retry)
+        {
+            return false;
+        }
+        if (handle_status != task_success)
         {
             throw runtime_error("Failed to remove router interface.");
         }
@@ -1583,7 +1607,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     return true;
 }
 
-void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
+bool IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.switch_id = gSwitchId;
@@ -1608,7 +1632,12 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        if (handleSaiCreateStatus(SAI_API_ROUTE, status) != task_success)
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
+        if (handle_status == task_need_retry)
+        {
+            return false;
+        }
+        if (handle_status != task_success)
         {
             throw runtime_error("Failed to create IP2me route.");
         }
@@ -1626,9 +1655,10 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     }
 
     gFlowCounterRouteOrch->onAddMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
+    return true;
 }
 
-void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
+bool IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.switch_id = gSwitchId;
@@ -1639,7 +1669,12 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        if (handleSaiRemoveStatus(SAI_API_ROUTE, status) != task_success)
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ROUTE, status);
+        if (handle_status == task_need_retry)
+        {
+            return false;
+        }
+        if (handle_status != task_success)
         {
             throw runtime_error("Failed to remove IP2me route.");
         }
@@ -1657,6 +1692,7 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     }
 
     gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
+    return true;
 }
 
 void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix)
