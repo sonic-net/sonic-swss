@@ -291,4 +291,73 @@ namespace stporch_test
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
     }
+
+    TEST_F(StpOrchTest, TestMstInstPortFlushTaskCoverage) {
+        _hook_sai_stp_api();
+        _hook_sai_vlan_api();
+        _hook_sai_fdb_api();
+
+        StrictMock<MockSaiStp> mock_sai_stp_;
+        mock_sai_stp = &mock_sai_stp_;
+        sai_stp_api->create_stp = mock_create_stp;
+        sai_stp_api->remove_stp = mock_remove_stp;
+
+        sai_uint16_t stp_instance = 1;
+        sai_object_id_t stp_oid = 98765;
+        bool result;
+
+        /* Port alias is not in PortsOrch. */
+        result = gStpOrch->stpInstancePortFdbFlush("Ethernet999", stp_instance);
+        ASSERT_FALSE(result);
+
+        /* Port exists, but it has no bridge port. */
+        sai_object_id_t saved_bridge_port_id = gPortsOrch->m_portList[ETHERNET0].m_bridge_port_id;
+        gPortsOrch->m_portList[ETHERNET0].m_bridge_port_id = SAI_NULL_OBJECT_ID;
+        result = gStpOrch->stpInstancePortFdbFlush(ETHERNET0, stp_instance);
+        ASSERT_FALSE(result);
+
+        /* Bridge port is valid, but this STP instance was never created. */
+        gPortsOrch->m_portList[ETHERNET0].m_bridge_port_id = 1234;
+        result = gStpOrch->stpInstancePortFdbFlush(ETHERNET0, 99);
+        ASSERT_FALSE(result);
+
+        EXPECT_CALL(mock_sai_stp_,
+            create_stp(_, _, _, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_oid),
+                                        ::testing::Return(SAI_STATUS_SUCCESS)));
+        result = gStpOrch->addVlanToStpInstance(VLAN_1000, stp_instance);
+        ASSERT_TRUE(result);
+
+        /* VLAN is listed on the instance, but PortsOrch has no such VLAN.
+         * The real VLAN still flushes, so the call returns true. */
+        gStpOrch->m_vlanAliasToStpInstanceMap[stp_instance].stp_inst_vlan_list.insert("Vlan9999");
+        result = gStpOrch->stpInstancePortFdbFlush(ETHERNET0, stp_instance);
+        ASSERT_TRUE(result);
+
+        auto consumer = dynamic_cast<Consumer*>(gStpOrch->getExecutor(APP_STP_INST_PORT_FLUSH_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        /* No ':' in the key: erase and continue, do not abort the batch. */
+        entries.push_back({"InvalidKeyNoColon", "SET", { {"state", "true"} }});
+        /* Parsed key, but state is not true: do not flush. */
+        entries.push_back({"1:Ethernet0", "SET", { {"state", "false"} }});
+        /* Delete is accepted and dropped. */
+        entries.push_back({"1:Ethernet0", "DEL", { {} }});
+        /* Valid flush after the skipped entries. */
+        entries.push_back({"1:Ethernet0", "SET", { {"state", "true"} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gStpOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+
+        EXPECT_CALL(mock_sai_stp_,
+            remove_stp(_)).WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+        result = gStpOrch->removeVlanFromStpInstance(VLAN_1000, stp_instance);
+        ASSERT_TRUE(result);
+
+        gPortsOrch->m_portList[ETHERNET0].m_bridge_port_id = saved_bridge_port_id;
+
+        _unhook_sai_stp_api();
+        _unhook_sai_vlan_api();
+        _unhook_sai_fdb_api();
+    }
 }
