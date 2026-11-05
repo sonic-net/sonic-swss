@@ -139,6 +139,11 @@ public:
     void onMacMove(const MacMoveNotification &notif);
     void onMacLearn(const MacLearnNotification &notif);
 
+    // Called by FdbOrch when PortsOrch removes a port or LAG. Drops the
+    // guard's state for it without touching hardware; the object is gone and
+    // PortsOrch has already discarded its admin-down hold.
+    void onPortRemoved(const std::string &alias);
+
     // Dispatched by FdbOrch::doTask(Consumer&) when the consumer belongs to
     // the MAC_MOVE_GUARD config table.
     void doConfigTask(Consumer &consumer);

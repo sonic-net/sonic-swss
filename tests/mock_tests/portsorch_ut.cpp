@@ -5107,6 +5107,179 @@ namespace portsorch_test
     }
 
     /*
+    * setPortAdminStatusByAlias() on a PortChannel: a LAG owns no SAI port
+    * object, so the request has to cascade to the members. The forced state is
+    * tracked separately from the APP_DB mirror so that a teamsyncd republish
+    * of LAG_TABLE cannot undo it, a member joining while the LAG is held down
+    * comes up forced-down, and releasing it restores the members.
+    */
+    TEST_F(PortsOrchTest, LagForcedAdminDownByAlias)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel999", { {"admin_status", "up"}, {"mtu", "9100"} });
+
+        const std::string sep = lagMemberTable.getTableNameSeparator();
+        auto portIt = ports.begin();
+        const std::string member0 = portIt->first;
+        const std::string member1 = (++portIt)->first;
+        lagMemberTable.set(std::string("PortChannel999") + sep + member0, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        auto drive = [&]() {
+            gPortsOrch->addExistingData(&lagTable);
+            gPortsOrch->addExistingData(&lagMemberTable);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        };
+
+        ASSERT_TRUE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        // internal admin-down cascades to the member, APP_DB mirror untouched
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", false, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_admin_state_up);
+        ASSERT_TRUE(gPortsOrch->m_portList[member0].m_lag_forced_admin_down);
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        // an APP_DB admin-down/admin-up cycle must not release the forced state
+        lagTable.set("PortChannel999", { {"admin_status", "down"}, {"mtu", "9100"} });
+        drive();
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        lagTable.set("PortChannel999", { {"admin_status", "up"}, {"mtu", "9100"} });
+        drive();
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_admin_state_up);
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+        ASSERT_TRUE(gPortsOrch->m_portList[member0].m_lag_forced_admin_down);
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        // a member joining while the LAG is held down comes up forced-down
+        lagMemberTable.set(std::string("PortChannel999") + sep + member1, { {"status", "enabled"} });
+        drive();
+        ASSERT_TRUE(gPortsOrch->m_portList[member1].m_lag_forced_admin_down);
+        ASSERT_FALSE(gPortsOrch->m_portList[member1].m_admin_state_up);
+
+        // releasing restores both members to their configured state
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_FALSE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+        for (const auto &member : { member0, member1 })
+        {
+            ASSERT_FALSE(gPortsOrch->m_portList[member].m_lag_forced_admin_down);
+            ASSERT_TRUE(gPortsOrch->m_portList[member].m_admin_state_up);
+        }
+
+        // deleting a LAG that is held down releases the members. The LAG itself
+        // is not removed while it still has members; the restore runs first.
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", false, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        std::deque<KeyOpFieldsValuesTuple> lagDel = { { "PortChannel999", DEL_COMMAND, { } } };
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_LAG_TABLE_NAME))->addToSync(lagDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        for (const auto &member : { member0, member1 })
+        {
+            ASSERT_FALSE(gPortsOrch->m_portList[member].m_lag_forced_admin_down);
+            ASSERT_TRUE(gPortsOrch->m_portList[member].m_admin_state_up);
+        }
+        ASSERT_NE(gPortsOrch->m_portList.find("PortChannel999"), gPortsOrch->m_portList.end());
+        ASSERT_TRUE(gPortsOrch->isAdminDownHeld("PortChannel999"));
+
+        // once the members leave, the pending LAG delete completes
+        std::deque<KeyOpFieldsValuesTuple> memberDel;
+        for (const auto &member : { member0, member1 })
+        {
+            memberDel.push_back({ std::string("PortChannel999") + sep + member, DEL_COMMAND, { } });
+        }
+        dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME))->addToSync(memberDel);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(gPortsOrch->m_portList.find("PortChannel999"), gPortsOrch->m_portList.end());
+
+        // removing the LAG discards its hold; a late release by the client
+        // fails because the port is gone, and leaves no hold behind
+        ASSERT_FALSE(gPortsOrch->isAdminDownHeld("PortChannel999"));
+        ASSERT_FALSE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_FALSE(gPortsOrch->isAdminDownHeld("PortChannel999"));
+    }
+
+    /*
+    * The port stays down until every client holding it has released it.
+    */
+    TEST_F(PortsOrchTest, AdminDownHoldMultipleHolders)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel999", { {"admin_status", "up"}, {"mtu", "9100"} });
+
+        const std::string sep = lagMemberTable.getTableNameSeparator();
+        const std::string member0 = ports.begin()->first;
+        const std::string memberKey = std::string("PortChannel999") + sep + member0;
+        lagMemberTable.set(memberKey, { {"status", "enabled"} });
+
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // two independent clients hold the LAG down
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", false, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", false, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD));
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+        ASSERT_TRUE(gPortsOrch->m_portList[member0].m_lag_forced_admin_down);
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        // one holder releasing is not enough
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_admin_state_up);
+
+        // a second release by the same holder is a no-op
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD));
+        ASSERT_TRUE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+
+        // the last holder releasing restores the member
+        ASSERT_TRUE(gPortsOrch->setPortAdminStatusByAlias(
+            "PortChannel999", true, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD));
+        ASSERT_FALSE(gPortsOrch->isAdminDownHeld("PortChannel999"));
+        ASSERT_FALSE(gPortsOrch->m_portList["PortChannel999"].m_forced_admin_down);
+        ASSERT_FALSE(gPortsOrch->m_portList[member0].m_lag_forced_admin_down);
+        ASSERT_TRUE(gPortsOrch->m_portList[member0].m_admin_state_up);
+    }
+
+    /*
     * The scope of this test is a negative test which verify that:
     * if port operational status is up but operational speed is 0, the port speed should not be
     * updated to DB.
