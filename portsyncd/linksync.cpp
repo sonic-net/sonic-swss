@@ -44,30 +44,6 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
 
     if (!WarmStart::isWarmStart())
     {
-        /* See the comments for g_portSet in portsyncd.cpp */
-        for (auto port_iter = g_portSet.begin(); port_iter != g_portSet.end();)
-        {
-            string port = *port_iter;
-            vector<FieldValueTuple> temp;
-            bool portFound = false;
-            if (m_portTable.get(port, temp))
-            {
-                for (auto it : temp)
-                {
-                    if (fvField(it) == "admin_status")
-                    {
-                        port_iter = g_portSet.erase(port_iter);
-                        portFound = true;
-                        break;
-                    }
-                }
-            }
-            if (!portFound)
-            {
-                ++port_iter;
-            }
-        }
-
         /* In DPU SONiC netdevs in Kernel are created in the early stage of the syncd service start,
          * when the driver is loading. And exist while the driver remains loaded. 
          *The comparison logic to distinguish "old" interfaces is not needed. */
@@ -103,6 +79,38 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             {
                 /* Ignore error in this flow ; */
                 SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            }
+        }
+    }
+}
+
+void LinkSync::updatePortSet()
+{
+    SWSS_LOG_ENTER();
+
+    if (!WarmStart::isWarmStart())
+    {
+        /* See the comments for g_portSet in portsyncd.cpp */
+        for (auto port_iter = g_portSet.begin(); port_iter != g_portSet.end();)
+        {
+            string port = *port_iter;
+            vector<FieldValueTuple> temp;
+            bool portFound = false;
+            if (m_portTable.get(port, temp))
+            {
+                for (auto it : temp)
+                {
+                    if (fvField(it) == "admin_status")
+                    {
+                        port_iter = g_portSet.erase(port_iter);
+                        portFound = true;
+                        break;
+                    }
+                }
+            }
+            if (!portFound)
+            {
+                ++port_iter;
             }
         }
     }
