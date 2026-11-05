@@ -181,6 +181,9 @@ protected:
     void report_pfc_restored(sai_object_id_t queueId, sai_object_id_t portId,
                             uint8_t queueIndex, const string& portAlias);
 
+    // Mark the queue's open storm interrupted: handling ended without a restore.
+    void interruptStorm(const string& portAlias, uint8_t queueIndex);
+
     // Helper to convert counter IDs to string set for FlexCounter
     template <typename T>
     static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T))
@@ -198,10 +201,19 @@ protected:
 
 private:
 
+    // PFC_WD_STATE / PFC_WD_STORM_HISTORY writers; none of them throw.
+    void recordStormDetected(const string& portAlias, uint8_t queueIndex);
+    void recordStormRestored(const string& portAlias, uint8_t queueIndex, sai_object_id_t queueId);
+    void clearStormLog(const string& portAlias);
+    // Cold start: mark open storms interrupted and reset PFC_WD_STATE.
+    void closeStormsOnColdStart();
+
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
     shared_ptr<DBConnector> m_stateDb = nullptr;
     shared_ptr<Table> m_stateTable = nullptr;
+    shared_ptr<Table> m_queueStateTable = nullptr;
+    shared_ptr<Table> m_stormHistoryTable = nullptr;
     PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
 };
 

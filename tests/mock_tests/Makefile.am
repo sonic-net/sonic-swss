@@ -90,6 +90,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 flexcounter_ut.cpp \
                 pfcwdhw_counters_ut.cpp \
                 pfcwd_counters_ut.cpp \
+                pfcwd_history_ut.cpp \
                 portphyattr_ut.cpp \
 		portphyserdesattr_ut.cpp \
                 counternameupdater_ut.cpp \

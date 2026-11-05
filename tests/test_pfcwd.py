@@ -128,6 +128,7 @@ class TestPfcwdFunc(object):
         self.asic_db = dvs.get_asic_db()
         self.config_db = dvs.get_config_db()
         self.counters_db = dvs.get_counters_db()
+        self.state_db = dvs.get_state_db()
 
     def set_flex_counter_status(self, key, state):
         fvs = {'FLEX_COUNTER_STATUS': state}
@@ -198,6 +199,39 @@ class TestPfcwdFunc(object):
             for queue in queues:
                 queue_name = port + ":" + str(queue)
                 self.counters_db.wait_for_field_match("COUNTERS", self.queue_oids[queue_name], fvs)
+
+    def verify_pfcwd_history(self, queues, storm="1", restored=False):
+        # PFC_WD_STATE holds the current storm state, PFC_WD_STORM_HISTORY the storms;
+        # storm_<n>_restored is written on restore only
+        entries = []
+        for port in self.test_ports:
+            for queue in queues:
+                key = port + "|" + str(queue)
+                detected = "storm_%s_detected" % storm
+                restored_field = "storm_%s_restored" % storm
+                status = "storm_restored" if restored else "storm_detected"
+
+                def check(key=key):
+                    state = self.state_db.get_entry("PFC_WD_STATE", key)
+                    history = self.state_db.get_entry("PFC_WD_STORM_HISTORY", key)
+                    ok = (state.get("status") == status and
+                          history.get("last_storm") == storm and
+                          detected in history and
+                          (restored_field in history) == restored)
+                    return (ok, (state, history))
+
+                _, entry = wait_for_result(
+                    check,
+                    failure_message="pfcwd storm record %s missing or in wrong state (restored=%s)" % (key, restored))
+                entries.append(entry)
+        return entries
+
+    def verify_pfcwd_history_cleared(self, queues):
+        for port in self.test_ports:
+            for queue in queues:
+                key = port + "|" + str(queue)
+                self.state_db.wait_for_deleted_entry("PFC_WD_STATE", key)
+                self.state_db.wait_for_deleted_entry("PFC_WD_STORM_HISTORY", key)
 
     def reset_pfcwd_counters(self, queues):
         fvs = {"PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED" : "0",
@@ -305,6 +339,59 @@ class TestPfcwdFunc(object):
             self.stop_pfcwd_on_ports()
             self.wait_pfcwd_unregistered(storm_queue)
             self.reset_pfcwd_counters(storm_queue)
+
+    def test_pfcwd_storm_history(self, dvs, setup_teardown_test):
+        test_queues = [3, 4]
+        storm_queue = [3]
+        history_keys = [port + "|" + str(queue) for port in self.test_ports for queue in storm_queue]
+        epoch_us = re.compile(r"^\d{16}$")
+        try:
+            for key in history_keys:
+                self.state_db.delete_entry("PFC_WD_STATE", key)
+                self.state_db.delete_entry("PFC_WD_STORM_HISTORY", key)
+
+            self.set_ports_pfc(pfc_queues=test_queues)
+            self.verify_ports_pfc(test_queues)
+
+            self.start_pfcwd_on_ports(action="drop")
+            self.verify_pfcwd_action(storm_queue, "drop")
+
+            # start pfc storm; storm 1 opens with its detect time only
+            self.set_storm_state(storm_queue)
+            self.verify_pfcwd_state(storm_queue)
+            for state, history in self.verify_pfcwd_history(storm_queue):
+                assert state["detection_count"] == "1"
+                assert state["restoration_count"] == "0"
+                assert epoch_us.match(history["storm_1_detected"])
+                assert state["last_detection_time"] == history["storm_1_detected"]
+
+            # stop storm; storm 1 is closed with restore time, duration and packet counts
+            self.set_storm_state(storm_queue, state="disabled")
+            self.verify_pfcwd_counters(storm_queue, restore="1")
+            for state, history in self.verify_pfcwd_history(storm_queue, restored=True):
+                assert state["restoration_count"] == "1"
+                assert epoch_us.match(history["storm_1_restored"])
+                assert state["last_restoration_time"] == history["storm_1_restored"]
+                assert state["storm_duration_ms"] == history["storm_1_duration_ms"]
+                assert int(history["storm_1_restored"]) >= int(history["storm_1_detected"])
+                assert int(history["storm_1_duration_ms"]) >= 0
+                for field in ["storm_1_tx_packets", "storm_1_tx_dropped",
+                              "storm_1_rx_packets", "storm_1_rx_dropped"]:
+                    assert field in history, "%s missing from storm history" % field
+                    assert int(history[field]) >= 0
+
+            # removing the watchdog from the port clears its storms
+            self.stop_pfcwd_on_ports()
+            self.verify_pfcwd_history_cleared(storm_queue)
+
+        finally:
+            self.set_storm_state(storm_queue, state="disabled")
+            self.stop_pfcwd_on_ports()
+            self.wait_pfcwd_unregistered(storm_queue)
+            self.reset_pfcwd_counters(storm_queue)
+            for key in history_keys:
+                self.state_db.delete_entry("PFC_WD_STATE", key)
+                self.state_db.delete_entry("PFC_WD_STORM_HISTORY", key)
 
     def test_pfcwd_brs_invalid_value_ignored(self, dvs, setup_teardown_test):
         """An unsupported BIG_RED_SWITCH value is rejected and pfcwd keeps working normally."""
