@@ -23,6 +23,7 @@ extern MacAddress gMacAddress;
 
 // Fields name
 #define VXLAN_TUNNEL "vxlan_tunnel"
+#define VXLAN_TUNNEL_LIST "vxlan_tunnel_list"
 #define SOURCE_IP "src_ip"
 #define VNI "vni"
 #define VNET "vnet"
