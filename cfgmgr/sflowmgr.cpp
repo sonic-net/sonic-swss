@@ -57,21 +57,33 @@ void SflowMgr::sflowHandleService(bool enable)
 
     if (enable)
     {
-        cmd << "service hsflowd restart";
+        cmd << "supervisorctl start hsflowd";
     }
     else
     {
-        cmd << "service hsflowd stop";
+        cmd << "supervisorctl stop hsflowd";
     }
 
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        /* supervisorctl returns non-zero for benign states like
+           ALREADY_STARTED or NOT_RUNNING — log at INFO, not ERROR */
+        if (res.find("already started") != string::npos ||
+            res.find("not running") != string::npos)
+        {
+            SWSS_LOG_INFO("Command '%s': %s (no action needed)",
+                          cmd.str().c_str(), res.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Command '%s' failed with rc %d: %s",
+                           cmd.str().c_str(), ret, res.c_str());
+        }
     }
     else
     {
-        SWSS_LOG_NOTICE("Starting hsflowd service");
+        SWSS_LOG_NOTICE("%s hsflowd via supervisorctl", enable ? "Starting" : "Stopping");
         SWSS_LOG_INFO("Command '%s' succeeded", cmd.str().c_str());
     }
 
