@@ -12,6 +12,7 @@
 #include "taskworker.h"
 #include "pbutils.h"
 #include "converter.h"
+#include "sainotificationorch.h"
 
 #include <google/protobuf/util/message_differencer.h>
 
@@ -93,6 +94,22 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
 
     register_ha_set_notifier();
     register_ha_scope_notifier();
+
+    if (gSaiNotificationOrch)
+    {
+        gSaiNotificationOrch->registerHandler(
+            SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT,
+            [this](KeyOpFieldsValuesTuple &entry)
+            {
+                handleNotification(entry);
+            });
+        gSaiNotificationOrch->registerHandler(
+            SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT,
+            [this](KeyOpFieldsValuesTuple &entry)
+            {
+                handleNotification(entry);
+            });
+    }
 
     // Register this DashHaOrch instance with DashOrch
     m_dash_orch->setDashHaOrch(this);
@@ -1140,130 +1157,147 @@ void DashHaOrch::doTask(NotificationConsumer &consumer)
 
     for (auto &event : events)
     {
-        std::string op = kfvOp(event);
-        std::string data = kfvKey(event);
-        std::vector<swss::FieldValueTuple> values = kfvFieldsValues(event);
-
-        if (op == "ha_set_event")
-        {
-            std::time_t now_time = getNowTime();
-
-            uint32_t count;
-            sai_ha_set_event_data_t *ha_set_event = nullptr;
-
-            sai_deserialize_ha_set_event_ntf(data, count, &ha_set_event);
-
-            for (uint32_t i = 0; i < count; i++)
-            {
-                sai_object_id_t ha_set_id = ha_set_event[i].ha_set_id;
-                sai_ha_set_event_t event_type = ha_set_event[i].event_type;
-
-                SWSS_LOG_INFO("Get HA Set event notification id:%" PRIx64 " event: Data plane channel goes %s", ha_set_id, sai_ha_set_event_type_name.at(event_type).c_str());
-
-                auto key = getHaSetObjectKey(ha_set_id);
-                if (key.empty())
-                {
-                    SWSS_LOG_ERROR("HA Set object not found for ID: %" PRIx64, ha_set_id);
-                    continue;
-                }
-                std::vector<FieldValueTuple> fvs = {
-                    {"last_updated_time", to_string(now_time)},
-                    {"dp_channel_is_alive", sai_ha_set_event_type_name.at(event_type)}
-                };
-                m_dpuStateDbHaSetTable->set(key, fvs);
-            }
-            sai_deserialize_free_ha_set_event_ntf(count, ha_set_event);
-        }
-
-        if (op == "ha_scope_event")
-        {
-            std::time_t now_time = getNowTime();
-
-            uint32_t count;
-            sai_ha_scope_event_data_t *ha_scope_event = nullptr;
-
-            sai_deserialize_ha_scope_event_ntf(data, count, &ha_scope_event);
-
-            for (uint32_t i = 0; i < count; i++)
-            {
-                sai_ha_scope_event_t event_type = ha_scope_event[i].event_type;
-                sai_object_id_t ha_scope_id = ha_scope_event[i].ha_scope_id;
-
-                SWSS_LOG_INFO("Get HA Scope event notification id:%" PRIx64 " event: %s", ha_scope_id, sai_ha_scope_event_type_name.at(event_type).c_str());
-
-                auto key = getHaScopeObjectKey(ha_scope_id);
-                if (key.empty())
-                {
-                    SWSS_LOG_ERROR("HA Scope object not found for ID: %" PRIx64, ha_scope_id);
-                    continue;
-                }
-
-                std::vector<FieldValueTuple> fvs = {
-                    {"last_updated_time", to_string(now_time)},
-                    {"ha_term", to_string(ha_scope_event[i].flow_version)}
-                };
-
-                auto ha_role = to_pb(ha_scope_event[i].ha_role);
-                std::time_t role_start_time = now_time;
-
-                if (m_ha_scope_entries[key].metadata.ha_role() != ha_role)
-                {
-                    m_ha_scope_entries[key].metadata.set_ha_role(ha_role);
-                    m_ha_scope_entries[key].last_role_start_time = now_time;
-                    SWSS_LOG_NOTICE("HA Scope role changed for %s to %s", key.c_str(), dash::types::HaRole_Name(ha_role).c_str());
-                } else
-                {
-                    role_start_time = m_ha_scope_entries[key].last_role_start_time;
-                }
-
-                fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
-                fvs.push_back({"ha_role_start_time", to_string(role_start_time)});
-
-                switch (event_type)
-                {
-                    case SAI_HA_SCOPE_EVENT_FLOW_RECONCILE_NEEDED:
-                        fvs.push_back({"flow_reconcile_pending", "true"});
-                        break;
-                    case SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED:
-                        fvs.push_back({"brainsplit_recover_pending", "true"});
-                        break;
-                    case SAI_HA_SCOPE_EVENT_STATE_CHANGED:
-                        if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_PENDING_STANDALONE_ACTIVATION,
-                                                            SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION,
-                                                            SAI_DASH_HA_STATE_PENDING_STANDBY_ACTIVATION}))
-                        {
-                            fvs.push_back({"activate_role_pending", "true"});
-                            SWSS_LOG_NOTICE("DPU is pending on role activation for %s", key.c_str());
-                        }
-                        else if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
-                                                                 SAI_DASH_HA_STATE_STANDBY}))
-                        {
-                            fvs.push_back({"brainsplit_recover_pending", "false"});
-                        }
-
-                        fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
-                        fvs.push_back({"ha_state_start_time", to_string(now_time)});
-
-                        m_ha_scope_entries[key].ha_state = ha_scope_event[i].ha_state;
-                        m_ha_scope_entries[key].last_state_start_time = now_time;
-
-                        if (has_dpu_scope() && in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
-                                                            SAI_DASH_HA_STATE_STANDBY,
-                                                            SAI_DASH_HA_STATE_STANDALONE}))
-                        {
-                            processCachedBfdSessions();
-                        }
-                        break;
-                    default:
-                        SWSS_LOG_ERROR("Unknown HA Scope event type %d for %s", event_type, key.c_str());
-                }
-
-                m_dpuStateDbHaScopeTable->set(key, fvs);
-
-            }
-            sai_deserialize_free_ha_scope_event_ntf(count, ha_scope_event);
-        }
+        handleNotification(event);
     }
+}
+
+void DashHaOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
+{
+    const auto &op = kfvOp(entry);
+    const auto &data = kfvKey(entry);
+
+    if (op == SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT)
+    {
+        handleHaSetEventNotification(data);
+    }
+    else if (op == SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT)
+    {
+        handleHaScopeEventNotification(data);
+    }
+}
+
+void DashHaOrch::handleHaSetEventNotification(const std::string &data)
+{
+    SWSS_LOG_ENTER();
+
+    std::time_t now_time = getNowTime();
+
+    uint32_t count;
+    sai_ha_set_event_data_t *ha_set_event = nullptr;
+
+    sai_deserialize_ha_set_event_ntf(data, count, &ha_set_event);
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        sai_object_id_t ha_set_id = ha_set_event[i].ha_set_id;
+        sai_ha_set_event_t event_type = ha_set_event[i].event_type;
+
+        SWSS_LOG_INFO("Get HA Set event notification id:%" PRIx64 " event: Data plane channel goes %s", ha_set_id, sai_ha_set_event_type_name.at(event_type).c_str());
+
+        auto key = getHaSetObjectKey(ha_set_id);
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("HA Set object not found for ID: %" PRIx64, ha_set_id);
+            continue;
+        }
+        std::vector<FieldValueTuple> fvs = {
+            {"last_updated_time", to_string(now_time)},
+            {"dp_channel_is_alive", sai_ha_set_event_type_name.at(event_type)}
+        };
+        m_dpuStateDbHaSetTable->set(key, fvs);
+    }
+    sai_deserialize_free_ha_set_event_ntf(count, ha_set_event);
+}
+
+void DashHaOrch::handleHaScopeEventNotification(const std::string &data)
+{
+    SWSS_LOG_ENTER();
+
+    std::time_t now_time = getNowTime();
+
+    uint32_t count;
+    sai_ha_scope_event_data_t *ha_scope_event = nullptr;
+
+    sai_deserialize_ha_scope_event_ntf(data, count, &ha_scope_event);
+
+    for (uint32_t i = 0; i < count; i++)
+    {
+        sai_ha_scope_event_t event_type = ha_scope_event[i].event_type;
+        sai_object_id_t ha_scope_id = ha_scope_event[i].ha_scope_id;
+
+        SWSS_LOG_INFO("Get HA Scope event notification id:%" PRIx64 " event: %s", ha_scope_id, sai_ha_scope_event_type_name.at(event_type).c_str());
+
+        auto key = getHaScopeObjectKey(ha_scope_id);
+        if (key.empty())
+        {
+            SWSS_LOG_ERROR("HA Scope object not found for ID: %" PRIx64, ha_scope_id);
+            continue;
+        }
+
+        std::vector<FieldValueTuple> fvs = {
+            {"last_updated_time", to_string(now_time)},
+            {"ha_term", to_string(ha_scope_event[i].flow_version)}
+        };
+
+        auto ha_role = to_pb(ha_scope_event[i].ha_role);
+        std::time_t role_start_time = now_time;
+
+        if (m_ha_scope_entries[key].metadata.ha_role() != ha_role)
+        {
+            m_ha_scope_entries[key].metadata.set_ha_role(ha_role);
+            m_ha_scope_entries[key].last_role_start_time = now_time;
+            SWSS_LOG_NOTICE("HA Scope role changed for %s to %s", key.c_str(), dash::types::HaRole_Name(ha_role).c_str());
+        } else
+        {
+            role_start_time = m_ha_scope_entries[key].last_role_start_time;
+        }
+
+        fvs.push_back({"ha_role", sai_ha_role_name.at(ha_scope_event[i].ha_role)});
+        fvs.push_back({"ha_role_start_time", to_string(role_start_time)});
+
+        switch (event_type)
+        {
+            case SAI_HA_SCOPE_EVENT_FLOW_RECONCILE_NEEDED:
+                fvs.push_back({"flow_reconcile_pending", "true"});
+                break;
+            case SAI_HA_SCOPE_EVENT_SPLIT_BRAIN_DETECTED:
+                fvs.push_back({"brainsplit_recover_pending", "true"});
+                break;
+            case SAI_HA_SCOPE_EVENT_STATE_CHANGED:
+                if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_PENDING_STANDALONE_ACTIVATION,
+                                                    SAI_DASH_HA_STATE_PENDING_ACTIVE_ACTIVATION,
+                                                    SAI_DASH_HA_STATE_PENDING_STANDBY_ACTIVATION}))
+                {
+                    fvs.push_back({"activate_role_pending", "true"});
+                    SWSS_LOG_NOTICE("DPU is pending on role activation for %s", key.c_str());
+                }
+                else if (in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                         SAI_DASH_HA_STATE_STANDBY}))
+                {
+                    fvs.push_back({"brainsplit_recover_pending", "false"});
+                }
+
+                fvs.push_back({"ha_state", sai_ha_state_name.at(ha_scope_event[i].ha_state)});
+                fvs.push_back({"ha_state_start_time", to_string(now_time)});
+
+                m_ha_scope_entries[key].ha_state = ha_scope_event[i].ha_state;
+                m_ha_scope_entries[key].last_state_start_time = now_time;
+
+                if (has_dpu_scope() && in(ha_scope_event[i].ha_state, {SAI_DASH_HA_STATE_ACTIVE,
+                                                    SAI_DASH_HA_STATE_STANDBY,
+                                                    SAI_DASH_HA_STATE_STANDALONE}))
+                {
+                    processCachedBfdSessions();
+                }
+                break;
+            default:
+                SWSS_LOG_ERROR("Unknown HA Scope event type %d for %s", event_type, key.c_str());
+        }
+
+        m_dpuStateDbHaScopeTable->set(key, fvs);
+
+    }
+    sai_deserialize_free_ha_scope_event_ntf(count, ha_scope_event);
 }
 
 bool DashHaOrch::convertKfvToHaSetPb(const std::vector<FieldValueTuple> &kfv, dash::ha_set::HaSet &entry)
