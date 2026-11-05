@@ -8,6 +8,7 @@
 #include "routeorch.h"
 #include "fdborch.h"
 #include "policerorch.h"
+#include "mirror/mirror_capabilities.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -48,6 +49,7 @@ struct MirrorEntry
     string src_port;
     string direction;
     string type;
+    string label;
 
     struct
     {
@@ -108,6 +110,7 @@ private:
     FdbOrch *m_fdbOrch;
     PolicerOrch *m_policerOrch;
     SwitchOrch *m_switchOrch;
+    MirrorSessionCapabilities m_capabilities;
     // Maximum number of traffic classes starting at 0, thus queue can be 0 - m_maxNumTC-1
     uint8_t m_maxNumTC;
     bool m_isWarmRestoreStage = false;
@@ -119,6 +122,7 @@ private:
     map<string, string> m_recoverySessionMap;
 
     bool isHwResourcesAvailable();
+    bool isMirrorSessionLabelInUse(const string& label, string& sessionName) const;
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
