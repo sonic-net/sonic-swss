@@ -204,6 +204,16 @@ void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
     }
     else
     {
+        // A port that vlanmgrd has already put in the VLAN bridge has no VRF
+        // to leave, and nomaster would silently take it out of the bridge.
+        stringstream show;
+        string link;
+        show << IP_CMD << " -d link show dev " << shellquote(alias);
+        if (swss::exec(show.str(), link) == 0 && link.find("bridge_slave") != string::npos)
+        {
+            SWSS_LOG_NOTICE("Keeping %s in its bridge: it has no VRF to leave", alias.c_str());
+            return;
+        }
         cmd << IP_CMD << " link set " << shellquote(alias) << " nomaster";
     }
     int ret = swss::exec(cmd.str(), res);

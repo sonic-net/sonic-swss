@@ -17,6 +17,7 @@ extern swss::MacAddress gSagMacAddress;
 
 bool Ethernet0IPv6Set = false;
 bool FailBridgeFdbCommand = false;
+std::string BridgeSlavePort;
 
 int cb(const std::string &cmd, std::string &stdout){
     mockCallArgs.push_back(cmd);
@@ -33,6 +34,14 @@ int cb(const std::string &cmd, std::string &stdout){
     }
     else if (cmd.find("bridge fdb") == 0) {
         return FailBridgeFdbCommand ? 1 : 0;
+    }
+    else if (cmd.find("/sbin/ip -d link show dev ") == 0)
+    {
+        // A bridge member's link details carry bridge_slave
+        stdout = (!BridgeSlavePort.empty() && cmd.find("\"" + BridgeSlavePort + "\"") != std::string::npos)
+                     ? "    bridge_slave state forwarding priority 32 cost 2"
+                     : "";
+        return 0;
     }
     else {
         return 0;
@@ -71,6 +80,7 @@ namespace intfmgr_ut
             mockCallArgs.clear();
             callback = cb;
             FailBridgeFdbCommand = false;
+            BridgeSlavePort.clear();
         }
     };
 
@@ -430,4 +440,17 @@ namespace intfmgr_ut
         EXPECT_FALSE(commandWasIssued("bridge fdb"));
     }
 
+    TEST_F(IntfMgrTest, testRemoveVrfKeepsBridgeMember)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        BridgeSlavePort = "Ethernet0";
+
+        mockCallArgs.clear();
+        intfmgr.setIntfVrf("Ethernet0", "");
+        EXPECT_FALSE(commandWasIssued("nomaster"));
+
+        mockCallArgs.clear();
+        intfmgr.setIntfVrf("Ethernet4", "");
+        EXPECT_TRUE(commandWasIssued("/sbin/ip link set \"Ethernet4\" nomaster"));
+    }
 }
