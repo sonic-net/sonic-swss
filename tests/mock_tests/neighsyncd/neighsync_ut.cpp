@@ -19,16 +19,7 @@
 
 #include "../mock_table.h"
 #include "linkcache.h"
-#include "dbconnector.h"
-#include "producerstatetable.h"
-#include "subscriberstatetable.h"
-#include "netmsg.h"
-#include "warmRestartAssist.h"
-
-// Limit private-member access to NeighSync rather than its dependencies.
-#define private public
 #include "neighsyncd/neighsync.h"
-#undef private
 #include "neighsyncd/linklocalresyncstate.h"
 #include "redisutility.h"
 
@@ -342,9 +333,12 @@ class NeighSyncTest : public ::testing::Test
 
     void enableDualTor()
     {
+        m_sync.reset();
         Table peerSwitchTable(m_configDb.get(), CFG_PEER_SWITCH_TABLE_NAME);
         peerSwitchTable.set("peer_switch_hostname", {{"address_ipv4", "10.0.0.1"}});
-        m_sync->m_isDualToR = true;
+        // PEER_SWITCH is read once during NeighSync startup.
+        m_sync = std::make_unique<NeighSync>(
+            m_pipeline.get(), m_stateDb.get(), m_configDb.get(), m_appDb.get());
     }
 
     bool failedNeighborExists(const std::string& ip, std::vector<FieldValueTuple>* fields = nullptr)
@@ -587,6 +581,31 @@ TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
 
     EXPECT_FALSE(failedNeighborExists("2001:db8::6"));
+}
+
+TEST_F(NeighSyncTest, DoesNotEnableDualTorForPeerSwitchAddedAfterStartup)
+{
+    Table peerSwitchTable(m_configDb.get(), CFG_PEER_SWITCH_TABLE_NAME);
+    peerSwitchTable.set("peer_switch_hostname", {{"address_ipv4", "10.0.0.1"}});
+    auto neigh = createNeighbor(AF_INET6, "2001:db8::8", NUD_FAILED);
+    ASSERT_TRUE(neigh.get() != nullptr);
+
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
+
+    EXPECT_FALSE(failedNeighborExists("2001:db8::8"));
+}
+
+TEST_F(NeighSyncTest, KeepsDualTorModeWhenPeerSwitchRemovedAfterStartup)
+{
+    enableDualTor();
+    Table peerSwitchTable(m_configDb.get(), CFG_PEER_SWITCH_TABLE_NAME);
+    peerSwitchTable.del("peer_switch_hostname");
+    auto neigh = createNeighbor(AF_INET6, "2001:db8::9", NUD_FAILED);
+    ASSERT_TRUE(neigh.get() != nullptr);
+
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
+
+    EXPECT_TRUE(failedNeighborExists("2001:db8::9"));
 }
 
 TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborOnNonVlanInterface)
