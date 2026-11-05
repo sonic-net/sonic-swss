@@ -6,8 +6,11 @@
 #include "portsorch.h"
 #include "sai_serialize.h"
 #include "converter.h"
+
 #include <algorithm>
 #include <set>
+
+#define PFC_WD_COUNTER_POLL_TIMEOUT_SEC  1
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
@@ -17,13 +20,9 @@ extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
-                         const vector<sai_port_stat_t> &portStatIds,
-                         const vector<sai_queue_stat_t> &queueStatIds,
-                         const vector<sai_queue_attr_t> &queueAttrIds):
+                         const vector<sai_port_stat_t> &portStatIds):
     PfcWdBaseOrch(db, tableNames),
     c_portStatIds(portStatIds),
-    c_queueStatIds(queueStatIds),
-    c_queueAttrIds(queueAttrIds),
     m_detectionTimeMin(0),
     m_detectionTimeMax(0),
     m_restorationTimeMin(0),
@@ -115,7 +114,6 @@ void PfcWdHwOrch::registerCallbacks()
 {
     SWSS_LOG_ENTER();
 
-    // Register PFC deadlock notification callback
     bool supported = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY);
     if (supported)
     {
@@ -130,6 +128,11 @@ void PfcWdHwOrch::registerCallbacks()
         auto deadlockNotifier = new Notifier(m_deadlockNotificationConsumer, this,
                                              "PFC_WD_HW_DEADLOCK_NOTIFICATIONS");
         Orch::addExecutor(deadlockNotifier);
+
+        auto interv = timespec { .tv_sec = PFC_WD_COUNTER_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+        auto timer = new SelectableTimer(interv);
+        Orch::addExecutor(new ExecutableTimer(timer, this, "PFC_WD_HW_COUNTERS_POLL"));
+        timer->start();
 
         sai_attribute_t attr;
         attr.id = SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY;
@@ -230,7 +233,6 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
 
         if (notification.event == SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED)
         {
-            // Initialize counters on storm detection
             if (port_found)
             {
                 // Report the storm only on the transition into it. The hardware
@@ -240,6 +242,9 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
                 if (m_stormedQueues.insert(notification.queue_id).second)
                 {
                     SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " entered storm", notification.queue_id);
+
+                    initQueueCounters(sai_serialize_object_id(notification.queue_id),
+                                      notification.queue_id);
 
                     this->report_pfc_storm(notification.queue_id, port_id,
                                           queue_index, port_alias, "");
@@ -259,7 +264,6 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
         }
         else if (notification.event == SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED)
         {
-            // Update counters on recovery
             if (port_found)
             {
                 // Same as the detection side: report only the transition, so a
@@ -268,6 +272,10 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
                 if (m_stormedQueues.erase(notification.queue_id) != 0)
                 {
                     SWSS_LOG_DEBUG("PfcWdHwOrch: Queue 0x%" PRIx64 " left storm", notification.queue_id);
+
+                    updateQueueCounters(sai_serialize_object_id(notification.queue_id),
+                                        notification.queue_id, false);
+                    m_queueBaselineStats.erase(notification.queue_id);
 
                     this->report_pfc_restored(notification.queue_id, port_id,
                                              queue_index, port_alias);
@@ -379,11 +387,6 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
         return task_process_status::task_invalid_entry;
     }
-    if (restorationTime == 0)
-    {
-        SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);
-        return task_process_status::task_invalid_entry;
-    }
 
     // Hardware detection and recovery are one SAI attribute, so a queue cannot
     // be watched without also being recovered. Only drop and forward are
@@ -395,8 +398,7 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         return task_process_status::task_invalid_entry;
     }
 
-    // Both times are checked here rather than while parsing, so that a field
-    // left out of the configuration is still validated.
+    // Checked after parsing so a missing detection time is caught; restoration time is optional
     if (m_timerRangesValid)
     {
         if (detectionTime < m_detectionTimeMin || detectionTime > m_detectionTimeMax)
@@ -406,7 +408,8 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
             return task_process_status::task_invalid_entry;
         }
 
-        if (restorationTime < m_restorationTimeMin || restorationTime > m_restorationTimeMax)
+        if (restorationTime != 0 &&
+            (restorationTime < m_restorationTimeMin || restorationTime > m_restorationTimeMax))
         {
             SWSS_LOG_ERROR("Restoration time %u ms is outside the supported range [%u-%u] ms on port %s",
                            restorationTime, m_restorationTimeMin, m_restorationTimeMax, key.c_str());
@@ -598,7 +601,8 @@ bool PfcWdHwOrch::readBackTimerValue(const Port& port, sai_port_attr_t attrId,
             }
         }
 
-        if (actual != expected)
+        // 0: none configured, the hardware keeps its timer
+        if (expected != 0 && actual != expected)
         {
             SWSS_LOG_WARN("%s time mismatch on port %s: sent %u, hardware has %u",
                           timerName.c_str(), port.m_alias.c_str(), expected, actual);
@@ -652,8 +656,10 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
         return false;
     }
 
-    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%ums, action=%s",
-                    port.m_alias.c_str(), detectionTime, restorationTime, serializeAction(action).c_str());
+    SWSS_LOG_NOTICE("Configuring hardware watchdog on port %s: detection=%ums, restoration=%s, action=%s",
+                    port.m_alias.c_str(), detectionTime,
+                    restorationTime ? (to_string(restorationTime) + "ms").c_str() : "unchanged",
+                    serializeAction(action).c_str());
 
     // Cleanup handler called on configuration failure
     auto handleFailure = [this, &port](const string& errorMsg) -> bool {
@@ -684,6 +690,8 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     // Keep the queue to port mapping the deadlock notification needs
     mapQueuesToPort(port, losslessTc);
 
+    initializeQueueStats(port, losslessTc);
+
     // Track this port
     m_pfcwd_ports.insert(port.m_alias);
 
@@ -706,7 +714,10 @@ bool PfcWdHwOrch::configureHwWatchdog(const Port& port, uint32_t detectionTime,
     fvs.emplace_back("hw_detection_time", to_string(actualHwDetectionTime));
     fvs.emplace_back("hw_restoration_time", to_string(actualHwRestorationTime));
     fvs.emplace_back("configured_detection_time", to_string(detectionTime));
-    fvs.emplace_back("configured_restoration_time", to_string(restorationTime));
+    if (restorationTime != 0)
+    {
+        fvs.emplace_back("configured_restoration_time", to_string(restorationTime));
+    }
 
     fvs.emplace_back("action", serializeAction(action));
     m_pfcWdHwStateTable->set(port.m_alias, fvs);
@@ -799,6 +810,14 @@ bool PfcWdHwOrch::configureTimerIntervals(const Port& port, const set<uint8_t>& 
     SWSS_LOG_NOTICE("Set PFC DLD (detection) interval on port %s to %u ms for %zu TCs",
                    port.m_alias.c_str(), detectionTime, losslessTc.size());
 
+    // Optional: DLDR arms on detection alone; without one the port keeps the timer the hardware holds
+    if (restorationTime == 0)
+    {
+        SWSS_LOG_NOTICE("No restoration time on port %s, keeping the recovery timer the hardware holds",
+                        port.m_alias.c_str());
+        return true;
+    }
+
     // Set restoration interval on port
     sai_attribute_t attr_dlr;
     attr_dlr.id = SAI_PORT_ATTR_PFC_TC_DLR_INTERVAL;
@@ -848,8 +867,9 @@ bool PfcWdHwOrch::enableDldrOnLosslessQueues(const Port& port, const set<uint8_t
                                sai_serialize_object_id(queueId) + "): " + to_string(status));
         }
 
-        SWSS_LOG_NOTICE("Enabled PFC DLDR on port %s TC %d queue 0x%" PRIx64 " (detection: %u ms, restoration: %u ms)",
-                       port.m_alias.c_str(), tc, queueId, detectionTime, restorationTime);
+        SWSS_LOG_NOTICE("Enabled PFC DLDR on port %s TC %d queue 0x%" PRIx64 " (detection: %u ms, restoration: %s)",
+                       port.m_alias.c_str(), tc, queueId, detectionTime,
+                       restorationTime ? (to_string(restorationTime) + " ms").c_str() : "unchanged");
     }
 
     return true;
@@ -874,6 +894,26 @@ bool PfcWdHwOrch::disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t
     SWSS_LOG_INFO("Disabled PFC DLDR on port %s TC %d queue 0x%" PRIx64,
                  port.m_alias.c_str(), tc, queueId);
     return true;
+}
+
+void PfcWdHwOrch::clearQueueCounterState(sai_object_id_t queueId)
+{
+    SWSS_LOG_ENTER();
+
+    const string queueIdStr = sai_serialize_object_id(queueId);
+
+    // A queue torn down mid storm is restored by the teardown, not by the
+    // hardware.
+    if (m_stormedQueues.count(queueId) != 0)
+    {
+        updateQueueCounters(queueIdStr, queueId, false);
+    }
+
+    m_queueBaselineStats.erase(queueId);
+
+    // Only the status is removed; the accumulated counters stay for
+    // `show pfcwd stats`.
+    getCountersTable()->hdel(queueIdStr, PFC_WD_QUEUE_STATUS);
 }
 
 bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
@@ -916,6 +956,7 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
             continue;
         }
 
+        clearQueueCounterState(queueId);
         m_queueToPortMap.erase(queueId);
         m_stormedQueues.erase(queueId);
     }
@@ -933,6 +974,7 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
                 continue;
             }
 
+            clearQueueCounterState(it->first);
             m_stormedQueues.erase(it->first);
             it = m_queueToPortMap.erase(it);
         }
@@ -1001,6 +1043,107 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
     }
 
     return cleanupOk;
+}
+
+bool PfcWdHwOrch::readHwCounters(sai_object_id_t queueId, PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    // The shared SAI read, as the software watchdog uses. It runs only on
+    // DETECTED, on RECOVERED and once a second while the queue is in storm, and
+    // an ASIC-fresh sample cannot be reordered against another counter group's
+    // publish the way a COUNTERS_DB read can. RX stays 0: the hardware watchdog
+    // acts only on the egress queue and has no ingress action to count.
+    return PfcWdBaseOrch::readQueueSaiStats(queueId, counters);
+}
+
+void PfcWdHwOrch::initQueueCounters(const string& queueIdStr, sai_object_id_t queueId)
+{
+    SWSS_LOG_ENTER();
+
+    // An unusable sample is not a baseline. The storm is still recorded, and
+    // the first sampled pass of the timer seeds the baseline.
+    PfcWdHwStats hwStats = {};
+    const bool sampled = readHwCounters(queueId, hwStats);
+
+    PfcWdHwStats discarded = {};
+    PfcWdHwStats& baseline = sampled ? m_queueBaselineStats[queueId] : discarded;
+    if (!sampled)
+    {
+        SWSS_LOG_WARN("No hardware counters yet for queue 0x%" PRIx64 ", recording the storm without a baseline",
+                      queueId);
+    }
+
+    PfcWdBaseOrch::beginStormCounters(getCountersTable(), queueIdStr, hwStats, baseline);
+}
+
+void PfcWdHwOrch::updateQueueCounters(const string& queueIdStr, sai_object_id_t queueId,
+                                      bool periodic)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdHwStats hwStats = {};
+    const bool sampled = readHwCounters(queueId, hwStats);
+
+    // A periodic pass with nothing to read adds nothing. A recovery closes the
+    // storm with or without a sample.
+    if (!sampled && periodic)
+    {
+        return;
+    }
+
+    auto it = m_queueBaselineStats.find(queueId);
+    const bool baselineValid = sampled && it != m_queueBaselineStats.end();
+
+    // A sample with no baseline becomes the baseline instead of being charged.
+    PfcWdHwStats discarded = {};
+    PfcWdHwStats& baseline = sampled ? m_queueBaselineStats[queueId] : discarded;
+
+    PfcWdBaseOrch::accumulateStormCounters(getCountersTable(), queueIdStr, hwStats,
+                                           baseline, periodic, baselineValid);
+}
+
+void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc)
+{
+    SWSS_LOG_ENTER();
+
+    // The counters are read from SAI while a queue is in storm, so no queue is
+    // registered for polling here. mapQueuesToPort() owns the mapping.
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            continue;
+        }
+
+        string queueIdStr = sai_serialize_object_id(port.m_queue_ids[tc]);
+
+        // Mark the queue operational without clearing its accumulated counters,
+        // as PfcWdActionHandler::initWdCounters does. A storm the stats show as
+        // still open was interrupted by a restart: its RECOVERED cannot arrive
+        // any more, and left open it would swallow the next storm's detect
+        // count. Close it; a storm that is in fact still running is re-detected
+        // by the hardware and counted as a new one.
+        auto stats = getQueueStats(queueIdStr);
+        if (stats.detectCount > stats.restoreCount)
+        {
+            SWSS_LOG_NOTICE("Closing PFC storm left open across a restart on queue %s",
+                            queueIdStr.c_str());
+            stats.restoreCount = stats.detectCount;
+        }
+        stats.operational = true;
+        updateQueueStats(queueIdStr, stats);
+    }
+}
+
+void PfcWdHwOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto queueId : m_stormedQueues)
+    {
+        updateQueueCounters(sai_serialize_object_id(queueId), queueId, true);
+    }
 }
 
 void PfcWdHwOrch::writeFailureStatus(const Port& port)
