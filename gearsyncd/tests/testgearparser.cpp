@@ -35,6 +35,22 @@ void positiveConfigTest()
     CU_ASSERT_EQUAL(ret, true);
 }
 
+void breakoutWithAliasConfigTest()
+{
+    bool ret;
+
+    ret = handleGearboxConfigFile("tests/configs/positive/gearbox_config_breakout.json", false);
+    CU_ASSERT_EQUAL(ret, true);
+}
+
+void backwardCompatNoAliasConfigTest()
+{
+    bool ret;
+
+    ret = handleGearboxConfigFile("tests/configs/positive/gearbox_config_1.json", false);
+    CU_ASSERT_EQUAL(ret, true);
+}
+
 void negativeConfigTest()
 {
     bool ret;
@@ -113,7 +129,15 @@ int unitTestMain()
     if (ret == 0) 
     {
         pTest = CU_add_test(pSuite, "gearbox_positive_config_test", positiveConfigTest);
-        if (pTest != NULL) 
+        if (pTest != NULL)
+        {
+            pTest = CU_add_test(pSuite, "gearbox_breakout_alias_config_test", breakoutWithAliasConfigTest);
+        }
+        if (pTest != NULL)
+        {
+            pTest = CU_add_test(pSuite, "gearbox_backward_compat_no_alias_test", backwardCompatNoAliasConfigTest);
+        }
+        if (pTest != NULL)
         {
             pTest = CU_add_test(pSuite, "gearbox_negative_config_test", negativeConfigTest);
         }
