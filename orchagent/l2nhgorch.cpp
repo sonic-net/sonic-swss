@@ -9,12 +9,14 @@ extern "C" {
 #include "vxlanorch.h"
 #include "nhgorch.h"
 #include "l2nhgorch.h"
+#include "evpnmhorch.h"
 
 extern Directory<Orch*> gDirectory;
 extern RouteOrch*       gRouteOrch;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch*         gCrmOrch;
 extern NhgOrch*         gNhgOrch;
+extern EvpnMhOrch*      gEvpnMhOrch;
 
 extern sai_object_id_t gSwitchId;
 
@@ -113,6 +115,9 @@ bool L2NhgOrch::deleteL2NextHopGroup(string nhg_id)
 
     if (m_nhg_nh.count(nhg_id))
     {
+        /* A group being removed is no longer handed out, even while its removal is retried. */
+        m_nhg_nh[nhg_id].is_active = false;
+
         /* Remove bridge port and portsorch l2 nexthop group cache*/
         Port nhgPort;
         auto nhg_port_name = getNextHopGroupPortName(nhg_id);
@@ -487,6 +492,11 @@ bool L2NhgOrch::addL2NextHopGroupEntry(string nhg_id, string nh_ids, string sour
             SWSS_LOG_NOTICE("Created bridge port for next hop group %s with %zu next hops",
                             nhg_id.c_str(), m_nhg_nh[nhg_id].next_hops.size());
             m_nhg_nh[nhg_id].is_active = true;
+            /* In the same pass, so a warm restart's view has the ES protection group too. */
+            if (gEvpnMhOrch)
+            {
+                gEvpnMhOrch->onL2NhgActive(nhg_id);
+            }
         }
         else
         {
@@ -875,6 +885,12 @@ unsigned long L2NhgOrch::getL2NhVtepRefCount(const std::string &nhg_id)
 bool L2NhgOrch::hasActiveL2Nhg(const std::string &nhg_id)
 {
     return (m_nhg_nh.find(nhg_id) != m_nhg_nh.end() && m_nhg_nh[nhg_id].is_active);
+}
+
+sai_object_id_t L2NhgOrch::getL2NhgOid(const std::string &nhg_id)
+{
+    auto it = m_nhg_nh.find(nhg_id);
+    return (it != m_nhg_nh.end() && it->second.is_active) ? it->second.oid : SAI_NULL_OBJECT_ID;
 }
 
 bool L2NhgOrch::isL2NextHop(const std::string &nhg_id)
