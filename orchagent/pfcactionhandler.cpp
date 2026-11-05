@@ -96,15 +96,17 @@ void PfcWdActionHandler::commitCounters(bool periodic /* = false */)
     }
     finalStats.operational = !periodic;
 
-    finalStats.txPktLast += hwStats.txPkt - m_hwStats.txPkt;
-    finalStats.txDropPktLast += hwStats.txDropPkt - m_hwStats.txDropPkt;
-    finalStats.rxPktLast += hwStats.rxPkt - m_hwStats.rxPkt;
-    finalStats.rxDropPktLast += hwStats.rxDropPkt - m_hwStats.rxDropPkt;
+    auto diff = [](uint64_t cur, uint64_t last) { return cur >= last ? cur - last : 0; };
 
-    finalStats.txPkt += hwStats.txPkt - m_hwStats.txPkt;
-    finalStats.txDropPkt += hwStats.txDropPkt - m_hwStats.txDropPkt;
-    finalStats.rxPkt += hwStats.rxPkt - m_hwStats.rxPkt;
-    finalStats.rxDropPkt += hwStats.rxDropPkt - m_hwStats.rxDropPkt;
+    finalStats.txPktLast += diff(hwStats.txPkt, m_hwStats.txPkt);
+    finalStats.txDropPktLast += diff(hwStats.txDropPkt, m_hwStats.txDropPkt);
+    finalStats.rxPktLast += diff(hwStats.rxPkt, m_hwStats.rxPkt);
+    finalStats.rxDropPktLast += diff(hwStats.rxDropPkt, m_hwStats.rxDropPkt);
+
+    finalStats.txPkt += diff(hwStats.txPkt, m_hwStats.txPkt);
+    finalStats.txDropPkt += diff(hwStats.txDropPkt, m_hwStats.txDropPkt);
+    finalStats.rxPkt += diff(hwStats.rxPkt, m_hwStats.rxPkt);
+    finalStats.rxDropPkt += diff(hwStats.rxDropPkt, m_hwStats.rxDropPkt);
 
     m_hwStats = hwStats;
 
