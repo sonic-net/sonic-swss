@@ -1141,7 +1141,7 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 continue;
             }
 
-            const auto& ctx = found->second;
+            auto& ctx = found->second;
 
             // if retry_cst field is set, move this task to retry cache:
             // - add it to retry cache before executing addRoutePost/removeRoutePost
@@ -1177,7 +1177,13 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                    if (removeRoutePost(ctx) || rc_inserted)
+                    bool removed = removeRoutePost(ctx);
+                    if (removed)
+                    {
+                        /* Freed a route entry -> wake parked resource creates. */
+                        notifyRouteResourceRetry();
+                    }
+                    if (removed || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1188,7 +1194,10 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
-                    if (addRoutePost(ctx, nhg) || rc_inserted)
+                    bool post_ok = addRoutePost(ctx, nhg);
+                    if (!post_ok && !rc_inserted)
+                        rc_inserted = parkRouteCreateOnResourceExhaustion(consumer, ctx, it_prev->second);
+                    if (post_ok || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1199,7 +1208,10 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                          gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                          ctx.using_temp_nhg)
                 {
-                    if (addRoutePost(ctx, nhg) || rc_inserted)
+                    bool post_ok = addRoutePost(ctx, nhg);
+                    if (!post_ok && !rc_inserted)
+                        rc_inserted = parkRouteCreateOnResourceExhaustion(consumer, ctx, it_prev->second);
+                    if (post_ok || rc_inserted)
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -1222,7 +1234,14 @@ void RouteOrch::doTask(ConsumerBase& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(ctx) || rc_inserted)
+                bool removed = removeRoutePost(ctx);
+                if (removed)
+                {
+                    /* A programmed route was freed from the ASIC: wake creates parked
+                     * on SAI resource exhaustion so they can be retried. */
+                    notifyRouteResourceRetry();
+                }
+                if (removed || rc_inserted)
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
@@ -2417,7 +2436,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     return false;
 }
 
-bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
@@ -2596,8 +2615,28 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
-                    ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+            if (isSaiStatusResourceFull(status))
+            {
+                /* Route-table exhaustion is a high-volume, repetitive failure.
+                 * Throttle the log (first occurrence, then at most once per 5s with a
+                 * running count) to avoid flooding syslog. */
+                m_routeResourceFullCount++;
+                auto now = std::chrono::steady_clock::now();
+                if (m_routeResourceFullCount == 1 ||
+                    now - m_lastRouteResourceFullLog >= std::chrono::seconds(5))
+                {
+                    SWSS_LOG_ERROR("Route table full: failed to create route %s "
+                                   "(%" PRIu64 " route create(s) failed since first exhaustion); "
+                                   "parking creates until resources are freed",
+                                   ipPrefix.to_string().c_str(), m_routeResourceFullCount);
+                    m_lastRouteResourceFullLog = now;
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
+                        ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+            }
 
             /* Check that the next hop group is not owned by NhgOrch. */
             if (ctx.nhg_index.empty() && nextHops.getSize() > 1)
@@ -2608,6 +2647,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
+                /* Park route creates that failed due to ASIC resource exhaustion on a
+                 * retry constraint so they are retried only when resources are freed
+                 * (a route is deleted), not every cycle. Do not clobber a constraint
+                 * already set earlier this cycle (e.g. PIC). */
+                if (isSaiStatusResourceFull(status) && ctx.retry_cst == DUMMY_CONSTRAINT)
+                {
+                    ctx.retry_cst = make_constraint(RETRY_CST_SAI_RESOURCE, APP_ROUTE_TABLE_NAME);
+                }
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
@@ -3116,6 +3163,35 @@ bool RouteOrch::isRouteExists(sai_object_id_t vrf_id, const IpPrefix& prefix)
     return true;
 }
 
+bool RouteOrch::parkRouteCreateOnResourceExhaustion(ConsumerBase& consumer,
+        const RouteBulkContext& ctx, const swss::KeyOpFieldsValuesTuple& task)
+{
+    /* addRoutePost() records ctx.retry_cst when a route create failed with SAI
+     * resource exhaustion. Park the task on that constraint so it is retried only
+     * when resources are freed (a route is deleted), not every doTask cycle, and
+     * re-arm the constraint so a single resource release wakes at most one bounded
+     * batch -- otherwise a backlog larger than the retry quota would be re-drained
+     * every cycle, recreating the retry storm. Returns true if the task was parked. */
+    if (ctx.retry_cst == DUMMY_CONSTRAINT)
+    {
+        return false;
+    }
+    bool parked = consumer.addToRetry(task, ctx.retry_cst);
+    if (parked && ctx.retry_cst.first == RETRY_CST_SAI_RESOURCE)
+    {
+        consumer.rearmRetry(ctx.retry_cst);
+    }
+    return parked;
+}
+
+void RouteOrch::notifyRouteResourceRetry()
+{
+    /* mark_resolved() is a no-op when nothing is parked under this constraint,
+     * so this is cheap to call on every route release. */
+    notifyRetry(this, APP_ROUTE_TABLE_NAME,
+                make_constraint(RETRY_CST_SAI_RESOURCE, APP_ROUTE_TABLE_NAME));
+}
+
 bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
 {
     // This function removes the route if it exists.
@@ -3131,6 +3207,11 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
     }
     gRouteBulker.flush();
     bool ret = removeRoutePost(context);
+    if (ret)
+    {
+        /* Freed a route entry -> wake parked resource creates. */
+        notifyRouteResourceRetry();
+    }
     m_routeStatePublisher.publishAsyncBatch();
     m_routeStatePublisher.flush();
     return ret;

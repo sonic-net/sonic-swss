@@ -177,6 +177,14 @@ bool ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
     return false;
 }
 
+void ConsumerBase::rearmRetry(const Constraint &cst) {
+    auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
+    if (retryCache)
+    {
+        retryCache->rearm(cst);
+    }
+}
+
 bool Orch::addToRetry(const std::string &executorName, const Task &task, const Constraint &cst) {
     auto retryCache = getRetryCache(executorName);
     if (retryCache)

@@ -1657,6 +1657,13 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     }
 
     gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
+
+    /* Freeing an ip2me route releases a SAI route entry: wake any route creates
+     * parked on route-table resource exhaustion so they can be retried. */
+    if (gRouteOrch)
+    {
+        gRouteOrch->notifyRouteResourceRetry();
+    }
 }
 
 void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix)
