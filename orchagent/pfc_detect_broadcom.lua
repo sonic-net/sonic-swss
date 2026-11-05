@@ -226,6 +226,12 @@ if timestamp_last ~= false then
     end
 end
 
+-- A new pause period starts at the previous poll
+local recent_pause_timestamp = timestamp_last
+if recent_pause_timestamp == false then
+    recent_pause_timestamp = string.format('%.0f', timestamp_current - time_since_last_poll)
+end
+
 -- The detection timer is charged the whole gap since the previous poll, however
 -- long.  Charging less than the time that really passed would bring back the
 -- stretch this timer exists to remove: under an overrun of k intervals,
@@ -264,6 +270,7 @@ local Q_FIELDS = {
     'SAI_QUEUE_ATTR_PAUSE_STATUS_last',
     'DEBUG_STORM',
     'PFC_STAT_HISTORY',
+    'PFC_STAT_HISTORY_PAUSED_last',
 }
 
 -- Indices are derived, never written down twice: inserting or reordering a
@@ -383,28 +390,6 @@ for i = n, 1, -1 do
                             end
                             time_left = detection_time
                         end
-
-                        -- estimate history
-                        local pfc_stat_history = qv[QF.PFC_STAT_HISTORY]
-                        if pfc_stat_history and pfc_stat_history == "enable" then
-                            local was_paused    = parse_boolean(queue_pause_status_last)
-                            local now_paused    = parse_boolean(queue_pause_status)
-
-                            -- Activity has occured
-                            if pfc_rx_packets > pfc_rx_packets_last then
-                                -- fresh recent pause period
-                                if not was_paused then
-                                    restartRecentTime(port_key, queue_index, timestamp_last)
-                                end
-                                -- Estimate entire interval paused if there was pfc activity
-                                updateTimePaused(port_key, queue_index, time_since_last_poll)
-                            else
-                                -- queue paused entire interval without activity
-                                if now_paused and was_paused then
-                                    updateTimePaused(port_key, queue_index, time_since_last_poll)
-                                end
-                            end
-                        end
                     end
 
                     -- Save values for next run
@@ -415,6 +400,48 @@ for i = n, 1, -1 do
                     redis.call('HSET', port_key,
                                pfc_rx_pkt_key .. '_last', pfc_rx_packets,
                                pfc_on2off_key .. '_last', pfc_on2off)
+                end
+            end
+        end
+    end
+
+    -- PFC stat history is kept for every watched queue, whatever the watchdog
+    -- has done with it, against baselines of its own: detection's stay as they
+    -- are, and pfc_restore.lua rewrites the RX one while a queue is mitigated.
+    if qv[QF.PFC_STAT_HISTORY] == 'enable' then
+        local queue_index = queue_index_all[i]
+        local port_id = port_id_all[i]
+        local queue_pause_status = qv[QF.SAI_QUEUE_ATTR_PAUSE_STATUS]
+        if queue_index and port_id and queue_pause_status then
+            local port_key = counters_table_name .. ':' .. port_id
+            local pfc_rx_pkt_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PKTS'
+            local hv = redis.call('HMGET', port_key, pfc_rx_pkt_key, pfc_rx_pkt_key .. '_history_last')
+            local pfc_rx_packets = tonumber(hv[1])
+            local pfc_rx_packets_last = tonumber(hv[2])
+            if pfc_rx_packets then
+                -- PFC activity, or a paused queue, means paused for the whole
+                -- interval.  Pause status can read paused a poll before the RX
+                -- counter moves, and a queue the watchdog has acted on reads
+                -- unpaused while PFC keeps arriving, so either one counts.
+                local paused = (pfc_rx_packets_last ~= nil and pfc_rx_packets > pfc_rx_packets_last)
+                               or parse_boolean(queue_pause_status)
+                local paused_last = qv[QF.PFC_STAT_HISTORY_PAUSED_last]
+
+                -- The first poll after registration only records the baselines
+                if pfc_rx_packets_last and paused_last and paused then
+                    if paused_last ~= 'true' then
+                        restartRecentTime(port_key, queue_index, recent_pause_timestamp)
+                    end
+                    updateTimePaused(port_key, queue_index, time_since_last_poll)
+                end
+
+                -- Written only when they change, so a queue with no PFC costs one read
+                if pfc_rx_packets ~= pfc_rx_packets_last then
+                    redis.call('HSET', port_key, pfc_rx_pkt_key .. '_history_last', pfc_rx_packets)
+                end
+                local paused_now = paused and 'true' or 'false'
+                if paused_now ~= paused_last then
+                    redis.call('HSET', queue_key, 'PFC_STAT_HISTORY_PAUSED_last', paused_now)
                 end
             end
         end
