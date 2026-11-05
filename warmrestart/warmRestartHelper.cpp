@@ -187,8 +187,24 @@ void WarmStartHelper::reconcile(void)
 {
     SWSS_LOG_NOTICE("Warm-Restart: Initiating reconciliation process for %s "
                     "application.", m_appName.c_str());
+    SWSS_LOG_NOTICE("Warm-Restart reconciliation: %zu restored entries, "
+                    "%zu refreshed entries",
+                    m_restorationVector.size(),
+                    m_refreshMap.size());
 
     assert(getState() == WarmStart::RESTORED);
+
+    /*
+     * Tally of what reconciliation did, logged as a summary at the end.
+     *   (staleDeleted + deleted + updated + unchanged) == (restored_entries)
+     *   (created + discarded) == (refreshed_entries - (deleted + updated + unchanged))
+     */
+    size_t staleDeletedCount = 0;
+    size_t deletedCount      = 0;
+    size_t updatedCount      = 0;
+    size_t unchangedCount    = 0;
+    size_t discardedCount    = 0;
+    size_t createdCount      = 0;
 
     for (auto &table : m_tableContexts)
     {
@@ -203,6 +219,7 @@ void WarmStartHelper::reconcile(void)
 
             if (iter == context.refreshMap.end())
             {
+                staleDeletedCount++;
                 SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting stale entry %s from %s",
                                 printKFV(restoredKey, restoredFV).c_str(), table.first.c_str());
 
@@ -212,6 +229,7 @@ void WarmStartHelper::reconcile(void)
 
             if (kfvOp(iter->second) == DEL_COMMAND)
             {
+                deletedCount++;
                 SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s from %s",
                                 printKFV(restoredKey, restoredFV).c_str(), table.first.c_str());
 
@@ -224,6 +242,7 @@ void WarmStartHelper::reconcile(void)
 
                 if (compareAllFV(restoredFV, refreshedFV))
                 {
+                    updatedCount++;
                     SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating entry %s in %s",
                                     printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
 
@@ -232,6 +251,7 @@ void WarmStartHelper::reconcile(void)
                 }
                 else
                 {
+                    unchangedCount++;
                     SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
                                   "existing entry %s in %s",
                                   printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
@@ -249,12 +269,14 @@ void WarmStartHelper::reconcile(void)
 
             if (refreshedOp == DEL_COMMAND)
             {
+                discardedCount++;
                 SWSS_LOG_NOTICE("Warm-Restart reconciliation: discarding non-existing"
                                 " entry %s from %s\n",
                                 refreshedKey.c_str(), table.first.c_str());
             }
             else
             {
+                createdCount++;
                 SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s in %s",
                                 printKFV(refreshedKey, refreshedFV).c_str(), table.first.c_str());
 
@@ -267,6 +289,11 @@ void WarmStartHelper::reconcile(void)
     }
 
     setState(WarmStart::RECONCILED);
+
+    SWSS_LOG_NOTICE("Warm-Restart reconciliation: %zu stale_deleted, %zu deleted, "
+                    "%zu updated, %zu unchanged, %zu created, %zu discarded",
+                    staleDeletedCount, deletedCount, updatedCount,
+                    unchangedCount, createdCount, discardedCount);
 
     SWSS_LOG_NOTICE("Warm-Restart: Concluded reconciliation process for %s "
                     "application.", m_appName.c_str());
