@@ -4493,4 +4493,354 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
     }
 
+    struct MclagFdbCase
+    {
+        PortsOrch *ports;
+        bool initDone;
+        FdbEntry entry;
+        string key;
+
+        explicit MclagFdbCase(PortsOrch *ports) : ports(ports), initDone(ports->m_initDone)
+        {
+            setUpVlan(ports);
+            setUpPort(ports);
+            setUpVlanMember(ports);
+            ports->m_portList[ETH0].m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            ports->m_initDone = true;
+            entry.mac = MacAddress("52:54:00:ac:3a:d1");
+            entry.bv_id = ports->m_portList[VLAN40].m_vlan_info.vlan_oid;
+            key = "Vlan40:" + entry.mac.to_string();
+        }
+        ~MclagFdbCase() { ports->m_initDone = initDone; }
+
+        Consumer &consumer(const string &table)
+        {
+            return *dynamic_cast<Consumer *>(gFdbOrch->getExecutor(table));
+        }
+        void send(const string &table, const string &op)
+        {
+            consumer(table).addToSync(deque<KeyOpFieldsValuesTuple>{{ key, op, {} }});
+            static_cast<Orch *>(gFdbOrch)->doTask();
+        }
+        void cleanKeptEntry()
+        {
+            auto it = gFdbOrch->m_entries.find(entry);
+            if (it != gFdbOrch->m_entries.end())
+            {
+                EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+                    .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+                EXPECT_TRUE(gFdbOrch->removeFdbEntry(entry, it->second.origin));
+            }
+            gFdbOrch->m_fdbStateTable.del(key);
+            EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_fdb_api));
+        }
+    };
+
+    struct RemoteDeleteWatch
+    {
+        string key;
+        bool sawDelete = false;
+        bool localReady = false;
+    };
+
+    RemoteDeleteWatch *gRemoteDeleteWatch = nullptr;
+
+    void onRemoteStateDelete(const string &table, const string &key, bool isDelete)
+    {
+        RemoteDeleteWatch *watch = gRemoteDeleteWatch;
+        if (watch == nullptr || !isDelete || watch->sawDelete || key != watch->key)
+            return;
+        if (table != gFdbOrch->m_mclagFdbStateTable.getTableName())
+            return;
+        watch->sawDelete = true;
+        string port;
+        /* Remote removal is valid only after the local row is stored. */
+        watch->localReady = gFdbOrch->m_fdbStateTable.hget(key, "port", port) && port == ETH0;
+    }
+
+    TEST_F(VxlanFdbOrchTest, MclagRuntimeStateRouting)
+    {
+        enum Case { CacheMiss, Learned, Owned, SamePortLearn, Move,
+                    Configured, Provisioned, Remote, RemoteThenLearn,
+                    Create, CreateFail };
+        const char *names[] = { "cache miss", "local learn", "owned", "same-port learn", "move",
+                                "configured", "provisioned delete",
+                                "remote delete", "remote-to-local learn",
+                                "create", "create failure" };
+        /* The VS SAI never saw the mocked creates, so stub MAC-move sets. */
+        ut_sai_fdb_api.set_fdb_entry_attribute =
+            [](const sai_fdb_entry_t *, const sai_attribute_t *) -> sai_status_t { return SAI_STATUS_SUCCESS; };
+        for (auto scenario : {CacheMiss, Learned, Owned, SamePortLearn, Move,
+                              Configured, Provisioned, Remote, RemoteThenLearn,
+                              Create, CreateFail})
+        {
+            SCOPED_TRACE(names[scenario]);
+            MclagFdbCase fdb(m_portsOrch.get());
+            Table config(m_app_db.get(), APP_FDB_TABLE_NAME);
+            const bool configured = scenario == Configured || scenario == Provisioned;
+            if (scenario == CacheMiss)
+                gFdbOrch->m_fdbStateTable.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic" }});
+            else if (scenario == Learned)
+            {
+                vector<uint8_t> mac = {0x52, 0x54, 0x00, 0xac, 0x3a, 0xd1};
+                triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, mac,
+                              m_portsOrch->m_portList[ETH0].m_bridge_port_id, fdb.entry.bv_id);
+            }
+            else if (scenario == Create || scenario == CreateFail)
+            {
+                /* TABLE_FULL is retried, so the SET stays queued. */
+                EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+                    .WillOnce(::testing::Return(scenario == Create ? SAI_STATUS_SUCCESS : SAI_STATUS_TABLE_FULL));
+                gFdbOrch->m_mclagFdbStateTable.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic" }});
+                RemoteDeleteWatch watch;
+                watch.key = fdb.key;
+                gRemoteDeleteWatch = &watch;
+                testing_db::setTableOpHook(onRemoteStateDelete);
+                fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).addToSync(
+                    deque<KeyOpFieldsValuesTuple>{{
+                        fdb.key, SET_COMMAND, {{ "port", ETH0 }, { "type", "dynamic_local" }} }});
+                static_cast<Orch *>(gFdbOrch)->doTask();
+                testing_db::setTableOpHook(nullptr);
+                gRemoteDeleteWatch = nullptr;
+                string port;
+                if (scenario == Create)
+                {
+                    EXPECT_TRUE(watch.sawDelete);
+                    EXPECT_TRUE(watch.localReady);
+                    ASSERT_EQ(gFdbOrch->m_entries.count(fdb.entry), 1u);
+                    EXPECT_TRUE(gFdbOrch->m_entries.at(fdb.entry).is_mclag_dynamic_local);
+                    EXPECT_TRUE(gFdbOrch->m_fdbStateTable.hget(fdb.key, "port", port));
+                    EXPECT_EQ(port, ETH0);
+                    EXPECT_FALSE(gFdbOrch->m_mclagFdbStateTable.hget(fdb.key, "port", port));
+                    EXPECT_TRUE(fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).m_toSync.empty());
+                }
+                else
+                {
+                    EXPECT_FALSE(watch.sawDelete);
+                    EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), 0u);
+                    EXPECT_FALSE(gFdbOrch->m_fdbStateTable.hget(fdb.key, "port", port));
+                    EXPECT_TRUE(gFdbOrch->m_mclagFdbStateTable.hget(fdb.key, "port", port));
+                    EXPECT_EQ(port, ETH0);
+                    EXPECT_FALSE(fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).m_toSync.empty());
+                    fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).m_toSync.clear();
+                }
+                EXPECT_TRUE(gFdbOrch->saved_fdb_entries.count(ETH0) == 0 ||
+                            gFdbOrch->saved_fdb_entries.at(ETH0).empty());
+                gFdbOrch->m_mclagFdbStateTable.del(fdb.key);
+                fdb.cleanKeptEntry();
+                continue;
+            }
+            else
+            {
+                FdbData data;
+                data.origin = configured ? FDB_ORIGIN_PROVISIONED : FDB_ORIGIN_MCLAG_ADVERTIZED;
+                data.type = configured || scenario == Remote || scenario == RemoteThenLearn ? "dynamic" : "dynamic_local";
+                EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+                    .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+                ASSERT_TRUE(gFdbOrch->addFdbEntry(fdb.entry, ETH0, data));
+                if (configured)
+                    config.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic" }});
+            }
+            gFdbOrch->m_mclagFdbStateTable.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic" }});
+            if (scenario == Learned || scenario == Configured)
+            {
+                FdbData data;
+                data.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
+                data.type = "dynamic_local";
+                ASSERT_TRUE(gFdbOrch->addFdbEntry(fdb.entry, ETH0, data));
+                string port;
+                EXPECT_FALSE(gFdbOrch->m_mclagFdbStateTable.hget(fdb.key, "port", port));
+                EXPECT_FALSE(gFdbOrch->m_entries.at(fdb.entry).is_mclag_dynamic_local);
+                EXPECT_EQ(gFdbOrch->m_entries.at(fdb.entry).origin,
+                          scenario == Configured ? FDB_ORIGIN_PROVISIONED : FDB_ORIGIN_LEARN);
+            }
+            if (scenario == SamePortLearn || scenario == Move || scenario == RemoteThenLearn)
+            {
+                Port learnedPort = m_portsOrch->m_portList[ETH0];
+                if (scenario == Move)
+                {
+                    learnedPort.m_alias = "Ethernet4";
+                    ++learnedPort.m_bridge_port_id;
+                    learnedPort.m_fdb_count = 0;
+                    m_portsOrch->m_portList[learnedPort.m_alias] = learnedPort;
+                    m_portsOrch->saiOidToAlias[learnedPort.m_bridge_port_id] = learnedPort.m_alias;
+                }
+                vector<uint8_t> mac = {0x52, 0x54, 0x00, 0xac, 0x3a, 0xd1};
+                triggerUpdate(gFdbOrch, scenario == Move ? SAI_FDB_EVENT_MOVE : SAI_FDB_EVENT_LEARNED,
+                              mac, learnedPort.m_bridge_port_id, fdb.entry.bv_id);
+                ASSERT_FALSE(gFdbOrch->m_entries.at(fdb.entry).is_mclag_dynamic_local);
+            }
+            const bool removed = scenario == Owned || scenario == Provisioned || scenario == Remote;
+            if (removed)
+                EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+                    .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+            else
+                EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_)).Times(0);
+            if (scenario == Provisioned)
+                config.del(fdb.key);
+            fdb.send(scenario == Provisioned ? APP_FDB_TABLE_NAME : APP_MCLAG_FDB_TABLE_NAME, DEL_COMMAND);
+            EXPECT_TRUE(fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).m_toSync.empty());
+            EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), removed || scenario == CacheMiss ? 0u : 1u);
+            string port;
+            EXPECT_EQ(gFdbOrch->m_fdbStateTable.hget(fdb.key, "port", port), !removed);
+            EXPECT_EQ(gFdbOrch->m_mclagFdbStateTable.hget(fdb.key, "port", port), scenario == Provisioned);
+            gFdbOrch->m_mclagFdbStateTable.del(fdb.key);
+            ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_fdb_api));
+            if (scenario == Configured)
+            {
+                /* The configuration, not MCLAG, owns the entry. */
+                EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+                    .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+                config.del(fdb.key);
+                fdb.send(APP_FDB_TABLE_NAME, DEL_COMMAND);
+                EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), 0u);
+                EXPECT_FALSE(gFdbOrch->m_fdbStateTable.hget(fdb.key, "port", port));
+                ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_fdb_api));
+            }
+            fdb.cleanKeptEntry();
+            config.del(fdb.key);
+        }
+    }
+
+    TEST_F(VxlanFdbOrchTest, MclagDeleteDropsSavedDynamicLocal)
+    {
+        MclagFdbCase fdb(m_portsOrch.get());
+        const auto bridgePort = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
+        m_portsOrch->m_portList[ETH0].m_bridge_port_id = SAI_NULL_OBJECT_ID;
+
+        FdbData dynamicLocal;
+        dynamicLocal.origin = FDB_ORIGIN_MCLAG_ADVERTIZED;
+        dynamicLocal.type = "dynamic_local";
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(fdb.entry, ETH0, dynamicLocal));
+
+        FdbEntry other = fdb.entry;
+        other.mac = MacAddress("52:54:00:ac:3a:d2");
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(other, ETH0, dynamicLocal));
+        ASSERT_EQ(gFdbOrch->saved_fdb_entries.at(ETH0).size(), 2u);
+
+        Port ready = m_portsOrch->m_portList[ETH0];
+        ready.m_alias = "Ethernet4";
+        ready.m_bridge_port_id = bridgePort + 1;
+        ready.m_fdb_count = 0;
+        ready.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+        m_portsOrch->m_portList[ready.m_alias] = ready;
+        m_portsOrch->saiOidToAlias[ready.m_bridge_port_id] = ready.m_alias;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(ready.m_alias);
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(fdb.entry, ready.m_alias, dynamicLocal));
+        ASSERT_TRUE(gFdbOrch->m_entries.at(fdb.entry).is_mclag_dynamic_local);
+        ASSERT_EQ(gFdbOrch->saved_fdb_entries.at(ETH0).size(), 2u);
+
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+        ASSERT_TRUE(gFdbOrch->removeFdbEntry(fdb.entry, FDB_ORIGIN_MCLAG_ADVERTIZED));
+        EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), 0u);
+        ASSERT_EQ(gFdbOrch->saved_fdb_entries.at(ETH0).size(), 1u);
+        EXPECT_EQ(gFdbOrch->saved_fdb_entries.at(ETH0).front().mac, other.mac);
+
+        m_portsOrch->m_portList[ETH0].m_bridge_port_id = bridgePort;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+        VlanMemberUpdate update;
+        update.add = true;
+        update.vlan = m_portsOrch->m_portList[VLAN40];
+        update.member = m_portsOrch->m_portList[ETH0];
+        gFdbOrch->updateVlanMember(update);
+        EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), 0u);
+        EXPECT_EQ(gFdbOrch->m_entries.count(other), 1u);
+        ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_fdb_api));
+    }
+
+    TEST_F(VxlanFdbOrchTest, MclagDeleteKeepsRestoredLocal)
+    {
+        enum PortState { MclagPortUp, MclagPortDown, OtherPortDown };
+        struct Case { const char *name; const char *type; const char *config;
+                      bool retainedSet; PortState port; };
+        const Case cases[] = {
+            { "restored local MCLAG up", "dynamic", "", true, MclagPortUp },
+            { "restored local non-MCLAG down", "dynamic", "", true, OtherPortDown },
+            { "configured MCLAG down", "dynamic", "Vlan40:52:54:00:ac:3a:d1", false, MclagPortDown },
+            { "restored static MCLAG down", "static", "", false, MclagPortDown }
+        };
+        for (const auto &scenario : cases)
+        {
+            SCOPED_TRACE(scenario.name);
+            MclagFdbCase fdb(m_portsOrch.get());
+            EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+                .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+            gFdbOrch->m_fdbStateTable.set(fdb.key, {{ "port", ETH0 }, { "type", scenario.type }});
+            Table config(m_app_db.get(), APP_FDB_TABLE_NAME);
+            Table mclag(m_app_db.get(), APP_MCLAG_FDB_TABLE_NAME);
+            if (*scenario.config)
+                config.set(scenario.config, {{ "port", ETH0 }, { "type", scenario.type }});
+            if (scenario.retainedSet)
+                mclag.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic_local" }});
+            ASSERT_TRUE(gFdbOrch->bake());
+            static_cast<Orch *>(gFdbOrch)->doTask();
+            ASSERT_EQ(gFdbOrch->m_entries.count(fdb.entry), 1u);
+            EXPECT_EQ(gFdbOrch->m_entries.at(fdb.entry).origin, FDB_ORIGIN_PROVISIONED);
+            EXPECT_EQ(gFdbOrch->m_entries.at(fdb.entry).type, scenario.type);
+            const bool mclagPort = scenario.port == MclagPortUp || scenario.port == MclagPortDown;
+            if (gMlagOrch->isMlagInterface(ETH0) != mclagPort)
+            {
+                auto &mlag = *dynamic_cast<Consumer *>(gMlagOrch->getExecutor(CFG_MCLAG_INTF_TABLE_NAME));
+                mlag.addToSync(deque<KeyOpFieldsValuesTuple>{{ "1|Ethernet0",
+                    mclagPort ? SET_COMMAND : DEL_COMMAND, {} }});
+                static_cast<Orch *>(gMlagOrch)->doTask();
+            }
+            ASSERT_EQ(gMlagOrch->isMlagInterface(ETH0), mclagPort);
+            if (scenario.port == MclagPortDown || scenario.port == OtherPortDown)
+            {
+                m_portsOrch->m_portList[ETH0].m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+                if (mclagPort)
+                {
+                    EXPECT_CALL(*mock_sai_fdb_api, flush_fdb_entries(_, _, _)).Times(0);
+                    PortOperStateUpdate update;
+                    update.port = m_portsOrch->m_portList[ETH0];
+                    update.operStatus = SAI_PORT_OPER_STATUS_DOWN;
+                    gFdbOrch->updatePortOperState(update);
+                    ASSERT_EQ(gFdbOrch->m_entries.count(fdb.entry), 1u);
+                }
+            }
+            EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_)).Times(0);
+            gFdbOrch->m_mclagFdbStateTable.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic" }});
+            mclag.del(fdb.key);
+            fdb.send(APP_MCLAG_FDB_TABLE_NAME, DEL_COMMAND);
+            EXPECT_TRUE(fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).m_toSync.empty());
+            EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), 1u);
+            EXPECT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1u);
+            EXPECT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1u);
+            string port;
+            EXPECT_TRUE(gFdbOrch->m_fdbStateTable.hget(fdb.key, "port", port));
+            EXPECT_FALSE(gFdbOrch->m_mclagFdbStateTable.hget(fdb.key, "port", port));
+            ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_fdb_api));
+            fdb.cleanKeptEntry();
+            if (*scenario.config)
+                config.del(scenario.config);
+        }
+    }
+
+    TEST_F(VxlanFdbOrchTest, MclagSavedDynamicLocalKeepsRemoteRow)
+    {
+        MclagFdbCase fdb(m_portsOrch.get());
+        m_portsOrch->m_portList[ETH0].m_bridge_port_id = SAI_NULL_OBJECT_ID;
+        gFdbOrch->m_mclagFdbStateTable.set(fdb.key, {{ "port", ETH0 }, { "type", "dynamic" }});
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _)).Times(0);
+        fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).addToSync(
+            deque<KeyOpFieldsValuesTuple>{{
+                fdb.key, SET_COMMAND, {{ "port", ETH0 }, { "type", "dynamic_local" }} }});
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        string port;
+        EXPECT_TRUE(fdb.consumer(APP_MCLAG_FDB_TABLE_NAME).m_toSync.empty());
+        EXPECT_EQ(gFdbOrch->m_entries.count(fdb.entry), 0u);
+        ASSERT_EQ(gFdbOrch->saved_fdb_entries.at(ETH0).size(), 1u);
+        EXPECT_FALSE(gFdbOrch->m_fdbStateTable.hget(fdb.key, "port", port));
+        EXPECT_TRUE(gFdbOrch->m_mclagFdbStateTable.hget(fdb.key, "port", port));
+        ASSERT_TRUE(testing::Mock::VerifyAndClearExpectations(mock_sai_fdb_api));
+    }
+
 }
