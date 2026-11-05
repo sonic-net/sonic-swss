@@ -3,6 +3,7 @@ import json
 import pytest
 
 from swsscommon import swsscommon
+from dvslib.dvs_common import wait_for_result
 
 
 class TestNeighbor(object):
@@ -13,6 +14,11 @@ class TestNeighbor(object):
     DEFAULT_PEER_SWITCH_PARAMS = {
         "address_ipv4": PEER_IPV4
     }
+
+    DUALTOR_VLAN                = "Vlan1000"
+    DUALTOR_VLAN_MEMBER         = "Ethernet0"
+    DUALTOR_VLAN_IPV6           = "fc02:1000::1/64"
+    APP_NEIGH_FAILED_TABLE      = "NEIGH_FAILED_TABLE"
 
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
@@ -514,6 +520,94 @@ class TestNeighbor(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
+
+    def restart_nbrmgrd(self, dvs):
+        dvs.runcmd("supervisorctl restart nbrmgrd")
+        (exitcode, output) = dvs.runcmd(['sh', '-c', "supervisorctl status nbrmgrd | awk '{print $2}'"])
+        assert output == "RUNNING\n"
+
+    def set_nbrmgrd_paused(self, dvs, paused):
+        signal = "SIGSTOP" if paused else "SIGCONT"
+        dvs.runcmd("bash -c 'kill -{} $(pidof nbrmgrd)'".format(signal))
+
+    def failed_neighbor_updates_consumed(self, dvs):
+        _, output = dvs.runcmd("redis-cli -n 0 SCARD {}_KEY_SET".format(self.APP_NEIGH_FAILED_TABLE))
+        return (output.strip() == "0", output)
+
+    @pytest.fixture
+    def setup_dualtor_vlan(self, dvs):
+        config_db = dvs.get_config_db()
+        config_db.create_entry(
+            self.CONFIG_PEER_SWITCH,
+            self.PEER_SWITCH_HOST,
+            self.DEFAULT_PEER_SWITCH_PARAMS
+        )
+        # nbrmgrd only consumes NEIGH_FAILED_TABLE when PEER_SWITCH exists at startup
+        self.restart_nbrmgrd(dvs)
+
+        vlan_member_key = self.DUALTOR_VLAN + "|" + self.DUALTOR_VLAN_MEMBER
+        vlan_ip_key = self.DUALTOR_VLAN + "|" + self.DUALTOR_VLAN_IPV6
+        config_db.create_entry("VLAN", self.DUALTOR_VLAN, {"vlanid": "1000"})
+        config_db.create_entry("VLAN_MEMBER", vlan_member_key, {"tagging_mode": "untagged"})
+        config_db.create_entry("VLAN_INTERFACE", self.DUALTOR_VLAN, {"NULL": "NULL"})
+        config_db.create_entry("VLAN_INTERFACE", vlan_ip_key, {"NULL": "NULL"})
+        dvs.port_admin_set(self.DUALTOR_VLAN_MEMBER, "up")
+
+        vlan_ip = self.DUALTOR_VLAN_IPV6.split("/")[0]
+
+        def vlan_ipv6_configured():
+            _, output = dvs.runcmd("ip -6 addr show dev {}".format(self.DUALTOR_VLAN))
+            return (vlan_ip in output, output)
+
+        wait_for_result(vlan_ipv6_configured,
+                        failure_message="{} is not configured on {}".format(vlan_ip, self.DUALTOR_VLAN))
+
+        yield
+
+        dvs.runcmd("ip -6 neigh flush dev {}".format(self.DUALTOR_VLAN))
+        config_db.delete_entry("VLAN_INTERFACE", vlan_ip_key)
+        config_db.delete_entry("VLAN_INTERFACE", self.DUALTOR_VLAN)
+        config_db.delete_entry("VLAN_MEMBER", vlan_member_key)
+        config_db.delete_entry("VLAN", self.DUALTOR_VLAN)
+        dvs.port_admin_set(self.DUALTOR_VLAN_MEMBER, "down")
+        config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self.restart_nbrmgrd(dvs)
+
+    def test_DualToRFailedIpv6NeighborEntryRemovedOnDelete(self, dvs, testlog, setup_dualtor_vlan):
+        app_db = dvs.get_app_db()
+        neigh_ip = "fc02:1000::20"
+        failed_key = self.DUALTOR_VLAN + ":" + neigh_ip
+
+        # No host owns the address, so the kernel marks the neighbor FAILED once
+        # its solicitations go unanswered, and neighsyncd publishes it.
+        dvs.runcmd("ping -6 -c 1 -W 1 {}".format(neigh_ip))
+        app_db.wait_for_entry(self.APP_NEIGH_FAILED_TABLE, failed_key)
+
+        dvs.runcmd("ip -6 neigh del {} dev {}".format(neigh_ip, self.DUALTOR_VLAN))
+        app_db.wait_for_deleted_entry(self.APP_NEIGH_FAILED_TABLE, failed_key)
+
+    def test_DualToRResolvedIpv6NeighborDeleteLeavesNoFailedEntry(self, dvs, testlog, setup_dualtor_vlan):
+        app_db = dvs.get_app_db()
+        neigh_ip = "fc02:1000::10"
+        neigh_key = self.DUALTOR_VLAN + ":" + neigh_ip
+
+        dvs.runcmd("ip -6 neigh replace {} lladdr 00:aa:bb:cc:dd:01 dev {} nud stale".format(
+            neigh_ip, self.DUALTOR_VLAN))
+        app_db.wait_for_entry("NEIGH_TABLE", neigh_key)
+
+        # Deleting a resolved neighbor makes the kernel report NUD_FAILED immediately
+        # followed by RTM_DELNEIGH. Pause nbrmgrd so neighsyncd handles both reports
+        # before the failed neighbor entry can be consumed.
+        self.set_nbrmgrd_paused(dvs, True)
+        try:
+            dvs.runcmd("ip -6 neigh del {} dev {}".format(neigh_ip, self.DUALTOR_VLAN))
+            app_db.wait_for_deleted_entry("NEIGH_TABLE", neigh_key)
+        finally:
+            self.set_nbrmgrd_paused(dvs, False)
+
+        wait_for_result(lambda: self.failed_neighbor_updates_consumed(dvs),
+                        failure_message="nbrmgrd did not consume pending failed neighbor updates")
+        assert neigh_key not in app_db.get_keys(self.APP_NEIGH_FAILED_TABLE)
 
     @pytest.fixture
     def setup_peer_switch(self, dvs):
