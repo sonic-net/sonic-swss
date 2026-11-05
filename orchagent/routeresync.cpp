@@ -19,7 +19,7 @@ int main(int argc, char **argv)
     swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
 
     SWSS_LOG_ENTER();
-    DBConnector db("APPL_DB", 0);
+    DBConnector db("APPL_DB", 0, false, "", true);
 
     // When route_performance zmq is enabled, route events must be sent to orchagent via the ZMQ channel.
     std::shared_ptr<ZmqClient> zmqClient = create_route_perf_zmq_client();

@@ -60,8 +60,8 @@ int main(int argc, char **argv)
         }
 
         swss::DBConnector cfgDb("CONFIG_DB", 0);
-        swss::DBConnector appDb("APPL_DB", 0);
-        swss::DBConnector stateDb("STATE_DB", 0);
+        swss::DBConnector appDb("APPL_DB", 0, false, "", true);
+        swss::DBConnector stateDb("STATE_DB", 0, false, "", true);
 
         std::vector<std::string> cfg_macsec_tables = {
             CFG_MACSEC_PROFILE_TABLE_NAME,

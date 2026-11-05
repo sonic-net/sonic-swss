@@ -21,7 +21,7 @@ NotificationConsumerStatsOrch::NotificationConsumerStatsOrch()
 {
     SWSS_LOG_ENTER();
 
-    m_countersDb = std::make_shared<DBConnector>("COUNTERS_DB", 0);
+    m_countersDb = std::make_shared<DBConnector>("COUNTERS_DB", 0, false, "", true);
     m_table      = std::make_shared<Table>(m_countersDb.get(), kStatsTable);
 
     auto interv = timespec { .tv_sec = kPublishIntervalSec, .tv_nsec = 0 };

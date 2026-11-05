@@ -2457,7 +2457,7 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
     neigh_orch_->attach(this);
     fdb_orch_->attach(this);
 
-    std::unique_ptr<DBConnector> state_db = std::make_unique<DBConnector>("STATE_DB", 0);
+    std::unique_ptr<DBConnector> state_db = std::make_unique<DBConnector>("STATE_DB", 0, false, "", true);
     state_mux_cable_table_ = std::make_unique<Table>(state_db.get(), STATE_MUX_CABLE_TABLE_NAME);
 }
 

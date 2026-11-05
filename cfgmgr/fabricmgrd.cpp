@@ -30,7 +30,7 @@ int main(int argc, char **argv)
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
 
         FabricMgr fabricmgr(&cfgDb, &appDb, cfg_fabric_tables);
 

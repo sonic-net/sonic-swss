@@ -80,16 +80,16 @@ int main(int argc, char **argv)
 
     const auto routeResponseChannelName = std::string("APPL_DB_") + APP_ROUTE_TABLE_NAME + "_RESPONSE_CHANNEL";
 
-    DBConnector db("APPL_DB", 0);
+    DBConnector db("APPL_DB", 0, false, "", true);
     DBConnector cfgDb("CONFIG_DB", 0);
     Table deviceMetadataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
-    DBConnector applStateDb("APPL_STATE_DB", 0);
+    DBConnector applStateDb("APPL_STATE_DB", 0, false, "", true);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
     RedisPipeline pipeline(&db, ROUTE_SYNC_PPL_SIZE);
     RouteSync sync(&pipeline);
 
-    DBConnector stateDb("STATE_DB", 0);
+    DBConnector stateDb("STATE_DB", 0, false, "", true);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     MacSync macsync(&pipeline, &stateDb, &cfgDb);
