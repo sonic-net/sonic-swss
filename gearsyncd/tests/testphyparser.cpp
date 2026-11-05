@@ -37,6 +37,24 @@ void positiveConfigTest()
     CU_ASSERT_EQUAL(ret, true);
 }
 
+void breakoutWithAliasConfigTest()
+{
+    bool ret;
+
+    ret = handlePhyConfigFile("tests/configs/positive/phy1_config_breakout.json", false);
+    CU_ASSERT_EQUAL(ret, true);
+}
+
+void backwardCompatNoAliasConfigTest()
+{
+    bool ret;
+
+    ret = handlePhyConfigFile("tests/configs/positive/phy1_config_1.json", false);
+    CU_ASSERT_EQUAL(ret, true);
+    ret = handlePhyConfigFile("tests/configs/positive/phy2_config_1.json", false);
+    CU_ASSERT_EQUAL(ret, true);
+}
+
 void negativeConfigTest()
 {
     bool ret;
@@ -133,9 +151,17 @@ int unitTestMain()
     if (ret == 0) 
     {
         pTest = CU_add_test(pSuite, "phy_positive_config_test", positiveConfigTest);
-      
-        if (pTest != NULL) 
-        { 
+
+        if (pTest != NULL)
+        {
+            pTest = CU_add_test(pSuite, "phy_breakout_alias_config_test", breakoutWithAliasConfigTest);
+        }
+        if (pTest != NULL)
+        {
+            pTest = CU_add_test(pSuite, "phy_backward_compat_no_alias_test", backwardCompatNoAliasConfigTest);
+        }
+        if (pTest != NULL)
+        {
             pTest = CU_add_test(pSuite, "phy_negative_config_test", negativeConfigTest);
         }
 
