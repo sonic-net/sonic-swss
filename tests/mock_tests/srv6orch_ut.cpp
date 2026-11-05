@@ -268,6 +268,25 @@ TEST_F(Srv6OrchMySidTest, VrfAndActionReplacementBalancesReferences)
     EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfBlue"), 0);
 }
 
+TEST_F(Srv6OrchMySidTest, DefaultVrfMySidDoesNotCreateAsymmetricLogicalReference)
+{
+    const string key = "32:16:16:0:fc00:0:1:32::";
+
+    ASSERT_FALSE(gVrfOrch->isVRFexists("default"));
+    runAppMySidTask(key, "end.dt46", "default", "");
+
+    /*
+     * The default VR is usable before the logical APP_DB entry exists.  Adding
+     * that entry after the MySID must not make the later MySID delete decrement
+     * a reference which was never acquired.
+     */
+    addVrf("default");
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
+
+    runAppMySidTask(key, "", "", "", false);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("default"), 0);
+}
+
 TEST_F(Srv6OrchMySidTest, AdjacencyReplacementBalancesReferences)
 {
     const string key = "32:16:16:0:fc00:0:1:5::";

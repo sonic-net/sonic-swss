@@ -241,56 +241,33 @@ TEST_F(VrfMgrTest, NvoRemovalWithdrawsPublishedMapping)
     EXPECT_FALSE(app_vxlan_vrf.get(map_key, values));
 }
 
-TEST_F(VrfMgrTest, NvoRemovalWaitsForAcceptedStateForAllVrfs)
+TEST_F(VrfMgrTest, InactiveNvoDeletionDoesNotWithdrawActiveNvoMappings)
 {
     const string default_map_key = "tunnel0:evpn_map_5000_default";
     const string named_map_key = "tunnel0:evpn_map_6000_VrfTenant";
-
-    /*
-     * vxlanmgrd retains the accepted APP_DB NVO while dependent VXLAN maps
-     * still reference it.  A CONFIG_DB delete must therefore remain pending
-     * in vrfmgrd and must not withdraw either default- or named-VRF mappings.
-     */
-    Table app_nvo(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
-    app_nvo.set("nvo0", {{"source_vtep", "tunnel0"}});
 
     addNvo("tunnel0");
     addDefaultVrf("5000");
     addVrf("VrfTenant", "6000");
 
-    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
-    vector<FieldValueTuple> values;
-    ASSERT_TRUE(app_vxlan_vrf.get(default_map_key, values));
-    values.clear();
-    ASSERT_TRUE(app_vxlan_vrf.get(named_map_key, values));
-
-    auto consumer = dynamic_cast<Consumer *>(
-        m_vrf_mgr->getExecutor(CFG_VXLAN_EVPN_NVO_TABLE_NAME));
-    ASSERT_NE(consumer, nullptr);
-    const KeyOpFieldsValuesTuple delete_nvo = {
-        "nvo0", DEL_COMMAND, vector<FieldValueTuple>{}};
-    consumer->addToSync(delete_nvo);
+    /*
+     * vrfmgrd keeps the first NVO as the source of its VRF mappings. A later
+     * DEL for another key must not tear down the active NVO's mappings.
+     */
+    process(CFG_VXLAN_EVPN_NVO_TABLE_NAME,
+            "nvo1", SET_COMMAND, {{"source_vtep", "tunnel1"}});
 
     testing_db::resetOperationCounters();
-    m_vrf_mgr->doTask();
+    process(CFG_VXLAN_EVPN_NVO_TABLE_NAME, "nvo1", DEL_COMMAND, {});
 
-    ASSERT_FALSE(consumer->m_toSync.empty());
     EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 0u);
-    values.clear();
+    EXPECT_EQ(m_vrf_mgr->m_evpnVxlanTunnel, "tunnel0");
+
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
     EXPECT_TRUE(app_vxlan_vrf.get(default_map_key, values));
     values.clear();
     EXPECT_TRUE(app_vxlan_vrf.get(named_map_key, values));
-
-    /* Once vxlanmgrd removes the accepted NVO, the pending delete completes. */
-    app_nvo.del("nvo0");
-    m_vrf_mgr->doTask();
-
-    EXPECT_TRUE(consumer->m_toSync.empty());
-    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 2u);
-    values.clear();
-    EXPECT_FALSE(app_vxlan_vrf.get(default_map_key, values));
-    values.clear();
-    EXPECT_FALSE(app_vxlan_vrf.get(named_map_key, values));
 }
 
 TEST_F(VrfMgrTest, NumericVniSpellingIsCanonicalized)
@@ -360,6 +337,69 @@ TEST_F(VrfMgrTest, VniOwnershipMoveWaitsForOldOwnerRelease)
     EXPECT_EQ(app_vni.get(), "5000");
     values.clear();
     EXPECT_TRUE(app_vxlan_vrf.get(new_map_key, values));
+}
+
+TEST_F(VrfMgrTest, CoalescedDefaultVrfVniReplacementRemovesOldMappingBeforeAdd)
+{
+    const string old_map_key = "tunnel0:evpn_map_6000_default";
+    const string new_map_key = "tunnel0:evpn_map_5000_default";
+
+    addNvo("tunnel0");
+    addDefaultVrf("6000");
+
+    Table config_vrf(m_config_db.get(), CFG_VRF_TABLE_NAME);
+    config_vrf.set("default", {{"vni", "5000"}});
+
+    testing_db::resetOperationCounters();
+    process(CFG_VRF_TABLE_NAME, "default", SET_COMMAND, {{"vni", "5000"}});
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 1u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_VRF_TABLE_NAME), 1u);
+
+    Table app_vrf(m_app_db.get(), APP_VRF_TABLE_NAME);
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(app_vxlan_vrf.get(old_map_key, values));
+    values.clear();
+    EXPECT_TRUE(app_vxlan_vrf.get(new_map_key, values));
+    values.clear();
+    ASSERT_TRUE(app_vrf.get("default", values));
+    const auto app_vni = fvsGetValue(values, "vni", true);
+    ASSERT_TRUE(app_vni);
+    EXPECT_EQ(app_vni.get(), "5000");
+    EXPECT_EQ(m_vrf_mgr->getVRFmappedVNI("default"), 5000u);
+}
+
+TEST_F(VrfMgrTest, CoalescedNamedVrfVniReplacementRemovesOldMappingBeforeAdd)
+{
+    const string vrf_name = "VrfTenant";
+    const string old_map_key = "tunnel0:evpn_map_6000_" + vrf_name;
+    const string new_map_key = "tunnel0:evpn_map_5000_" + vrf_name;
+
+    addNvo("tunnel0");
+    addVrf(vrf_name, "6000");
+
+    Table config_vrf(m_config_db.get(), CFG_VRF_TABLE_NAME);
+    config_vrf.set(vrf_name, {{"vni", "5000"}});
+
+    testing_db::resetOperationCounters();
+    process(CFG_VRF_TABLE_NAME, vrf_name, SET_COMMAND, {{"vni", "5000"}});
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 1u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_VRF_TABLE_NAME), 1u);
+
+    Table app_vrf(m_app_db.get(), APP_VRF_TABLE_NAME);
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(app_vxlan_vrf.get(old_map_key, values));
+    values.clear();
+    EXPECT_TRUE(app_vxlan_vrf.get(new_map_key, values));
+    values.clear();
+    ASSERT_TRUE(app_vrf.get(vrf_name, values));
+    const auto app_vni = fvsGetValue(values, "vni", true);
+    ASSERT_TRUE(app_vni);
+    EXPECT_EQ(app_vni.get(), "5000");
+    EXPECT_EQ(m_vrf_mgr->getVRFmappedVNI(vrf_name), 5000u);
 }
 
 } // namespace vrfmgr_ut

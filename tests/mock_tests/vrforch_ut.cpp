@@ -749,6 +749,12 @@ TEST_F(VrfOrchTest, DefaultAndNamedVrfMapsShareTunnelLifetimeAccounting)
     ASSERT_NE(consumer, nullptr);
     auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
 
+    // provisionEvpnVtep() adds a synthetic remote-DIP reference.  Release it
+    // so this test isolates tunnel lifetime accounting for the two VRF maps.
+    tunnel->updateRemoteEndPointIpRef("2.2.2.2", false);
+    tunnel->eraseRemoteEndPoint("2.2.2.2");
+    ASSERT_EQ(tunnel->getDipTunnelCnt(), 0);
+
     const string default_map = "EVPN_2.2.2.2:map_default_5200";
     const string tenant_map = "EVPN_2.2.2.2:map_VrfTenant_5300";
     consumer->addToSync({
@@ -780,6 +786,7 @@ TEST_F(VrfOrchTest, DefaultAndNamedVrfMapsShareTunnelLifetimeAccounting)
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(tenant_map));
     EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
+    EXPECT_FALSE(tunnel->isActive());
     EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfTenant"), 0);
 }
 
