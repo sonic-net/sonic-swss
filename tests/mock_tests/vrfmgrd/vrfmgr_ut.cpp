@@ -5,6 +5,8 @@
 #include "vrfmgr.h"
 #include "warm_restart.h"
 
+extern std::vector<std::string> mockCallArgs;
+
 namespace vrfmgr_ut
 {
 using namespace std;
@@ -35,11 +37,13 @@ class VrfMgrTest : public ::testing::Test
 
         vector<string> tables = {
             CFG_VRF_TABLE_NAME,
+            CFG_VNET_TABLE_NAME,
             CFG_VXLAN_EVPN_NVO_TABLE_NAME,
         };
         m_vrf_mgr = make_unique<TestableVrfMgr>(
             m_config_db.get(), m_app_db.get(), m_state_db.get(), tables);
         testing_db::resetOperationCounters();
+        mockCallArgs.clear();
     }
 
     void process(const string &table_name,
@@ -77,6 +81,41 @@ class VrfMgrTest : public ::testing::Test
         addVrf("default", vni);
     }
 };
+
+TEST_F(VrfMgrTest, VnetNamedDefaultRetainsLinuxVrfLifecycle)
+{
+    const vector<FieldValueTuple> fields = {
+        {"vxlan_tunnel", "tunnel0"},
+        {"vni", "5000"},
+    };
+
+    process(CFG_VNET_TABLE_NAME, "default", SET_COMMAND, fields);
+
+    ASSERT_EQ(mockCallArgs.size(), 2u);
+    EXPECT_EQ(mockCallArgs[0],
+              "/sbin/ip link add \"default\" type vrf table 1001");
+    EXPECT_EQ(mockCallArgs[1], "/sbin/ip link set \"default\" up");
+
+    Table app_vnet(m_app_db.get(), APP_VNET_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    ASSERT_TRUE(app_vnet.get("default", values));
+    EXPECT_EQ(fvsGetValue(values, "vxlan_tunnel", true).get(), "tunnel0");
+    EXPECT_EQ(fvsGetValue(values, "vni", true).get(), "5000");
+
+    mockCallArgs.clear();
+    process(CFG_VNET_TABLE_NAME, "default", DEL_COMMAND, {});
+
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(mockCallArgs[0], "/sbin/ip link del \"default\"");
+    EXPECT_FALSE(app_vnet.get("default", values));
+}
+
+TEST_F(VrfMgrTest, DefaultVrfSkipsLinuxVrfCreation)
+{
+    addDefaultVrf("5000");
+
+    EXPECT_TRUE(mockCallArgs.empty());
+}
 
 TEST_F(VrfMgrTest, VniRemovalWithoutNvoIsSuccessfulNoOp)
 {
