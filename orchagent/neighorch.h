@@ -35,6 +35,13 @@ struct NeighborData
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
 typedef map<NeighborEntry, NeighborData> NeighborTable;
+/* Orders pointers to NeighborTable keys as the table orders the keys */
+struct NeighborEntryPtrLess
+{
+    bool operator()(const NeighborEntry *a, const NeighborEntry *b) const { return *a < *b; }
+};
+/* (interface alias, MAC) -> the NeighborTable keys of that interface's neighbors with that MAC */
+typedef map<pair<string, MacAddress>, set<const NeighborEntry *, NeighborEntryPtrLess>> NeighborMacIndex;
 /* NextHopTable: NextHopKey, NextHopEntry */
 typedef map<NextHopKey, NextHopEntry> NextHopTable;
 
@@ -109,9 +116,12 @@ public:
     bool enableNeighbors(std::list<NeighborContext>&);
     bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
-    void processFDBDelete(const FdbEntry &entry);
+    void processFDBDelete(const FdbEntry &entry, bool behind_nhg = false);
     void processFDBAdd(const FdbEntry &entry);
     void processFDBResolve(const FdbEntry &entry);
+    void processFDBRemoteUpdate(const FdbEntry &entry);
+    void processFDBRemoteDelete(const FdbEntry &entry);
+    void updateTunnelHostRoute(sai_object_id_t vrf_id, const IpAddress &ip, bool present);
 
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
@@ -148,7 +158,10 @@ private:
     FdbOrch *m_fdbOrch;
     ProducerStateTable m_appNeighResolveProducer;
 
+    /* Add and erase entries, and change an entry's MAC, only through setNeighbor() and eraseNeighbor(): they keep m_neighborsByMac in step */
     NeighborTable m_syncdNeighbors;
+    /* Lets an FDB event find the neighbors on its MAC without walking m_syncdNeighbors */
+    NeighborMacIndex m_neighborsByMac;
     NextHopTable m_syncdNextHops;
 
     /* Registrant count per IPinIP tunnel NextHopKey (e.g. MuxOrch, TunnelDecapOrch) */
@@ -157,6 +170,18 @@ private:
     std::set<NextHopKey> m_neighborToResolve;
     /* Existing neighbors re-resolved by processFDBResolve(), awaiting a kernel update */
     std::set<NeighborEntry> m_neighborToRefresh;
+    /* VLAN neighbors kept out of the SAI while their MAC is behind a VxLAN tunnel */
+    std::set<NeighborEntry> m_tunnelMacNeighbors;
+    /* Host routes (VRF, address) whose next hops are VxLAN tunnel next hops */
+    std::set<std::pair<sai_object_id_t, IpAddress>> m_tunnelHostRoutes;
+
+    void setNeighbor(const NeighborEntry &neighborEntry, const NeighborData &data);
+    void eraseNeighbor(const NeighborEntry &neighborEntry);
+    void unindexNeighbor(NeighborTable::const_iterator it);
+    vector<NeighborEntry> getNeighborsByMac(const string &alias, const MacAddress &mac) const;
+
+    bool hasTunnelHostRoute(const Port &vlan, const IpAddress &ip) const;
+    bool isMacBehindTunnel(const string &alias, const MacAddress &mac);
 
     EntityBulker<sai_neighbor_api_t> gNeighBulker;
     ObjectBulker<sai_next_hop_api_t> gNextHopBulker;
