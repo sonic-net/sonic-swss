@@ -6,9 +6,14 @@ class DVSLag(object):
         self.config_db = cdb
         self.dvs = dvs
 
-    def create_port_channel(self, lag_id, admin_status="up", mtu="1500", fast_rate=False):
+    def create_port_channel(self, lag_id, admin_status="up", mtu="1500", fast_rate=False,
+                            fallback=None, fallback_timeout=None):
         lag = "PortChannel{}".format(lag_id)
         lag_entry = {"admin_status": admin_status, "mtu": mtu, "fast_rate": str(fast_rate).lower()}
+        if fallback is not None:
+            lag_entry["fallback"] = str(fallback).lower()
+        if fallback_timeout is not None:
+            lag_entry["fallback_timeout"] = str(fallback_timeout)
         self.config_db.create_entry("PORTCHANNEL", lag, lag_entry)
 
     def remove_port_channel(self, lag_id):
@@ -38,4 +43,10 @@ class DVSLag(object):
 
     def get_and_verify_port_channel_fast_rate(self, lag_id, fast_rate):
         assert self.dump_portchannel(lag_id)["runner"]["fast_rate"] == fast_rate
+
+    def get_and_verify_port_channel_fallback(self, lag_id, fallback):
+        assert self.dump_portchannel(lag_id)["runner"]["fallback"] == fallback
+
+    def get_and_verify_port_channel_fallback_timeout(self, lag_id, fallback_timeout):
+        assert self.dump_portchannel(lag_id)["runner"]["fallback_timeout"] == fallback_timeout
 
