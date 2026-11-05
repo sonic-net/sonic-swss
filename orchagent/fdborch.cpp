@@ -163,6 +163,11 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
              */
             if (port.m_bridge_port_id == it->second.bridge_port_id)
             {
+                /* A real SAI learn on the same port makes this a local FDB. */
+                if (it->second.is_mclag_dynamic_local)
+                {
+                    it->second.is_mclag_dynamic_local = false;
+                }
                 if (it->second.origin != FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
                     SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", entry.mac.to_string().c_str());
@@ -191,6 +196,8 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
         SWSS_LOG_INFO("m_entries size=%zu mac=%s port=0x%" PRIx64,
             m_entries.size(), entry.mac.to_string().c_str(),  m_entries[entry].bridge_port_id);
 
+        // Write to StateDb
+        writeLocalFdbStateRow(key, portName, update.type);
         if (mac_move && (oldFdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
         {
             SWSS_LOG_NOTICE("fdbEvent: FdbOrch MCLAG remote to local move delete mac from state MCLAG remote fdb %s table:"
@@ -198,11 +205,6 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 
             m_mclagFdbStateTable.del(key);
         }
-        // Write to StateDb
-        std::vector<FieldValueTuple> fvs;
-        fvs.push_back(FieldValueTuple("port", portName));
-        fvs.push_back(FieldValueTuple("type", update.type));
-        m_fdbStateTable.set(key, fvs);
 
         if (!mac_move)
         {
@@ -552,6 +554,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
             else
             {
                 SWSS_LOG_INFO("update: EVPN_MH_UC: remote mac entry exists for this Received LEARN event for bvid=0x%" PRIx64 "mac=%s port=0x%" PRIx64, entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
+                if (existing_entry->second.is_mclag_dynamic_local &&
+                    bridge_port_id == existing_entry->second.bridge_port_id)
+                {
+                    /* Same-port learn supersedes the MCLAG dynamic_local origin. */
+                    existing_entry->second.is_mclag_dynamic_local = false;
+                }
                 if (existing_entry->second.dest_type == FdbDest::IFNAME && existing_entry->second.type == "dynamic" && bridge_port_id == existing_entry->second.bridge_port_id) {
                     SWSS_LOG_NOTICE("update: EVPN_MH_UC: C -> (C+D) transition bvid=0x%" PRIx64 "mac=%s port=0x%" PRIx64, entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
                     m_entries[update.entry].type = "dynamic";
@@ -1213,15 +1221,6 @@ void FdbOrch::doTask(Consumer& consumer)
             entry.port_name = port;
             if (addFdbEntry(entry, port, fdbData))
             {
-                if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
-                {
-                    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
-                    if (type == "dynamic_local")
-                    {
-                        m_mclagFdbStateTable.del(key);
-                    }
-                }
-
                 if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
                 {
                     if (dest_type == FdbDest::VTEP) {
@@ -1255,7 +1254,10 @@ void FdbOrch::doTask(Consumer& consumer)
                 it = consumer.m_toSync.erase(it);
             }
             else
-                it++;
+            {
+                /* A later SET for this key must wait for its DEL to finish. */
+                it = consumer.m_toSync.upper_bound(it->first);
+            }
 
         }
         else
@@ -1850,6 +1852,34 @@ bool FdbOrch::isDestinationSame(FdbData &oldFdbData, FdbData &newFdbData) {
     return false;
 }
 
+void FdbOrch::cancelPendingMclagRefill(const FdbEntry &entry, const Port &vlan)
+{
+    /* Drop saved MCLAG copies of this MAC. */
+    for (auto port = saved_fdb_entries.begin(); port != saved_fdb_entries.end(); )
+    {
+        auto &saved = port->second;
+        saved.erase(remove_if(saved.begin(), saved.end(), [&](const SavedFdbEntry &refill) {
+            return refill.mac == entry.mac &&
+                   refill.vlanId == vlan.m_vlan_info.vlan_id &&
+                   refill.fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED;
+        }), saved.end());
+        if (saved.empty())
+            port = saved_fdb_entries.erase(port);
+        else
+            ++port;
+    }
+}
+
+void FdbOrch::writeLocalFdbStateRow(const string &key, const string &port,
+                                    const string &type)
+{
+    vector<FieldValueTuple> fvs = {
+        { "port", port },
+        { "type", type == "dynamic_local" ? "dynamic" : type }
+    };
+    m_fdbStateTable.set(key, fvs);
+}
+
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         FdbData fdbData)
 {
@@ -1994,8 +2024,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                             fdbData.dest_value.c_str());
                 }
             }
-            else if ((oldOrigin == FDB_ORIGIN_LEARN) && (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
+            else if (((oldOrigin == FDB_ORIGIN_LEARN) || (oldOrigin == FDB_ORIGIN_PROVISIONED)) &&
+                     (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
             {
+                /* A configured or warm-restored dynamic stays local, as a learn does. */
                 if ((port.m_bridge_port_id == it->second.bridge_port_id) && (oldType == "dynamic") && (fdbData.type == "dynamic_local"))
                 {
                     SWSS_LOG_INFO("FdbOrch: mac=%s %s port=%s type=%s origin=%d old_origin=%d"
@@ -2004,6 +2036,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                         entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(),
                         fdbData.type.c_str(), fdbData.origin, oldOrigin, oldType.c_str());
 
+                    /* The local entry wins; still retire the stale remote MCLAG row. */
+                    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
+                    m_mclagFdbStateTable.del(key);
                     return true;
                 }
             }
@@ -2250,6 +2285,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     // overwrite the type and origin
     if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type == "dynamic_local"))
     {
+        storeFdbData.is_mclag_dynamic_local = true;
         //If the MAC is dynamic_local change the origin accordingly
         //MAC is added/updated as dynamic to allow aging.
         SWSS_LOG_INFO("MAC-Update Modify to dynamic FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
@@ -2276,15 +2312,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) &&
           (fdbData.type == "dynamic_local")))
     {
-        /* State-DB is updated only for Local Mac addresses */
-        // Write to StateDb
-        std::vector<FieldValueTuple> fvs;
-        fvs.push_back(FieldValueTuple("port", port_name));
-        if (fdbData.type == "dynamic_local")
-            fvs.push_back(FieldValueTuple("type", "dynamic"));
-        else
-            fvs.push_back(FieldValueTuple("type", fdbData.type));
-        m_fdbStateTable.set(key, fvs);
+        writeLocalFdbStateRow(key, port_name, fdbData.type);
     }
 
     else if (macUpdate && (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED) &&
@@ -2297,7 +2325,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         m_fdbStateTable.del(key);
     }
 
-    if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type != "dynamic_local"))
+    /* Drop the remote row only once the local entry and its row exist. */
+    if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type == "dynamic_local"))
+    {
+        m_mclagFdbStateTable.del(key);
+    }
+    else if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type != "dynamic_local"))
     {
         std::vector<FieldValueTuple> fvs;
         fvs.push_back(FieldValueTuple("port", port_name));
@@ -2387,31 +2420,40 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
             }
         }
 
-        if ((origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.origin == FDB_ORIGIN_LEARN) &&
-                        (port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN) && (gMlagOrch->isMlagInterface(port.m_alias)))
+        if ((origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && fdbData.is_mclag_dynamic_local)
         {
-            //check if the local MCLAG port is down, if yes then continue delete the local MAC
-            origin = FDB_ORIGIN_LEARN;
-            SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s fdb del origin is MCLAG; delete local mac as port %s is down",
-                entry.mac.to_string().c_str(), port.m_alias.c_str());
+            /* Installed dynamic_local is removed by the MCLAG delete. */
+            cancelPendingMclagRefill(entry, vlan);
+            origin = fdbData.origin;
         }
-        else
+
+        if (fdbData.origin != origin)
         {
+            if ((origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.origin == FDB_ORIGIN_LEARN) &&
+                    (port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN) && (gMlagOrch->isMlagInterface(port.m_alias)))
+            {
+                //check if the local MCLAG port is down, if yes then continue delete the local MAC
+                origin = FDB_ORIGIN_LEARN;
+                SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s fdb del origin is MCLAG; delete local mac as port %s is down",
+                    entry.mac.to_string().c_str(), port.m_alias.c_str());
+            }
+            else
+            {
+                /* When mac is moved from remote to local
+                 * BGP will delete the mac from vxlan_fdb_table
+                 * but we should not delete this mac here since now
+                 * mac in orchagent represents locally learnt
+                 */
+                SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s fdb origin is different; found_origin:%d delete_origin:%d",
+                        entry.mac.to_string().c_str(), origin, fdbData.origin);
 
-            /* When mac is moved from remote to local
-             * BGP will delete the mac from vxlan_fdb_table
-             * but we should not delete this mac here since now
-             * mac in orchagent represents locally learnt
-             */
-            SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s fdb origin is different; found_origin:%d delete_origin:%d",
-                    entry.mac.to_string().c_str(), origin, fdbData.origin);
+                /* We may still have the mac in saved-fdb probably due to unavailability
+                 * of bridge-port. check whether the entry is in the saved fdb,
+                 * if so delete it from there. */
+                deleteFdbEntryFromSavedFDB(entry.mac, vlan.m_vlan_info.vlan_id, origin);
 
-            /* We may still have the mac in saved-fdb probably due to unavailability
-             * of bridge-port. check whether the entry is in the saved fdb,
-             * if so delete it from there. */
-            deleteFdbEntryFromSavedFDB(entry.mac, vlan.m_vlan_info.vlan_id, origin);
-
-            return true;
+                return true;
+            }
         }
     }
 
