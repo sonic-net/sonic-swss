@@ -348,8 +348,11 @@ private:
     std::vector<std::reference_wrapper<FlexCounterCachedManager>> counter_managers;
 
     FlexCounterManager gb_port_stat_manager;
+    FlexCounterManager gb_port_phy_attr_manager;
+    FlexCounterManager gb_port_phy_serdes_attr_manager;
     shared_ptr<DBConnector> m_gb_counter_db;
     unique_ptr<Table> m_gbcounterTable;
+    unique_ptr<Table> m_gbPortSerdesIdToPortIdTable;
 
     // Supported speeds on the system side.
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
@@ -586,6 +589,9 @@ private:
                                 std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
 
     void removePortSerdesAttribute(sai_object_id_t port_id);
+    void clearGbSerdes(sai_object_id_t gb_port_id);
+    void registerGbSerdes(sai_object_id_t gb_port_id, const std::string &alias, sai_object_id_t switch_id);
+    bool isPhyAttrEligiblePort(const Port &port) const;
 
     bool programSerdes(Port &port, sai_object_id_t port_id, sai_object_id_t switch_id,
                        std::map<sai_port_serdes_attr_t, SerdesValue> &serdes_attr);
