@@ -10,9 +10,6 @@
 #include <algorithm>
 #include <set>
 
-// Counter poll interval for the hardware watchdog, in milliseconds. It bounds
-// how stale a storm edge sample can be; nothing polls these counters in between.
-#define PFC_HW_WD_POLL_MSECS             100
 #define PFC_WD_COUNTER_POLL_TIMEOUT_SEC  1
 
 extern sai_object_id_t gSwitchId;
@@ -23,13 +20,9 @@ extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
-                         const vector<sai_port_stat_t> &portStatIds,
-                         const vector<sai_queue_stat_t> &queueStatIds,
-                         const vector<sai_queue_attr_t> &queueAttrIds):
+                         const vector<sai_port_stat_t> &portStatIds):
     PfcWdBaseOrch(db, tableNames),
     c_portStatIds(portStatIds),
-    c_queueStatIds(queueStatIds),
-    c_queueAttrIds(queueAttrIds),
     m_detectionTimeMin(0),
     m_detectionTimeMax(0),
     m_restorationTimeMin(0),
@@ -135,10 +128,6 @@ void PfcWdHwOrch::registerCallbacks()
         auto deadlockNotifier = new Notifier(m_deadlockNotificationConsumer, this,
                                              "PFC_WD_HW_DEADLOCK_NOTIFICATIONS");
         Orch::addExecutor(deadlockNotifier);
-
-        // initializeQueueStats() registers each armed queue in this group.
-        m_pfcwdFlexCounterManager = make_shared<FlexCounterTaggedCachedManager<sai_object_type_t>>(
-            PFC_WD_FLEX_COUNTER_GROUP, StatsMode::READ, PFC_HW_WD_POLL_MSECS, true);
 
         auto interv = timespec { .tv_sec = PFC_WD_COUNTER_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
         auto timer = new SelectableTimer(interv);
@@ -920,11 +909,6 @@ void PfcWdHwOrch::clearQueueCounterState(sai_object_id_t queueId)
         updateQueueCounters(queueIdStr, queueId, false);
     }
 
-    if (m_pfcwdFlexCounterManager)
-    {
-        m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);
-    }
-
     m_queueBaselineStats.erase(queueId);
 
     // Only the status is removed; the accumulated counters stay for
@@ -1123,8 +1107,8 @@ void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& los
 {
     SWSS_LOG_ENTER();
 
-    // For each lossless queue, register the PFC_WD FlexCounters and
-    // initialize the watchdog counters. mapQueuesToPort() owns the mapping.
+    // The counters are read from SAI while a queue is in storm, so no queue is
+    // registered for polling here. mapQueuesToPort() owns the mapping.
     for (auto tc : losslessTc)
     {
         if (tc >= port.m_queue_ids.size())
@@ -1132,57 +1116,7 @@ void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& los
             continue;
         }
 
-        sai_object_id_t queueId = port.m_queue_ids[tc];
-        string queueIdStr = sai_serialize_object_id(queueId);
-
-        if (m_pfcwdFlexCounterManager)
-        {
-            if (!c_queueStatIds.empty())
-            {
-                auto queueStatIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-                if (queueStatIdSet.empty())
-                {
-                    SWSS_LOG_WARN("Failed to convert queue stat IDs for queue 0x%" PRIx64 " on port %s",
-                                  queueId, port.m_alias.c_str());
-                }
-                else
-                {
-                    m_pfcwdFlexCounterManager->setCounterIdList(queueId,
-                                                                 CounterType::QUEUE,
-                                                                 queueStatIdSet,
-                                                                 SAI_OBJECT_TYPE_QUEUE);
-                    SWSS_LOG_DEBUG("Registered %zu queue stats for queue 0x%" PRIx64 " on port %s",
-                                   queueStatIdSet.size(), queueId, port.m_alias.c_str());
-                }
-            }
-
-            if (!c_queueAttrIds.empty())
-            {
-                auto queueAttrIdSet = PfcWdBaseOrch::counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-                if (queueAttrIdSet.empty())
-                {
-                    SWSS_LOG_WARN("Failed to convert queue attr IDs for queue 0x%" PRIx64 " on port %s",
-                                  queueId, port.m_alias.c_str());
-                }
-                else
-                {
-                    auto *fcMgr = dynamic_cast<FlexCounterManager*>(m_pfcwdFlexCounterManager.get());
-                    if (fcMgr)
-                    {
-                        fcMgr->setCounterIdList(queueId,
-                                                CounterType::QUEUE_ATTR,
-                                                queueAttrIdSet);
-                        SWSS_LOG_DEBUG("Registered %zu queue attrs for queue 0x%" PRIx64 " on port %s",
-                                       queueAttrIdSet.size(), queueId, port.m_alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_WARN("PFC WD FlexCounter manager is not FlexCounterManager for queue 0x%" PRIx64 " on port %s",
-                                      queueId, port.m_alias.c_str());
-                    }
-                }
-            }
-        }
+        string queueIdStr = sai_serialize_object_id(port.m_queue_ids[tc]);
 
         // Mark the queue operational without clearing its accumulated counters,
         // as PfcWdActionHandler::initWdCounters does. A storm the stats show as

@@ -812,17 +812,6 @@ bool OrchDaemon::init()
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 
-        // Only the hardware watchdog scores a storm by queue drops. The software
-        // watchdog's detect plugin never reads them, so they are not polled for it.
-        // Support varies by ASIC: syncd polls only the stats the ASIC reports as
-        // supported, and the watchdog treats a missing counter as an unreadable queue.
-        static const vector<sai_queue_stat_t> hwQueueStatIds =
-        {
-            SAI_QUEUE_STAT_PACKETS,
-            SAI_QUEUE_STAT_DROPPED_PACKETS,
-            SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
-        };
-
         static const vector<sai_queue_attr_t> queueAttrIds =
         {
             SAI_QUEUE_ATTR_PAUSE_STATUS,
@@ -860,16 +849,12 @@ bool OrchDaemon::init()
         if (pfcWdMode == PfcWdRecoveryMode::Hardware)
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
-            // Only the software detect plugin reads SAI_QUEUE_ATTR_PAUSE_STATUS,
-            // so the hardware watchdog does not poll any queue attribute.
-            static const vector<sai_queue_attr_t> hwQueueAttrIds = {};
-
+            // The hardware watchdog reads a queue from SAI while that queue is
+            // in storm, so it registers no counters for polling.
             m_orchList.push_back(new PfcWdHwOrch(
                         m_configDb,
                         pfc_wd_tables,
-                        portStatIds,
-                        hwQueueStatIds,
-                        hwQueueAttrIds));
+                        portStatIds));
         }
         else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {

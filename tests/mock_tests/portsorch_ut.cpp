@@ -6009,8 +6009,6 @@ namespace portsorch_test
 struct PfcWdHwOrchTest : public PortsOrchTest
 {
     static const vector<sai_port_stat_t>  s_portStatIds;
-    static const vector<sai_queue_stat_t> s_queueStatIds;
-    static const vector<sai_queue_attr_t> s_queueAttrIds;
 
     void SetUp() override
     {
@@ -6042,8 +6040,7 @@ struct PfcWdHwOrchTest : public PortsOrchTest
 
         vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
         gPfcWdHwOrch = new PfcWdHwOrch(
-            m_config_db.get(), pfc_wd_tables,
-            s_portStatIds, s_queueStatIds, s_queueAttrIds);
+            m_config_db.get(), pfc_wd_tables, s_portStatIds);
     }
 
     void TearDown() override
@@ -6149,14 +6146,6 @@ const vector<sai_port_stat_t> PfcWdHwOrchTest::s_portStatIds = {
     SAI_PORT_STAT_PFC_6_ON2OFF_RX_PKTS,
     SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS,
 };
-const vector<sai_queue_stat_t> PfcWdHwOrchTest::s_queueStatIds = {
-    SAI_QUEUE_STAT_PACKETS,
-    SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
-};
-const vector<sai_queue_attr_t> PfcWdHwOrchTest::s_queueAttrIds = {
-    SAI_QUEUE_ATTR_PAUSE_STATUS,
-};
-
 TEST_F(PfcWdHwOrchTest, GlobalConfigRejected)
 {
     // Capture the return status
@@ -6579,15 +6568,7 @@ TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
         SAI_PORT_STAT_PFC_0_RX_PKTS,
         SAI_PORT_STAT_PFC_1_RX_PKTS
     };
-    static const vector<sai_queue_stat_t> queueStatIds = {
-        SAI_QUEUE_STAT_PACKETS
-    };
-    static const vector<sai_queue_attr_t> queueAttrIds = {
-        SAI_QUEUE_ATTR_PAUSE_STATUS
-    };
-
-    gPfcWdHwOrch = new PfcWdHwOrch(m_config_db.get(), pfc_wd_tables,
-                                    portStatIds, queueStatIds, queueAttrIds);
+    gPfcWdHwOrch = new PfcWdHwOrch(m_config_db.get(), pfc_wd_tables, portStatIds);
 
     // Process warm reboot recovery
     static_cast<Orch *>(gPfcWdHwOrch)->doTask();

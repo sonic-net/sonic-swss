@@ -82,19 +82,10 @@ namespace pfcwdhworch_test
 
                 static const vector<sai_port_stat_t> portStatIds = {};
 
-                static const vector<sai_queue_stat_t> queueStatIds = {
-                    SAI_QUEUE_STAT_PACKETS,
-                    SAI_QUEUE_STAT_DROPPED_PACKETS
-                };
-
-                static const vector<sai_queue_attr_t> queueAttrIds = {};
-
                 m_pfcwd_hw_orch = new PfcWdHwOrch(
-                    m_config_db.get(), 
-                    pfc_wd_tables, 
-                    portStatIds, 
-                    queueStatIds, 
-                    queueAttrIds);
+                    m_config_db.get(),
+                    pfc_wd_tables,
+                    portStatIds);
             }
 
             void TearDown() override
@@ -894,30 +885,8 @@ namespace pfcwdhworch_test
     }
 
     // ========================================================================
-    // Test Cases: FlexCounter registration and teardown
+    // Test Cases: queue counter state teardown
     // ========================================================================
-
-    // The armed queues have to reach the PFC_WD group. Covered by the global
-    // QUEUE group alone, a sample would be older than most storms. Without a
-    // manager the registration is skipped silently, so assert it is there.
-    TEST_F(PfcWdHwCountersTest, InitializeQueueStats_RegistersQueuesWithFlexCounter)
-    {
-        Port port;
-        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-
-        uint8_t queueIndex = 3;
-        sai_object_id_t queueId = port.m_queue_ids[queueIndex];
-
-        ASSERT_NE(m_pfcwd_hw_orch->m_pfcwdFlexCounterManager, nullptr);
-        auto& installed = m_pfcwd_hw_orch->m_pfcwdFlexCounterManager->installed_counters;
-        ASSERT_EQ(installed.count(queueId), 0u);
-
-        m_pfcwd_hw_orch->initializeQueueStats(port, { queueIndex });
-        EXPECT_EQ(installed.count(queueId), 1u);
-
-        m_pfcwd_hw_orch->clearQueueCounterState(queueId);
-        EXPECT_EQ(installed.count(queueId), 0u);
-    }
 
     // A queue the watchdog no longer watches must stop reporting a status, while
     // the counters it accumulated stay for show pfcwd stats.
