@@ -25,6 +25,7 @@ public:
     HFTelProfile(
         const std::string &profile_name,
         sai_object_id_t sai_tam_obj,
+        std::vector<sai_object_id_t> &sai_tam_telemetry_list,
         sai_object_id_t sai_tam_collector_obj,
         const CounterNameCache &cache,
         sai_tam_tel_type_mode_t tel_type_mode,
@@ -123,6 +124,8 @@ private:
 
     // SAI objects
     const sai_object_id_t m_sai_tam_obj;
+    // SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST of m_sai_tam_obj, shared by all profiles
+    std::vector<sai_object_id_t> &m_sai_tam_telemetry_list;
     const sai_object_id_t m_sai_tam_collector_obj;
     std::unordered_map<
         sai_object_type_t,
@@ -133,6 +136,9 @@ private:
                 sai_guard_t>>>
         m_sai_tam_counter_subscription_objs;
     sai_guard_t m_sai_tam_telemetry_obj;
+    // SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST of m_sai_tam_telemetry_obj.
+    // Must be declared before the tel type guards, whose cleanup callbacks update it.
+    std::vector<sai_object_id_t> m_sai_tam_tel_type_list;
     std::unordered_map<sai_guard_t, sai_tam_tel_type_state_t> m_sai_tam_tel_type_states;
     std::unordered_map<sai_object_type_t, sai_guard_t> m_sai_tam_tel_type_objs;
     std::unordered_map<sai_object_type_t, sai_guard_t> m_sai_tam_report_objs;
