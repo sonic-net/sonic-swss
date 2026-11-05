@@ -16,6 +16,7 @@ namespace testing_db
     std::map<int, TablesT> gDB;
     std::map<std::string, std::size_t> gProducerSetCounts;
     std::map<std::string, std::size_t> gProducerDelCounts;
+    std::map<std::pair<std::string, std::string>, std::size_t> gTableSetCounts;
 
     void reset()
     {
@@ -27,6 +28,7 @@ namespace testing_db
     {
         gProducerSetCounts.clear();
         gProducerDelCounts.clear();
+        gTableSetCounts.clear();
     }
 
     std::size_t getProducerSetCount(const std::string &tableName)
@@ -37,6 +39,11 @@ namespace testing_db
     std::size_t getProducerDelCount(const std::string &tableName)
     {
         return gProducerDelCounts[tableName];
+    }
+
+    std::size_t getTableSetCount(const std::string &tableName, const std::string &key)
+    {
+        return gTableSetCounts[{tableName, key}];
     }
 }
 
@@ -107,6 +114,7 @@ namespace swss
                     const std::string &op,
                     const std::string &prefix)
     {
+        ++gTableSetCounts[{getTableName(), key}];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         auto iter = table.find(key);
         if (iter == table.end())
