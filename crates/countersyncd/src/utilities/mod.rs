@@ -47,6 +47,8 @@ pub enum ChannelLabel {
     IpfixToStatsReporter,
     IpfixToCounterDb,
     IpfixToOtel,
+    #[cfg(not(target_arch = "arm"))]
+    IpfixToLocalStorage,
 }
 
 impl ChannelLabel {
@@ -58,6 +60,8 @@ impl ChannelLabel {
             ChannelLabel::IpfixToStatsReporter => &IPFIX_TO_STATS_REPORTER_STATS,
             ChannelLabel::IpfixToCounterDb => &IPFIX_TO_COUNTER_DB_STATS,
             ChannelLabel::IpfixToOtel => &IPFIX_TO_OTEL_STATS,
+            #[cfg(not(target_arch = "arm"))]
+            ChannelLabel::IpfixToLocalStorage => &IPFIX_TO_LOCAL_STORAGE_STATS,
         }
     }
 
@@ -69,6 +73,8 @@ impl ChannelLabel {
             ChannelLabel::IpfixToStatsReporter => "ipfix.stats_reporter",
             ChannelLabel::IpfixToCounterDb => "ipfix.counter_db",
             ChannelLabel::IpfixToOtel => "ipfix.otel",
+            #[cfg(not(target_arch = "arm"))]
+            ChannelLabel::IpfixToLocalStorage => "ipfix.local_storage",
         }
     }
 }
@@ -130,6 +136,9 @@ static IPFIX_TO_STATS_REPORTER_STATS: Lazy<Mutex<CommStats>> =
 static IPFIX_TO_COUNTER_DB_STATS: Lazy<Mutex<CommStats>> =
     Lazy::new(|| Mutex::new(CommStats::default()));
 static IPFIX_TO_OTEL_STATS: Lazy<Mutex<CommStats>> = Lazy::new(|| Mutex::new(CommStats::default()));
+#[cfg(not(target_arch = "arm"))]
+static IPFIX_TO_LOCAL_STORAGE_STATS: Lazy<Mutex<CommStats>> =
+    Lazy::new(|| Mutex::new(CommStats::default()));
 
 /// Records a communication channel length sample and logs periodically.
 pub fn record_comm_stats(label: ChannelLabel, channel_len: usize) {
