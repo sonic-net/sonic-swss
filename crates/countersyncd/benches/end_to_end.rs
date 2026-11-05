@@ -32,8 +32,6 @@ use countersyncd::message::{
 mod ipfix_bench_data;
 use ipfix_bench_data::{datasets, PreparedDataset};
 
-const COUNTERS_DB_ID: i32 = 2;
-const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 
 struct BenchNullWriter;
 
@@ -109,13 +107,13 @@ fn start_mock_collector() -> (
 }
 
 fn flush_counters_db() {
-    let db = swss_common::DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
+    let db = swss_common::DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
         .expect("connect counter db for flush");
     assert!(db.flush_db().expect("flush counters DB"));
 }
 
 fn seed_port_name_map(port_count: usize) {
-    let db = swss_common::DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
+    let db = swss_common::DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
         .expect("connect counter db for seed");
 
     let table = "COUNTERS_PORT_NAME_MAP";
@@ -278,7 +276,7 @@ async fn run_end_to_end(
     drop(counter_tx);
     counter_handle.await.expect("CounterDB actor should join");
     // This checks only a periodic write, not final values or all counters.
-    let db = swss_common::DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
+    let db = swss_common::DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
         .expect("connect counter db for smoke check");
     assert!(
         db.exists("COUNTERS:oid:0x1000000000000")
