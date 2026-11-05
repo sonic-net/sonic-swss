@@ -37,3 +37,5 @@ AclOrch::~AclOrch() {}
 void AclOrch::doTask(Consumer& consumer) {}
 
 void AclOrch::update(SubjectType type, void* cntx) {}
+
+void AclOrch::onWarmBootEnd() {}
