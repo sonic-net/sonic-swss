@@ -705,6 +705,33 @@ namespace sflow_test
         EXPECT_EQ(attrs[1].value.u64, cbs);
     }
 
+    void expectPolicerColorActions(sai_object_id_t policer, sai_packet_action_t green,
+                                   sai_packet_action_t yellow, sai_packet_action_t red)
+    {
+        sai_attribute_t attrs[3] = {};
+        attrs[0].id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
+        attrs[1].id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
+        attrs[2].id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
+        ASSERT_EQ(sai_policer_api->get_policer_attribute(policer, 3, attrs), SAI_STATUS_SUCCESS);
+        EXPECT_EQ(attrs[0].value.s32, green);
+        EXPECT_EQ(attrs[1].value.s32, yellow);
+        EXPECT_EQ(attrs[2].value.s32, red);
+    }
+
+    /* Test: the drop-monitor policer uses the vendor-portable color actions
+       (green/yellow FORWARD, red DROP) so create_policer succeeds on SAI
+       implementations that support only FORWARD for green/yellow. */
+    TEST_F(SflowOrchTest, SflowDropMonitorPolicerUsesPortableColorActions)
+    {
+        MockSflowOrch mock_orch;
+        setDropMonitorLimit(mock_orch, "100");
+        auto &monitor = mock_orch.get().m_sflowDropMonitor;
+        ASSERT_TRUE(monitor.isEnabled());
+        expectPolicerColorActions(monitor.m_policer, SAI_PACKET_ACTION_FORWARD,
+                                  SAI_PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_DROP);
+        setDropMonitorLimit(mock_orch, "0");
+    }
+
     /* Test: rate change updates CIR/CBS on the same policer without recreating it. */
     TEST_F(SflowOrchTest, SflowDropMonitorRateUpdateInPlace)
     {
