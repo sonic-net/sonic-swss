@@ -6765,6 +6765,58 @@ TEST_F(PfcWdHwOrchTest, StormedPortProtection)
     ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
 }
 
+// A port with no lossless TC is deferred until it becomes PFC-ready. The first
+// attempt reports it failed; retries must not touch the ASIC or rewrite STATE_DB.
+TEST_F(PfcWdHwOrchTest, PortWithoutLosslessTcIsReportedOnceThenWaitsQuietly)
+{
+    bringUpPorts();
+    const vector<FieldValueTuple> config =
+        { { "action", "drop" }, { "detection_time", "400" }, { "restoration_time", "400" } };
+
+    ASSERT_EQ(gPfcWdHwOrch->createEntry("Ethernet0", config), task_process_status::task_need_retry);
+
+    Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+    string status;
+    ASSERT_TRUE(hwStateTable.hget("Ethernet0", "status", status));
+    ASSERT_EQ(status, "failed");
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwdPendingPorts.count("Ethernet0"), 1u);
+
+    hwStateTable.del("Ethernet0");
+    auto dldBefore = _sai_port_dld_intervals;
+    auto dlrBefore = _sai_port_dlr_intervals;
+    auto dldrBefore = _sai_queue_dldr_enabled;
+    auto actionCountBefore = _sai_switch_dlr_packet_action_count;
+    for (int i = 0; i < 5; i++)
+    {
+        ASSERT_EQ(gPfcWdHwOrch->createEntry("Ethernet0", config), task_process_status::task_need_retry);
+    }
+
+    ASSERT_FALSE(hwStateTable.hget("Ethernet0", "status", status));
+    ASSERT_EQ(_sai_port_dld_intervals, dldBefore);
+    ASSERT_EQ(_sai_port_dlr_intervals, dlrBefore);
+    ASSERT_EQ(_sai_queue_dldr_enabled, dldrBefore);
+    ASSERT_EQ(_sai_switch_dlr_packet_action_count, actionCountBefore);
+}
+
+TEST_F(PfcWdHwOrchTest, PendingPortStartsOnceLosslessTcsAppear)
+{
+    bringUpPorts();
+    const vector<FieldValueTuple> config =
+        { { "action", "drop" }, { "detection_time", "400" }, { "restoration_time", "400" } };
+
+    ASSERT_EQ(gPfcWdHwOrch->createEntry("Ethernet0", config), task_process_status::task_need_retry);
+
+    enablePfcOnPort("Ethernet0");
+    ASSERT_EQ(gPfcWdHwOrch->createEntry("Ethernet0", config), task_process_status::task_success);
+
+    Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+    string status;
+    ASSERT_TRUE(hwStateTable.hget("Ethernet0", "status", status));
+    ASSERT_EQ(status, "configured");
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwdPendingPorts.count("Ethernet0"), 0u);
+}
+
 TEST_F(PfcWdHwOrchTest, AlertActionRejected)
 {
     bringUpPorts();
