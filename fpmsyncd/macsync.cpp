@@ -543,7 +543,7 @@ void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTupl
     m_vxlanFdbTable.del(key);
     m_vxlanFdbTable.set(key, row);
     m_pendingWrites = true;
-    m_remoteRows[key] = RemoteRow{row, seq};
+    setRemoteRow(key, row, seq);
     m_staleRemoteMacs.erase(key);
 }
 
@@ -553,8 +553,40 @@ void MacSync::removeRemoteMac(const string& key)
 {
     m_vxlanFdbTable.del(key);
     m_pendingWrites = true;
-    m_remoteRows.erase(key);
+    eraseRemoteRow(key);
     m_staleRemoteMacs.erase(key);
+}
+
+void MacSync::setRemoteRow(const string& key, const std::vector<FieldValueTuple>& row, uint64_t seq)
+{
+    eraseRemoteRow(key);
+
+    uint32_t group = groupOf(row);
+    m_remoteRows[key] = RemoteRow{row, seq, group};
+    if (group)
+    {
+        m_rowsByGroup[group].insert(key);
+    }
+}
+
+void MacSync::eraseRemoteRow(const string& key)
+{
+    auto it = m_remoteRows.find(key);
+    if (it == m_remoteRows.end())
+    {
+        return;
+    }
+
+    auto rows = m_rowsByGroup.find(it->second.group);
+    if (rows != m_rowsByGroup.end())
+    {
+        rows->second.erase(key);
+        if (rows->second.empty())
+        {
+            m_rowsByGroup.erase(rows);
+        }
+    }
+    m_remoteRows.erase(it);
 }
 
 constexpr long MacSync::ES_READD_DELAY_MS;
@@ -562,6 +594,7 @@ constexpr long MacSync::ES_READD_DELAY_MS;
 constexpr long MacSync::NHG_FLUSH_DELAY_MS;
 constexpr long MacSync::NHG_FLUSH_BATCH_MS;
 constexpr int MacSync::NHG_FLUSH_TRIES;
+constexpr long MacSync::NHG_ABSENT_CACHE_MS;
 
 void MacSync::onKernelNexthop(struct nlmsghdr *h)
 {
@@ -610,7 +643,7 @@ void MacSync::onKernelNexthop(struct nlmsghdr *h)
         return;
     }
 
-    m_deletedNhgs.insert(id);
+    m_deletedNhgs[id] = std::chrono::steady_clock::time_point();
 
     auto now = std::chrono::steady_clock::now();
     bool armed = !m_nhgFlushPending.empty();
@@ -672,13 +705,15 @@ void MacSync::processNhgFlush(std::chrono::steady_clock::time_point now)
     /* Only the groups rows still use are looked up. A row zebra has not sent
      * since the last connect is the stale sweep's. */
     std::set<uint32_t> used;
-    for (const auto& remote : m_remoteRows)
+    for (const auto& flush : due)
     {
-        uint32_t group = groupOf(remote.second.row);
+        auto rows = m_rowsByGroup.find(flush.first);
 
-        if (group && due.count(group) && !m_staleRemoteMacs.count(remote.first))
+        if (rows != m_rowsByGroup.end() &&
+            std::any_of(rows->second.begin(), rows->second.end(),
+                        [this](const string& key) { return !m_staleRemoteMacs.count(key); }))
         {
-            used.insert(group);
+            used.insert(flush.first);
         }
     }
     for (const auto& held : m_esReAddDeferred)
@@ -728,12 +763,21 @@ void MacSync::processNhgFlush(std::chrono::steady_clock::time_point now)
     if (!lastFlushed.empty())
     {
         std::vector<string> gone;
-        for (const auto& remote : m_remoteRows)
+        for (const auto& flushed : lastFlushed)
         {
-            if (!m_staleRemoteMacs.count(remote.first) &&
-                onDueGroup(groupOf(remote.second.row), remote.second.seq))
+            auto rows = m_rowsByGroup.find(flushed.first);
+            if (rows == m_rowsByGroup.end())
             {
-                gone.push_back(remote.first);
+                continue;
+            }
+            for (const auto& key : rows->second)
+            {
+                auto remote = m_remoteRows.find(key);
+                if (remote != m_remoteRows.end() && !m_staleRemoteMacs.count(key) &&
+                    remote->second.seq <= flushed.second)
+                {
+                    gone.push_back(key);
+                }
             }
         }
         for (const auto& key : gone)
@@ -1298,10 +1342,22 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     /* zebra creates a group in the kernel before it sends MACs on it, and the
      * creation is read before each MAC message. So a MAC on a group the kernel
      * has deleted since was sent before the delete, which took it, however
-     * late it is read. The kernel is asked in case a creation was missed. */
-    if (nhid && m_deletedNhgs.count(nhid))
+     * late it is read. The kernel is asked in case a creation was missed; its
+     * answer that the group is gone stands for the rest of the burst. */
+    auto deleted = nhid ? m_deletedNhgs.find(nhid) : m_deletedNhgs.end();
+    if (deleted != m_deletedNhgs.end())
     {
-        NexthopState state = m_kernelNexthopState(nhid);
+        auto now = std::chrono::steady_clock::now();
+        NexthopState state = NexthopState::Absent;
+
+        if (deleted->second <= now)
+        {
+            state = m_kernelNexthopState(nhid);
+            if (state == NexthopState::Absent)
+            {
+                deleted->second = now + std::chrono::milliseconds(NHG_ABSENT_CACHE_MS);
+            }
+        }
 
         if (state == NexthopState::Absent)
         {
@@ -1312,7 +1368,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         }
         if (state == NexthopState::Fdb)
         {
-            m_deletedNhgs.erase(nhid);
+            m_deletedNhgs.erase(deleted);
         }
     }
 
@@ -1353,7 +1409,7 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
         m_staleRemoteMacs.erase(stale);
         if (same)
         {
-            m_remoteRows[key] = RemoteRow{fvVector, ++m_remoteMacSeq};
+            setRemoteRow(key, fvVector, ++m_remoteMacSeq);
             /* zebra's replay after a connect sends every MAC again. A live add
              * still rewrites the row, which repairs one APPL_DB lost. */
             SWSS_LOG_INFO("MacSync: remote MAC %s unchanged", key.c_str());
