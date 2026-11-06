@@ -141,10 +141,10 @@ public:
 
     bool isFpmMode() const { return m_fpmMode; }
 
-    /* MacSync has written VXLAN_FDB_TABLE since the pipeline was last empty:
-     * the caller flushes it, which it otherwise holds during a warm restart. */
-    bool hasPendingWrites() const { return m_pendingWrites; }
-    void clearPendingWrites() { m_pendingWrites = false; }
+    /* Sends the VXLAN_FDB_TABLE writes queued. MacSync has a pipeline of its
+     * own: fpmsyncd holds the shared one until the reconcile of a warm
+     * restart, and these rows must not wait for it. */
+    void flush() { m_pipeline.flush(); }
 
 private:
     /* Local MACs already advertised to zebra, keyed "Vlan<id>:<mac>". */
@@ -175,6 +175,8 @@ private:
     void armEsReAddTimer(std::chrono::steady_clock::time_point now);
     void armNhgFlushTimer(std::chrono::steady_clock::time_point now);
 
+    DBConnector m_appDb;
+    RedisPipeline m_pipeline;
     ProducerStateTable m_vxlanFdbTable;
     Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
@@ -225,7 +227,6 @@ private:
     /* zebra has sent a remote MAC since the rows were marked stale. */
     bool m_remoteMacSinceStale {false};
     bool m_markedBefore {false};
-    bool m_pendingWrites {false};
     /* The stale rows go at this many seconds after the connect, whatever the
      * channel does; 0 when the settle rule applies. */
     time_t m_staleWarmTimer {0};
