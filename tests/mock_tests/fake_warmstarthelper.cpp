@@ -23,7 +23,7 @@ WarmStartHelper::WarmStartHelper(RedisPipeline *pipeline,
     m_syncTableName(syncTableName)
 {
     g_mockRefreshMaps.emplace(syncTableName, MockRefreshMap{});
-    g_mockRegisteredTables[this].insert(syncTableName);
+    g_mockRegisteredTables[this] = {syncTableName};
 }
 
 WarmStartHelper::~WarmStartHelper()
@@ -151,5 +151,6 @@ bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
 
 size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName)
 {
-    return g_mockRefreshMaps[tableName].size();
+    auto table = g_mockRefreshMaps.find(tableName);
+    return table == g_mockRefreshMaps.end() ? 0 : table->second.size();
 }
