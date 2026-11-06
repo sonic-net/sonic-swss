@@ -170,7 +170,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/vxlanorch.cpp \
                 $(top_srcdir)/orchagent/tunneltermhelper.cpp \
                 $(top_srcdir)/orchagent/vnetorch.cpp \
-                $(top_srcdir)/orchagent/dtelorch.cpp \
                 $(top_srcdir)/orchagent/flexcounterorch.cpp \
                 $(top_srcdir)/orchagent/watermarkorch.cpp \
                 $(top_srcdir)/orchagent/notificationconsumerstatsorch.cpp \

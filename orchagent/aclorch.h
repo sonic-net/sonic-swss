@@ -13,7 +13,6 @@
 #include "switchorch.h"
 #include "portsorch.h"
 #include "mirrororch.h"
-#include "dtelorch.h"
 #include "observer.h"
 #include "vxlanorch.h"
 #include "flex_counter_manager.h"
@@ -74,12 +73,6 @@
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
-#define ACTION_DTEL_FLOW_OP                 "FLOW_OP"
-#define ACTION_DTEL_INT_SESSION             "INT_SESSION"
-#define ACTION_DTEL_DROP_REPORT_ENABLE      "DROP_REPORT_ENABLE"
-#define ACTION_DTEL_TAIL_DROP_REPORT_ENABLE "TAIL_DROP_REPORT_ENABLE"
-#define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
-#define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
 #define ACTION_COUNTER                      "COUNTER"
 #define ACTION_META_DATA                    "META_DATA_ACTION"
 #define ACTION_DSCP                         "DSCP_ACTION"
@@ -92,14 +85,6 @@
 #define PACKET_ACTION_REDIRECT     "REDIRECT"
 #define PACKET_ACTION_DO_NOT_NAT   "DO_NOT_NAT"
 #define PACKET_ACTION_DISABLE_TRIM "DISABLE_TRIM"
-
-#define DTEL_FLOW_OP_NOP        "NOP"
-#define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
-#define DTEL_FLOW_OP_INT        "INT"
-#define DTEL_FLOW_OP_IOAM       "IOAM"
-
-#define DTEL_ENABLED             "TRUE"
-#define DTEL_DISABLED            "FALSE"
 
 #define IP_TYPE_ANY             "ANY"
 #define IP_TYPE_IP              "IP"
@@ -153,7 +138,6 @@ typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_range_type_t> acl_range_type_lookup_t;
 typedef map<string, sai_acl_bind_point_type_t> acl_bind_point_type_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
-typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
 typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
@@ -352,7 +336,6 @@ public:
 
     static shared_ptr<AclRule> makeShared(AclOrch *acl,
                                         MirrorOrch *mirror,
-                                        DTelOrch *dtel,
                                         const string& rule,
                                         const string& table,
                                         const KeyOpFieldsValuesTuple&,
@@ -456,27 +439,6 @@ protected:
     bool m_state {false};
     string m_sessionName;
     MirrorOrch *m_pMirrorOrch {nullptr};
-};
-
-class AclRuleDTelWatchListEntry: public AclRule
-{
-public:
-    AclRuleDTelWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
-    bool validateAddAction(string attr_name, string attr_value);
-    bool validate();
-    bool createRule();
-    bool removeRule();
-    void onUpdate(SubjectType, void *) override;
-
-    bool activate();
-    bool deactivate();
-
-    bool update(const AclRule& updatedRule) override;
-protected:
-    DTelOrch *m_pDTelOrch;
-    string m_intSessionId;
-    bool INT_enabled;
-    bool INT_session_valid;
 };
 
 class AclRuleUnderlaySetDscp: public AclRule
@@ -587,8 +549,7 @@ public:
             PortsOrch               *portOrch,
             MirrorOrch              *mirrorOrch,
             NeighOrch               *neighOrch,
-            RouteOrch               *routeOrch,
-            DTelOrch                *m_dTelOrch = NULL);
+            RouteOrch               *routeOrch);
     ~AclOrch();
     void update(SubjectType, void *);
 
@@ -605,7 +566,6 @@ public:
     MirrorOrch *m_mirrorOrch;
     NeighOrch *m_neighOrch;
     RouteOrch *m_routeOrch;
-    DTelOrch *m_dTelOrch;
 
     bool addAclTable(AclTable &aclTable);
     bool removeAclTable(string table_id);
@@ -700,8 +660,6 @@ private:
                            AclTable    &curT,
                            set<string> &addSet,
                            set<string> &delSet);
-    void createDTelWatchListTables();
-    void deleteDTelWatchListTables();
 
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
