@@ -154,6 +154,9 @@ public:
     PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
 
     bool allPortsReady();
+    // Ports created but not yet fully initialized (e.g. buffers not applied);
+    // while non-empty, allPortsReady() returns false.
+    std::set<std::string> getPendingInitPorts() const;
     bool isInitDone();
     bool isConfigDone();
     bool isGearboxEnabled();
