@@ -576,4 +576,98 @@ namespace intfsorch_test
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
         ASSERT_EQ(port.m_nat_zone_id, 7u);
     }
+
+    // A coalesced VRF-change SET carries only vrf_name, so the RIF is torn down and
+    // recreated without the interface settings being restated. SAG has to be carried
+    // across, and its link local route has to follow the interface into the new vrf.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfChangePreservesSag)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // a SAG gateway mac is required before any link local route is programmed
+        entries.push_back({"GLOBAL", "SET", {{"gateway_mac", "02:03:04:05:06:07"}}});
+        auto sagConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_SAG_TABLE_NAME));
+        ASSERT_NE(sagConsumer, nullptr);
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // create a new vrf
+        entries.clear();
+        entries.push_back({"Vrf-Blue", "SET", {{"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+
+        // create the interface in the default vrf with SAG enabled
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"mtu", "9100"}, {"static_anycast_gateway", "true"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(intfConsumer, nullptr);
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncd.find("Ethernet0"), syncd.end());
+        ASSERT_EQ(syncd.at("Ethernet0").vrf_id, gVirtualRouterId);
+        ASSERT_TRUE(syncd.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"vrf_name", "Vrf-Blue"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd.at("Ethernet0").vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
+        EXPECT_TRUE(syncd.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"GLOBAL", "DEL", {}});
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+    }
+
+    // The RIF cannot be torn down while something still references it, so the vrf
+    // change has to be deferred rather than dropped, and converge once the
+    // reference goes away.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfChangeDeferredUntilRifUnreferenced)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        entries.push_back({"Vrf-Blue", "SET", {{"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"mtu", "9100"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(intfConsumer, nullptr);
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncd.find("Ethernet0"), syncd.end());
+        ASSERT_EQ(syncd.at("Ethernet0").vrf_id, gVirtualRouterId);
+
+        // stand in for a next hop still resolving over the router interface
+        gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"vrf_name", "Vrf-Blue"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd.at("Ethernet0").vrf_id, gVirtualRouterId);
+        ASSERT_EQ(intfConsumer->m_toSync.size(), 1u);
+
+        gIntfsOrch->decreaseRouterIntfsRefCount("Ethernet0");
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd.at("Ethernet0").vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+    }
 }
