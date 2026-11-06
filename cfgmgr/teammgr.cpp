@@ -884,7 +884,10 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     cmd.str("");
     cmd.clear();
 
-    // Set admin down LAG member (required by teamd) and enslave it
+    // Set admin down LAG member (required by teamd) and enslave it.
+    // The commands below are executed one by one and every return value is
+    // checked separately, so a failure in an earlier step is not masked by a
+    // successful later one:
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port config update <member> { "lacp_key": <lacp_key>, "link_watch": { "name": "ethtool" } };
     // teamdctl <port_channel_name> port add <member>;
