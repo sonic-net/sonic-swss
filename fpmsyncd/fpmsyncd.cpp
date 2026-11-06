@@ -343,7 +343,13 @@ int main(int argc, char **argv)
                     }
 
                     sync.onWarmStartEnd(applStateDb);
-                    macsync.onWarmStartEnd();
+                    /* The EOIU covers only the unicast families; zebra can still
+                     * send EVPN DF entries until the warm restart timer, which
+                     * stays armed when the EOIU hold fires first. */
+                    if (temps == &warmStartTimer)
+                    {
+                        macsync.onWarmStartEnd();
+                    }
 
                     // remove the one-shot timer.
                     s.removeSelectable(temps);
