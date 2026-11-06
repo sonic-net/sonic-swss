@@ -1187,6 +1187,20 @@ void FdbOrch::doTask(Consumer& consumer)
                     /* get the port_name from l2nhgorch so that we can populate the port structure  */
                     if (!gL2NhgOrch->hasActiveL2Nhg(dest_value))
                     {
+                        if (!gL2NhgOrch->isBridgePortNhgSupported())
+                        {
+                            /* The group never becomes active: drop the MAC instead of keeping it
+                             * pending, which would also fail a warm restore. */
+                            auto existing = m_entries.find(entry);
+                            if (existing != m_entries.end() && existing->second.origin == origin)
+                            {
+                                removeFdbEntry(entry, origin);
+                            }
+                            SWSS_LOG_INFO("L2 Next Hop Group %s not supported, remote MAC %s not programmed",
+                                          dest_value.c_str(), entry.mac.to_string().c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
                         SWSS_LOG_INFO("L2 Next Hop Group %s is not known/active yet", dest_value.c_str());
                         it++;
                         continue;
@@ -2112,12 +2126,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if ((fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) &&
+        /* A local MAC moved to a remote VTEP takes its neighbors out of the SAI. Behind a bridge
+         * port next hop group they stay: the SAI resolves them through the group's bridge port. */
+        if ((fdbData.dest_type == FdbDest::VTEP) &&
             macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
             (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
-            /* Try to remove the local neighbor entry if a local MAC moved to
-             * the remote VXLAN side now.
-             */
             gNeighOrch->processFDBDelete(entry);
         }
     }
