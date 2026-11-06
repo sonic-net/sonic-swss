@@ -124,6 +124,9 @@ public:
     static constexpr long NHG_FLUSH_BATCH_MS = 100;
     /* Kernel lookups with no clear answer before the rows are kept. */
     static constexpr int NHG_FLUSH_TRIES = 3;
+    /* How long the kernel's answer that a deleted group is gone stands for the
+     * MACs zebra sent on it, which arrive in a burst. */
+    static constexpr long NHG_ABSENT_CACHE_MS = 100;
 
     /* Reads the kernel nexthop messages already queued. zebra creates a group
      * in the kernel before it sends MACs on it, so reading them before each
@@ -162,6 +165,9 @@ private:
                       LocalMac& local, bool add);
     void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row, uint64_t seq);
     void removeRemoteMac(const std::string& key);
+    /* m_remoteRows and m_rowsByGroup together. */
+    void setRemoteRow(const std::string& key, const std::vector<FieldValueTuple>& row, uint64_t seq);
+    void eraseRemoteRow(const std::string& key);
     void withdrawStaleRemoteMacs();
     bool isRemoteRow(const std::string& key, const std::vector<FieldValueTuple>& staleRow);
     struct HeldRow;
@@ -202,8 +208,12 @@ private:
         /* m_remoteMacSeq when zebra sent it, which orders it against a nexthop
          * group's delete. */
         uint64_t seq {0};
+        /* The nexthop group it names, 0 for none. */
+        uint32_t group {0};
     };
     std::map<std::string, RemoteRow> m_remoteRows;
+    /* The keys of m_remoteRows by the nexthop group each names. */
+    std::map<uint32_t, std::set<std::string>> m_rowsByGroup;
     /* The remote rows at the last connect, in APPL_DB or queued, that zebra
      * has not sent or withdrawn since. With m_remoteRows it holds every row
      * in VXLAN_FDB_TABLE, so APPL_DB is not searched. A queued row keeps only
@@ -252,8 +262,10 @@ private:
     /* Remote MACs zebra has sent, counted so rows can be told from a group's delete. */
     uint64_t m_remoteMacSeq {0};
 
-    /* FDB nexthop groups the kernel has deleted and not created again. */
-    std::set<uint32_t> m_deletedNhgs;
+    /* FDB nexthop groups the kernel has deleted and not created again, and
+     * until when the kernel's answer that one is gone stands. zebra reuses
+     * the ids, so a creation takes its id out again. */
+    std::map<uint32_t, std::chrono::steady_clock::time_point> m_deletedNhgs;
 
     struct NhgFlush
     {

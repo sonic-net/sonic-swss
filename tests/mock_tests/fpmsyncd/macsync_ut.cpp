@@ -2447,6 +2447,82 @@ TEST_F(MacSyncNhgFlushTest, MacReadAfterItsGroupWentIsDropped)
     EXPECT_FALSE(hasRow(0x55));
 }
 
+/* zebra's MACs on a group it deleted arrive back to back; the kernel is asked
+ * once for the burst, not once per MAC. */
+TEST_F(MacSyncNhgFlushTest, BurstOnAGoneGroupAsksTheKernelOnce)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+
+    int asked = 0;
+    auto kernel = m_macSync->m_kernelNexthopState;
+    m_macSync->m_kernelNexthopState = [&asked, kernel](uint32_t id) {
+        asked++;
+        return kernel(id);
+    };
+
+    for (uint8_t last = 0x50; last < 0x60; last++)
+    {
+        remote(last, ES_NHG);
+        EXPECT_FALSE(hasRow(last));
+    }
+    EXPECT_EQ(asked, 1);
+}
+
+/* The answer stands only for the burst: a creation that was not read is found
+ * by the next lookup. */
+TEST_F(MacSyncNhgFlushTest, AnswerThatAGroupIsGoneExpires)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    ASSERT_FALSE(hasRow(0x55));
+    ASSERT_EQ(m_macSync->m_deletedNhgs.count(ES_NHG), 1u);
+
+    m_kernelIds[ES_NHG] = true;
+    m_macSync->m_deletedNhgs[ES_NHG] = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+    remote(0x56, ES_NHG);
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(m_macSync->m_deletedNhgs.empty());
+}
+
+/* A creation read from the kernel ends the answer at once. */
+TEST_F(MacSyncNhgFlushTest, CreationEndsTheAnswerThatTheGroupIsGone)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    ASSERT_FALSE(hasRow(0x55));
+
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x56, ES_NHG);
+    EXPECT_TRUE(hasRow(0x56));
+}
+
+/* The rows are found by their group, which follows each rewrite and withdrawal. */
+TEST_F(MacSyncNhgFlushTest, RowsAreIndexedByTheirGroup)
+{
+    remote(0x55, ES_NHG);
+    remote(0x56, ES_NHG);
+    ASSERT_EQ(m_macSync->m_rowsByGroup[ES_NHG].size(), 2u);
+
+    remote(0x55, OTHER_NHG);
+    EXPECT_EQ(m_macSync->m_rowsByGroup[ES_NHG], std::set<std::string>{key(0x56)});
+    EXPECT_EQ(m_macSync->m_rowsByGroup[OTHER_NHG], std::set<std::string>{key(0x55)});
+
+    remote(0x55, 0, "10.0.0.2");
+    remote(0x56, 0, "10.0.0.2");
+    EXPECT_TRUE(m_macSync->m_rowsByGroup.empty());
+    EXPECT_EQ(m_macSync->m_remoteRows[key(0x55)].group, 0u);
+
+    remote(0x57, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x57));
+    EXPECT_TRUE(m_macSync->m_rowsByGroup.empty());
+}
+
 /* A creation that was not read: the kernel has the group again. */
 TEST_F(MacSyncNhgFlushTest, MacOnAGroupTheKernelHasAgainIsWritten)
 {
@@ -2667,6 +2743,7 @@ TEST_F(MacSyncNhgFlushTest, UnchangedReplayRowIsOnTheGroup)
 {
     remote(0x55, ES_NHG);
     m_macSync->m_remoteRows.clear();
+    m_macSync->m_rowsByGroup.clear();
     ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
     testing_db::resetOperationCounters();
     remote(0x55, ES_NHG);
