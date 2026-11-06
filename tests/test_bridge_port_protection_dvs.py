@@ -1,7 +1,7 @@
 """Bridge-port protection real-daemon DVS cases.
 
-Collection does not start a testbed. Matching protection-capable SAI and
-companion FRR serializer artifacts are prerequisites for execution.
+Collection does not start a testbed. Matching protection-capable SAI and current shared-header test artifacts are
+prerequisites. FPM socket fixtures use a synthetic sender; live FRR is separate.
 """
 import time
 import pytest
@@ -132,11 +132,14 @@ def assert_shared_peer(bpp,nh,tunnel,oid):
 
 def test_conflicting_rmac_preserves_existing_peer_and_pending_group(bpp):
     bpp.start(); nh,tunnel=peer(bpp)
+    old=bpp.asic.get_entry(BP,bpp.bridge_oid())[GROUP_ATTR]
     bpp.member(bpp.member_id+1,mac='02:00:00:00:00:99')
     bpp.group([bpp.member_id+1],identifier=bpp.group_id+1)
     stable(lambda: assert_shared_mac(bpp,nh,tunnel))
     bpp.bind(bpp.group_id+1)
-    bpp.wait_runtime(reconciliation_state='INCONSISTENT',last_event='nhg_pending')
+    bpp.wait_runtime(reconciliation_state='INCONSISTENT',last_event='replacement_nhg_pending')
+    assert bpp.asic.get_entry(BP,bpp.bridge_oid())[GROUP_ATTR]==old
+    assert_shared_mac(bpp,nh,tunnel)
     bpp.bind(); bpp.path('PRIMARY')
 
 
@@ -1160,3 +1163,152 @@ def test_intent_withdrawal_during_wtr_cancels_restore_and_restores_normal_flush(
     bpp.asic.wait_for_deleted_entry('ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY',
                                   entries['ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY'][0])
     poll(lambda: True if len(successful_port_fdb_flushes(bpp,since))==1 else None)
+
+
+def send_primary_fdb_notification(bpp, mac, event):
+    """Inject the same SAI notification channel used by existing FDB tests.
+
+    This tests notification handling, not hardware packet learning. Do not seed
+    ASIC_DB; the existing primary objects are created through normal inputs.
+    """
+    import json
+    from swsscommon import swsscommon
+    vlans = [key for key in bpp.asic.get_keys('ASIC_STATE:SAI_OBJECT_TYPE_VLAN')
+             if bpp.asic.get_entry('ASIC_STATE:SAI_OBJECT_TYPE_VLAN', key).get(
+                 'SAI_VLAN_ATTR_VLAN_ID') == '999']
+    switches = bpp.asic.get_keys('ASIC_STATE:SAI_OBJECT_TYPE_SWITCH')
+    assert len(vlans) == len(switches) == 1
+    entry = {'bvid': vlans[0], 'mac': mac.upper(), 'switch_id': switches[0]}
+    payload = [{'fdb_entry': json.dumps(entry), 'fdb_event': event,
+                'list': [{'id': 'SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID',
+                          'value': bpp.bridge_oid()}]}]
+    producer = swsscommon.NotificationProducer(bpp.asic.db_connection, 'NOTIFICATIONS')
+    producer.send('fdb_event', json.dumps(payload), swsscommon.FieldValuePairs())
+
+
+@pytest.mark.parametrize('attached', [False, True])
+def test_delayed_learn_after_down_preserves_protected_primary_objects(bpp, attached):
+    entries = primary_forwarding_entries(bpp)
+    if attached:
+        bpp.start()
+    else:
+        bpp.policy()
+        bpp.bind()  # Accepted intent with an unresolved group.
+    bpp.link(False)
+    if attached:
+        bpp.path('PROTECTION')
+    else:
+        bpp.wait_runtime(last_event='nhg_pending')
+    bpp.fault()
+    since = len(bpp.trace())
+    mac = '00:11:22:33:44:66'
+    key = bpp.vlan + ':' + mac
+    try:
+        send_primary_fdb_notification(bpp, mac, 'SAI_FDB_EVENT_LEARNED')
+        # STATE_DB acknowledgement proves orchagent processed this LEARN.
+        bpp.state_db.wait_for_field_match('FDB_TABLE', key, {'port': bpp.po})
+        stable(lambda: assert_primary_forwarding_preserved(bpp, entries))
+        assert not successful_port_fdb_flushes(bpp, since)
+    finally:
+        send_primary_fdb_notification(bpp, mac, 'SAI_FDB_EVENT_AGED')
+        bpp.state_db.wait_for_deleted_entry('FDB_TABLE', key)
+
+
+def test_delayed_learn_on_unprotected_down_port_still_flushes(bpp):
+    bpp.fault()
+    before_down = len(bpp.trace())
+    bpp.link(False)
+    poll(lambda: True if successful_port_fdb_flushes(bpp, before_down) else None)
+    since = len(bpp.trace())
+    mac = '00:11:22:33:44:66'
+    send_primary_fdb_notification(bpp, mac, 'SAI_FDB_EVENT_LEARNED')
+    poll(lambda: True if successful_port_fdb_flushes(bpp, since) else None)
+    assert not bpp.state_db.get_entry('FDB_TABLE', bpp.vlan + ':' + mac)
+
+
+@pytest.mark.parametrize('admin', ['PRIMARY', 'PROTECTION'])
+def test_unready_replacement_keeps_old_group_and_current_policy(bpp, admin):
+    bpp.start(admin)
+    old = bpp.asic.get_entry(BP, bpp.bridge_oid())[GROUP_ATTR]
+    replacement = bpp.group_id + 1
+    since = len(bpp.trace())
+    bpp.bind(replacement)
+    bpp.wait_runtime(reconciliation_state='INCONSISTENT',
+                     last_event='replacement_nhg_pending')
+
+    def held():
+        assert bpp.asic.get_entry(BP, bpp.bridge_oid())[GROUP_ATTR] == old
+        assert old in bpp.asic.get_keys(NHG)
+        assert not [e for e in bpp.trace()[since:]
+                    if e['operation'] == 'set' and
+                    e['attr'] == bpp.instrumented.constants['attr_group'] and
+                    e['value'] == 0 and e['status'] == 0]
+    stable(held)
+    opposite = 'PROTECTION' if admin == 'PRIMARY' else 'PRIMARY'
+    bpp.policy(opposite)
+    bpp.wait(protection_state=opposite, reconciliation_state='INCONSISTENT')
+    held()
+    bpp.asic.wait_for_field_match(BP, bpp.bridge_oid(),
+                                {ADMIN_ATTR: 'SAI_BRIDGE_PORT_PROTECTION_ADMIN_MODE_' + opposite})
+    bpp.group(identifier=replacement)
+    bpp.path(opposite)
+    new = bpp.asic.get_entry(BP, bpp.bridge_oid())[GROUP_ATTR]
+    assert new != old
+    bpp.delete_app(OBJECTS, str(bpp.group_id))
+    bpp.asic.wait_for_deleted_entry(NHG, old)
+    assert new in bpp.asic.get_keys(NHG)
+
+
+def test_old_group_withdrawal_during_unready_replacement_still_retires(bpp):
+    bpp.start('PROTECTION')
+    old = bpp.asic.get_entry(BP, bpp.bridge_oid())[GROUP_ATTR]
+    bpp.bind(bpp.group_id + 1)
+    bpp.wait_runtime(last_event='replacement_nhg_pending')
+    bpp.delete_app(OBJECTS, str(bpp.group_id))
+    bpp.asic.wait_for_field_match(BP, bpp.bridge_oid(), {GROUP_ATTR: 'oid:0x0'})
+    bpp.asic.wait_for_deleted_entry(NHG, old)
+    assert bpp.config.get_entry(CONFIG, bpp.po)
+    assert bpp.state()['reconciliation_state'] == 'INCONSISTENT'
+
+
+def test_two_portchannels_restore_on_independent_wtr_deadlines(bpp):
+    bpp.start(revertive=True, wtr=6000)
+    second = 'PortChannel998'
+    run(bpp.dvs, ['config', 'portchannel', 'add', second])
+    try:
+        run(bpp.dvs, ['config', 'vlan', 'member', 'add', '999', second])
+        # Wait for actual LAG/bridge/VLAN creation before injecting oper
+        # events, matching the main fixture's bridge readiness handshake.
+        def second_ready():
+            lag = bpp.dvs.get_counters_db().get_entry('COUNTERS_LAG_NAME_MAP', '').get(second)
+            ports = [key for key in bpp.asic.get_keys(BP)
+                     if bpp.asic.get_entry(BP, key).get('SAI_BRIDGE_PORT_ATTR_PORT_ID') == lag]
+            return ports[0] if len(ports) == 1 and bpp.bridge_vlan_members(ports[0]) else None
+        poll(second_ready)
+        bpp.app('LAG_TABLE', second, {'admin_status': 'up', 'oper_status': 'down', 'mtu': '9100'})
+        bpp.config.create_entry(CONFIG, second, {'admin_mode': 'AUTO', 'revertive': 'true',
+                                               'wait_to_restore_time_ms': '20000'})
+        bpp.app(BINDING, second, {'nexthop_group': str(bpp.group_id)})
+        bpp.state_db.wait_for_field_match(STATE, second, {'protection_state': 'PROTECTION',
+                                                         'reconciliation_state': 'STEADY'})
+        bpp.link(False)
+        bpp.path('PROTECTION')
+        bpp.link(True)
+        bpp.wait_runtime(wtr_state='WAIT_TO_RESTORE')
+        bpp.app('LAG_TABLE', second, {'oper_status': 'up'})
+        bpp.path('PRIMARY')
+        # The short deadline must not restore the independent long timer.
+        assert bpp.state_db.get_entry(STATE, second)['protection_state'] == 'PROTECTION'
+        def second_held():
+            assert bpp.state_db.get_entry(STATE, second)['protection_state'] == 'PROTECTION'
+        stable(second_held)
+        bpp.state_db.wait_for_field_match(STATE, second, {'protection_state': 'PRIMARY',
+                                                         'reconciliation_state': 'STEADY'})
+    finally:
+        bpp.fault()
+        bpp.config.delete_entry(CONFIG, second)
+        bpp.state_db.wait_for_deleted_entry(STATE, second)
+        bpp.delete_app(BINDING, second)
+        run(bpp.dvs, ['config', 'vlan', 'member', 'del', '999', second])
+        bpp.delete_app('LAG_TABLE', second)
+        run(bpp.dvs, ['config', 'portchannel', 'del', second])

@@ -365,6 +365,14 @@ def test_hld_empty_or_orphan_group_flushes_after_fpm_crash_without_row_markers(b
     bpp_fpm.send(group_frame(bpp.group_id,members))
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':','.join(map(str,members))})
     exact(bpp,FPM_IDS,str(bpp.group_id),{'NULL':'NULL'})
+    if missing_members:
+        # A complete Group ADD publishes its inline Members. Explicitly
+        # withdraw one to construct the orphan before crashing fpmsyncd.
+        exact(bpp,OBJECTS,str(bpp.member_id),member_row(bpp.ip))
+        bpp_fpm.send(member_frame(bpp.member_id,bpp.ip,deleting=True))
+        bpp.app_db.wait_for_deleted_entry(OBJECTS,str(bpp.member_id))
+        bpp.app_db.wait_for_deleted_entry(FPM_IDS,str(bpp.member_id))
+        exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':str(bpp.member_id)})
     assert not bpp.app_db.get_entry(OBJECTS,str(bpp.member_id))
     restart_fpmsyncd_after_sigkill(bpp.dvs); bpp_fpm.disconnect()
     bpp.app_db.wait_for_deleted_entry(OBJECTS,str(bpp.group_id))
@@ -429,3 +437,41 @@ def test_native_padding_is_ignored_for_member_and_inline_group(bpp,bpp_fpm):
     bpp_fpm.send(frame(151,group))
     exact(bpp,OBJECTS,str(bpp.group_id),{'nexthop_group':str(bpp.member_id)})
     exact(bpp,OBJECTS,str(bpp.member_id),member_row(bpp.ip))
+
+
+def test_repeated_reconnect_releases_accepted_fpm_socket(bpp, bpp_fpm):
+    """Exercise the actual daemon's accepted-socket lifetime across sessions."""
+    import json
+    pid = int(run(bpp.dvs, ['supervisorctl', 'pid', 'fpmsyncd']).strip())
+    script = '''import json,os,sys
+root='/proc/'+sys.argv[1]+'/fd'
+links=[]
+for name in os.listdir(root):
+ try: links.append(os.readlink(root+'/'+name))
+ except FileNotFoundError: pass
+print(json.dumps(sorted(value for value in links if value.startswith('socket:['))))
+'''
+    def sockets():
+        assert int(run(bpp.dvs, ['supervisorctl', 'pid', 'fpmsyncd']).strip()) == pid
+        return set(json.loads(run(bpp.dvs, ['python3', '-c', script, str(pid)])))
+
+    marker = 0x800020fe
+    session = bpp_fpm
+    # A TCP connect alone does not prove userspace accept has completed.
+    session.send(group_frame(marker, []))
+    exact(bpp, OBJECTS, str(marker), {'nexthop_group': ''})
+    connected = sockets()
+    session.disconnect()
+    bpp.app_db.wait_for_deleted_entry(OBJECTS, str(marker))
+    closed = poll(lambda: value if len(value := sockets()) == len(connected) - 1 else None)
+    try:
+        for _ in range(5):
+            session = FpmSession(bpp)
+            poll(lambda: True if len(sockets()) == len(closed) + 1 else None)
+            session.send(group_frame(marker, []))
+            exact(bpp, OBJECTS, str(marker), {'nexthop_group': ''})
+            session.disconnect()
+            poll(lambda: True if len(sockets()) == len(closed) else None)
+            bpp.app_db.wait_for_deleted_entry(OBJECTS, str(marker))
+    finally:
+        session.close()
