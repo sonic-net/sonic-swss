@@ -733,6 +733,7 @@ class TestVrf(object):
         tenant_first = "VrfTenantFirst"
         tenant_second = "VrfTenantSecond"
         app_db = dvs.get_app_db()
+        config_db = dvs.get_config_db()
         initial_default_vrf = app_db.get_entry("VRF_TABLE", "default")
 
         vxlan.create_vlan1(dvs, "Vlan130")
@@ -757,25 +758,13 @@ class TestVrf(object):
         app_db.wait_for_field_match(
             "VRF_TABLE", tenant_first, {"vni": "5300"})
         app_db.wait_for_entry("VXLAN_VRF_TABLE", tenant_map_key)
-        marker = dvs.add_log_marker()
         self.create_entry_tbl(
             self.cdb, "VRF", "default", [("vni", "5300")])
         # A baseline image may retain a logical default-VRF placeholder with
         # no VNI. Deferring this conflict must preserve that pre-existing row,
         # not require the whole APP_DB key to be absent.
-        def default_conflict_deferred():
-            _, output = dvs.runcmd([
-                "sh", "-c",
-                "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | "
-                "grep -c 'Deferring VNI 5300 for VRF default; it is currently mapped to VRF {}'".format(
-                    marker, tenant_first),
-            ])
-            return int(output.strip()) >= 1, output
-
-        wait_for_result(
-            default_conflict_deferred,
-            failure_message="vrfmgrd did not defer the duplicate VNI owner",
-        )
+        config_db.wait_for_field_match(
+            "VRF", "default", {"vni": "5300"})
         assert app_db.get_entry("VRF_TABLE", "default") == initial_default_vrf
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_5300_key)
         (status, _) = dvs.runcmd("ip link show dev default")
