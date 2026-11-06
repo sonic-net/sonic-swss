@@ -93,6 +93,11 @@ struct Portal
         {
             return obj.supported_trap_ids;
         }
+
+        static void applyCpuQueueShaper(CoppOrch &obj)
+        {
+            obj.applyCpuQueueShaper();
+        }
     };
 
     struct SflowOrchInternal
