@@ -2890,6 +2890,20 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     }
     else
     {
+        /* Another key of the same prefix (fpmsyncd writes "10.1.1.1", FgNhgOrch
+         * "10.1.1.1/32") already staged this removal; that request finishes it. */
+        if (creating == 0 && gRouteBulker.bulk_entry_pending_removal(route_entry))
+        {
+            SWSS_LOG_INFO("Route %s removal already staged, vrf_id 0x%" PRIx64,
+                          ipPrefix.to_string().c_str(), vrf_id);
+            if (!ctx.is_set)
+            {
+                /* This key's state entry; the staged request publishes only its own */
+                publishRouteState(ctx);
+            }
+            return true;
+        }
+
         object_statuses.emplace_back();
         gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
     }
