@@ -22,6 +22,8 @@ namespace mock_orch_test
     static const string ETHERNET12 = "Ethernet12";
     static const string ACTIVE_STATE = "active";
     static const string STANDBY_STATE = "standby";
+    static const string ADMIN_ACTIVE_STATE = "admin_active";
+    static const string ADMIN_STANDBY_STATE = "admin_standby";
     static const string STATE = "state";
     static const string VLAN_1000 = "Vlan1000";
     static const string VLAN_2000 = "Vlan2000";

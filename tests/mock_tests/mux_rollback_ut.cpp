@@ -913,4 +913,57 @@ namespace mux_rollback_test
 
         gNeighOrch->m_syncdNextHops[nh_key] = saved_next_hop;
     }
+
+    // linkmgrd writes admin_active/admin_standby for config-driven switchovers.
+    // They carry their own MuxState values but must forward like active/standby,
+    // and xcvrd/STATE_DB must only ever see the operational state.
+    TEST_F(MuxRollbackTest, AdminActiveForwardsAsActive)
+    {
+        SetMuxStateFromAppDb(ADMIN_ACTIVE_STATE);
+
+        EXPECT_EQ(MuxState::MUX_STATE_ADMIN_ACTIVE, m_MuxCable->state_);
+        EXPECT_TRUE(m_MuxCable->isActive());
+        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
+    }
+
+    TEST_F(MuxRollbackTest, AdminStandbyForwardsAsStandby)
+    {
+        SetMuxStateFromAppDb(ADMIN_ACTIVE_STATE);
+        SetMuxStateFromAppDb(ADMIN_STANDBY_STATE);
+
+        EXPECT_EQ(MuxState::MUX_STATE_ADMIN_STANDBY, m_MuxCable->state_);
+        EXPECT_FALSE(m_MuxCable->isActive());
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
+    }
+
+    // active <-> admin_active only changes the switchover trigger, never the
+    // forwarding side, so the transition must be handled and must not roll back.
+    TEST_F(MuxRollbackTest, AdminRoleChangeKeepsForwardingState)
+    {
+        SetAndAssertMuxState(ACTIVE_STATE);
+
+        SetMuxStateFromAppDb(ADMIN_ACTIVE_STATE);
+        EXPECT_EQ(MuxState::MUX_STATE_ADMIN_ACTIVE, m_MuxCable->state_);
+        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
+
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+        EXPECT_EQ(MuxState::MUX_STATE_ACTIVE, m_MuxCable->state_);
+        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
+    }
+
+    // admin_standby must hand off to plain active exactly like standby does.
+    TEST_F(MuxRollbackTest, AdminStandbyToActiveSwitchesForwarding)
+    {
+        SetMuxStateFromAppDb(ADMIN_STANDBY_STATE);
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+        EXPECT_EQ(MuxState::MUX_STATE_ACTIVE, m_MuxCable->state_);
+        EXPECT_TRUE(m_MuxCable->isActive());
+        EXPECT_FALSE(m_MuxCable->isStateChangeFailed());
+    }
 }
