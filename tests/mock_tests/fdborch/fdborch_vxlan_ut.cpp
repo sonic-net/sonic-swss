@@ -4601,4 +4601,87 @@ namespace fdborch_vxlan_ut
         EXPECT_EQ(gFdbOrch->saved_fdb_entries[ETH0][0].fdbData.discard, "true");
     }
 
+    /*
+     * A stale AGED event arrives on a bridge port that still exists, but the bridge port the
+     * entry is stored on is gone. A static, a remote and a C+D MAC are then neither added back
+     * nor saved under the event's port.
+     */
+    TEST_F(VxlanFdbOrchTest, StaleAgeOnRemovedStoredBridgePortSkipsReAdd)
+    {
+        setUpLocalAndTunnelMembers(m_app_db.get(), m_portsOrch.get());
+
+        const string eth4 = "Ethernet4";
+        const sai_object_id_t eth4_bp = 0x3a000000002c36;
+        m_portsOrch->m_portList[eth4].m_bridge_port_id = eth4_bp;
+        m_portsOrch->m_portList[eth4].m_oper_status = SAI_PORT_OPER_STATUS_UP;
+        m_portsOrch->saiOidToAlias[eth4_bp] = eth4;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(eth4);
+
+        /* The port the stale events carry; not a VLAN member, so a static MAC would be saved under it */
+        const string eth8 = "Ethernet8";
+        const sai_object_id_t eth8_bp = 0x3a000000002c37;
+        m_portsOrch->m_portList[eth8].m_bridge_port_id = eth8_bp;
+        m_portsOrch->saiOidToAlias[eth8_bp] = eth8;
+
+        const sai_object_id_t local_bp = m_portsOrch->m_portList[ETH0].m_bridge_port_id;
+        const sai_object_id_t tunnel_bp = m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id;
+        const sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        vector<vector<sai_attribute_t>> created;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillRepeatedly(testing::Invoke(
+                [&](const sai_fdb_entry_t *, uint32_t attr_count, const sai_attribute_t *attr_list) {
+                    created.emplace_back(attr_list, attr_list + attr_count);
+                    return SAI_STATUS_SUCCESS;
+                }));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_)).Times(0);
+
+        Table fdbTable = Table(m_app_db.get(), APP_FDB_TABLE_NAME);
+        fdbTable.set("Vlan40:7c:fe:90:12:22:f2", {
+            {"port", ETH0},
+            {"type", "static"}
+        });
+        gFdbOrch->addExistingData(&fdbTable);
+
+        vector<uint8_t> cd_mac = {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xf4};
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, cd_mac, eth4_bp, vlan_oid);
+
+        Table vxlanFdbTable = Table(m_app_db.get(), APP_VXLAN_FDB_TABLE_NAME);
+        vxlanFdbTable.set("Vlan40:7c:fe:90:12:22:f3", {
+            {"vni", "40"},
+            {"type", "dynamic"},
+            {"remote_vtep", "1.1.1.1"}
+        });
+        vxlanFdbTable.set("Vlan40:7c:fe:90:12:22:f4", {
+            {"vni", "40"},
+            {"type", "dynamic"},
+            {"ifname", eth4}
+        });
+        gFdbOrch->addExistingData(&vxlanFdbTable);
+        static_cast<Orch *>(gFdbOrch)->doTask();
+
+        FdbEntry static_key, remote_key, cd_key;
+        static_key.mac = MacAddress("7c:fe:90:12:22:f2");
+        remote_key.mac = MacAddress("7c:fe:90:12:22:f3");
+        cd_key.mac = MacAddress("7c:fe:90:12:22:f4");
+        static_key.bv_id = remote_key.bv_id = cd_key.bv_id = vlan_oid;
+        ASSERT_EQ(gFdbOrch->m_entries[static_key].bridge_port_id, local_bp);
+        ASSERT_EQ(gFdbOrch->m_entries[remote_key].bridge_port_id, tunnel_bp);
+        ASSERT_EQ(gFdbOrch->m_entries[cd_key].type, "dynamic_control_learn");
+
+        m_portsOrch->saiOidToAlias.erase(local_bp);
+        m_portsOrch->saiOidToAlias.erase(tunnel_bp);
+        m_portsOrch->saiOidToAlias.erase(eth4_bp);
+        created.clear();
+
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xf2}, eth8_bp, vlan_oid);
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, {0x7c, 0xfe, 0x90, 0x12, 0x22, 0xf3}, eth8_bp, vlan_oid);
+        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_AGED, cd_mac, eth8_bp, vlan_oid);
+
+        EXPECT_TRUE(created.empty());
+        EXPECT_TRUE(gFdbOrch->saved_fdb_entries[eth8].empty());
+        ASSERT_EQ(gFdbOrch->m_entries.count(cd_key), 1);
+        EXPECT_EQ(gFdbOrch->m_entries[cd_key].type, "dynamic_control_learn");
+    }
+
 }

@@ -653,6 +653,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
              break;
         }
 
+        /* An entry whose own bridge port is gone can be neither added back nor saved */
+        bool stored_port_found = true;
         if (existing_entry->second.bridge_port_id != bridge_port_id)
         {
             SWSS_LOG_INFO("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%" PRIx64 " with bp=0x%" PRIx64 " existing bp=0x%" PRIx64,
@@ -661,6 +663,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, update.port))
             {
                 SWSS_LOG_INFO("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
+                stored_port_found = false;
             }
             // dont return, let it delete just to bring SONiC and SAI in sync
             // return;
@@ -668,6 +671,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         if (existing_entry->second.type == "static")
         {
+            if (!stored_port_found)
+            {
+                SWSS_LOG_NOTICE("FdbOrch AGE notification: not adding back static mac %s, its bridge port 0x%" PRIx64 " is gone",
+                                update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+                return;
+            }
+
             update.type = "static";
 
             if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
@@ -720,6 +730,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
         if ((existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) ||
             (existing_entry->second.origin == FDB_ORIGIN_VXLAN_ADVERTIZED))
         {
+            if (!stored_port_found)
+            {
+                SWSS_LOG_NOTICE("FdbOrch AGE notification: not adding back remote mac %s, its bridge port 0x%" PRIx64 " is gone",
+                                update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+                return;
+            }
+
             sai_status_t status;
             sai_fdb_entry_t fdb_entry;
 
@@ -764,6 +781,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         if (existing_entry->second.origin == FDB_ORIGIN_LEARN && existing_entry->second.dest_type == FdbDest::IFNAME) {
             if (existing_entry->second.type == "dynamic_control_learn") {
+                if (!stored_port_found)
+                {
+                    SWSS_LOG_NOTICE("FdbOrch AGE notification: not adding back mac %s, its bridge port 0x%" PRIx64 " is gone",
+                                    update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+                    return;
+                }
                 SWSS_LOG_NOTICE("update: EVPN_MH_UC: ageout (C+D) -> C, type %s FDB %s in %s on %s",
                         existing_entry->second.type.c_str(), update.entry.mac.to_string().c_str(),
                         vlan.m_alias.c_str(), update.port.m_alias.c_str());
@@ -2184,9 +2207,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.insert((fdbData.sai_fdb_type == SAI_FDB_ENTRY_TYPE_DYNAMIC) ? attrs.begin() : attrs.end(), attr);
         }
     }
-    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = (fdbData.discard == "true") ? SAI_PACKET_ACTION_DROP: SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
+    addPacketActionAttr(fdbData, attrs);
     if (macUpdate && !macMoveLocalToRemote)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
