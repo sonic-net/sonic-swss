@@ -1138,6 +1138,11 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (!ip_prefix_in_key)
+            {
+                m_rifWaitingForVlanExit.erase(alias);
+            }
+
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
@@ -1384,6 +1389,24 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         SWSS_LOG_WARN("Router interface already exists on %s",
                       port.m_alias.c_str());
         return true;
+    }
+
+    /* A port is either bridged or routed: wait until portsorch has removed the port's VLAN memberships
+     * (vlanmgrd and intfmgrd write APPL_DB independently, so the INTF SET can arrive first). */
+    if (port.m_type == Port::PHY || port.m_type == Port::LAG)
+    {
+        vlan_members_t vlan_members;
+        gPortsOrch->getPortVlanMembers(port, vlan_members);
+        if (!vlan_members.empty())
+        {
+            if (m_rifWaitingForVlanExit.insert(port.m_alias).second)
+            {
+                SWSS_LOG_NOTICE("Port %s is still a member of %zu VLAN(s), delaying router interface creation",
+                                port.m_alias.c_str(), vlan_members.size());
+            }
+            return false;
+        }
+        m_rifWaitingForVlanExit.erase(port.m_alias);
     }
 
     /* Create router interface if the router interface doesn't exist */
