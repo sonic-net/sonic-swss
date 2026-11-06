@@ -268,23 +268,14 @@ int main(int argc, char **argv)
 
             gSelectTimeout = INFINITE;
 
-            /*
-             * A warm restart holds the pipeline until the reconcile; MacSync's
-             * writes do not go through the warm-start helper, so they go now.
-             * The flag stays until a flush empties the pipeline, since
-             * flushPipeline() may defer under load.
-             */
+            /* A warm restart holds the shared pipeline until the reconcile;
+             * MacSync's writes go through its own pipeline, which is not held. */
             auto flushWrites = [&]() {
-                if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled() ||
-                    macsync.hasPendingWrites())
+                if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
                 {
                     flushPipeline(pipeline);
                 }
-
-                if (pipeline.size() == 0)
-                {
-                    macsync.clearPendingWrites();
-                }
+                macsync.flush();
             };
 
             while (true)
@@ -375,8 +366,7 @@ int main(int argc, char **argv)
                     else
                     {
                         s.removeSelectable(&macStaleTimer);
-                        pipeline.flush();
-                        macsync.clearPendingWrites();
+                        macsync.flush();
                     }
                 }
                 else if (temps == &eoiuCheckTimer)
@@ -434,6 +424,8 @@ int main(int argc, char **argv)
         catch (FpmLink::FpmConnectionClosedException &e)
         {
             macsync.onFpmDisconnected();
+            /* the loop does not flush MacSync's pipeline again until an event after the reconnect */
+            macsync.flush();
             cout << "Connection lost, reconnecting..." << endl;
         }
     }

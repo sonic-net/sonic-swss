@@ -241,8 +241,10 @@ bool MacSync::parseNexthopReply(char *buf, size_t len, uint32_t seq, NexthopStat
 }
 
 MacSync::MacSync(RedisPipeline *pipeline, DBConnector *stateDb, DBConnector *cfgDb) :
-    m_vxlanFdbTable(pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
-    m_vxlanFdbTableRead(pipeline->getDBConnector(), APP_VXLAN_FDB_TABLE_NAME),
+    m_appDb("APPL_DB", 0),
+    m_pipeline(&m_appDb),
+    m_vxlanFdbTable(&m_pipeline, APP_VXLAN_FDB_TABLE_NAME, true),
+    m_vxlanFdbTableRead(&m_appDb, APP_VXLAN_FDB_TABLE_NAME),
     m_stateFdbTable(stateDb, STATE_FDB_TABLE_NAME),
     m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(cfgDb, CFG_FDB_SYNC_TABLE_NAME),
@@ -542,7 +544,6 @@ void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTupl
 {
     m_vxlanFdbTable.del(key);
     m_vxlanFdbTable.set(key, row);
-    m_pendingWrites = true;
     setRemoteRow(key, row, seq);
     m_staleRemoteMacs.erase(key);
 }
@@ -552,7 +553,6 @@ void MacSync::writeRemoteMac(const string& key, const std::vector<FieldValueTupl
 void MacSync::removeRemoteMac(const string& key)
 {
     m_vxlanFdbTable.del(key);
-    m_pendingWrites = true;
     eraseRemoteRow(key);
     m_staleRemoteMacs.erase(key);
 }

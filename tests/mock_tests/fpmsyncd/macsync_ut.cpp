@@ -1705,47 +1705,32 @@ TEST_F(MacSyncStaleTest, EoiuReconcileLeavesTheStaleRows)
 }
 
 /*
- * fpmsyncd holds the pipeline during a warm restart, which an FPM reconnect
- * also starts; MacSync's writes tell it to flush them anyway.
+ * fpmsyncd holds its shared pipeline during a warm restart, which an FPM
+ * reconnect also starts; MacSync's rows go through a pipeline of its own.
  */
-TEST_F(MacSyncStaleTest, RemoteMacWritesAskForAFlush)
+TEST_F(MacSyncStaleTest, RemoteMacWritesUseTheirOwnPipeline)
 {
-    EXPECT_FALSE(m_macSync->hasPendingWrites());
+    EXPECT_NE(&m_macSync->m_pipeline, m_pipeline.get());
+    EXPECT_NE(m_macSync->m_pipeline.getDBConnector(), m_pipeline->getDBConnector());
 
     addRemoteMac(VTEP_IFINDEX, 100, 0x01);
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
-    /* Held until the caller has emptied the pipeline. */
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
-    m_macSync->clearPendingWrites();
-    EXPECT_FALSE(m_macSync->hasPendingWrites());
-
-    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
-
-    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
-    m_macSync->clearPendingWrites();
-    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
-
-    addRemoteMac(OTHER_VTEP_IFINDEX, 200, 0x03);
-    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
-    m_macSync->clearPendingWrites();
-    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_MAX)), 0);
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
+    m_macSync->flush();
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
 }
 
-/* A replayed row that is not rewritten leaves nothing to flush. */
-TEST_F(MacSyncStaleTest, UnchangedReplayRowAsksForNoFlush)
+/* A replayed row that is not rewritten writes nothing. */
+TEST_F(MacSyncStaleTest, UnchangedReplayRowWritesNothing)
 {
     putRows({key(100, 0x01)});
     ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
-    m_macSync->clearPendingWrites();
+    testing_db::resetOperationCounters();
 
     addRemoteMac(VTEP_IFINDEX, 100, 0x01);
-    EXPECT_FALSE(m_macSync->hasPendingWrites());
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(rowDels(), 0u);
 
     addRemoteMac(VTEP_IFINDEX, 100, 0x02);
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
 }
 
 /*
@@ -2201,10 +2186,10 @@ TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesTheRemoteRow)
     zebraSendsRemote();
     ASSERT_TRUE(hasRow());
 
-    m_macSync->clearPendingWrites();
+    auto dels = rowDels();
     learn(TEST_KEY, "PortChannel1");
     EXPECT_FALSE(hasRow());
-    EXPECT_TRUE(m_macSync->hasPendingWrites());
+    EXPECT_EQ(rowDels(), dels + 1);
 }
 
 /* The row goes whoever wrote it. */
@@ -2250,11 +2235,10 @@ TEST_F(MacSyncEsHeldRowTest, LocalLearnDoesNotReadAppDb)
 TEST_F(MacSyncEsHeldRowTest, LocalLearnWithoutARemoteRowWritesNothing)
 {
     testing_db::resetOperationCounters();
-    m_macSync->clearPendingWrites();
     learn("Vlan100:00:11:22:33:44:66", "PortChannel1");
 
     EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
-    EXPECT_FALSE(m_macSync->hasPendingWrites());
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
 }
 
 /* A row on an Ethernet Segment port is the module's to withdraw. */
