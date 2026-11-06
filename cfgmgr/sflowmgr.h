@@ -23,6 +23,7 @@ struct SflowPortInfo
     std::string rate;
     std::string admin;
     std::string dir;
+    std::string role;
 };
 
 /* Port to Local config map  */
