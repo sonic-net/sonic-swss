@@ -14,4 +14,8 @@ namespace testing_db
     void resetOperationCounters();
     std::size_t getProducerSetCount(const std::string &tableName);
     std::size_t getProducerDelCount(const std::string &tableName);
+    /* Number of Table::getKeys() calls on this table name. */
+    std::size_t getGetKeysCount(const std::string &tableName);
+    /* Number of Table::get() calls on this table name. */
+    std::size_t getGetCount(const std::string &tableName);
 }

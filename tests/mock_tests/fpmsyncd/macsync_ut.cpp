@@ -1153,13 +1153,15 @@ TEST_F(MacSyncLinkDelTest, RowOrchagentHasNotReadGoesWithTheLink)
 }
 
 /* The VLAN's rows go whoever wrote them; Ethernet Segment port rows (no VTEP,
- * the kernel keeps them on the port) and other VLANs' rows stay. */
+ * the kernel keeps them on the port) and other VLANs' rows stay. Rows another
+ * writer left are the ones the connect marked stale. */
 TEST_F(MacSyncLinkDelTest, RowsOfTheVlanGoWhoeverWroteThem)
 {
     putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
     putRow(key(100, 0x02), {{"nexthop_group", "7"}, {"type", "dynamic"}, {"vni", "20100"}});
     putRow(key(100, 0x03), {{"ifname", "PortChannel1"}, {"type", "dynamic"}, {"vni", "0"}});
     putRow(key(1000, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "21000"}});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
 
     delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
 
@@ -1167,6 +1169,61 @@ TEST_F(MacSyncLinkDelTest, RowsOfTheVlanGoWhoeverWroteThem)
     EXPECT_FALSE(hasEntry(key(100, 0x02)));
     EXPECT_TRUE(hasEntry(key(100, 0x03)));
     EXPECT_TRUE(hasEntry(key(1000, 0x01)));
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.count(key(100, 0x01)), 0u);
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.count(key(100, 0x03)), 1u);
+}
+
+/* The rows of a deleted netdev are found without searching APPL_DB, which
+ * orchagent shares, once per netdev. */
+TEST_F(MacSyncLinkDelTest, LinkDeleteDoesNotSearchAppDb)
+{
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    testing_db::resetOperationCounters();
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    delLink(OTHER_VTEP_IFINDEX, "vtep1-200", "vxlan");
+
+    EXPECT_EQ(testing_db::getGetKeysCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getGetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+}
+
+/* A row seen at an earlier connect and kept without its fields is read back
+ * to tell an Ethernet Segment port row from a remote one. */
+TEST_F(MacSyncLinkDelTest, StaleRowKeptWithoutItsFieldsIsReadBack)
+{
+    ASSERT_FALSE(m_macSync->markRemoteMacsStale(0));
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    putRow(key(100, 0x03), {{"ifname", "PortChannel1"}, {"type", "dynamic"}, {"vni", "0"}});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    ASSERT_TRUE(m_macSync->m_staleRemoteMacs[key(100, 0x01)].empty());
+    ASSERT_TRUE(m_macSync->m_staleRemoteMacs[key(100, 0x03)].empty());
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+}
+
+/* A queued row is marked by its key alone, and zebra's unchanged replay of it
+ * is still found unchanged. */
+TEST_F(MacSyncLinkDelTest, QueuedRowIsMarkedByKeyAlone)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    ASSERT_EQ(m_macSync->m_staleRemoteMacs.count(key(100, 0x01)), 1u);
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs[key(100, 0x01)].empty());
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
 }
 
 /* A port leaving the bridge (AF_BRIDGE) and a non-VxLAN netdev flush nothing:
@@ -2158,9 +2215,12 @@ TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesARowItDidNotWrite)
     appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"},
                                                       {"type", "dynamic"},
                                                       {"vni", std::to_string(TEST_VNI)}});
+    /* As the connect finds it. */
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
 
     learn(TEST_KEY, "PortChannel1");
     EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
 }
 
 /* A row orchagent has not read yet is not in APPL_DB, and goes all the same. */
@@ -2173,6 +2233,17 @@ TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesARowOrchagentHasNotRead)
 
     learn(TEST_KEY, "PortChannel1");
     EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* A local learn with no remote row for the MAC reads nothing from APPL_DB. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnDoesNotReadAppDb)
+{
+    testing_db::resetOperationCounters();
+    learn("Vlan100:00:11:22:33:44:66", "PortChannel1");
+    learn("Vlan100:00:11:22:33:44:67", "PortChannel1");
+
+    EXPECT_EQ(testing_db::getGetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getGetKeysCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
 }
 
 /* With no remote row, a local learn writes nothing to APPL_DB. */
