@@ -163,6 +163,7 @@ private:
     void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row, uint64_t seq);
     void removeRemoteMac(const std::string& key);
     void withdrawStaleRemoteMacs();
+    bool isRemoteRow(const std::string& key, const std::vector<FieldValueTuple>& staleRow);
     struct HeldRow;
     void releaseEsReAddDeferred(const std::string& key);
     void armEsReAddTimer(std::chrono::steady_clock::time_point now);
@@ -204,8 +205,10 @@ private:
     };
     std::map<std::string, RemoteRow> m_remoteRows;
     /* The remote rows at the last connect, in APPL_DB or queued, that zebra
-     * has not sent or withdrawn since. zebra's replay rewrites a row that
-     * differs; an empty one always does. */
+     * has not sent or withdrawn since. With m_remoteRows it holds every row
+     * in VXLAN_FDB_TABLE, so APPL_DB is not searched. A queued row keeps only
+     * its key here, and is compared with m_remoteRows. zebra's replay
+     * rewrites a row that differs; one not queued and kept empty always. */
     std::map<std::string, std::vector<FieldValueTuple>> m_staleRemoteMacs;
     std::chrono::steady_clock::time_point m_staleSince;
     std::chrono::steady_clock::time_point m_lastFpmMessage;

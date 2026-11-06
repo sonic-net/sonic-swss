@@ -342,8 +342,9 @@ void MacSync::onVxlanLinkDel(const string& ifname)
     string prefix = vlanName + ":";
     std::vector<string> gone;
 
-    /* orchagent may not have read the rows MacSync queued last. A row MacSync
-     * withdrew can still be in APPL_DB, and withdrawing it again does no harm. */
+    /* orchagent may not have read the rows MacSync queued last. The rows other
+     * writers left are the stale ones; a row MacSync withdrew can still be in
+     * APPL_DB, and withdrawing it again does no harm. */
     for (auto it = m_remoteRows.lower_bound(prefix);
          it != m_remoteRows.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it)
     {
@@ -353,16 +354,12 @@ void MacSync::onVxlanLinkDel(const string& ifname)
         }
     }
 
-    std::vector<string> keys;
-    m_vxlanFdbTableRead.getKeys(keys);
-    for (const auto& key : keys)
+    for (auto it = m_staleRemoteMacs.lower_bound(prefix);
+         it != m_staleRemoteMacs.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it)
     {
-        std::vector<FieldValueTuple> row;
-
-        if (key.compare(0, prefix.size(), prefix) == 0 && !m_remoteRows.count(key) &&
-            m_vxlanFdbTableRead.get(key, row) && !hasField(row, "ifname"))
+        if (!m_remoteRows.count(it->first) && isRemoteRow(it->first, it->second))
         {
-            gone.push_back(key);
+            gone.push_back(it->first);
         }
     }
 
@@ -440,9 +437,11 @@ time_t MacSync::markRemoteMacsStale(time_t warmRestartTimer, std::chrono::steady
         }
     }
 
+    /* A queued row is compared with m_remoteRows, which keeps it until zebra
+     * sends or withdraws it, so only its key is kept here. */
     for (const auto& queued : m_remoteRows)
     {
-        m_staleRemoteMacs.emplace(queued.first, queued.second.row);
+        m_staleRemoteMacs.emplace(queued.first, std::vector<FieldValueTuple>());
     }
     m_markedBefore = true;
     m_warmSweepPending = warm && !m_staleRemoteMacs.empty();
@@ -504,6 +503,19 @@ time_t MacSync::onStaleSweepTimer(std::chrono::steady_clock::time_point now)
 
     withdrawStaleRemoteMacs();
     return 0;
+}
+
+/* A stale row not queued, with no destination but an Ethernet Segment port.
+ * One kept without its fields (see markRemoteMacsStale()) is read from APPL_DB. */
+bool MacSync::isRemoteRow(const string& key, const std::vector<FieldValueTuple>& staleRow)
+{
+    std::vector<FieldValueTuple> row;
+
+    if (!staleRow.empty())
+    {
+        return !hasField(staleRow, "ifname");
+    }
+    return m_vxlanFdbTableRead.get(key, row) && !hasField(row, "ifname");
 }
 
 void MacSync::withdrawStaleRemoteMacs()
@@ -989,13 +1001,13 @@ void MacSync::processStateFdbEntry(const KeyOpFieldsValuesTuple& entry)
 
     /* A local learn replaces a remote MAC in the kernel bridge, so zebra sends
      * no delete for it; fdbsyncd removes the row on a local learn in kernel
-     * mode. It goes by key, whoever wrote it; a row MacSync has queued counts
-     * before APPL_DB's. An Ethernet Segment port row is the module's to
-     * withdraw. */
+     * mode. It goes by key, whoever wrote it: a row MacSync has queued, or a
+     * stale one another writer left. An Ethernet Segment port row is the
+     * module's to withdraw. */
     auto queued = m_remoteRows.find(key);
-    std::vector<FieldValueTuple> row;
+    auto stale = m_staleRemoteMacs.find(key);
     bool remote = queued != m_remoteRows.end() ? !hasField(queued->second.row, "ifname")
-                                               : m_vxlanFdbTableRead.get(key, row) && !hasField(row, "ifname");
+                : stale != m_staleRemoteMacs.end() && isRemoteRow(key, stale->second);
     if (remote)
     {
         removeRemoteMac(key);
@@ -1335,7 +1347,8 @@ void MacSync::onMacMsg(struct nlmsghdr *h, int len)
     auto stale = m_staleRemoteMacs.find(key);
     if (stale != m_staleRemoteMacs.end())
     {
-        bool same = sameRow(stale->second, fvVector);
+        auto queued = m_remoteRows.find(key);
+        bool same = sameRow(queued != m_remoteRows.end() ? queued->second.row : stale->second, fvVector);
 
         m_staleRemoteMacs.erase(stale);
         if (same)
