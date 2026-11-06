@@ -446,6 +446,47 @@ namespace mux_rollback_test
         }
     }
 
+    TEST_F(MuxRollbackTest, StandbyToActiveFailedNextHopWithReturnedVidRollsBack)
+    {
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            GTEST_SKIP() << "Host-route MUX neighbors use ObjectBulker";
+        }
+
+        std::vector<sai_object_id_t> returned_ids{0x101};
+        std::vector<sai_status_t> returned_statuses{SAI_STATUS_INSUFFICIENT_RESOURCES};
+        NextHopKey nexthop(IpAddress(SERVER_IP1), VLAN_1000);
+        NeighborEntry neighbor(IpAddress(SERVER_IP1), VLAN_1000);
+        auto& counter = gCrmOrch->m_resourcesMap.at(CrmResourceType::CRM_IPV4_NEXTHOP)
+                            .countersMap["STATS"].usedCounter;
+        uint32_t initial_counter = counter;
+        auto& neighbor_counter = gCrmOrch->m_resourcesMap.at(CrmResourceType::CRM_IPV4_NEIGHBOR)
+                                     .countersMap["STATS"].usedCounter;
+        uint32_t initial_neighbor_counter = neighbor_counter;
+        int initial_rif_ref_count = gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count;
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(1);
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                SetArrayArgument<6>(returned_statuses.begin(), returned_statuses.end()),
+                Return(SAI_STATUS_FAILURE)));
+
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        EXPECT_EQ(gNeighOrch->m_syncdNextHops.count(nexthop), 0);
+        auto next_hop = gNeighOrch->m_syncdNextHops.find(nexthop);
+        if (next_hop != gNeighOrch->m_syncdNextHops.end())
+        {
+            EXPECT_NE(next_hop->second.next_hop_id, SAI_NULL_OBJECT_ID);
+        }
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
+        EXPECT_EQ(counter, initial_counter);
+        EXPECT_EQ(neighbor_counter, initial_neighbor_counter);
+        EXPECT_EQ(gIntfsOrch->getSyncdIntfses().at(VLAN_1000).ref_count, initial_rif_ref_count);
+    }
+
     // Covers MuxOrch::updateFdb shared-MAC fallback: when an FDB add on a
     // mux port matches the MAC of a neighbor that bypassed mux registration
     // (e.g. learned while the FDB was aged out), the fallback loop converts
