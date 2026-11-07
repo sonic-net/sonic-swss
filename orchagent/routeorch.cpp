@@ -1365,6 +1365,8 @@ void RouteOrch::doTask(ConsumerBase& consumer)
                 removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
             }
         }
+        removeUnusedProtNhgs();
+
         // Failed single-MPLS creates may share a next hop with successful
         // routes in this bulk. Groups above may also have removed it already.
         for (const auto& nexthop : m_bulkMplsNhReducedRefCnt)
@@ -2142,6 +2144,61 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
     addRoute(ctx, tmp_next_hop);
 }
 
+/*
+ * Protection counterpart of the ECMP temporary route: until every member
+ * exists, forward through one usable next hop, never a standby while a primary
+ * is usable. The route stays pending and moves to the protection NHG once all
+ * members exist.
+ */
+void RouteOrch::addTempProtRoute(RouteBulkContext& ctx)
+{
+    SWSS_LOG_ENTER();
+
+    NextHopGroupKey candidates;
+    for (const NextHopGroupKey *side : { &ctx.primary_nhg_key, &ctx.standby_nhg_key })
+    {
+        for (const auto &nh : side->getNextHops())
+        {
+            if (m_neighOrch->hasNextHop(nh) &&
+                !m_neighOrch->isNextHopFlagSet(nh, NHFLAGS_IFDOWN))
+            {
+                candidates.add(nh);
+            }
+        }
+        if (candidates.getSize() > 0)
+        {
+            break;
+        }
+    }
+
+    if (candidates.getSize() == 0)
+    {
+        return;
+    }
+
+    /* Keep the current temporary next hop while it is still a preferred candidate. */
+    auto it_route = m_syncdRoutes.at(ctx.vrf_id).find(ctx.ip_prefix);
+    if (it_route != m_syncdRoutes.at(ctx.vrf_id).end() &&
+        it_route->second.prot_nhg_key.empty() &&
+        it_route->second.nhg_key.getSize() == 1 &&
+        it_route->second.desired_nhg_key == ctx.nhg &&
+        candidates.contains(*it_route->second.nhg_key.getNextHops().begin()))
+    {
+        return;
+    }
+
+    /*
+     * Program the temporary next hop as a plain route so addRoute() and
+     * addRoutePost() do not take the protection path. The bulk context is
+     * rebuilt from APPL_DB on every retry, which restores the protection keys.
+     */
+    ctx.prot_nhg_key.clear();
+    ctx.primary_nhg_key.clear();
+    ctx.standby_nhg_key.clear();
+
+    addTempRoute(ctx, candidates);
+}
+
 bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
@@ -2213,6 +2270,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         if (!ready)
         {
+            addTempProtRoute(ctx);
             return false;
         }
 
@@ -2726,22 +2784,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
         else
         {
-            /* Route already exists. Release by owner, mirroring
-             * removeRoutePost(): nhg_key is not a key into
-             * m_syncdNextHopGroups for protection or NhgOrch-owned routes. */
+            /* Route already exists. A protected route's nhg_key is not a key
+             * into m_syncdNextHopGroups; release its protection NHG instead.
+             * TODO: NhgOrch-owned (nhg_index) routes moving to FG ECMP do not
+             * release their NhgOrch reference here; fix in a separate PR. */
             if (!it_route->second.prot_nhg_key.empty())
             {
-                const string stale_prot_key = it_route->second.prot_nhg_key;
-                gNhgOrch->decProtNhgRefCount(stale_prot_key);
-                if (gNhgOrch->getProtNhgRefCount(stale_prot_key) == 0)
-                {
-                    gNhgOrch->removeProtNhg(stale_prot_key);
-                }
-            }
-            else if (!it_route->second.nhg_index.empty())
-            {
-                decNhgRefCount(it_route->second.nhg_index,
-                               it_route->second.context_index);
+                releaseProtNhgRef(it_route->second.prot_nhg_key);
             }
             else
             {
@@ -2770,7 +2819,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             // Another orchestrator (e.g. VNetRouteOrch) owns this route.
             // Do not account for it or cache it in m_syncdRoutes: a later
             // DEL would otherwise remove that orchestrator's SAI entry.
-            if (ctx.nhg_index.empty())
+            if (!ctx.prot_nhg_key.empty())
+            {
+                // NhgOrch owns the protection NHG; nextHops is not a RouteOrch group.
+                deferProtNhgCleanup(ctx.prot_nhg_key);
+            }
+            else if (ctx.nhg_index.empty())
             {
                 // Undo provisional allocations only: no route reference was
                 // acquired. Successful siblings may share these resources, so
@@ -2820,12 +2874,8 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
-                /* Clean up the just-created protection NHG that no route claimed. */
-                if (!ctx.prot_nhg_key.empty() &&
-                    gNhgOrch->getProtNhgRefCount(ctx.prot_nhg_key) == 0)
-                {
-                    gNhgOrch->removeProtNhg(ctx.prot_nhg_key);
-                }
+                /* Clean up the just-created protection NHG if no route claims it. */
+                deferProtNhgCleanup(ctx.prot_nhg_key);
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
@@ -2890,11 +2940,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 m_syncdRoutes.at(vrf_id).erase(ipPrefix);
                 if (!stale_prot_key.empty())
                 {
-                    gNhgOrch->decProtNhgRefCount(stale_prot_key);
-                    if (gNhgOrch->getProtNhgRefCount(stale_prot_key) == 0)
-                    {
-                        gNhgOrch->removeProtNhg(stale_prot_key);
-                    }
+                    releaseProtNhgRef(stale_prot_key);
                 }
                 return false;
             }
@@ -2910,11 +2956,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                  * does not orphan it in NhgOrch's map. The refcount guard
                  * leaves an already-referenced (reused) PNHG untouched.
                  */
-                if (!ctx.prot_nhg_key.empty() &&
-                    gNhgOrch->getProtNhgRefCount(ctx.prot_nhg_key) == 0)
-                {
-                    gNhgOrch->removeProtNhg(ctx.prot_nhg_key);
-                }
+                deferProtNhgCleanup(ctx.prot_nhg_key);
                 return parseHandleSaiStatusFailure(handle_status);
             }
         }
@@ -2934,11 +2976,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
              * the re-claim below would destroy the group we are about to reuse. */
             if (prev_prot_key != ctx.prot_nhg_key)
             {
-                gNhgOrch->decProtNhgRefCount(prev_prot_key);
-                if (gNhgOrch->getProtNhgRefCount(prev_prot_key) == 0)
-                {
-                    gNhgOrch->removeProtNhg(prev_prot_key);
-                }
+                releaseProtNhgRef(prev_prot_key);
             }
         }
         /* Decrease the ref count for the previous next hop group. */
@@ -3255,12 +3293,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     /* Route was using a protection NHG. */
     else if (!it_route->second.prot_nhg_key.empty())
     {
-        const string old_prot_key = it_route->second.prot_nhg_key;
-        gNhgOrch->decProtNhgRefCount(old_prot_key);
-        if (gNhgOrch->getProtNhgRefCount(old_prot_key) == 0)
-        {
-            gNhgOrch->removeProtNhg(old_prot_key);
-        }
+        releaseProtNhgRef(it_route->second.prot_nhg_key);
     }
     /* Check if the next hop group is not owned by NhgOrch. */
     else if (!it_route->second.nhg_index.empty())
@@ -3407,6 +3440,7 @@ bool RouteOrch::removeRoutePrefix(const IpPrefix& prefix)
     }
     gRouteBulker.flush();
     bool ret = removeRoutePost(context);
+    removeUnusedProtNhgs();
     m_routeStatePublisher.publishAsyncBatch();
     m_routeStatePublisher.flush();
     return ret;
@@ -3551,6 +3585,38 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index, const std::string &
     {
         m_srv6Orch->decreasePicContextIdRefCount(context_index);
     }
+}
+
+/*
+ * RouteOrch-created protection NHGs live only while a route references them.
+ * Removal waits until every post in the bulk has run: a zero refcount midway
+ * does not mean unused, since a sibling route may already point at the group
+ * and not have claimed its reference yet.
+ */
+void RouteOrch::deferProtNhgCleanup(const std::string &prot_nhg_key)
+{
+    if (!prot_nhg_key.empty())
+    {
+        m_bulkProtNhgReducedRefCnt.insert(prot_nhg_key);
+    }
+}
+
+void RouteOrch::releaseProtNhgRef(const std::string &prot_nhg_key)
+{
+    gNhgOrch->decProtNhgRefCount(prot_nhg_key);
+    deferProtNhgCleanup(prot_nhg_key);
+}
+
+void RouteOrch::removeUnusedProtNhgs()
+{
+    for (const auto &key : m_bulkProtNhgReducedRefCnt)
+    {
+        if (gNhgOrch->hasProtNhg(key) && gNhgOrch->getProtNhgRefCount(key) == 0)
+        {
+            gNhgOrch->removeProtNhg(key);
+        }
+    }
+    m_bulkProtNhgReducedRefCnt.clear();
 }
 
 void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)

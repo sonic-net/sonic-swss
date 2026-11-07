@@ -355,6 +355,8 @@ private:
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
     std::set<NextHopKey> m_bulkMplsNhReducedRefCnt;
+    /* Protection NHGs whose refcount may have dropped to zero; removed once all posts ran. */
+    std::set<std::string> m_bulkProtNhgReducedRefCnt;
 
     std::set<IpPrefix> m_SubnetDecapTermsCreated;
     ProducerStateTable m_appTunnelDecapTermProducer;
@@ -371,6 +373,7 @@ private:
     ResponsePublisher m_routeStatePublisher{"APPL_STATE_DB", /*buffered=*/false, gRouteStateAsyncPublish};
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    void addTempProtRoute(RouteBulkContext& ctx);
 
     void addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
     bool addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
@@ -394,6 +397,9 @@ private:
     void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
     void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
     void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
+    void releaseProtNhgRef(const std::string &prot_nhg_key);
+    void deferProtNhgCleanup(const std::string &prot_nhg_key);
+    void removeUnusedProtNhgs();
 };
 
 #endif /* SWSS_ROUTEORCH_H */
