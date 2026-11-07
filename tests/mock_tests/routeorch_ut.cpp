@@ -4,6 +4,12 @@
 #define protected public
 #include "orch.h"
 #undef protected
+/* Reach NhgOrch's cached capability flags so the truncation fallback (protection
+ * indicated but unsupported) can be exercised; the probe reads SAI metadata,
+ * which this fixture does not mock. */
+#define private public
+#include "nhgorch.h"
+#undef private
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
@@ -73,6 +79,10 @@ namespace routeorch_test
     int remove_route_count = 0;
     int sai_fail_count = 0;
     int drop_set_count = 0;
+    sai_status_t set_route_fail_status = SAI_STATUS_SUCCESS;
+    // When set, route creates for this prefix fail with create_route_fail_status.
+    std::string create_route_fail_prefix;
+    sai_status_t create_route_fail_status = SAI_STATUS_SUCCESS;
 
     // sai_route_api_t ut_sai_route_api;
     sai_route_api_t *pold_sai_route_api;
@@ -90,7 +100,39 @@ namespace routeorch_test
         _Out_ sai_status_t *object_statuses)
     {
         create_route_count++;
-        return old_create_route_entries(object_count, route_entry, attr_count, attr_list, mode, object_statuses);
+        if (create_route_fail_prefix.empty())
+        {
+            return old_create_route_entries(object_count, route_entry, attr_count, attr_list, mode, object_statuses);
+        }
+
+        std::vector<sai_route_entry_t> entries;
+        std::vector<uint32_t> counts;
+        std::vector<const sai_attribute_t *> attrs;
+        std::vector<uint32_t> index;
+        for (uint32_t i = 0; i < object_count; i++)
+        {
+            IpPrefix prefix(sai_serialize_ip_prefix(route_entry[i].destination));
+            if (prefix.to_string() == create_route_fail_prefix)
+            {
+                object_statuses[i] = create_route_fail_status;
+                continue;
+            }
+            entries.push_back(route_entry[i]);
+            counts.push_back(attr_count[i]);
+            attrs.push_back(attr_list[i]);
+            index.push_back(i);
+        }
+        if (!entries.empty())
+        {
+            std::vector<sai_status_t> statuses(entries.size());
+            old_create_route_entries((uint32_t)entries.size(), entries.data(), counts.data(),
+                                     attrs.data(), mode, statuses.data());
+            for (size_t j = 0; j < index.size(); j++)
+            {
+                object_statuses[index[j]] = statuses[j];
+            }
+        }
+        return create_route_fail_status;
     }
 
     sai_status_t _ut_stub_sai_bulk_remove_route_entry(
@@ -111,6 +153,15 @@ namespace routeorch_test
         _Out_ sai_status_t *object_statuses)
     {
         set_route_count++;
+
+        if (set_route_fail_status != SAI_STATUS_SUCCESS)
+        {
+            for (uint32_t i = 0; i < object_count; i++)
+            {
+                object_statuses[i] = set_route_fail_status;
+            }
+            return set_route_fail_status;
+        }
 
         // Make sure there is not conflict settings
         bool drop = false;
@@ -420,9 +471,6 @@ namespace routeorch_test
 
             gDirectory.m_values.clear();
 
-            delete gCrmOrch;
-            gCrmOrch = nullptr;
-
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
 
@@ -473,6 +521,11 @@ namespace routeorch_test
 
             delete m_flexCounterOrch;
             m_flexCounterOrch = nullptr;
+
+            /* Last: orch destructors decrement CRM counters, so gCrmOrch must
+             * outlive every one of them. */
+            delete gCrmOrch;
+            gCrmOrch = nullptr;
 
             sai_route_api = pold_sai_route_api;
             ut_helper::uninitSaiApi();
@@ -1859,5 +1912,654 @@ namespace routeorch_test
         // After NHG destruction, refcounts must be decremented
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
         ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
+    }
+
+    // An explicit primary_nh_count=0 is invalid -- a well-behaved producer omits
+    // the field for non-protection routes. Orchagent must warn and drop the row;
+    // no route is programmed.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgZeroPrimaryCountSkipped)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "4.4.4.4/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3"},
+              {"primary_nh_count", "0"} }});
+        routeConsumer->addToSync(entries);
+
+        auto base_create = create_route_count;
+        auto base_set    = set_route_count;
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // Row dropped: no route create or set, and the entry is not retried.
+        EXPECT_EQ(create_route_count, base_create);
+        EXPECT_EQ(set_route_count, base_set);
+        EXPECT_EQ(sai_fail_count, 0);
+    }
+
+    // Happy path: a plain IPv4 route with 0 < primary_nh_count <
+    // total nexthops, on a platform where SW protection is supported, creates a
+    // two-level protection NHG (outer PROTECTION group over per-role inner ECMPs)
+    // and programs exactly one SAI route. This is the positive counterpart to the
+    // truncation/zero-count error paths above.
+    //
+    // NHG creation is left to forward to the real VS (the fixture's default
+    // ON_CALL), so the outer PROTECTION group + inner ECMPs get real, meta-tracked
+    // OIDs -- fake OIDs would fail the route-create reference check and get the
+    // just-created PNHG cleaned back out. The VS advertises PROTECTION as a
+    // supported NHG type, so isProtectionSupported() is true without forcing.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgHappyPath)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+
+        // Two standby underlays alongside the fixture's 10.0.0.2 / 10.0.0.3, so
+        // both roles have >= 2 members (a recursive inner ECMP on each side).
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4",
+                          { {"neigh", "00:00:0a:00:00:04"}, {"family", "IPv4"} });
+        neighborTable.set("Ethernet0:10.0.0.5",
+                          { {"neigh", "00:00:0a:00:00:05"}, {"family", "IPv4"} });
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+
+        auto base_create = create_route_count;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // The outer SW-driven protection NHG was created for the
+        // primary/standby partition...
+        NextHopGroupKey primary_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key);
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(prot_key));
+
+        // RouteOrch elects NeighOrch liveness as the group's observation
+        // source, so NhgOrch drives its switchover.
+        EXPECT_EQ(gNhgOrch->getProtNhg(prot_key).getObservationSource(),
+                  ProtNhgObservationSource::NEIGH_LIVENESS);
+
+        // ...and exactly one SAI route was programmed for the prefix.
+        EXPECT_EQ(create_route_count, base_create + 1);
+        EXPECT_EQ(sai_fail_count, 0);
+
+        // Tear the route down: covers route-delete -> refcount 0 -> removeProtNhg.
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+
+        // Remove the neighbors this test added, as the rest of the file does.
+        neighborTable.del("Ethernet0:10.0.0.4");
+        neighborTable.del("Ethernet0:10.0.0.5");
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+    }
+
+    // Two prefixes sharing one protection NHG, then removing one of them.
+    //
+    // This is the regression test for the two refcount bugs in addRoutePost():
+    // releasing the group before re-claiming it on a same-key reprogram, and
+    // the create-failure cleanup falling through into the increment. Both only
+    // surface when the group's refcount is shared, because a protection NHG
+    // frees itself at zero -- unlike a plain NHG, whose decrement frees nothing.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgSharedByTwoPrefixes)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4",
+                          { {"neigh", "00:00:0a:00:00:04"}, {"family", "IPv4"} });
+        neighborTable.set("Ethernet0:10.0.0.5",
+                          { {"neigh", "00:00:0a:00:00:05"}, {"family", "IPv4"} });
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        const std::vector<FieldValueTuple> prot_fvs = {
+            {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+            {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+            {"primary_nh_count", "2"} };
+
+        NextHopGroupKey primary_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key);
+
+        // Both prefixes resolve to the same partition, so they share one group.
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET", prot_fvs });
+        entries.push_back({ "6.6.6.6/32", "SET", prot_fvs });
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_TRUE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gNhgOrch->getProtNhgRefCount(prot_key), 2u);
+        sai_object_id_t prot_oid = gNhgOrch->getProtNhgId(prot_key);
+        EXPECT_NE(prot_oid, SAI_NULL_OBJECT_ID);
+
+        // Re-program one prefix with the identical key. The group must survive
+        // with its refcount intact: releasing before the re-claim would destroy
+        // it at refcount 1 and then throw out of the increment.
+        std::deque<KeyOpFieldsValuesTuple> reprogram;
+        reprogram.push_back({ "5.5.5.5/32", "SET", prot_fvs });
+        routeConsumer->addToSync(reprogram);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gNhgOrch->getProtNhgRefCount(prot_key), 2u);
+        EXPECT_EQ(gNhgOrch->getProtNhgId(prot_key), prot_oid);
+
+        // Removing one prefix drops the refcount but must not free the group,
+        // since the other prefix still points at it.
+        std::deque<KeyOpFieldsValuesTuple> del_one;
+        del_one.push_back({ "6.6.6.6/32", "DEL", {} });
+        routeConsumer->addToSync(del_one);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_TRUE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gNhgOrch->getProtNhgRefCount(prot_key), 1u);
+        EXPECT_EQ(gNhgOrch->getProtNhgId(prot_key), prot_oid);
+
+        // The last prefix goes: now the group is released.
+        std::deque<KeyOpFieldsValuesTuple> del_last;
+        del_last.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del_last);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(sai_fail_count, 0);
+
+        neighborTable.del("Ethernet0:10.0.0.4");
+        neighborTable.del("Ethernet0:10.0.0.5");
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+    }
+
+    // Truncation fallback: the producer asks for protection via primary_nh_count,
+    // but SAI does not advertise SW PROTECTION. We must program plain ECMP over
+    // the primaries only -- never spreading BGP traffic onto the standbys -- and
+    // create no protection NHG.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgUnsupportedTruncatesToPrimaries)
+    {
+        // Pin the cached probe result to "unsupported" for this test.
+        bool saved_checked = gNhgOrch->m_protCapChecked;
+        bool saved_sw = gNhgOrch->m_protectionSupported;
+        gNhgOrch->m_protCapChecked = true;
+        gNhgOrch->m_protectionSupported = false;
+        ASSERT_FALSE(gNhgOrch->isProtectionSupported());
+
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4",
+                          { {"neigh", "00:00:0a:00:00:04"}, {"family", "IPv4"} });
+        neighborTable.set("Ethernet0:10.0.0.5",
+                          { {"neigh", "00:00:0a:00:00:05"}, {"family", "IPv4"} });
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "7.7.7.7/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        NextHopGroupKey primary_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        NextHopGroupKey full_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0,"
+                                     "10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key);
+
+        // No protection group, and the route's ECMP spans the primaries only.
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_TRUE(gRouteOrch->hasNextHopGroup(primary_nhg_key));
+        EXPECT_FALSE(gRouteOrch->hasNextHopGroup(full_nhg_key));
+        EXPECT_EQ(sai_fail_count, 0);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "7.7.7.7/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        neighborTable.del("Ethernet0:10.0.0.4");
+        neighborTable.del("Ethernet0:10.0.0.5");
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        gNhgOrch->m_protCapChecked = saved_checked;
+        gNhgOrch->m_protectionSupported = saved_sw;
+    }
+
+    // Helpers for the protection temp-route tests below.
+    static void setNeighbors(Table &neighborTable, const std::vector<std::string> &ips)
+    {
+        for (const auto &ip : ips)
+        {
+            char mac[18];
+            snprintf(mac, sizeof(mac), "00:00:0a:00:00:%02x",
+                     std::stoi(ip.substr(ip.rfind('.') + 1)));
+            neighborTable.set("Ethernet0:" + ip, { {"neigh", mac}, {"family", "IPv4"} });
+        }
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+    }
+
+    static void delNeighbors(Table &neighborTable, const std::vector<std::string> &ips)
+    {
+        for (const auto &ip : ips)
+        {
+            neighborTable.del("Ethernet0:" + ip);
+        }
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+    }
+
+    static bool hasNh(const std::string &ip)
+    {
+        return gNeighOrch->hasNextHop(NextHopKey(ip + "@Ethernet0"));
+    }
+
+    static const RouteNhg &syncdRoute(const std::string &prefix)
+    {
+        return gRouteOrch->m_syncdRoutes.at(gVirtualRouterId).at(IpPrefix(prefix));
+    }
+
+    // Primaries resolved, standbys not: the route forwards through one primary
+    // as a temporary next hop and stays pending. It keeps that next hop while
+    // the standbys resolve one by one, then moves to the protection NHG.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgTempPrimaryUntilAllResolved)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        ASSERT_TRUE(hasNh("10.0.0.2") && hasNh("10.0.0.3"));
+        ASSERT_FALSE(hasNh("10.0.0.4") || hasNh("10.0.0.5"));
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        NextHopGroupKey primary_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        NextHopGroupKey full_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0,"
+                                     "10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key);
+        NextHopKey p1("10.0.0.2@Ethernet0"), p2("10.0.0.3@Ethernet0");
+        int p1_ref = gNeighOrch->getNextHopRefCount(p1);
+        int p2_ref = gNeighOrch->getNextHopRefCount(p2);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+
+        auto base_create = create_route_count;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_EQ(create_route_count, base_create + 1);
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        RouteNhg temp = syncdRoute("5.5.5.5/32");
+        EXPECT_TRUE(temp.prot_nhg_key.empty());
+        ASSERT_EQ(temp.nhg_key.getSize(), 1u);
+        NextHopKey temp_nh = *temp.nhg_key.getNextHops().begin();
+        EXPECT_TRUE(primary_nhg_key.contains(temp_nh));
+        EXPECT_EQ(temp.desired_nhg_key, full_nhg_key);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        // One standby resolves: still incomplete, keep the same next hop.
+        setNeighbors(neighborTable, { "10.0.0.4" });
+        auto base_set = set_route_count;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(set_route_count, base_set);
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").nhg_key, NextHopGroupKey(temp_nh.to_string()));
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        // Last member resolves: the route moves to the protection NHG.
+        setNeighbors(neighborTable, { "10.0.0.5" });
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gNhgOrch->getProtNhgRefCount(prot_key), 1u);
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").prot_nhg_key, prot_key);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 0u);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(p1), p1_ref);
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(p2), p2_ref);
+        EXPECT_EQ(sai_fail_count, 0);
+
+        delNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+    }
+
+    // Only standbys resolved: forward through a standby, move to a primary as
+    // soon as one is usable even though the other primary is still missing.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgTempStandbyMovesToPrimary)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        ASSERT_TRUE(hasNh("10.0.0.2") && hasNh("10.0.0.3"));
+        ASSERT_FALSE(hasNh("10.0.0.4") || hasNh("10.0.0.5"));
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        NextHopGroupKey primary_nhg_key("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.4,10.0.0.5,10.0.0.2,10.0.0.3"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_EQ(syncdRoute("5.5.5.5/32").nhg_key.getSize(), 1u);
+        EXPECT_TRUE(standby_nhg_key.contains(
+            *syncdRoute("5.5.5.5/32").nhg_key.getNextHops().begin()));
+
+        setNeighbors(neighborTable, { "10.0.0.4" });
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").nhg_key, NextHopGroupKey("10.0.0.4@Ethernet0"));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        setNeighbors(neighborTable, { "10.0.0.5" });
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").prot_nhg_key, prot_key);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 0u);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(sai_fail_count, 0);
+
+        delNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+    }
+
+    // No member resolved: nothing is programmed; a DEL while pending leaves
+    // nothing behind.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgNoMemberResolvedNotProgrammed)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        for (const auto &ip : { "10.0.0.90", "10.0.0.91", "10.0.0.92", "10.0.0.93" })
+        {
+            ASSERT_FALSE(hasNh(ip));
+        }
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.90,10.0.0.91,10.0.0.92,10.0.0.93"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+
+        auto base_create = create_route_count;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(create_route_count, base_create);
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes.at(gVirtualRouterId).count(IpPrefix("5.5.5.5/32")), 0u);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(create_route_count, base_create);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 0u);
+        EXPECT_EQ(sai_fail_count, 0);
+    }
+
+    // The move from the temporary next hop to the protection NHG fails in SAI:
+    // the route keeps its temporary next hop, the unclaimed protection NHG is
+    // released, and the next retry completes the move.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgTempKeptWhenProtSetFails)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        ASSERT_TRUE(hasNh("10.0.0.2") && hasNh("10.0.0.3"));
+        ASSERT_FALSE(hasNh("10.0.0.4") || hasNh("10.0.0.5"));
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        NextHopGroupKey primary_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        NextHopGroupKey standby_nhg_key("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(primary_nhg_key, standby_nhg_key);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        NextHopGroupKey temp_key = syncdRoute("5.5.5.5/32").nhg_key;
+        ASSERT_EQ(temp_key.getSize(), 1u);
+        NextHopKey temp_nh = *temp_key.getNextHops().begin();
+        int temp_ref = gNeighOrch->getNextHopRefCount(temp_nh);
+
+        setNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+        set_route_fail_status = SAI_STATUS_INSUFFICIENT_RESOURCES;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        set_route_fail_status = SAI_STATUS_SUCCESS;
+
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").nhg_key, temp_key);
+        EXPECT_TRUE(syncdRoute("5.5.5.5/32").prot_nhg_key.empty());
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(temp_nh), temp_ref);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").prot_nhg_key, prot_key);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 0u);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+
+        delNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+    }
+
+    // A route already on a protection NHG is updated with a member that is
+    // not resolved yet: it drops to a temporary primary next hop, releases the
+    // old protection NHG, and moves to the new one once the member resolves.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgUpdateWithUnresolvedMemberUsesTemp)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        ASSERT_TRUE(hasNh("10.0.0.2") && hasNh("10.0.0.3"));
+        ASSERT_FALSE(hasNh("10.0.0.4") || hasNh("10.0.0.5"));
+        setNeighbors(neighborTable, { "10.0.0.4" });
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        NextHopGroupKey primary_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        string old_key = NhgOrch::buildProtNhgKey(primary_nhg_key,
+                                                  NextHopGroupKey("10.0.0.4@Ethernet0"));
+        string new_key = NhgOrch::buildProtNhgKey(primary_nhg_key,
+                             NextHopGroupKey("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0"));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(syncdRoute("5.5.5.5/32").prot_nhg_key, old_key);
+
+        entries.clear();
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(old_key));
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(new_key));
+        EXPECT_TRUE(syncdRoute("5.5.5.5/32").prot_nhg_key.empty());
+        ASSERT_EQ(syncdRoute("5.5.5.5/32").nhg_key.getSize(), 1u);
+        EXPECT_TRUE(primary_nhg_key.contains(
+            *syncdRoute("5.5.5.5/32").nhg_key.getNextHops().begin()));
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        setNeighbors(neighborTable, { "10.0.0.5" });
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").prot_nhg_key, new_key);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 0u);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(new_key));
+        EXPECT_EQ(sai_fail_count, 0);
+
+        delNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+    }
+
+    // Two prefixes take a new protection NHG in the same bulk and the first
+    // create fails. The group must survive for the second prefix, which
+    // already points at it: cleanup waits until every post has run.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgSharedBulkCreateFailureKeepsGroup)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        ASSERT_TRUE(hasNh("10.0.0.2") && hasNh("10.0.0.3"));
+        ASSERT_FALSE(hasNh("10.0.0.4") || hasNh("10.0.0.5"));
+        setNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        const std::vector<FieldValueTuple> prot_fvs = {
+            {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+            {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+            {"primary_nh_count", "2"} };
+        string prot_key = NhgOrch::buildProtNhgKey(
+            NextHopGroupKey("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0"),
+            NextHopGroupKey("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0"));
+
+        // m_toSync is ordered by key, so 5.5.5.5 is posted before 6.6.6.6.
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET", prot_fvs });
+        entries.push_back({ "6.6.6.6/32", "SET", prot_fvs });
+        routeConsumer->addToSync(entries);
+
+        // The VS SAI refuses to remove an in-use group, which would hide an
+        // early removal; assert that no removal is even attempted.
+        EXPECT_CALL(*mock_sai_next_hop_group_api, remove_next_hop_group(_)).Times(0);
+        create_route_fail_prefix = "5.5.5.5/32";
+        create_route_fail_status = SAI_STATUS_INSUFFICIENT_RESOURCES;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        create_route_fail_prefix.clear();
+        create_route_fail_status = SAI_STATUS_SUCCESS;
+        ::testing::Mock::VerifyAndClearExpectations(mock_sai_next_hop_group_api);
+
+        ASSERT_TRUE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gNhgOrch->getProtNhgRefCount(prot_key), 1u);
+        EXPECT_EQ(syncdRoute("6.6.6.6/32").prot_nhg_key, prot_key);
+        EXPECT_EQ(routeConsumer->m_toSync.count("6.6.6.6/32"), 0u);
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 1u);
+
+        // The retry succeeds and shares the same group.
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(gNhgOrch->getProtNhgRefCount(prot_key), 2u);
+        EXPECT_EQ(syncdRoute("5.5.5.5/32").prot_nhg_key, prot_key);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        del.push_back({ "6.6.6.6/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+
+        delNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+    }
+
+    // Route create returns ITEM_ALREADY_EXISTS for a protected route (another
+    // orch owns the prefix). The unclaimed protection NHG is released, and no
+    // RouteOrch ECMP group is touched for the full next-hop set.
+    TEST_F(RouteOrchTest, RouteOrchProtNhgCreateAlreadyExistsReleasesGroup)
+    {
+        ASSERT_TRUE(gNhgOrch->isProtectionSupported());
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        ASSERT_TRUE(hasNh("10.0.0.2") && hasNh("10.0.0.3"));
+        ASSERT_FALSE(hasNh("10.0.0.4") || hasNh("10.0.0.5"));
+        setNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
+
+        auto *routeConsumer =
+            dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        NextHopGroupKey full_nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0,"
+                                     "10.0.0.4@Ethernet0,10.0.0.5@Ethernet0");
+        string prot_key = NhgOrch::buildProtNhgKey(
+            NextHopGroupKey("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0"),
+            NextHopGroupKey("10.0.0.4@Ethernet0,10.0.0.5@Ethernet0"));
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({ "5.5.5.5/32", "SET",
+            { {"ifname",           "Ethernet0,Ethernet0,Ethernet0,Ethernet0"},
+              {"nexthop",          "10.0.0.2,10.0.0.3,10.0.0.4,10.0.0.5"},
+              {"primary_nh_count", "2"} }});
+        routeConsumer->addToSync(entries);
+
+        create_route_fail_prefix = "5.5.5.5/32";
+        create_route_fail_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        create_route_fail_prefix.clear();
+        create_route_fail_status = SAI_STATUS_SUCCESS;
+
+        EXPECT_FALSE(gNhgOrch->hasProtNhg(prot_key));
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.count(full_nhg_key), 0u);
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes.at(gVirtualRouterId).count(IpPrefix("5.5.5.5/32")), 0u);
+
+        std::deque<KeyOpFieldsValuesTuple> del;
+        del.push_back({ "5.5.5.5/32", "DEL", {} });
+        routeConsumer->addToSync(del);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(routeConsumer->m_toSync.count("5.5.5.5/32"), 0u);
+
+        delNeighbors(neighborTable, { "10.0.0.4", "10.0.0.5" });
     }
 }
