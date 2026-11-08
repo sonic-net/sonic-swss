@@ -267,6 +267,13 @@ void CoppOrch::publishTrapIdsCapability()
 
     supported_trap_ids.clear();
 
+    sai_attr_capability_t capability;
+    m_exclude_ports_supported = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF_TRAP,
+                                                               SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST,
+                                                               &capability) == SAI_STATUS_SUCCESS &&
+                                capability.create_implemented && capability.set_implemented;
+    SWSS_LOG_NOTICE("SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST is %ssupported", m_exclude_ports_supported ? "" : "not ");
+
     const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_HOSTIF_TRAP, SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE);
     if (!meta || !meta->isenum) 
     {
@@ -318,6 +325,7 @@ void CoppOrch::publishTrapIdsCapability()
     SWSS_LOG_NOTICE("Publishing supported trap IDs to STATE_DB");
     vector<FieldValueTuple> trapCapabilityFvs;
     trapCapabilityFvs.push_back(FieldValueTuple("trap_ids", trap_id_list_str));
+    trapCapabilityFvs.push_back(FieldValueTuple("exclude_ports_supported", m_exclude_ports_supported ? "true" : "false"));
     m_trapCapabilityTable->set("traps", trapCapabilityFvs);
 }
 
@@ -755,6 +763,8 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     vector<sai_attribute_t> trap_id_attribs;
     vector<sai_attribute_t> policer_attribs;
     vector<sai_attribute_t> genetlink_attribs;
+    bool has_exclude_ports = false;
+    vector<sai_object_id_t> exclude_ports;
 
     vector<sai_hostif_trap_type_t> trap_ids;
     vector<sai_hostif_trap_type_t> add_trap_ids;
@@ -773,10 +783,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
         }
 
-        if (!getAttribsFromTrapGroup(fv_tuple, trap_gr_attribs, trap_id_attribs,
-                                    policer_attribs, genetlink_attribs))
+        task_process_status attr_status = getAttribsFromTrapGroup(fv_tuple, trap_gr_attribs, trap_id_attribs,
+                                                                  policer_attribs, genetlink_attribs,
+                                                                  has_exclude_ports, exclude_ports);
+        if (attr_status != task_process_status::task_success)
         {
-            return task_process_status::task_invalid_entry;
+            return attr_status;
         }
 
         /* Set host interface trap group */
@@ -856,6 +868,31 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 trap_attr[i.id] = i.value;
             }
             m_trap_group_trap_id_attrs[trap_group_name] = trap_attr;
+        }
+        if (has_exclude_ports && m_trap_group_exclude_ports[trap_group_name] != exclude_ports)
+        {
+            vector<sai_hostif_trap_type_t> group_trap_ids;
+            getTrapIdsFromTrapGroup(m_trap_group_map[trap_group_name], group_trap_ids);
+
+            sai_attribute_t attr;
+            attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
+            attr.value.objlist.count = static_cast<uint32_t>(exclude_ports.size());
+            attr.value.objlist.list = exclude_ports.data();
+            for (auto trap_id : group_trap_ids)
+            {
+                sai_status = sai_hostif_api->set_hostif_trap_attribute(m_syncdTrapIds[trap_id].trap_obj, &attr);
+                if (sai_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set exclude port list on trap %" PRIx64 " on group %s",
+                                   m_syncdTrapIds[trap_id].trap_obj, trap_group_name.c_str());
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
+                }
+            }
+            setTrapGroupExcludePorts(trap_group_name, exclude_ports);
         }
         if (!genetlink_attribs.empty())
         {
@@ -1100,6 +1137,14 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
             attr.value = it.second;
             add_trap_attr.push_back(attr);
         }
+        auto exclude_ports = m_trap_group_exclude_ports.find(trap_group_name);
+        if (exclude_ports != m_trap_group_exclude_ports.end() && !exclude_ports->second.empty())
+        {
+            attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
+            attr.value.objlist.count = static_cast<uint32_t>(exclude_ports->second.size());
+            attr.value.objlist.list = exclude_ports->second.data();
+            add_trap_attr.push_back(attr);
+        }
         if (!applyAttributesToTrapIds(m_trap_group_map[trap_group_name], add_trap_ids,
                                       add_trap_attr))
         {
@@ -1201,14 +1246,39 @@ bool CoppOrch::processTrapGroupDel (string trap_group_name)
     }
 
     m_trap_group_map.erase(it_del);
+    setTrapGroupExcludePorts(trap_group_name, {});
+    m_trap_group_exclude_ports.erase(trap_group_name);
     return true;
 }
 
-bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
+/* Hold a port reference so a port can't be removed while a trap still excludes it */
+void CoppOrch::setTrapGroupExcludePorts(const string &trap_group_name, const vector<sai_object_id_t> &exclude_ports)
+{
+    Port port;
+    for (auto port_id : m_trap_group_exclude_ports[trap_group_name])
+    {
+        if (gPortsOrch->getPort(port_id, port))
+        {
+            gPortsOrch->decreasePortRefCount(port.m_alias);
+        }
+    }
+    for (auto port_id : exclude_ports)
+    {
+        if (gPortsOrch->getPort(port_id, port))
+        {
+            gPortsOrch->increasePortRefCount(port.m_alias);
+        }
+    }
+    m_trap_group_exclude_ports[trap_group_name] = exclude_ports;
+}
+
+task_process_status CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
                                         vector<sai_attribute_t> &trap_gr_attribs,
                                         vector<sai_attribute_t> &trap_id_attribs,
                                         vector<sai_attribute_t> &policer_attribs,
-                                        vector<sai_attribute_t> &genetlink_attribs)
+                                        vector<sai_attribute_t> &genetlink_attribs,
+                                        bool &has_exclude_ports,
+                                        vector<sai_object_id_t> &exclude_ports)
 {
     sai_attribute_t attr;
 
@@ -1244,6 +1314,26 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
                 attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
                     attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 trap_id_attribs.push_back(attr);
+            }
+        }
+        else if (fvField(*i) == copp_exclude_ports_field)
+        {
+            if (!m_exclude_ports_supported)
+            {
+                SWSS_LOG_NOTICE("Ignoring %s, SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST is not supported",
+                                copp_exclude_ports_field.c_str());
+                continue;
+            }
+            has_exclude_ports = true;
+            for (const auto &alias : tokenize(fvValue(*i), list_item_delimiter))
+            {
+                Port port;
+                if (!gPortsOrch->getPort(alias, port))
+                {
+                    SWSS_LOG_INFO("Trap exclude port %s is not created yet", alias.c_str());
+                    return task_process_status::task_need_retry;
+                }
+                exclude_ports.push_back(port.m_port_id);
             }
         }
         //
@@ -1341,10 +1431,10 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
         else
         {
             SWSS_LOG_ERROR("Unknown copp field specified:%s\n", fvField(*i).c_str());
-            return false;
+            return task_process_status::task_invalid_entry;
         }
     }
-    return true;
+    return task_process_status::task_success;
 }
 
 bool CoppOrch::trapGroupUpdatePolicer (string trap_group_name,
