@@ -62,7 +62,8 @@ void BpProtOrch::doTask(swss::SelectableTimer &timer)
     {
         const auto &attachment = entry.second;
         if ((attachment.wtrRunning && now >= attachment.wtrDeadline) ||
-            (attachment.pathPending && !attachment.blocked && now >= attachment.retryAt))
+            (attachment.pathPending && !attachment.blocked && now >= attachment.retryAt) ||
+            (attachment.cleanupPending && !attachment.cleanupBlocked && now >= attachment.cleanupRetryAt))
             work.push_back(entry.first);
     }
     for (const auto &name : work) reconcile(name);

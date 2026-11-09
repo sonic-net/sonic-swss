@@ -80,6 +80,8 @@ private:
         bool partialFailure = false; // Terminal failure during unconfirmed attachment/replacement.
         bool cleanupBlocked = false; // Terminal clear/GET; keep references until explicit reapplication.
         bool cleanupPending = false;
+        unsigned cleanupRetryAttempts = 0;
+        uint64_t cleanupRetryAt = 0;
         std::string terminalOperation, terminalAttributes;
         sai_status_t terminalStatus = SAI_STATUS_SUCCESS;
         int32_t selected = SAI_BRIDGE_PORT_PROTECTION_ADMIN_MODE_PRIMARY;
@@ -131,6 +133,7 @@ private:
     void groupEvent(const L2NhgUpdate &event);
     std::string pendingDependencies(const std::string &ifname) const;
     bool clearAttachment(const std::string &ifname, Attachment &attachment);
+    void scheduleCleanupRetry(Attachment &attachment);
     bool result(const std::string &ifname, Attachment &attachment, sai_status_t status,
         const char *operation, const sai_attribute_t *attrs, unsigned count);
     bool terminalResult(const std::string &ifname, Attachment &attachment, sai_status_t status,

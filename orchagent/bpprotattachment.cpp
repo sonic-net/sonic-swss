@@ -1,6 +1,7 @@
 #include "bpprotorch.h"
 #include "portsorch.h"
 #include <limits>
+#include <algorithm>
 #include <ctime>
 #include <sstream>
 #include <cstring>
@@ -154,13 +155,26 @@ bool BpProtOrch::terminalResult(const std::string &ifname, Attachment &attachmen
     return true;
 }
 
+void BpProtOrch::scheduleCleanupRetry(Attachment &attachment)
+{
+    // Cleanup has its own clock: lifecycle reconciliation resets the path FSM.
+    if (attachment.cleanupRetryAttempts < std::numeric_limits<unsigned>::max())
+        ++attachment.cleanupRetryAttempts;
+    const auto delay = std::min<uint64_t>(100ULL << std::min(attachment.cleanupRetryAttempts - 1, 6u), 5000);
+    const auto now = m_now();
+    attachment.cleanupRetryAt = delay > std::numeric_limits<uint64_t>::max() - now ?
+        std::numeric_limits<uint64_t>::max() : now + delay;
+}
+
 bool BpProtOrch::result(const std::string &ifname, Attachment &attachment, sai_status_t status,
     const char *operation, const sai_attribute_t *attrs, unsigned count)
 {
     if (status == SAI_STATUS_SUCCESS) return true;
     if (terminalResult(ifname, attachment, status, operation, attrs, count, true)) return false;
+    scheduleCleanupRetry(attachment);
     publishRuntime(ifname, "INCONSISTENT", "sai_retry");
-    BP_PROT_LOG(SWSS_ERROR, "event=sai_failure ifname=%s operation=%s status=%d", ifname.c_str(), operation, status);
+    BP_PROT_LOG(SWSS_ERROR, "event=sai_failure ifname=%s operation=%s status=%d attempt=%u",
+        ifname.c_str(), operation, status, attachment.cleanupRetryAttempts);
     return false;
 }
 
@@ -169,7 +183,7 @@ bool BpProtOrch::clearAttachment(const std::string &ifname, Attachment &attachme
     if (attachment.reference.token || attachment.replacement.token)
     {
         attachment.cleanupPending = true;
-        if (attachment.cleanupBlocked) return false;
+        if (attachment.cleanupBlocked || m_now() < attachment.cleanupRetryAt) return false;
         // A changed PortsOrch OID is not proof that the old object was removed.
         // Always clear the stored object; never write a recreated port by alias.
         Port current;
@@ -196,6 +210,7 @@ bool BpProtOrch::clearAttachment(const std::string &ifname, Attachment &attachme
         if (status != SAI_STATUS_ITEM_NOT_FOUND && (observed[0].value.oid != SAI_NULL_OBJECT_ID ||
             observed[1].value.s32 != SAI_BRIDGE_PORT_PROTECTION_STATE_NOT_APPLICABLE))
         {
+            scheduleCleanupRetry(attachment);
             publishRuntime(ifname, "INCONSISTENT", "clear_mismatch");
             return false;
         }
@@ -207,6 +222,7 @@ bool BpProtOrch::clearAttachment(const std::string &ifname, Attachment &attachme
     attachment.partialFailure = false;
     attachment.cleanupPending = false;
     attachment.cleanupBlocked = false;
+    attachment.cleanupRetryAttempts = 0; attachment.cleanupRetryAt = 0;
     if (!attachment.removing)
     {
         attachment.port = SAI_NULL_OBJECT_ID;

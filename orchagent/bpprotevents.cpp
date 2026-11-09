@@ -148,7 +148,10 @@ void BpProtOrch::update(SubjectType type, void *context)
         auto found = m_attachments.find(event.port.m_alias);
         if (found != m_attachments.end() &&
             found->second.linkUp != (event.operStatus == SAI_PORT_OPER_STATUS_UP))
+        {
             found->second.retryEvent = true;
+            found->second.cleanupRetryAt = 0; found->second.cleanupRetryAttempts = 0;
+        }
         reconcile(event.port.m_alias);
     }
 }

@@ -1400,7 +1400,7 @@ TEST_F(BpProtectionAttachmentTest, TwoBridgePortsKeepWithdrawingGroupUntilBothCo
     row(APP_BP_PROTECTION_BINDING_TABLE_NAME,SET_COMMAND,{{"nexthop_group","2147483649"}});
     EXPECT_EQ(refs(),2u); bridgeFault="clear"; builder->deleteProtectionRow("2147483649"); step();
     apply(APP_BP_PROTECTION_BINDING_TABLE_NAME,DEL_COMMAND); EXPECT_EQ(refs(),2u);
-    bridgeFault.clear(); row(APP_BP_PROTECTION_BINDING_TABLE_NAME,DEL_COMMAND,{}); EXPECT_EQ(refs(),1u);
+    bridgeFault.clear(); taskNow += 100; row(APP_BP_PROTECTION_BINDING_TABLE_NAME,DEL_COMMAND,{}); EXPECT_EQ(refs(),1u);
     step(); EXPECT_FALSE(groups.empty()); retry(); EXPECT_EQ(refs(),0u); step(); EXPECT_TRUE(groups.empty());
     row(CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME,DEL_COMMAND,{});
 }
@@ -1805,7 +1805,7 @@ TEST_F(BpProtectionObserverTest, PreRemoveFailureDefersAdminDownFlushAndSaiRemov
     EXPECT_FALSE(gPortsOrch->removeBridgePort(value)); EXPECT_EQ(refs(), 1u);
     EXPECT_EQ(bridgeRemoves, 0u); EXPECT_EQ(bridgeFlushes, 0u);
     for (const auto &write : bridgeWrites) EXPECT_NE(write.second, SAI_BRIDGE_PORT_ATTR_ADMIN_STATE);
-    bridgeFault.clear(); readHook = [&] { EXPECT_EQ(refs(), 1u); EXPECT_EQ(bridgeRemoves, 0u); };
+    bridgeFault.clear(); taskNow += 100; readHook = [&] { EXPECT_EQ(refs(), 1u); EXPECT_EQ(bridgeRemoves, 0u); };
     ASSERT_TRUE(gPortsOrch->removeBridgePort(value)); EXPECT_EQ(refs(), 0u);
     EXPECT_EQ(bridgeRemoves, 1u); EXPECT_EQ(bridgeFlushes, 1u);
     EXPECT_EQ(port().m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -1868,7 +1868,7 @@ TEST_F(BpProtectionObserverTest, PreRemoveDrainsOlderDifferentOidBeforeAdoptingC
 {
     attached(); Port old = port(); po(SAI_PORT_OPER_STATUS_UP, 0xdef); Port current = port();
     bridgeFault = "clear"; EXPECT_FALSE(preRemove(current).ready); EXPECT_EQ(refs(), 1u);
-    bridgeFault.clear(); EXPECT_TRUE(preRemove(current).ready); EXPECT_EQ(refs(), 0u);
+    bridgeFault.clear(); taskNow += 100; EXPECT_TRUE(preRemove(current).ready); EXPECT_EQ(refs(), 0u);
     EXPECT_EQ(runtime().port, 0xdefu);
     po(SAI_PORT_OPER_STATUS_UP, 0); removedEvent(current);
     EXPECT_EQ(runtime().lastReason, "bridge_port_pending");
@@ -2976,7 +2976,7 @@ TEST_F(BpProtectionFsmTest, GroupWithdrawalInvalidatesCountdownEvenWhileClearFai
     builder->deleteProtectionRow("2147483649"); step(); EXPECT_EQ(wtrStatus(), "IDLE");
     auto writes = bridgeWrites.size(); tick(10000); EXPECT_EQ(bridgeWrites.size(), writes+1);
     EXPECT_EQ(bridgeWrites.back().second, SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID); EXPECT_EQ(refs(), 1u);
-    bridgeFault.clear(); tick(1); step(); EXPECT_TRUE(groups.empty());
+    bridgeFault.clear(); tick(200); step(); EXPECT_TRUE(groups.empty());
 }
 TEST_F(BpProtectionFsmTest, BridgeRemovalCancelsCountdownAndRecreateStartsFresh)
 {
@@ -3414,7 +3414,7 @@ TEST_F(BpProtectionFsmTest, FullGroupCleanupWaitsForBridgeClearThenContinuesPast
     const auto g=builder->m_protectionGroups.at("2147483649"); const auto failed=g.members.at("1073741825");
     failedGroupMembers.insert(failed); bridgeFault="clear"; memberRemovalAttempts.clear();
     builder->deleteProtectionRow("2147483649"); step(); EXPECT_EQ(refs(),1u); EXPECT_TRUE(memberRemovalAttempts.empty());
-    EXPECT_EQ(gmHops.size(),3u); bridgeFault.clear(); protection->doTask(); step();
+    EXPECT_EQ(gmHops.size(),3u); bridgeFault.clear(); tick(100); step();
     EXPECT_EQ(refs(),0u); EXPECT_EQ(gmHops.size(),1u); EXPECT_TRUE(gmHops.count(failed)); EXPECT_TRUE(groups.count(g.oid));
     EXPECT_EQ(state().at("reconciliation_state"),"INCONSISTENT");
     failedGroupMembers.clear(); step(); EXPECT_FALSE(groups.count(g.oid));
@@ -3978,4 +3978,58 @@ TEST_F(BpProtectionFdbTest, FailedGroupRetirementAndOrderedRebuildPreservePrimar
     step(); protection->doTask(); path("PROTECTION");
     EXPECT_NE(runtime().reference.oid, oid);
     EXPECT_EQ(status(), BpProtectionStatus::PROTECTED); expectPreserved();
+}
+
+TEST_F(BpProtectionFsmTest, CleanupFailuresBackOffWithoutReleasingReferences)
+{
+    for (const string stage : {"clear", "clear-get", "mismatch"})
+    {
+        SCOPED_TRACE(stage);
+        start("AUTO", false);
+        if (stage == "mismatch") bridgeMismatch = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_NEXT_HOP_GROUP_ID;
+        else bridgeFault = stage;
+        config(DEL_COMMAND);
+        ASSERT_EQ(refs(), 1u);
+        for (uint64_t delay : {100u, 200u, 400u, 800u, 1600u, 3200u, 5000u, 5000u})
+        {
+            const auto writes = bridgeWrites.size(), reads = size_t(bridgeReads);
+            for (unsigned i = 0; i < 10; ++i) protection->doTask();
+            tick(delay - 1);
+            EXPECT_EQ(bridgeWrites.size(), writes);
+            EXPECT_EQ(bridgeReads, reads);
+            tick(1);
+            EXPECT_EQ(bridgeWrites.size(), writes + 1);
+            EXPECT_EQ(refs(), 1u);
+        }
+        bridgeFault.clear(); bridgeMismatch = 0;
+        tick(4999); EXPECT_EQ(refs(), 1u);
+        tick(1); EXPECT_EQ(refs(), 0u);
+        EXPECT_TRUE(state().empty());
+    }
+}
+
+TEST_F(BpProtectionFsmTest, CleanupDeadlineWakesOnTimerWithoutAnotherDatabaseEvent)
+{
+    start("AUTO", false); bridgeFault = "clear";
+    config(DEL_COMMAND); ASSERT_EQ(refs(), 1u);
+    const auto writes = bridgeWrites.size(); bridgeFault.clear();
+    now += 99; protection->doTask(*protection->m_fsmTimer);
+    EXPECT_EQ(bridgeWrites.size(), writes); EXPECT_EQ(refs(), 1u);
+    ++now; protection->doTask(*protection->m_fsmTimer);
+    EXPECT_EQ(bridgeWrites.size(), writes + 1); EXPECT_EQ(refs(), 0u);
+}
+
+TEST_F(BpProtectionFsmTest, ValidConfigAndChangedOperStatePreemptCleanupBackoff)
+{
+    start("AUTO", false); bridgeFault = "clear";
+    apply(APP_BP_PROTECTION_BINDING_TABLE_NAME, DEL_COMMAND);
+    const auto writes = bridgeWrites.size();
+    policy("AUTO", false);
+    EXPECT_EQ(bridgeWrites.size(), writes + 1); EXPECT_EQ(refs(), 1u);
+    const auto retried = bridgeWrites.size();
+    apply(CFG_BRIDGE_PORT_PROTECTION_TABLE_NAME, SET_COMMAND, {{"admin_mode", "invalid"}});
+    EXPECT_EQ(bridgeWrites.size(), retried);
+    link(false); EXPECT_EQ(bridgeWrites.size(), retried + 1);
+    link(false); EXPECT_EQ(bridgeWrites.size(), retried + 1);
+    bridgeFault.clear(); tick(100); EXPECT_EQ(refs(), 0u);
 }

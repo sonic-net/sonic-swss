@@ -229,7 +229,11 @@ void BpProtOrch::doTask(Consumer &consumer)
         {
             auto attachment = m_attachments.find(ifname);
             // Explicit CONFIG deletion may retry a previously failed cleanup once.
-            if (attachment != m_attachments.end()) attachment->second.cleanupBlocked = false;
+            if (attachment != m_attachments.end())
+            {
+                attachment->second.cleanupBlocked = false;
+                attachment->second.cleanupRetryAttempts = 0; attachment->second.cleanupRetryAt = 0;
+            }
             m_entries.erase(ifname);
             m_stateTable.del(ifname);
             BP_PROT_LOG(SWSS_NOTICE, "event=config_del ifname=%s state_deleted=true", ifname.c_str());
@@ -265,6 +269,7 @@ void BpProtOrch::doTask(Consumer &consumer)
                         attachment.wtrEligible = false; attachment.wtrCompleted = false;
                     }
                     attachment.blocked = false; attachment.cleanupBlocked = false;
+                    attachment.cleanupRetryAttempts = 0; attachment.cleanupRetryAt = 0;
                     attachment.partialFailure = false;
                     attachment.terminalOperation.clear(); attachment.terminalAttributes.clear();
                     attachment.terminalStatus = SAI_STATUS_SUCCESS;
