@@ -102,6 +102,10 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 
 FdbOrch::~FdbOrch()
 {
+    for (auto table : m_appTables)
+    {
+        delete table;
+    }
     gFdbOrch = nullptr;
 }
 
