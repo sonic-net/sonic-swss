@@ -1849,13 +1849,22 @@ TEST_P(VxlanSharedTunnelTest, SharedPeerOwnersDelayPhysicalRemovalUntilFinalRele
     const string peer = "10.40.0.2";
     const vector<tunnel_user_t> users = {TUNNEL_USER_MAC, TUNNEL_USER_IP, TUNNEL_USER_IMR, TUNNEL_USER_PROTECTION};
     for (auto user : users) ASSERT_TRUE(source->createDynamicDIPTunnel(peer, user));
+    // An unrelated peer sorts before the protected peer. A source DELETE
+    // must inspect all peers before deciding that no protection owner exists.
+    const string otherPeer = "10.40.0.10";
+    ASSERT_TRUE(source->createDynamicDIPTunnel(otherPeer, TUNNEL_USER_MAC));
+    VxlanTunnelRequest deletion; deletion.parse({"SharedSip", DEL_COMMAND, {}});
+    EXPECT_FALSE(m_VxlanTunnelOrch->delOperation(deletion));
+    EXPECT_EQ(m_VxlanTunnelOrch->getVxlanTunnel("SharedSip"), source);
     removeMap(GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 1u); EXPECT_TRUE(source->isActive());
     removeMap(!GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 0u); EXPECT_TRUE(source->isActive());
     for (size_t i = 0; i < users.size(); ++i)
     {
         ASSERT_TRUE(source->deleteDynamicDIPTunnel(peer, users[i])); source->deletePendingSIPTunnel();
-        if (i + 1 < users.size()) { EXPECT_TRUE(source->isActive()); }
+        EXPECT_TRUE(source->isActive()); // The other peer still owns its tunnel.
     }
+    ASSERT_TRUE(source->deleteDynamicDIPTunnel(otherPeer, TUNNEL_USER_MAC));
+    source->deletePendingSIPTunnel();
     EXPECT_TRUE(source->tnl_users_.empty()); expectRemoved(tunnel);
 }
 TEST_P(VxlanSharedTunnelTest, P2mpFdbOwnerDefersSourceBridgeAndTunnelRemoval)
