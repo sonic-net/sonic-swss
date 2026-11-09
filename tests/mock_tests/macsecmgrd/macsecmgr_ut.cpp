@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <memory>
@@ -29,11 +30,28 @@ extern "C" int __real_pclose(FILE *pipe);
 std::map<FILE *, int> wpaPipeStatuses;
 size_t wpaProcessCount = 0;
 int wpaSignal = 0;
+bool wpaRealQueryTimeout = false;
+bool wpaPopenFails = false;
+bool wpaPcloseFails = false;
+std::set<FILE *> wpaRealPipes;
 
 extern "C" FILE *__wrap_popen(const char *command, const char *)
 {
     ++wpaProcessCount;
     std::string cmd(command);
+    if (wpaPopenFails)
+    {
+        return nullptr;
+    }
+    if (wpaRealQueryTimeout && cmd.find("macsec_mka_list") != std::string::npos)
+    {
+        FILE *pipe = __real_popen("/usr/bin/timeout --signal=KILL 2s /bin/sleep 5 2>&1", "r");
+        if (pipe != nullptr)
+        {
+            wpaRealPipes.insert(pipe);
+        }
+        return pipe;
+    }
     const std::string redirect = " 2>&1";
     if (cmd.size() >= redirect.size() &&
         cmd.compare(cmd.size() - redirect.size(), redirect.size(), redirect) == 0)
@@ -55,10 +73,14 @@ extern "C" FILE *__wrap_popen(const char *command, const char *)
 
 extern "C" int __wrap_pclose(FILE *pipe)
 {
+    if (wpaRealPipes.erase(pipe) != 0)
+    {
+        return __real_pclose(pipe);
+    }
     const int status = wpaPipeStatuses.at(pipe);
     wpaPipeStatuses.erase(pipe);
     fclose(pipe);
-    return status;
+    return wpaPcloseFails ? -1 : status;
 }
 
 namespace macsecmgr_ut
@@ -193,6 +215,8 @@ struct CommandState
     map<string, size_t> queryCountByPort;
     map<string, map<size_t, string>> queryRepliesByPort;
     map<string, set<size_t>> failedQueriesByPort;
+    map<string, map<size_t, int>> queryExitStatusesByPort;
+    int queryFailureStatus = 1;
     set<string> peersAppearOnSecondQueryPorts;
     set<string> primaryPeerLostOnSecondQueryPorts;
     set<string> replacementAppearsAfterRemovePorts;
@@ -325,10 +349,16 @@ int commandCallback(const string &cmd, string &output)
     if (cmd.find("macsec_mka_list") != string::npos)
     {
         const auto queryCount = ++commandState.queryCountByPort[port];
+        const auto scriptedExit = commandState.queryExitStatusesByPort[port].find(queryCount);
+        if (scriptedExit != commandState.queryExitStatusesByPort[port].end())
+        {
+            output = commandState.failureOutput;
+            return scriptedExit->second;
+        }
         if (commandState.failedQueriesByPort[port].count(queryCount) != 0)
         {
             output = "FAIL\n";
-            return 1;
+            return commandState.queryFailureStatus;
         }
         const auto scripted = commandState.queryRepliesByPort[port].find(queryCount);
         if (scripted != commandState.queryRepliesByPort[port].end())
@@ -363,7 +393,7 @@ int commandCallback(const string &cmd, string &output)
             commandState.failQueryPorts.count(port) != 0)
         {
             output = "FAIL\n";
-            return 1;
+            return commandState.queryFailureStatus;
         }
         if (commandState.lastRemoveWasPrimaryByPort.count(port) != 0 &&
             commandState.replacementAppearsAfterRemovePorts.erase(port) != 0)
@@ -498,6 +528,9 @@ struct MACsecMgrTest : public ::testing::Test
         commandState = CommandState();
         wpaProcessCount = 0;
         wpaSignal = 0;
+        wpaRealQueryTimeout = false;
+        wpaPopenFails = false;
+        wpaPcloseFails = false;
         callback = commandCallback;
         configDb = make_shared<DBConnector>("CONFIG_DB", 0);
         appDb = make_shared<DBConnector>("APPL_DB", 0);
@@ -588,7 +621,218 @@ struct MACsecMgrTest : public ::testing::Test
         }
         return nullptr;
     }
+
+    string captureLogs(const function<void()> &action, bool debug = false)
+    {
+        const auto priorPriority = Logger::getMinPrio();
+        Logger::swssOutputNotify("macsecmgrd", "STDOUT");
+        Logger::setMinPrio(debug ? Logger::SWSS_DEBUG : Logger::SWSS_INFO);
+        testing::internal::CaptureStdout();
+        action();
+        const string logs = testing::internal::GetCapturedStdout();
+        Logger::setMinPrio(priorPriority);
+        Logger::swssOutputNotify("macsecmgrd", "SYSLOG");
+        return logs;
+    }
 };
+
+TEST_F(MACsecMgrTest, BackgroundTimeoutDeletesOnlyAffectedRowsWithoutImmediateWarning)
+{
+    auto &blocked = session("Ethernet0");
+    auto &ready = session("Ethernet4");
+    ASSERT_TRUE(manager->collectMKAStatus("Ethernet0", blocked));
+    ASSERT_TRUE(manager->collectMKAStatus("Ethernet4", ready));
+    commandState.failQueryPort = "Ethernet0";
+    commandState.queryFailureStatus = 124;
+    const auto logs = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_EQ(string::npos, logs.find("failed:"));
+    EXPECT_EQ(string::npos, logs.find("recovered"));
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+    EXPECT_FALSE(manager->m_stateMkaParticipantTable.get("Ethernet0|" + PRIMARY_CKN, values));
+    EXPECT_TRUE(manager->m_stateMkaSessionTable.get("Ethernet4", values));
+    EXPECT_TRUE(ready.participants_verified);
+    EXPECT_EQ(2u, commandState.queryCountByPort["Ethernet0"]);
+    EXPECT_EQ(2u, commandState.queryCountByPort["Ethernet4"]);
+    commandState.failQueryPort.clear();
+    const auto recovery = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_EQ(string::npos, recovery.find("recovered"));
+    EXPECT_TRUE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+
+    commandState.failQueryPort = "Ethernet0";
+    const auto debug = captureLogs([&] { manager->sweepMKAStatus(); }, true);
+    EXPECT_NE(string::npos, debug.find("no response within 2s deadline"));
+    EXPECT_NE(string::npos, debug.find("consecutive background timeouts: 1"));
+}
+
+TEST_F(MACsecMgrTest, BackgroundTimeoutWarningsEscalateAtThreeSixAndResetAfterRecovery)
+{
+    auto &runtime = session();
+    commandState.failQuery = true;
+    commandState.queryFailureStatus = 124;
+    for (size_t sweep = 1; sweep <= 6; ++sweep)
+    {
+        const auto logs = captureLogs([&] { manager->sweepMKAStatus(); });
+        EXPECT_EQ(sweep % 3 == 0, logs.find("failed:") != string::npos) << sweep;
+        if (sweep % 3 == 0)
+        {
+            EXPECT_NE(string::npos, logs.find(
+                "consecutive background timeouts: " + to_string(sweep)));
+        }
+        EXPECT_EQ(sweep, commandState.queryCountByPort["Ethernet0"]);
+    }
+    commandState.failQuery = false;
+    // Any successful observation, including a strict verification query, ends the outage.
+    const auto recovery = captureLogs([&] {
+        EXPECT_TRUE(manager->collectMKAStatus("Ethernet0", runtime));
+    });
+    EXPECT_NE(string::npos, recovery.find("recovered after background timeouts"));
+    const auto normal = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_EQ(string::npos, normal.find("recovered"));
+    commandState.failQuery = true;
+    for (size_t sweep = 1; sweep <= 3; ++sweep)
+    {
+        const auto logs = captureLogs([&] { manager->sweepMKAStatus(); });
+        EXPECT_EQ(sweep == 3, logs.find("failed:") != string::npos);
+    }
+}
+
+TEST_F(MACsecMgrTest, BackgroundCommandAndMalformedFailuresWarnImmediatelyWithoutSecrets)
+{
+    session();
+    const string secret = "do-not-log-this-cak-or-output";
+    for (const int exitCode : {1, 7, 125, 137})
+    {
+        commandState.failQuery = true;
+        commandState.queryFailureStatus = exitCode;
+        const auto logs = captureLogs([&] { manager->sweepMKAStatus(); });
+        EXPECT_NE(string::npos, logs.find("failed:"));
+        EXPECT_NE(string::npos, logs.find("exit " + to_string(exitCode)));
+        EXPECT_EQ(string::npos, logs.find("no response within"));
+    }
+    commandState.failQuery = false;
+    commandState.failOperation = "macsec_mka_list";
+    commandState.failureStatus = 7;
+    commandState.failureOutput = "command timed out " + secret;
+    const auto command = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_NE(string::npos, command.find("command failed (exit 7)"));
+    EXPECT_EQ(string::npos, command.find("no response within"));
+    EXPECT_EQ(string::npos, command.find(secret));
+    commandState.failureStatus = 0;
+    commandState.failureOutput = "Authenticated=" + secret + "\ncak=" + secret;
+    const auto malformed = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_NE(string::npos, malformed.find("failed: malformed WPA status:"));
+    EXPECT_EQ(string::npos, malformed.find(secret));
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+    EXPECT_FALSE(manager->m_stateMkaParticipantTable.get("Ethernet0|" + PRIMARY_CKN, values));
+}
+
+TEST_F(MACsecMgrTest, BackgroundNonTimeoutBreaksConsecutiveTimeoutStreak)
+{
+    session();
+    commandState.failQuery = true;
+    commandState.queryFailureStatus = 124;
+    captureLogs([&] {
+        manager->sweepMKAStatus();
+        manager->sweepMKAStatus();
+    });
+    commandState.queryFailureStatus = 1;
+    const auto failure = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_NE(string::npos, failure.find("failed:"));
+    commandState.queryFailureStatus = 124;
+    const auto timeout = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_EQ(string::npos, timeout.find("failed:"));
+}
+
+TEST_F(MACsecMgrTest, FailedVerificationInTimerSweepNeverRetriesOrUsesBackgroundGrace)
+{
+    for (size_t stage = 1; stage <= 3; ++stage)
+    {
+        auto &runtime = session();
+        commandState = CommandState();
+        mockCallArgs.clear();
+        manager->m_profiles["profile"] = profile(NEW_PRIMARY_CKN);
+        manager->m_profiles["profile"].fallback_ckn = NEW_FALLBACK_CKN;
+        commandState.queryExitStatusesByPort["Ethernet0"][stage] = 124;
+        const auto logs = captureLogs([&] { manager->sweepMKAStatus(); });
+        EXPECT_NE(string::npos, logs.find("failed:"));
+        EXPECT_NE(string::npos, logs.find("no response within 2s deadline"));
+        EXPECT_EQ(stage, commandState.queryCountByPort["Ethernet0"]);
+        EXPECT_EQ(stage == 3 ? 1 : 0, commandState.addCalls);
+        EXPECT_EQ(FALLBACK_CKN, runtime.applied_profile.fallback_ckn);
+        EXPECT_EQ(stage == 1 ? "" : PRIMARY_CKN, runtime.pending_old_ckn);
+        vector<FieldValueTuple> values;
+        EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+        commandState.failQuery = true;
+        commandState.queryFailureStatus = 124;
+        const auto retry = captureLogs([&] { manager->sweepMKAStatus(); });
+        EXPECT_NE(string::npos, retry.find("failed:"));
+        EXPECT_EQ(stage + 1, commandState.queryCountByPort["Ethernet0"]);
+        EXPECT_EQ(stage == 3 ? 1 : 0, commandState.addCalls);
+        commandState.failQuery = false;
+        manager->sweepMKAStatus();
+        EXPECT_TRUE(runtime.pending_old_ckn.empty());
+        EXPECT_EQ(NEW_PRIMARY_CKN, runtime.applied_profile.primary_ckn);
+        EXPECT_EQ(NEW_FALLBACK_CKN, runtime.applied_profile.fallback_ckn);
+    }
+}
+
+TEST_F(MACsecMgrTest, QueryDiagnosticsPreserveIoAndUnknownFailureCategories)
+{
+    auto &runtime = session();
+    wpaPopenFails = true;
+    auto logs = captureLogs([&] { EXPECT_FALSE(manager->collectMKAStatus("Ethernet0", runtime)); });
+    EXPECT_NE(string::npos, logs.find("cannot execute command"));
+    wpaPopenFails = false;
+    wpaPcloseFails = true;
+    logs = captureLogs([&] { EXPECT_FALSE(manager->collectMKAStatus("Ethernet0", runtime)); });
+    EXPECT_NE(string::npos, logs.find("command I/O failed"));
+    wpaPcloseFails = false;
+    wpaSignal = SIGTERM;
+    logs = captureLogs([&] { EXPECT_FALSE(manager->collectMKAStatus("Ethernet0", runtime)); });
+    EXPECT_NE(string::npos, logs.find("command terminated by signal " + to_string(SIGTERM)));
+    wpaSignal = 0;
+    callback = [](const string &, string &) -> int { throw runtime_error("private-cak"); };
+    logs = captureLogs([&] { EXPECT_FALSE(manager->collectMKAStatus("Ethernet0", runtime)); });
+    EXPECT_NE(string::npos, logs.find("unexpected exception"));
+    EXPECT_EQ(string::npos, logs.find("private-cak"));
+    callback = commandCallback;
+}
+
+TEST_F(MACsecMgrTest, DriftVerificationTimeoutWarnsImmediatelyAndContinuesLaterPorts)
+{
+    auto &drifted = session("Ethernet0");
+    auto &ready = session("Ethernet4");
+    commandState.primaryCknByPort["Ethernet0"] = NEW_PRIMARY_CKN;
+    commandState.queryExitStatusesByPort["Ethernet0"][2] = 124;
+    const auto logs = captureLogs([&] { manager->sweepMKAStatus(); });
+    EXPECT_NE(string::npos, logs.find("failed:"));
+    EXPECT_NE(string::npos, logs.find("no response within 2s deadline"));
+    EXPECT_EQ(2u, commandState.queryCountByPort["Ethernet0"]);
+    EXPECT_EQ(1u, commandState.queryCountByPort["Ethernet4"]);
+    EXPECT_EQ(0, commandState.addCalls);
+    EXPECT_TRUE(none_of(mockCallArgs.begin(), mockCallArgs.end(), [](const string &command) {
+        return command.find("macsec_del_mka") != string::npos;
+    }));
+    EXPECT_EQ(0u, drifted.background_timeout_streak);
+    EXPECT_TRUE(ready.status_published);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(manager->m_stateMkaSessionTable.get("Ethernet0", values));
+}
+
+TEST_F(MACsecMgrTest, RealGnuKillDeadlineThroughPopenIsReportedAsTimeout)
+{
+    auto &runtime = session();
+    wpaRealQueryTimeout = true;
+    const auto logs = captureLogs([&] {
+        EXPECT_FALSE(manager->collectMKAStatus("Ethernet0", runtime));
+    });
+    wpaRealQueryTimeout = false;
+    EXPECT_NE(string::npos, logs.find("no response within 2s deadline (exit 137)"));
+    EXPECT_TRUE(wpaRealPipes.empty());
+    EXPECT_FALSE(runtime.status_published);
+}
 
 TEST(MKAStatusParser, AcceptsFinalFrozenInterfaceWithoutParticipantField)
 {
@@ -1010,7 +1254,7 @@ TEST_F(MACsecMgrTest, PreDeleteQueryFailureDefersOnlyAffectedPortUntilTimerRecov
     auto timer = dynamic_cast<ExecutableTimer *>(executor("MACSEC_MKA_STATUS_TIMER"));
     ASSERT_NE(nullptr, timer);
     timer->execute();
-    EXPECT_EQ(forks + 3, wpaProcessCount);
+    EXPECT_EQ(forks + 2, wpaProcessCount);
     Table sessionTable(stateDb.get(), STATE_MACSEC_MKA_SESSION_TABLE_NAME);
     vector<FieldValueTuple> values;
     EXPECT_FALSE(sessionTable.get("Ethernet0", values));

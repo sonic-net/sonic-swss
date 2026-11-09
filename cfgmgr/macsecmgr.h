@@ -65,6 +65,14 @@ public:
         bool update(const TaskArgs & ta);
     };
 
+    enum class MKAQueryFailure
+    {
+        None,
+        Timeout,
+        Command,
+        Malformed,
+    };
+
     struct MKASession
     {
         std::string profile_name;
@@ -82,6 +90,9 @@ public:
         bool participants_verified = false;
         bool status_published = false;
         std::string config_error;
+        MKAQueryFailure query_failure = MKAQueryFailure::None;
+        std::uint64_t background_timeout_streak = 0;
+        bool background_timeout_warned = false;
     };
 
 private:
@@ -125,15 +136,22 @@ private:
     bool configureMACsec(const std::string & port_name, MKASession & session, const MACsecProfile & profile) const;
     bool unconfigureMACsec(const std::string & port_name, const MKASession & session) const;
 
+    enum class MKAQueryPurpose
+    {
+        Verification,
+        Background,
+    };
     bool collectMKAStatus(
         const std::string &port_name,
         MKASession &session,
-        MKASessionStatus *status = nullptr);
+        MKASessionStatus *status = nullptr,
+        MKAQueryPurpose purpose = MKAQueryPurpose::Verification);
     bool queryMKAStatus(
         const std::string &port_name,
         const MKASession &session,
         MKASessionStatus &status,
-        std::string &error) const;
+        std::string &error,
+        MKAQueryFailure *failure = nullptr) const;
     bool observeRemovalTarget(
         const std::string &port_name,
         MKASession &session,
@@ -151,7 +169,8 @@ private:
     void handleMKAQueryFailure(
         const std::string &port_name,
         MKASession &session,
-        const std::string &reason);
+        const std::string &reason,
+        MKAQueryPurpose purpose);
     void setConfigState(
         const std::string &port_name,
         MKASession &session,

@@ -326,6 +326,18 @@ static void wpa_cli_commands(
     wpa_cli_commands(ostream, args...);
 }
 
+class WpaCommandError : public std::runtime_error
+{
+public:
+    WpaCommandError(const std::string &message,
+                   MACsecMgr::MKAQueryFailure kind = MACsecMgr::MKAQueryFailure::Command) :
+        std::runtime_error(message), failure(kind)
+    {
+    }
+
+    const MACsecMgr::MKAQueryFailure failure;
+};
+
 // swss::exec logs the full command at DEBUG, including WPA key arguments.
 template<typename...Args>
 static std::string wpa_cli_exec(
@@ -336,7 +348,8 @@ static std::string wpa_cli_exec(
     Args && ... args)
 {
     std::ostringstream command;
-    if (strcmp(operation, "macsec_mka_list") == 0)
+    const bool statusQuery = strcmp(operation, "macsec_mka_list") == 0;
+    if (statusQuery)
     {
         command << TIMEOUT_CMD << " --signal=KILL 2s ";
     }
@@ -350,10 +363,11 @@ static std::string wpa_cli_exec(
     const std::string context =
         std::string("WPA control ") + operation + " on port '" + port_name + "'";
     SWSS_LOG_DEBUG("%s", context.c_str());
+    const auto started = std::chrono::steady_clock::now();
     FILE *pipe = popen((command.str() + " 2>&1").c_str(), "r");
     if (pipe == nullptr)
     {
-        throw std::runtime_error(context + ": cannot execute command");
+        throw WpaCommandError(context + ": cannot execute command");
     }
 
     std::string output;
@@ -366,28 +380,40 @@ static std::string wpa_cli_exec(
     const int status = pclose(pipe);
     if (readFailed || status == -1)
     {
-        throw std::runtime_error(context + ": command I/O failed");
+        throw WpaCommandError(context + ": command I/O failed");
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
     {
-        const bool timedOut = output.find("command timed out") != std::string::npos ||
-            (WIFEXITED(status) && WEXITSTATUS(status) == 124) ||
+        const bool killed = (WIFEXITED(status) && WEXITSTATUS(status) == 128 + SIGKILL) ||
             (WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+        // GNU timeout's KILL can surface as shell exit 137, also used by other failures.
+        const bool timedOut = statusQuery ?
+            ((WIFEXITED(status) && WEXITSTATUS(status) == 124) ||
+             (killed && std::chrono::steady_clock::now() - started >= std::chrono::seconds(2))) :
+            (output.find("command timed out") != std::string::npos ||
+             (WIFEXITED(status) && WEXITSTATUS(status) == 124) ||
+             (WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL));
+        const auto detail = WIFEXITED(status) ?
+            "exit " + std::to_string(WEXITSTATUS(status)) :
+            (WIFSIGNALED(status) ? "signal " + std::to_string(WTERMSIG(status)) : "unknown wait status");
         if (timedOut)
         {
-            throw std::runtime_error(context + ": command timed out");
+            throw WpaCommandError(
+                context + (statusQuery ? ": no response within 2s deadline (" : ": command timed out (") +
+                    detail + ")",
+                MACsecMgr::MKAQueryFailure::Timeout);
         }
         if (WIFEXITED(status))
         {
-            throw std::runtime_error(
+            throw WpaCommandError(
                 context + ": command failed (exit " + std::to_string(WEXITSTATUS(status)) + ")");
         }
         if (WIFSIGNALED(status))
         {
-            throw std::runtime_error(
+            throw WpaCommandError(
                 context + ": command terminated by signal " + std::to_string(WTERMSIG(status)));
         }
-        throw std::runtime_error(context + ": unexpected command wait status");
+        throw WpaCommandError(context + ": unexpected command wait status");
     }
     return output;
 }
@@ -501,21 +527,24 @@ void MACsecMgr::sweepMKAStatus()
 {
     for (auto &port : m_macsec_ports)
     {
+        port.second.query_failure = MKAQueryFailure::None;
         const auto desired = m_profiles.find(port.second.profile_name);
         if (desired != m_profiles.end() &&
             (!sameProfile(port.second.applied_profile, desired->second) ||
              !port.second.pending_old_ckn.empty()))
         {
+            // A failed verification must not trigger another query in this sweep.
             if (!reconcilePort(port.first, port.second, desired->second) &&
-                port.second.pending_old_ckn.empty())
+                port.second.pending_old_ckn.empty() &&
+                port.second.query_failure == MKAQueryFailure::None)
             {
-                collectMKAStatus(port.first, port.second);
+                collectMKAStatus(port.first, port.second, nullptr, MKAQueryPurpose::Background);
             }
         }
         else
         {
             MKASessionStatus status;
-            if (collectMKAStatus(port.first, port.second, &status) &&
+            if (collectMKAStatus(port.first, port.second, &status, MKAQueryPurpose::Background) &&
                 !port.second.participants_verified &&
                 desired != m_profiles.end())
             {
@@ -1346,8 +1375,13 @@ bool MACsecMgr::queryMKAStatus(
     const std::string &port_name,
     const MKASession &session,
     MKASessionStatus &status,
-    std::string &error) const
+    std::string &error,
+    MKAQueryFailure *failure) const
 {
+    if (failure != nullptr)
+    {
+        *failure = MKAQueryFailure::None;
+    }
     try
     {
         const auto output = wpa_cli_exec(
@@ -1355,11 +1389,33 @@ bool MACsecMgr::queryMKAStatus(
             port_name,
             "",
             "macsec_mka_list");
-        return parseMKAStatus(output, status, error);
+        if (parseMKAStatus(output, status, error))
+        {
+            return true;
+        }
+        error = "malformed WPA status: " + error;
+        if (failure != nullptr)
+        {
+            *failure = MKAQueryFailure::Malformed;
+        }
+        return false;
     }
-    catch (const std::exception &)
+    catch (const WpaCommandError &e)
     {
-        error = "WPA status query failed";
+        error = e.what();
+        if (failure != nullptr)
+        {
+            *failure = e.failure;
+        }
+        return false;
+    }
+    catch (...)
+    {
+        error = "WPA status query failed: unexpected exception";
+        if (failure != nullptr)
+        {
+            *failure = MKAQueryFailure::Command;
+        }
         return false;
     }
 }
@@ -1440,16 +1496,25 @@ bool MACsecMgr::validateExpectedParticipants(
 bool MACsecMgr::collectMKAStatus(
     const std::string &port_name,
     MKASession &session,
-    MKASessionStatus *statusResult)
+    MKASessionStatus *statusResult,
+    MKAQueryPurpose purpose)
 {
     MKASessionStatus status;
     std::string error;
 
-    if (!queryMKAStatus(port_name, session, status, error))
+    if (!queryMKAStatus(port_name, session, status, error, &session.query_failure))
     {
-        handleMKAQueryFailure(port_name, session, error);
+        handleMKAQueryFailure(port_name, session, error, purpose);
         return false;
     }
+
+    if (session.background_timeout_warned)
+    {
+        SWSS_LOG_INFO("MKA status polling for port '%s' recovered after background timeouts",
+                      port_name.c_str());
+    }
+    session.background_timeout_streak = 0;
+    session.background_timeout_warned = false;
 
     if (!session.pending_old_ckn.empty())
     {
@@ -1529,11 +1594,32 @@ void MACsecMgr::publishMKAStatus(
 void MACsecMgr::handleMKAQueryFailure(
     const std::string &port_name,
     MKASession &session,
-    const std::string &reason)
+    const std::string &reason,
+    MKAQueryPurpose purpose)
 {
     session.participants_verified = false;
     session.status_published = false;
     deleteOperationalState(port_name);
+    if (purpose == MKAQueryPurpose::Background)
+    {
+        if (session.query_failure == MKAQueryFailure::Timeout)
+        {
+            ++session.background_timeout_streak;
+            SWSS_LOG_DEBUG("MKA status query for port '%s' failed: %s "
+                           "(consecutive background timeouts: %" PRIu64 ")",
+                           port_name.c_str(), reason.c_str(), session.background_timeout_streak);
+            if (session.background_timeout_streak % 3 != 0)
+            {
+                return;
+            }
+            session.background_timeout_warned = true;
+            SWSS_LOG_WARN("MKA status query for port '%s' failed: %s "
+                          "(consecutive background timeouts: %" PRIu64 ")",
+                          port_name.c_str(), reason.c_str(), session.background_timeout_streak);
+            return;
+        }
+        session.background_timeout_streak = 0;
+    }
     SWSS_LOG_WARN("MKA status query for port '%s' failed: %s",
                   port_name.c_str(), reason.c_str());
 }
