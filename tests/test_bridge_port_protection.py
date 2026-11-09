@@ -250,9 +250,22 @@ def test_real_logger_registration_and_hld_verbose_fields(protection_portchannel)
         for field in ['RECONCILIATION','T_RECONCILE_ARMED_AT','LAST_ARBITRATION_SOURCE','LAST_CACHE_UPDATE']:
             assert field in info
         db.update_entry('LOGGER',component,{'LOGLEVEL':'ERROR'})
-        # Let the independent logger configuration observer consume the change.
-        import time
-        time.sleep(1)
+        # LOGGER and policy have independent consumers. Observe ERROR filtering
+        # on a real, acknowledged policy change instead of assuming a delay.
+        def error_filter_applied():
+            nonlocal marker
+            marker = __import__('uuid').uuid4().hex
+            run(dvs,['logger','BPP-DVS-BEGIN-'+marker])
+            current = dvs.get_state_db().get_entry(STATE_TABLE,PORTCHANNEL).get('admin_mode')
+            target = 'PROTECTION' if current == 'PRIMARY' else 'PRIMARY'
+            run(dvs,['config','portchannel','protection',PORTCHANNEL,'admin_mode',target.lower()])
+            check_policy(dvs,dict(DEFAULTS,admin_mode=target))
+            try:
+                stable(lambda: assert_no_info(lines()),duration=1)
+            except AssertionError:
+                return None
+            return True
+        poll(error_filter_applied)
         marker = __import__('uuid').uuid4().hex
         run(dvs,['logger','BPP-DVS-BEGIN-'+marker])
         run(dvs,['config','portchannel','protection',PORTCHANNEL,'admin_mode','protection'])

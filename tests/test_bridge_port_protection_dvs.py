@@ -1082,8 +1082,10 @@ def test_complete_intent_withdrawal_flushes_once_only_if_port_remains_down(bpp,c
     else:
         stable(lambda: assert_primary_forwarding_preserved(bpp,entries))
         assert not successful_port_fdb_flushes(bpp,since)
-    policy_del(); binding_del(); time.sleep(0.5)
-    assert len(successful_port_fdb_flushes(bpp,since))==(1 if down else 0)
+    policy_del(); binding_del()
+    def no_duplicate_flush():
+        assert len(successful_port_fdb_flushes(bpp,since)) == (1 if down else 0)
+    stable(no_duplicate_flush,duration=0.5)
 
 
 def test_fpm_row_flush_and_ordered_replay_with_policy_preserve_primary_entries(bpp):
@@ -1107,7 +1109,12 @@ def test_failed_clear_preserves_fdb_until_both_intents_are_removed(bpp):
     bpp.delete_app(BINDING,bpp.po)
     bpp.asic.wait_for_deleted_entry('ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY',entries['ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY'][0])
     poll(lambda: True if len(successful_port_fdb_flushes(bpp,since))==1 else None)
-    bpp.fault(); time.sleep(0.5); assert len(successful_port_fdb_flushes(bpp,since))==1
+    bpp.fault()
+    bpp.asic.wait_for_field_match(BP,bpp.bridge_oid(),{GROUP_ATTR:'oid:0x0'})
+    bpp.state_db.wait_for_deleted_entry(STATE,bpp.po)
+    def no_duplicate_flush():
+        assert len(successful_port_fdb_flushes(bpp,since)) == 1
+    stable(no_duplicate_flush,duration=0.5)
 
 
 def test_unprotected_port_down_keeps_the_existing_normal_fdb_flush(bpp):
@@ -1312,3 +1319,61 @@ def test_two_portchannels_restore_on_independent_wtr_deadlines(bpp):
         run(bpp.dvs, ['config', 'vlan', 'member', 'del', '999', second])
         bpp.delete_app('LAG_TABLE', second)
         run(bpp.dvs, ['config', 'portchannel', 'del', second])
+
+
+@pytest.mark.parametrize('failure',['clear','clear_get'])
+def test_cleanup_retries_back_off_and_keep_retiring_group_until_confirmed(bpp,failure):
+    bpp.start(); group=group_oid(bpp); since=len(bpp.trace())
+    bpp.fault(fail=failure)
+    bpp.config.delete_entry(CONFIG,bpp.po)
+    bpp.delete_app(OBJECTS,str(bpp.group_id))
+    def clears():
+        attr=bpp.instrumented.constants['attr_group']
+        return [e for e in bpp.trace()[since:] if e['operation']=='set' and e['attr']==attr and e['value']==0]
+    poll(lambda: True if len(clears())>=8 else None,timeout=35)
+    attempts=clears()[:8]
+    for first,second,minimum in zip(attempts,attempts[1:],[100,200,400,800,1600,3200,5000]):
+        assert second['time_ms']-first['time_ms'] >= minimum-10
+    assert group in bpp.asic.get_keys(NHG)
+    bpp.fault()
+    bpp.asic.wait_for_deleted_entry(NHG,group)
+    bpp.state_db.wait_for_deleted_entry(STATE,bpp.po)
+
+
+@pytest.mark.parametrize('vlan_first',[True,False])
+def test_shared_source_tunnel_outlives_protection_until_final_vlan_or_vrf_map(bpp,vlan_first):
+    bpp.start(); group=group_oid(bpp)
+    vrf='VrfBppShared'; map_key=bpp.source_name+':'+vrf
+    table='ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY'
+    bpp.config.create_entry('VRF',vrf,{'NULL':'NULL'})
+    try:
+        bpp.state_db.wait_for_entry('VRF_OBJECT_TABLE',vrf)
+        bpp.app('VXLAN_VRF_TABLE',map_key,{'vni':'200000','vrf':vrf})
+        def vrf_entries():
+            return [key for key in bpp.asic.get_keys(table) if any(
+                bpp.asic.get_entry(table,key).get(field)=='200000' for field in
+                ['SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY','SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE'])]
+        poll(lambda: True if len(vrf_entries())==2 else None)
+        sources=[key for key in bpp.asic.get_keys(TUNNEL) if
+                 bpp.asic.get_entry(TUNNEL,key).get('SAI_TUNNEL_ATTR_ENCAP_SRC_IP')=='10.10.10.1' and
+                 bpp.asic.get_entry(TUNNEL,key).get('SAI_TUNNEL_ATTR_PEER_MODE')=='SAI_TUNNEL_PEER_MODE_P2MP']
+        assert len(sources)==1
+        source=sources[0]
+        def vlan_delete():
+            bpp.config.delete_entry('VXLAN_TUNNEL_MAP',bpp.source_name+'|bpp_map')
+            bpp.app_db.wait_for_deleted_entry('VXLAN_TUNNEL_MAP_TABLE',bpp.source_name+':bpp_map')
+        def vrf_delete():
+            bpp.delete_app('VXLAN_VRF_TABLE',map_key)
+            poll(lambda: True if not vrf_entries() else None)
+        first,last=(vlan_delete,vrf_delete) if vlan_first else (vrf_delete,vlan_delete)
+        first()
+        # Retire the entire protection path while the other map still owns SIP.
+        bpp.config.delete_entry(CONFIG,bpp.po); bpp.delete_app(BINDING,bpp.po)
+        bpp.delete_app(OBJECTS,str(bpp.group_id)); bpp.delete_app(OBJECTS,str(bpp.member_id))
+        bpp.asic.wait_for_deleted_entry(NHG,group)
+        poll(lambda: True if len(bpp.asic.get_keys(TUNNEL))==1 else None)
+        assert source in bpp.asic.get_keys(TUNNEL)
+        last(); bpp.asic.wait_for_deleted_entry(TUNNEL,source)
+    finally:
+        bpp.delete_app('VXLAN_VRF_TABLE',map_key)
+        bpp.config.delete_entry('VRF',vrf)
