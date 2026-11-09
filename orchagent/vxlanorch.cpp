@@ -1029,21 +1029,24 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 
 void VxlanTunnel::deletePendingSIPTunnel()
 {
-   VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
-   bool dip_tunnels_used  = tunnel_orch->isDipTunnelsSupported();
-
-   if ((!dip_tunnels_used || getDipTunnelCnt() == 0) && del_tnl_hw_pending)
-   {
-       uint8_t mapper_list=0;
-
-       TUNNELMAP_SET_VLAN(mapper_list);
-       TUNNELMAP_SET_VRF(mapper_list);
-       if (!deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP)) return;
-       del_tnl_hw_pending = false;
-       SWSS_LOG_INFO("Removing SIP Tunnel HW which is pending");
-   }
-
-   return;
+    if (!del_tnl_hw_pending || vlan_vrf_vni_count != 0 || isTunnelReferenced()) return;
+    auto tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    if (!tunnel_orch->isDipTunnelsSupported())
+    {
+        Port port;
+        auto name = tunnel_orch->getTunnelPortName(getSrcIP().to_string(), true);
+        if (gPortsOrch->getPort(name, port))
+        {
+            if (!gPortsOrch->removeBridgePort(port)) return;
+            gPortsOrch->removeTunnel(port);
+        }
+    }
+    uint8_t mapper_list = 0;
+    TUNNELMAP_SET_VLAN(mapper_list);
+    TUNNELMAP_SET_VRF(mapper_list);
+    if (!deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP)) return;
+    del_tnl_hw_pending = false;
+    SWSS_LOG_INFO("Removing SIP Tunnel HW which is pending");
 }
 
 int VxlanTunnel::getDipTunnelCnt()
@@ -2329,52 +2332,8 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
 
     if (tunnel_obj->vlan_vrf_vni_count == 0)
     {
-      Port tunnelPort;
-      auto src_vtep = tunnel_obj->getSrcIP().to_string();
-      auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
-      bool ret;
-
-      // If there are Dynamic DIP Tunnels referring to this SIP Tunnel 
-      // then mark it as pending for delete. 
-      if (!tunnel_obj->isTunnelReferenced())
-      {
-          if (!tunnel_orch->isDipTunnelsSupported())
-          {
-              ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
-              if (!ret)
-              {
-                  SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
-                  return true;
-              }
-              ret = gPortsOrch->removeBridgePort(tunnelPort);
-              if (!ret)
-              {
-                  SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
-                                 port_tunnel_name.c_str(), tunnelPort.m_fdb_count);
-                  return true;
-              }
-              gPortsOrch->removeTunnel(tunnelPort);
-          }
-          uint8_t mapper_list=0;
-          TUNNELMAP_SET_VLAN(mapper_list);
-          TUNNELMAP_SET_VRF(mapper_list);
-          tunnel_obj->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-      }
-      else
-      {
-          tunnel_obj->del_tnl_hw_pending = true;
-          if (tunnel_orch->isDipTunnelsSupported())
-          {
-              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion DIP Tunnel count = %d",
-                          tunnel_obj->getDipTunnelCnt());
-          }
-          else
-          {
-              gPortsOrch->getPort(port_tunnel_name, tunnelPort);
-              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
-                            gPortsOrch->getBridgePortReferenceCount(tunnelPort));
-          }
-      }
+        tunnel_obj->del_tnl_hw_pending = true;
+        tunnel_obj->deletePendingSIPTunnel();
     }
 
     vector<string> map_entries = tokenize(tunnel_map_entry_name, '_');
@@ -2430,6 +2389,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     }
 
     auto tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
+    if (tunnel_obj->del_tnl_hw_pending) return false;
     sai_object_id_t vrf_id;
 
     string vrf_name = request.getAttrString("vrf");
@@ -2500,6 +2460,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
 
         vxlan_vrf_table_[full_map_entry_name] = entry;
         vxlan_vrf_tunnel_[vrf_name] = tunnel_obj->getTunnelId();
+        ++tunnel_obj->vlan_vrf_vni_count;
     }
     catch(const std::runtime_error& error)
     {
@@ -2592,6 +2553,12 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
 
         vxlan_vrf_table_.erase(full_map_entry_name);
         vxlan_vrf_tunnel_.erase(vrf_name);
+        --tunnel_obj->vlan_vrf_vni_count;
+        if (tunnel_obj->vlan_vrf_vni_count == 0)
+        {
+            tunnel_obj->del_tnl_hw_pending = true;
+            tunnel_obj->deletePendingSIPTunnel();
+        }
     }
     catch(const std::runtime_error& error)
     {

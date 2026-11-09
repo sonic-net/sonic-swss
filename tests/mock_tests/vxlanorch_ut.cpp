@@ -10,6 +10,7 @@
 #include "orch.h"
 #include "vxlanorch.h"
 #include "portsorch.h"
+#include "vrforch.h"
 
 #undef protected
 #undef private
@@ -1501,4 +1502,90 @@ TEST_F(VxlanOrchTest, ProtectionRmacBatchRequiresLiveEvpnTunnelAndUnicastMac)
     EXPECT_FALSE(tunnel.updateProtectionRmac({1},MacAddress())); EXPECT_FALSE(tunnel.updateProtectionRmac({1},MacAddress("01:00:00:00:00:01")));
     EXPECT_EQ(protectionWrites.size(),1u); EXPECT_EQ(tunnel.protection_rmac_users_.at(1),old);
 }
+}
+
+namespace vxlanorch_test
+{
+// Exercise the production map handlers and native SAI objects, not just counters.
+class VxlanSharedTunnelTest : public mock_orch_test::MockOrchTest,
+                             public ::testing::WithParamInterface<bool>
+{
+protected:
+    unique_ptr<VxlanTunnelMapOrch> vlanMaps;
+    unique_ptr<VxlanVrfMapOrch> vrfMaps;
+    VxlanTunnel *source = nullptr;
+    sai_object_id_t vlanOid = SAI_NULL_OBJECT_ID;
+    void PostSetUp() override
+    {
+        vlanMaps.reset(new VxlanTunnelMapOrch(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME));
+        vrfMaps.reset(new VxlanVrfMapOrch(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME));
+        gDirectory.set(vlanMaps.get()); gDirectory.set(vrfMaps.get());
+        m_VxlanTunnelOrch->is_dip_tunnel_supported = true;
+        source = new VxlanTunnel("SharedSip", IpAddress("10.40.0.1"), IpAddress("0.0.0.0"), TNL_CREATION_SRC_CLI);
+        m_VxlanTunnelOrch->addTunnel("SharedSip", source);
+        sai_attribute_t attr{}; attr.id = SAI_VLAN_ATTR_VLAN_ID; attr.value.u16 = 1000;
+        ASSERT_EQ(sai_vlan_api->create_vlan(&vlanOid, gSwitchId, 1, &attr), SAI_STATUS_SUCCESS);
+        Port vlan("Vlan1000", Port::VLAN); vlan.m_vlan_info.vlan_id = 1000; vlan.m_vlan_info.vlan_oid = vlanOid;
+        gPortsOrch->setPort(vlan.m_alias, vlan);
+        VRFRequest vrf; vrf.parse({"VrfShared", SET_COMMAND, {}});
+        ASSERT_TRUE(gVrfOrch->addOperation(vrf));
+        VxlanTunnelMapRequest l2; l2.parse({"SharedSip:L2", SET_COMMAND, {{"vni", "1000"}, {"vlan", "Vlan1000"}}});
+        ASSERT_TRUE(vlanMaps->addOperation(l2));
+        VxlanVrfRequest l3; l3.parse({"SharedSip:VrfShared", SET_COMMAND, {{"vni", "2000"}, {"vrf", "VrfShared"}}});
+        ASSERT_TRUE(vrfMaps->addOperation(l3));
+    }
+    void removeMap(bool vlan)
+    {
+        if (vlan)
+        {
+            VxlanTunnelMapRequest request; request.parse({"SharedSip:L2", DEL_COMMAND, {}});
+            ASSERT_TRUE(vlanMaps->delOperation(request));
+        }
+        else
+        {
+            VxlanVrfRequest request; request.parse({"SharedSip:VrfShared", DEL_COMMAND, {}});
+            ASSERT_TRUE(vrfMaps->delOperation(request));
+        }
+    }
+    void expectRemoved(sai_object_id_t tunnel)
+    {
+        EXPECT_FALSE(source->isActive()); EXPECT_EQ(source->getTunnelId(), SAI_NULL_OBJECT_ID);
+        sai_attribute_t attr{}; attr.id = SAI_TUNNEL_ATTR_TYPE;
+        EXPECT_EQ(sai_tunnel_api->get_tunnel_attribute(tunnel, 1, &attr), SAI_STATUS_ITEM_NOT_FOUND);
+    }
+    void PreTearDown() override
+    {
+        if (vlanMaps->isTunnelMapExists("SharedSip:L2")) removeMap(true);
+        if (vrfMaps->isVrfMapExists("SharedSip:VrfShared")) removeMap(false);
+        uint8_t maps = 0; TUNNELMAP_SET_VLAN(maps); TUNNELMAP_SET_VRF(maps);
+        if (source->isActive()) { EXPECT_TRUE(source->deleteTunnelHw(maps, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP)); }
+        VRFRequest vrf; vrf.parse({"VrfShared", DEL_COMMAND, {}}); EXPECT_TRUE(gVrfOrch->delOperation(vrf));
+        gPortsOrch->m_portList.erase("Vlan1000"); EXPECT_EQ(sai_vlan_api->remove_vlan(vlanOid), SAI_STATUS_SUCCESS);
+    }
+};
+
+TEST_P(VxlanSharedTunnelTest, BothMapOrdersRetainLiveOwnerAndRemoveFinalTunnel)
+{
+    const auto tunnel = source->getTunnelId(); ASSERT_NE(tunnel, SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(source->vlan_vrf_vni_count, 2u);
+    removeMap(GetParam()); EXPECT_TRUE(source->isActive()); EXPECT_EQ(source->vlan_vrf_vni_count, 1u);
+    removeMap(!GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 0u); expectRemoved(tunnel);
+}
+
+TEST_P(VxlanSharedTunnelTest, SharedPeerOwnersDelayPhysicalRemovalUntilFinalRelease)
+{
+    const auto tunnel = source->getTunnelId();
+    const string peer = "10.40.0.2";
+    const vector<tunnel_user_t> users = {TUNNEL_USER_MAC, TUNNEL_USER_IP, TUNNEL_USER_IMR, TUNNEL_USER_PROTECTION};
+    for (auto user : users) ASSERT_TRUE(source->createDynamicDIPTunnel(peer, user));
+    removeMap(GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 1u); EXPECT_TRUE(source->isActive());
+    removeMap(!GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 0u); EXPECT_TRUE(source->isActive());
+    for (size_t i = 0; i < users.size(); ++i)
+    {
+        ASSERT_TRUE(source->deleteDynamicDIPTunnel(peer, users[i])); source->deletePendingSIPTunnel();
+        if (i + 1 < users.size()) { EXPECT_TRUE(source->isActive()); }
+    }
+    EXPECT_TRUE(source->tnl_users_.empty()); expectRemoved(tunnel);
+}
+INSTANTIATE_TEST_SUITE_P(MapDeletionOrders, VxlanSharedTunnelTest, ::testing::Bool());
 }
