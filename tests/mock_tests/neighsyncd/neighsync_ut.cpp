@@ -13,7 +13,16 @@
 
 #include "../mock_table.h"
 #include "linkcache.h"
+#include "dbconnector.h"
+#include "producerstatetable.h"
+#include "subscriberstatetable.h"
+#include "netmsg.h"
+#include "warmRestartAssist.h"
+
+// Limit private-member access to NeighSync rather than its dependencies.
+#define private public
 #include "neighsyncd/neighsync.h"
+#undef private
 #include "redisutility.h"
 
 using namespace swss;
@@ -130,6 +139,7 @@ class NeighSyncTest : public ::testing::Test
     {
         Table peerSwitchTable(m_configDb.get(), CFG_PEER_SWITCH_TABLE_NAME);
         peerSwitchTable.set("peer_switch_hostname", {{"address_ipv4", "10.0.0.1"}});
+        m_sync->m_isDualToR = true;
     }
 
     bool failedNeighborExists(const std::string& ip, std::vector<FieldValueTuple>* fields = nullptr)

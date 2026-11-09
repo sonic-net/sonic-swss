@@ -107,6 +107,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
+                coppstats_sai_wrap.cpp \
                 shlorch_ut.cpp \
                 mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
@@ -168,6 +169,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdsworch.cpp \
+                $(top_srcdir)/orchagent/pfcwdhworch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
                 $(top_srcdir)/orchagent/policerorch.cpp \
                 $(top_srcdir)/orchagent/crmorch.cpp \
@@ -259,7 +261,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
-                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata
+                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata \
+                -Wl,--wrap=sai_query_stats_capability
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
@@ -360,6 +363,7 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fpmsyncd/fpmsyncd_evpn_mh_ut.cpp \
                          fpmsyncd/fpm_fdbsyncd_ownership_ut.cpp \
+                         fpmsyncd/macsync_ut.cpp \
                          fdbsyncd/fake_warmstartassist.cpp \
                          fdbsyncd/fake_subscriberstatetable.cpp \
                          common/mock_shell_command.cpp \
@@ -373,7 +377,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp \
-                         $(top_srcdir)/fpmsyncd/routesendcoalescer.cpp
+                         $(top_srcdir)/fpmsyncd/routesendcoalescer.cpp \
+                         $(top_srcdir)/fpmsyncd/macsync.cpp
 
 tests_fpmsyncd_SOURCES += $(top_srcdir)/fdbsyncd/fdbsync.cpp
 
