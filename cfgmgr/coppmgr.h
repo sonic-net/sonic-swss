@@ -11,6 +11,12 @@
 
 namespace swss {
 
+/* CONFIG_DB table of ports excluded from every CoPP trap. Defined here until
+ * swss-common's schema.h carries it. */
+#ifndef CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+#define CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME "COPP_TRAP_EXCLUDE_PORTS"
+#endif
+
 /* COPP Trap Table Fields */
 #define COPP_TRAP_ID_LIST_FIELD                "trap_ids"
 #define COPP_TRAP_GROUP_FIELD                  "trap_group"
