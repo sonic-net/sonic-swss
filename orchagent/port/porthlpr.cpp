@@ -25,6 +25,9 @@ typedef decltype(PortConfig::link_event_damping_config) PortDampingConfig_t;
 
 // constants ----------------------------------------------------------------------------------------------------------
 
+static const std::string GB_LINE_PREFIX = "gb_line_";
+static const std::string GB_SYSTEM_PREFIX = "gb_system_";
+
 static const std::uint32_t minPortSpeed = 1;
 static const std::uint32_t maxPortSpeed = 1600000;
 
@@ -697,6 +700,32 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+bool PortHelper::parsePortFastLinkup(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is not allowed", field.c_str());
+        return false;
+    }
+    if (value == "true")
+    {
+        port.fast_linkup.value = true;
+    }
+    else if (value == "false")
+    {
+        port.fast_linkup.value = false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+    port.fast_linkup.is_set = true;
+    return true;
+}
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -764,6 +793,10 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obplev) &serdes
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::obnlev) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::txpolarity) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rxpolarity) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::tx_precoding) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rx_precoding) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
@@ -969,6 +1002,22 @@ bool PortHelper::parsePortPtTimestampTemplate(PortConfig &port, const std::strin
     return true;
 }
 
+bool PortHelper::parsePortMediaType(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty string is prohibited", field.c_str());
+        return false;
+    }
+
+    port.media_type.value = value;
+    port.media_type.is_set = true;
+
+    return true;
+}
+
 bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
@@ -977,6 +1026,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
     {
         const auto &field = cit.first;
         const auto &value = cit.second;
+
+        std::string serdes_field = field;
+        PortSerdes_t *serdes = &port.serdes;
+
+        if (field.rfind(GB_LINE_PREFIX, 0) == 0)
+        {
+            serdes_field = field.substr(GB_LINE_PREFIX.size());
+            serdes = &port.serdes_gb_line;
+        } 
+        else if (field.rfind(GB_SYSTEM_PREFIX, 0) == 0)
+        {
+            serdes_field = field.substr(GB_SYSTEM_PREFIX.size());
+            serdes = &port.serdes_gb_system;
+        }
 
         if (field == PORT_ALIAS)
         {
@@ -1076,6 +1139,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == PORT_FAST_LINKUP)
+        {
+            if (!this->parsePortFastLinkup(port, field, value))
+            {
+                return false;
+            }
+        }
         else if (field == PORT_UNRELIABLE_LOS)
         {
             if (!this->parsePortUnreliableLos(port, field, value))
@@ -1083,128 +1153,156 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
-        else if (field == PORT_PREEMPHASIS)
+        else if (serdes_field == PORT_PREEMPHASIS)
         {
-            if (!this->parsePortSerdes(port.serdes.preemphasis, field, value))
+            if (!this->parsePortSerdes(serdes->preemphasis, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_IDRIVER)
+        else if (serdes_field == PORT_IDRIVER)
         {
-            if (!this->parsePortSerdes(port.serdes.idriver, field, value))
+            if (!this->parsePortSerdes(serdes->idriver, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_IPREDRIVER)
+        else if (serdes_field == PORT_IPREDRIVER)
         {
-            if (!this->parsePortSerdes(port.serdes.ipredriver, field, value))
+            if (!this->parsePortSerdes(serdes->ipredriver, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_PRE1)
+        else if (serdes_field == PORT_PRE1)
         {
-            if (!this->parsePortSerdes(port.serdes.pre1, field, value))
+            if (!this->parsePortSerdes(serdes->pre1, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_PRE2)
+        else if (serdes_field == PORT_PRE2)
         {
-            if (!this->parsePortSerdes(port.serdes.pre2, field, value))
+            if (!this->parsePortSerdes(serdes->pre2, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_PRE3)
+        else if (serdes_field == PORT_PRE3)
         {
-            if (!this->parsePortSerdes(port.serdes.pre3, field, value))
+            if (!this->parsePortSerdes(serdes->pre3, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_MAIN)
+        else if (serdes_field == PORT_MAIN)
         {
-            if (!this->parsePortSerdes(port.serdes.main, field, value))
+            if (!this->parsePortSerdes(serdes->main, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_POST1)
+        else if (serdes_field == PORT_POST1)
         {
-            if (!this->parsePortSerdes(port.serdes.post1, field, value))
+            if (!this->parsePortSerdes(serdes->post1, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_POST2)
+        else if (serdes_field == PORT_POST2)
         {
-            if (!this->parsePortSerdes(port.serdes.post2, field, value))
+            if (!this->parsePortSerdes(serdes->post2, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_POST3)
+        else if (serdes_field == PORT_POST3)
         {
-            if (!this->parsePortSerdes(port.serdes.post3, field, value))
+            if (!this->parsePortSerdes(serdes->post3, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_ATTN)
+        else if (serdes_field == PORT_ATTN)
         {
-            if (!this->parsePortSerdes(port.serdes.attn, field, value))
+            if (!this->parsePortSerdes(serdes->attn, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OB_M2LP)
+        else if (serdes_field == PORT_OB_M2LP)
         {
-            if (!this->parsePortSerdes(port.serdes.ob_m2lp, field, value))
+            if (!this->parsePortSerdes(serdes->ob_m2lp, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OB_ALEV_OUT)
+        else if (serdes_field == PORT_OB_ALEV_OUT)
         {
-            if (!this->parsePortSerdes(port.serdes.ob_alev_out, field, value))
+            if (!this->parsePortSerdes(serdes->ob_alev_out, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OBPLEV)
+        else if (serdes_field == PORT_OBPLEV)
         {
-            if (!this->parsePortSerdes(port.serdes.obplev, field, value))
+            if (!this->parsePortSerdes(serdes->obplev, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_OBNLEV)
+        else if (serdes_field == PORT_OBNLEV)
         {
-            if (!this->parsePortSerdes(port.serdes.obnlev, field, value))
+            if (!this->parsePortSerdes(serdes->obnlev, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_REGN_BFM1P)
+        else if (serdes_field == PORT_REGN_BFM1P)
         {
-            if (!this->parsePortSerdes(port.serdes.regn_bfm1p, field, value))
+            if (!this->parsePortSerdes(serdes->regn_bfm1p, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_REGN_BFM1N)
+        else if (serdes_field == PORT_TX_POLARITY)
         {
-            if (!this->parsePortSerdes(port.serdes.regn_bfm1n, field, value))
+            if (!this->parsePortSerdes(serdes->txpolarity, field, value))
             {
                 return false;
             }
         }
-        else if (field == PORT_CUSTOM_SERDES_ATTRS)
+        else if (serdes_field == PORT_RX_POLARITY)
         {
-            if (!this->parsePortSerdes(port.serdes.custom_collection, field, value))
+            if (!this->parsePortSerdes(serdes->rxpolarity, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_TX_PRECODING)
+        {
+            if (!this->parsePortSerdes(serdes->tx_precoding, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_RX_PRECODING)
+        {
+            if (!this->parsePortSerdes(serdes->rx_precoding, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_REGN_BFM1N)
+        {
+            if (!this->parsePortSerdes(serdes->regn_bfm1n, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_CUSTOM_SERDES_ATTRS)
+        {
+            if (!this->parsePortSerdes(serdes->custom_collection, field, value))
             {
                 return false;
             }
@@ -1298,6 +1396,28 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
             /* Placeholder to prevent warning. Not needed to be parsed here.
              * Setting exists in sonic-port.yang with possible values: routed|access|trunk
              */
+        }
+        else if (field == PORT_MEDIA_TYPE)
+        {
+            if (!this->parsePortMediaType(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_MACSEC)
+        {
+            /* Placeholder to prevent warning. Parsed by macsecorch.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if (field == PORT_ASIC_PORT_NAME)
+        {
+            /* Placeholder to prevent warning. Not used by orchagent.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if ((field == PORT_CORE_ID) || (field == PORT_CORE_PORT_ID) || (field == PORT_NUM_VOQ))
+        {
+            /* Placeholder to prevent warning. These fields are taken from SYSTEM_PORT*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
         }
         else
         {

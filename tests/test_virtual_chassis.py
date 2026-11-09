@@ -205,6 +205,54 @@ class TestVirtualChassis(object):
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
 
+    def test_voq_switch_credit_watchdog(self, vct):
+        """Test credit watchdog SWITCH_TABLE configuration on VOQ switches.
+
+        The credit_watchdog and credit_watchdog_timer fields of SWITCH_TABLE:switch
+        in APPL_DB map to SAI_SWITCH_ATTR_CREDIT_WD and SAI_SWITCH_ATTR_CREDIT_WD_TIMER,
+        which are valid only for VOQ switches. This test verifies that on the line
+        cards (switch_type voq) the sets are programmed in the asic db.
+        """
+
+        if vct is None:
+            return
+
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            # Get the config info
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Test only for line cards
+            if cfg_switch_type == "voq":
+                print("VOQ credit watchdog test for {}".format(name))
+
+                asic_db = dvs.get_asic_db()
+                switch_oid_key = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")[0]
+
+                app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+                switch_tbl = swsscommon.ProducerStateTable(app_db, "SWITCH_TABLE")
+
+                # Disable the credit watchdog and set the watchdog timer, then
+                # verify both sets reach the asic db
+                fvs = swsscommon.FieldValuePairs([("credit_watchdog", "0"),
+                                                  ("credit_watchdog_timer", "600")])
+                switch_tbl.set("switch", fvs)
+                asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH",
+                                             switch_oid_key,
+                                             {"SAI_SWITCH_ATTR_CREDIT_WD": "false",
+                                              "SAI_SWITCH_ATTR_CREDIT_WD_TIMER": "600"})
+
+                # Re-enable the credit watchdog (hardware default) and verify the update
+                fvs = swsscommon.FieldValuePairs([("credit_watchdog", "1")])
+                switch_tbl.set("switch", fvs)
+                asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH",
+                                             switch_oid_key,
+                                             {"SAI_SWITCH_ATTR_CREDIT_WD": "true"})
+
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
 
@@ -915,62 +963,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    def test_chassis_add_remove_ports(self, vct):
-        """Test removing and adding a port in a VOQ chassis.
-
-        Test validates that when a port is created the port is removed from the default vlan.
-        """
-        dvss = vct.dvss
-        for name in dvss.keys():
-            dvs = dvss[name]
-            buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
-
-            config_db = dvs.get_config_db()
-            app_db = dvs.get_app_db()
-            asic_db = dvs.get_asic_db()
-            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
-            cfg_switch_type = metatbl.get("switch_type")
-
-            if cfg_switch_type == "voq":
-                num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
-                # Get the port info we'll flap
-                port = config_db.get_keys('PORT')[0]
-                port_info = config_db.get_entry("PORT", port)
-
-                # Remove port's other configs
-                pgs = config_db.get_keys('BUFFER_PG')
-                queues = config_db.get_keys('BUFFER_QUEUE')
-                for key in pgs:
-                    if port in key:
-                        config_db.delete_entry('BUFFER_PG', key)
-                        app_db.wait_for_deleted_entry('BUFFER_PG_TABLE', key)
-
-                for key in queues:
-                    if port in key:
-                        config_db.delete_entry('BUFFER_QUEUE', key)
-                        app_db.wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
-
-                # Remove port
-                config_db.delete_entry('PORT', port)
-                app_db.wait_for_deleted_entry('PORT_TABLE', port)
-                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
-                                              num_ports)
-                assert len(num) == num_ports
-
-                # Create port
-                config_db.update_entry("PORT", port, port_info)
-                app_db.wait_for_entry("PORT_TABLE", port)
-                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
-                                              num_ports)
-                assert len(num) == num_ports
-
-                # Check that we see the logs for removing default vlan
-                _, logSeen = dvs.runcmd( [ "sh", "-c",
-                    "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
-                assert logSeen.strip() == "1"
-
-            buffer_model.disable_dynamic_buffer(dvs)
-
     def test_voq_egress_queue_counter(self, vct):
         if vct is None:
             return
@@ -997,7 +989,79 @@ class TestVirtualChassis(object):
 
         flex_db = dvs.get_flex_db()
         flex_db.wait_for_n_keys("FLEX_COUNTER_TABLE:QUEUE_STAT_COUNTER", num_queues_to_be_polled)
- 
+
+    def test_voq_wred_queue_counter(self, vct):
+        """Verify WRED flex counter registration on a VOQ-chassis line card.
+
+        Exercises both registration paths in
+        PortsOrch::addWredQueueFlexCounters: the egress-queue path (all 4
+        WRED stats) and the per-port VOQ path (WRED_DROPPED_* only). The
+        WRED_ECN_MARKED_* counters are intentionally not registered on
+        the VOQ object because ECN marking on VOQ-chassis platforms is
+        reported at the egress queue object, not at the ingress VOQ.
+        """
+        if vct is None:
+            return
+        dvss = vct.dvss
+        dvs = None
+        for name in dvss.keys():
+            if "supervisor" in name:
+                continue
+            dvs = dvss[name]
+            break
+        assert dvs
+
+        _, _ = dvs.runcmd("counterpoll wredqueue enable")
+
+        # Layout matches test_voq_egress_queue_counter above
+        num_voqs_per_port = 8
+        num_queues_per_local_port = 20
+        num_ports_per_linecard = 32
+        num_local_ports = 32
+        num_linecards = 3
+        num_egress_queues = num_local_ports * num_queues_per_local_port
+        num_voqs = num_ports_per_linecard * num_voqs_per_port * num_linecards
+        num_queues_to_be_polled = num_voqs + num_egress_queues
+
+        flex_db = dvs.get_flex_db()
+        flex_db.wait_for_n_keys(
+            "FLEX_COUNTER_TABLE:WRED_ECN_QUEUE_STAT_COUNTER",
+            num_queues_to_be_polled,
+        )
+
+        # Verify stat-list semantics: VOQ entries register only
+        # WRED_DROPPED_*; egress entries register all four.
+        counters_db = dvs.get_counters_db()
+        voq_name_map = counters_db.get_entry("COUNTERS_VOQ_NAME_MAP", "")
+        queue_name_map = counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
+        assert voq_name_map, "No VOQ name map populated on linecard"
+        assert queue_name_map, "No queue name map populated on linecard"
+
+        sample_voq_oid = next(iter(voq_name_map.values()))
+        voq_stat_list = flex_db.db_connection.hgetall(
+            "FLEX_COUNTER_TABLE:WRED_ECN_QUEUE_STAT_COUNTER:" + sample_voq_oid
+        ).get("QUEUE_COUNTER_ID_LIST", "")
+        assert "WRED_DROPPED_PACKETS" in voq_stat_list
+        assert "WRED_DROPPED_BYTES" in voq_stat_list
+        assert "WRED_ECN_MARKED_PACKETS" not in voq_stat_list, \
+            "ECN-marked stat must not be registered on VOQ object"
+        assert "WRED_ECN_MARKED_BYTES" not in voq_stat_list
+
+        voq_oid_set = set(voq_name_map.values())
+        egress_oid = None
+        for oid in queue_name_map.values():
+            if oid not in voq_oid_set:
+                egress_oid = oid
+                break
+        assert egress_oid, "No egress-only queue OID found"
+        egress_stat_list = flex_db.db_connection.hgetall(
+            "FLEX_COUNTER_TABLE:WRED_ECN_QUEUE_STAT_COUNTER:" + egress_oid
+        ).get("QUEUE_COUNTER_ID_LIST", "")
+        assert "WRED_DROPPED_PACKETS" in egress_stat_list
+        assert "WRED_DROPPED_BYTES" in egress_stat_list
+        assert "WRED_ECN_MARKED_PACKETS" in egress_stat_list
+        assert "WRED_ECN_MARKED_BYTES" in egress_stat_list
+
     def test_chassis_wred_profile_on_system_ports(self, vct):
         """Test whether wred profile is applied on system ports in VoQ chassis.
         """
@@ -1038,6 +1102,78 @@ class TestVirtualChassis(object):
                 # Total number of logs = (No of system ports * No of lossless priorities) - No of lossless priorities for CPU ports
                 assert logSeen.strip() == str(len(system_ports)*2 - 2)
     
+    def test_chassis_add_remove_ports(self, vct):
+        """Test removing and adding a port in a VOQ chassis.
+
+        Test validates that when a port is created the port is removed from the default vlan.
+        """
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+
+            config_db = dvs.get_config_db()
+            app_db = dvs.get_app_db()
+            asic_db = dvs.get_asic_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+            cfg_switch_type = metatbl.get("switch_type")
+            cfg_hostname = metatbl.get("hostname")
+            cfg_asic_name = metatbl.get("asic_name")
+
+            if cfg_switch_type == "voq":
+                num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+                # Get the port info we'll flap
+                port = config_db.get_keys('PORT')[0]
+                port_info = config_db.get_entry("PORT", port)
+                system_port = cfg_hostname+"|"+cfg_asic_name+"|"+port
+
+                # Remove port's other configs
+                pgs = config_db.get_keys('BUFFER_PG')
+                buf_queues = config_db.get_keys('BUFFER_QUEUE')
+                queues = config_db.get_keys('QUEUE')
+                for key in pgs:
+                    if port in key:
+                        config_db.delete_entry('BUFFER_PG', key)
+                        app_db.wait_for_deleted_entry('BUFFER_PG_TABLE', key)
+
+                for key in buf_queues:
+                    if port in key:
+                        config_db.delete_entry('BUFFER_QUEUE', key)
+                        app_db.wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
+
+                queue_info = {}
+                for key in queues:
+                    if system_port in key:
+                        queue_info[key] = config_db.get_entry("QUEUE", key)
+                        config_db.delete_entry('QUEUE', key)
+                        config_db.wait_for_deleted_entry('QUEUE_TABLE', key)
+
+                # Remove port
+                config_db.delete_entry('PORT', port)
+                app_db.wait_for_deleted_entry('PORT_TABLE', port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports)
+                assert len(num) == num_ports
+
+                # Create port
+                config_db.update_entry("PORT", port, port_info)
+                app_db.wait_for_entry("PORT_TABLE", port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports)
+                assert len(num) == num_ports
+
+                if len(queue_info):
+                    for key, value in queue_info.items():
+                        config_db.update_entry("QUEUE", key, value)
+                        config_db.wait_for_entry("QUEUE", key)
+
+                # Check that we see the logs for removing default vlan
+                _, logSeen = dvs.runcmd( [ "sh", "-c",
+                    "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
+                assert logSeen.strip() == "1"
+
+            buffer_model.disable_dynamic_buffer(dvs)
+
     def test_chassis_system_intf_status(self, vct):
         dvs = self.get_sup_dvs(vct)
         chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)

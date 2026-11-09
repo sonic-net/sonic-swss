@@ -355,12 +355,25 @@ public:
             {
                 return nullptr;
             }
-            if (port->m_line_side_id != SAI_NULL_OBJECT_ID)
+
+            const auto *phy = get_gearbox_phy();
+            bool force_npu = true;
+            if (phy)
+            {
+                force_npu = !phy->macsec_supported;
+            }
+
+            if (!force_npu && port->m_line_side_id != SAI_NULL_OBJECT_ID)
             {
                 m_port_id = std::make_unique<sai_object_id_t>(port->m_line_side_id);
             }
             else
             {
+                if (force_npu && port->m_line_side_id != SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_NOTICE("MACsec: %s -> backend=NPU (phy marked unsupported), using NPU port",
+                                    m_port_name ? m_port_name->c_str() : "");
+                }
                 m_port_id = std::make_unique<sai_object_id_t>(port->m_port_id);
             }
         }
@@ -381,12 +394,27 @@ public:
             {
                 switchId = port->m_switch_id;
             }
+
             if (switchId == SAI_NULL_OBJECT_ID)
             {
                 SWSS_LOG_ERROR("Switch ID cannot be found");
                 return nullptr;
             }
             m_switch_id = std::make_unique<sai_object_id_t>(switchId);
+
+            const auto *phy = port ? m_orch->m_port_orch->getGearboxPhy(*port) : nullptr;
+            bool force_npu = true;
+            if (phy)
+            {
+                force_npu = !phy->macsec_supported;
+            }
+
+            if (force_npu && (*m_switch_id != gSwitchId))
+            {
+                SWSS_LOG_NOTICE("MACsec: %s -> backend=NPU (phy marked unsupported), override switch to global",
+                                m_port_name ? m_port_name->c_str() : "");
+                *m_switch_id = gSwitchId;
+            }
         }
         return m_switch_id.get();
     }
@@ -1870,7 +1898,7 @@ task_process_status MACsecOrch::updateMACsecSC(
             return task_failed;
         }
     }
-    else
+    else if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
         if (!setEncodingAN(*ctx.get_macsec_sc(), sc_attr, direction))
         {
@@ -1886,19 +1914,32 @@ bool MACsecOrch::setEncodingAN(
     const TaskArgs &sc_attr,
     sai_macsec_direction_t direction)
 {
-    if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-    {
-        if (!get_value(sc_attr, "encoding_an", sc.m_encoding_an))
-        {
-            SWSS_LOG_WARN("Wrong parameter, the encoding AN cannot be found");
-            return false;
-        }
-    }
-    else
+    SWSS_LOG_ENTER();
+
+    if (direction != SAI_MACSEC_DIRECTION_EGRESS)
     {
         SWSS_LOG_WARN("Cannot set encoding AN for the ingress SC");
         return false;
     }
+
+    macsec_an_t new_an;
+    if (!get_value(sc_attr, "encoding_an", new_an))
+    {
+        SWSS_LOG_WARN("setEncodingAN: 'encoding_an' field missing in SET on egress SC");
+        return false;
+    }
+
+    if (sc.m_encoding_an == new_an)
+    {
+        return true;
+    }
+
+    // Only the in-memory encoding AN moves. The previous AN's SA stays until
+    // wpa_supplicant retires it (CP RETIRE, 3 s after the switch); orchagent
+    // never removes an SA it was not told to remove. State left behind by a
+    // supplicant that died is cleared by macsecmgrd before a new session
+    // starts, not inferred here.
+    sc.m_encoding_an = new_an;
     return true;
 }
 
@@ -2507,28 +2548,32 @@ bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
 
 FlexCounterManager& MACsecOrch::MACsecSaStatManager(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_sa_stat_manager;
     return m_macsec_sa_stat_manager;
 }
 
 FlexCounterManager& MACsecOrch::MACsecSaAttrStatManager(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_sa_attr_manager;
     return m_macsec_sa_attr_manager;
 }
 
 FlexCounterManager& MACsecOrch::MACsecFlowStatManager(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_flow_stat_manager;
     return m_macsec_flow_stat_manager;
 }
 
 Table& MACsecOrch::MACsecCountersMap(MACsecOrchContext &ctx)
 {
-    if (ctx.get_gearbox_phy() != nullptr)
+    const auto *phy = ctx.get_gearbox_phy();
+    if (phy && phy->macsec_supported)
         return m_gb_macsec_counters_map;
     return m_macsec_counters_map;
 }

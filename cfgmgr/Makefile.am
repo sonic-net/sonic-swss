@@ -126,20 +126,21 @@ stpmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-vlanmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-teammgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-portmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-intfmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-buffermgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-vrfmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-nbrmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-vxlanmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-sflowmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-natmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-coppmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-tunnelmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-macsecmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-fabricmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
-stpmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+ASAN_SOURCES = $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+vlanmgrd_SOURCES += $(ASAN_SOURCES)
+teammgrd_SOURCES += $(ASAN_SOURCES)
+portmgrd_SOURCES += $(ASAN_SOURCES)
+intfmgrd_SOURCES += $(ASAN_SOURCES)
+buffermgrd_SOURCES += $(ASAN_SOURCES)
+vrfmgrd_SOURCES += $(ASAN_SOURCES)
+nbrmgrd_SOURCES += $(ASAN_SOURCES)
+vxlanmgrd_SOURCES += $(ASAN_SOURCES)
+sflowmgrd_SOURCES += $(ASAN_SOURCES)
+natmgrd_SOURCES += $(ASAN_SOURCES)
+coppmgrd_SOURCES += $(ASAN_SOURCES)
+tunnelmgrd_SOURCES += $(ASAN_SOURCES)
+macsecmgrd_SOURCES += $(ASAN_SOURCES)
+fabricmgrd_SOURCES += $(ASAN_SOURCES)
+stpmgrd_SOURCES += $(ASAN_SOURCES)
 endif
 

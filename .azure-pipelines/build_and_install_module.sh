@@ -49,12 +49,15 @@ build_and_install_kmodule()
     KERNEL_PACKAGE_VERSION=$(trim $(apt-cache show linux-image-unsigned-${KERNEL_RELEASE} | grep ^Version: | cut -d':' -f 2))
     SOURCE_PACKAGE_VERSION=$(apt-cache showsrc "${KERNEL_PACKAGE_SOURCE}" | grep ^Version: | cut -d':' -f 2 | tr '\n' ' ')
     if ! echo "${SOURCE_PACKAGE_VERSION}" | grep "\b${KERNEL_PACKAGE_VERSION}\b"; then
-        echo "WARN: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match any of the available source " \
+        echo "WARNING: the running kernel version (${KERNEL_PACKAGE_VERSION}) doesn't match any of the available source " \
             "package versions (${SOURCE_PACKAGE_VERSION}) being downloaded. There's no guarantee any of the available " \
             "source packages can be loaded into the kernel or function correctly. Please update your kernel and reboot " \
             "your system so that it's running a matching kernel version." >&2
+        echo "Continuing with the build anyways" >&2
+        apt-get source "linux-image-unsigned-${KERNEL_RELEASE}"
+    else
+        apt-get source "linux-image-unsigned-${KERNEL_RELEASE}=${KERNEL_PACKAGE_VERSION}"
     fi
-    apt-get source "linux-image-unsigned-${KERNEL_RELEASE}"
 
     # Recover the original apt sources list
     cp /etc/apt/sources.list.bk /etc/apt/sources.list
@@ -72,6 +75,7 @@ build_and_install_kmodule()
     mv .config .config.bk
     cp /boot/config-$(uname -r) .config
     grep NET_TEAM .config.bk >> .config
+    make olddefconfig
     make VERSION=$VERSION PATCHLEVEL=$PATCHLEVEL SUBLEVEL=$SUBLEVEL EXTRAVERSION=-${EXTRAVERSION} LOCALVERSION=-${LOCALVERSION} modules_prepare
     cp /usr/src/linux-headers-$(uname -r)/Module.symvers .
     make -j$(nproc) M=drivers/net/team

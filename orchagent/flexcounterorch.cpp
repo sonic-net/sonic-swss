@@ -15,12 +15,14 @@
 #include "pfcwdorch.h"
 #include "routeorch.h"
 #include "srv6orch.h"
+#include "icmporch.h"
 #include "switchorch.h"
 #include "debugcounterorch.h"
 #include "fabricportsorch.h"
 
 #include "dash/dashorch.h"
 #include "dash/dashmeterorch.h"
+#include "dash/dashhaorch.h"
 #include "flex_counter/flowcounterrouteorch.h"
 
 #include "flexcounterorch.h"
@@ -36,13 +38,17 @@ extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern Srv6Orch *gSrv6Orch;
+extern IcmpOrch *gIcmpOrch;
 extern SwitchOrch *gSwitchOrch;
 extern sai_object_id_t gSwitchId;
+extern string gMySwitchType;
 
-int gFlexCounterDelaySec;
+#define FLEX_COUNTER_DELAY_SEC 60
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
+#define PORT_PHY_ATTR_KEY           "PORT_PHY_ATTR"
+#define PORT_PHY_SERDES_ATTR_KEY    "PORT_PHY_SERDES_ATTR"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
 #define QUEUE_WATERMARK             "QUEUE_WATERMARK"
@@ -58,11 +64,16 @@ int gFlexCounterDelaySec;
 #define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
 #define WRED_PORT_KEY               "WRED_ECN_PORT"
 #define SRV6_KEY                    "SRV6"
+#define ICMP_SESSION_KEY            "ICMP_SESSION"
 #define SWITCH_KEY                  "SWITCH"
+#define HA_SET_KEY                  "HA_SET"
+#define COPP_STATS_KEY               "COPP_STATS"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_PHY_ATTR", PORT_PHY_ATTR_FLEX_COUNTER_GROUP},
+    {"PORT_PHY_SERDES_ATTR", PORT_PHY_SERDES_ATTR_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_MONITOR_COUNTER", DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP},
     {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
@@ -87,7 +98,10 @@ unordered_map<string, string> flexCounterGroupMap =
     {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {SRV6_KEY, SRV6_STAT_COUNTER_FLEX_COUNTER_GROUP},
-    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {ICMP_SESSION_KEY, ICMP_SESSION_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {SWITCH_KEY, SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {HA_SET_KEY, HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {COPP_STATS_KEY, COPP_STATS_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -116,12 +130,11 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
         SWSS_LOG_ERROR("System error reading create_only_config_db_buffers: %s", e.what());
     }
 
-    SWSS_LOG_NOTICE("Counter delay is %d seconds", gFlexCounterDelaySec);
-    if (gFlexCounterDelaySec > 0)
+    m_delayTimer = std::make_unique<SelectableTimer>(timespec{.tv_sec = FLEX_COUNTER_DELAY_SEC, .tv_nsec = 0});
+    if (WarmStart::isWarmStart())
     {
-        m_delayTimer = new SelectableTimer(timespec{.tv_sec = static_cast<time_t>(gFlexCounterDelaySec), .tv_nsec = 0});
-        auto delayExecutor = new ExecutableTimer(m_delayTimer, this, "FLEX_COUNTER_DELAY");
-        Orch::addExecutor(delayExecutor);
+        m_delayExecutor = std::make_unique<ExecutableTimer>(m_delayTimer.get(), this, "FLEX_COUNTER_DELAY");
+        Orch::addExecutor(m_delayExecutor.get());
         m_delayTimer->start();
     }
     else
@@ -153,7 +166,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
     VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     DashOrch* dash_orch = gDirectory.get<DashOrch*>();
-    DashMeterOrch* dash_meter_orch = gDirectory.get<DashMeterOrch*>();
+    DashHaOrch* dash_ha_orch = gDirectory.get<DashHaOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -200,6 +213,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             setFlexCounterGroupPollInterval(flexCounterGroupMap[key], value, true);
                         }
+                    }
+                    // PORT_PHY_ATTR_KEY and PORT_PHY_SERDES_ATTR_KEY share the 'counterpoll phy' knob
+                    if (key == PORT_PHY_ATTR_KEY)
+                    {
+                        setFlexCounterGroupPollInterval(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value);
                     }
                 }
                 else if (field == BULK_CHUNK_SIZE_FIELD)
@@ -288,9 +306,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         dash_orch->handleFCStatusUpdate((value == "enable"));
                     }
-                    if (dash_meter_orch && (key == DASH_METER_KEY))
+                    if (dash_orch && (key == DASH_METER_KEY))
                     {
-                        dash_meter_orch->handleMeterFCStatusUpdate((value == "enable"));
+                        dash_orch->handleMeterFCStatusUpdate((value == "enable"));
+                    }
+                    if (dash_ha_orch && (key == HA_SET_KEY))
+                    {
+                        dash_ha_orch->handleHaSetFCStatusUpdate((value == "enable"));
                     }
                     if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
                     {
@@ -303,6 +325,21 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             gCoppOrch->clearHostIfTrapCounterIdList();
                             m_hostif_trap_counter_enabled = false;
+                        }
+                    }
+                    if (gCoppOrch && (key == COPP_STATS_KEY))
+                    {
+                        // No-op when the SAI doesn't advertise policer stats;
+                        // the flag still tracks the user toggle.
+                        if (value == "enable")
+                        {
+                            m_copp_stats_counter_enabled = true;
+                            gCoppOrch->generatePolicerCounterIdList();
+                        }
+                        else if (value == "disable")
+                        {
+                            gCoppOrch->clearPolicerCounterIdList();
+                            m_copp_stats_counter_enabled = false;
                         }
                     }
                     if (gFlowCounterRouteOrch && gFlowCounterRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
@@ -322,6 +359,39 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gSrv6Orch->setCountersState((value == "enable"));
                     }
+                    if (gIcmpOrch && (key == ICMP_SESSION_KEY))
+                    {
+                        gIcmpOrch->setCountersState((value == "enable"));
+                    }
+                    if (gPortsOrch && (key == PORT_PHY_ATTR_KEY))
+                    {
+                        if(value == "enable")
+                        {
+                            if (!m_port_phy_attr_enabled)
+                            {
+                                m_port_phy_attr_enabled = true;
+                                gPortsOrch->generatePortPhyAttrCounterMap();
+                            }
+                            if (!m_port_phy_serdes_attr_enabled)
+                            {
+                                m_port_phy_serdes_attr_enabled = true;
+                                gPortsOrch->generatePortPhySerdesAttrCounterMap();
+                            }
+                        }
+                        if (value == "disable")
+                        {
+                            if (m_port_phy_attr_enabled)
+                            {
+                                gPortsOrch->clearPortPhyAttrCounterMap();
+                                m_port_phy_attr_enabled = false;
+                            }
+                            if (m_port_phy_serdes_attr_enabled)
+                            {
+                                gPortsOrch->clearPortPhySerdesAttrCounterMap();
+                                m_port_phy_serdes_attr_enabled = false;
+                            }
+                        }
+                    }
                     if (gSwitchOrch && (key == SWITCH_KEY) && (value == "enable"))
                     {
                         gSwitchOrch->generateSwitchCounterIdList();
@@ -340,6 +410,11 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             setFlexCounterGroupOperation(flexCounterGroupMap[key], value, true);
                         }
+                    }
+                    // PORT_PHY_ATTR_KEY and PORT_PHY_SERDES_ATTR_KEY share the 'counterpoll phy' knob
+                    if (key == PORT_PHY_ATTR_KEY)
+                    {
+                        setFlexCounterGroupOperation(flexCounterGroupMap[PORT_PHY_SERDES_ATTR_KEY], value);
                     }
                 }
                 else
@@ -383,6 +458,16 @@ void FlexCounterOrch::doTask(SelectableTimer&)
 bool FlexCounterOrch::getPortCountersState() const
 {
     return m_port_counter_enabled;
+}
+
+bool FlexCounterOrch::getPortPhyAttrCounterState() const
+{
+    return m_port_phy_attr_enabled;
+}
+
+bool FlexCounterOrch::getPortPhySerdesAttrCountersState() const
+{
+    return m_port_phy_serdes_attr_enabled;
 }
 
 bool FlexCounterOrch::getPortBufferDropCountersState() const
@@ -481,7 +566,9 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 
     map<string, FlexCounterQueueStates> queuesStateVector;
 
-    if (!isCreateOnlyConfigDbBuffers())
+    // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queues of all front panel and system ports
+    // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration.
+    if ((!isCreateOnlyConfigDbBuffers()) || (gMySwitchType == "voq"))
     {
         FlexCounterQueueStates flexCounterQueueState(0);
         queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));

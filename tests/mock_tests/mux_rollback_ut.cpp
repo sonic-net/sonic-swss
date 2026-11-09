@@ -6,12 +6,17 @@
 #undef protected
 #include "ut_helper.h"
 #define private public
+#define protected public
 #include "neighorch.h"
 #include "muxorch.h"
+#include "fdborch.h"
+#undef protected
 #undef private
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_orch_test.h"
+#include "nexthopkey.h"
+#include "ipaddress.h"
 #include "gtest/gtest.h"
 #include <string>
 
@@ -20,7 +25,7 @@ EXTERN_MOCK_FNS
 namespace mux_rollback_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
-    DEFINE_SAI_API_MOCK(route);
+    DEFINE_SAI_API_MOCK_SPECIFY_ENTRY_WITH_SET(route, route);
     DEFINE_SAI_GENERIC_API_MOCK(acl, acl_entry);
     DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(next_hop, next_hop);
     using ::testing::_;
@@ -29,7 +34,9 @@ namespace mux_rollback_test
     using ::testing::Return;
     using ::testing::Throw;
     using ::testing::DoAll;
+    using ::testing::SetArgPointee;
     using ::testing::SetArrayArgument;
+    using ::testing::AtLeast;
 
     static const string TEST_INTERFACE = "Ethernet4";
 
@@ -37,12 +44,15 @@ namespace mux_rollback_test
     sai_bulk_remove_neighbor_entry_fn old_remove_neighbor_entries;
     sai_bulk_create_route_entry_fn old_create_route_entries;
     sai_bulk_remove_route_entry_fn old_remove_route_entries;
+    sai_bulk_set_route_entry_attribute_fn old_set_route_entries_attribute;
     sai_bulk_object_create_fn old_object_create;
     sai_bulk_object_remove_fn old_object_remove;
 
     class MuxRollbackTest : public MockOrchTest
     {
     protected:
+        std::string m_neighbor_mode = "host-route";
+
         void SetMuxStateFromAppDb(std::string state)
         {
             Table mux_cable_table = Table(m_app_db.get(), APP_MUX_CABLE_TABLE_NAME);
@@ -55,6 +65,12 @@ namespace mux_rollback_test
         {
             m_MuxCable->setState(state);
             EXPECT_EQ(state, m_MuxCable->getState());
+        }
+
+        bool IsPrefixBasedMuxNeighbor()
+        {
+            NextHopKey nhKey = NextHopKey(IpAddress(SERVER_IP1), VLAN_1000);
+            return gNeighOrch->isPrefixNeighborNh(nhKey);
         }
 
         void ApplyInitialConfigs()
@@ -109,6 +125,7 @@ namespace mux_rollback_test
 
             mux_cable_table.set(TEST_INTERFACE, { { "server_ipv4", SERVER_IP1 + "/32" },
                                                   { "server_ipv6", "a::a/128" },
+                                                  { "neighbor_mode", m_neighbor_mode },
                                                   { "state", "auto" } });
 
             gPortsOrch->addExistingData(&port_table);
@@ -151,12 +168,14 @@ namespace mux_rollback_test
             old_object_remove = gNeighOrch->gNextHopBulker.remove_entries;
             old_create_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.create_entries;
             old_remove_route_entries = m_MuxCable->nbr_handler_->gRouteBulker.remove_entries;
+            old_set_route_entries_attribute = m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute;
             gNeighOrch->gNeighBulker.create_entries = mock_create_neighbor_entries;
             gNeighOrch->gNeighBulker.remove_entries = mock_remove_neighbor_entries;
             gNeighOrch->gNextHopBulker.create_entries = mock_create_next_hops;
             gNeighOrch->gNextHopBulker.remove_entries = mock_remove_next_hops;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = mock_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = mock_remove_route_entries;
+            m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute = mock_set_route_entries_attribute;
         }
 
         void PreTearDown() override
@@ -172,14 +191,27 @@ namespace mux_rollback_test
             gNeighOrch->gNextHopBulker.remove_entries = old_object_remove;
             m_MuxCable->nbr_handler_->gRouteBulker.create_entries = old_create_route_entries;
             m_MuxCable->nbr_handler_->gRouteBulker.remove_entries = old_remove_route_entries;
+            m_MuxCable->nbr_handler_->gRouteBulker.set_entries_attribute = old_set_route_entries_attribute;
+        }
+    };
+
+    class MuxRollbackPrefixRouteTest : public MuxRollbackTest
+    {
+    public:
+        MuxRollbackPrefixRouteTest()
+        {
+            m_neighbor_mode = "prefix-route";
         }
     };
 
     TEST_F(MuxRollbackTest, StandbyToActiveNeighborAlreadyExists)
     {
-        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
-            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
+            EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
+                .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        }
         SetAndAssertMuxState(ACTIVE_STATE);
     }
 
@@ -187,25 +219,48 @@ namespace mux_rollback_test
     {
         SetAndAssertMuxState(ACTIVE_STATE);
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
-            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
+                .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        }
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveRouteNotFound)
     {
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
-        EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
-            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
+                .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        }
         SetAndAssertMuxState(ACTIVE_STATE);
+    }
+
+    TEST_F(MuxRollbackPrefixRouteTest, StandbyToActiveSetRouteAttrNotFoundRollbackToStandby)
+    {
+        std::vector<sai_status_t> exp_status_not_found{SAI_STATUS_ITEM_NOT_FOUND};
+        std::vector<sai_status_t> exp_status_success{SAI_STATUS_SUCCESS};
+        EXPECT_CALL(*mock_sai_route_api, set_route_entries_attribute)
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status_not_found.begin(), exp_status_not_found.end()),
+                            Return(SAI_STATUS_ITEM_NOT_FOUND)))
+            .WillOnce(DoAll(SetArrayArgument<4>(exp_status_success.begin(), exp_status_success.end()),
+                            Return(SAI_STATUS_SUCCESS)));
+        SetMuxStateFromAppDb(ACTIVE_STATE);
+        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyRouteAlreadyExists)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
         std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
-            .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+                .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        }
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
@@ -226,78 +281,636 @@ namespace mux_rollback_test
 
     TEST_F(MuxRollbackTest, StandbyToActiveNextHopAlreadyExists)
     {
-        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_ALREADY_EXISTS};
+            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+                .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_ALREADY_EXISTS)));
+        }
         SetAndAssertMuxState(ACTIVE_STATE);
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyNextHopNotFound)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
-        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            std::vector<sai_status_t> exp_status{SAI_STATUS_ITEM_NOT_FOUND};
+            EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
+                .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_ITEM_NOT_FOUND)));
+        }
         SetAndAssertMuxState(STANDBY_STATE);
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveRuntimeErrorRollbackToStandby)
     {
-        EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
-            .WillOnce(Throw(runtime_error("Mock runtime error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, remove_route_entries)
+                .WillOnce(Throw(runtime_error("Mock runtime error")));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyRuntimeErrorRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        EXPECT_CALL(*mock_sai_route_api, create_route_entries)
-            .WillOnce(Throw(runtime_error("Mock runtime error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_route_api, create_route_entries)
+                .WillOnce(Throw(runtime_error("Mock runtime error")));
+        }
         SetMuxStateFromAppDb(STANDBY_STATE);
-        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to active
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveLogicErrorRollbackToStandby)
     {
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
-            .WillOnce(Throw(logic_error("Mock logic error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entries)
+                .WillOnce(Throw(logic_error("Mock logic error")));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyLogicErrorRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
-            .WillOnce(Throw(logic_error("Mock logic error")));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entries)
+                .WillOnce(Throw(logic_error("Mock logic error")));
+        }
         SetMuxStateFromAppDb(STANDBY_STATE);
-        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to active
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveExceptionRollbackToStandby)
     {
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(Throw(exception()));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+                .WillOnce(Throw(exception()));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, ActiveToStandbyExceptionRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE_STATE);
-        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
-            .WillOnce(Throw(exception()));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hops)
+                .WillOnce(Throw(exception()));
+        }
         SetMuxStateFromAppDb(STANDBY_STATE);
-        EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to active
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
     }
 
     TEST_F(MuxRollbackTest, StandbyToActiveNextHopTableFullRollbackToActive)
     {
         std::vector<sai_status_t> exp_status{SAI_STATUS_TABLE_FULL};
-        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
-            .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_TABLE_FULL)));
+        if (!IsPrefixBasedMuxNeighbor())
+        {
+            EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+                .WillOnce(DoAll(SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_TABLE_FULL)));
+        }
         SetMuxStateFromAppDb(ACTIVE_STATE);
-        EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            // With prefix-based neighbors, state transition should succeed
+            EXPECT_EQ(ACTIVE_STATE, m_MuxCable->getState());
+        }
+        else
+        {
+            // Without prefix-based neighbors, expect rollback to standby
+            EXPECT_EQ(STANDBY_STATE, m_MuxCable->getState());
+        }
+    }
+
+    // Covers MuxOrch::updateFdb shared-MAC fallback: when an FDB add on a
+    // mux port matches the MAC of a neighbor that bypassed mux registration
+    // (e.g. learned while the FDB was aged out), the fallback loop converts
+    // it. The negative-filter neighbors (different MAC, prefix_route) must
+    // be skipped so unrelated NeighOrch entries are not touched.
+    TEST_F(MuxRollbackTest, UpdateFdbConvertsStrandedSharedMacNeighbor)
+    {
+        if (IsPrefixBasedMuxNeighbor())
+        {
+            GTEST_SKIP() << "Fallback path is for host-route mux neighbors";
+        }
+
+        // Use a MAC distinct from the fixture's SERVER_IP1 (MAC4) so the
+        // first loop's port-move branch finds no match and leaves
+        // found_existing_mux_neighbor false, letting the fallback fire.
+        const MacAddress shared_mac("62:f9:65:10:2f:05");
+        const MacAddress other_mac("aa:bb:cc:dd:ee:ff");
+
+        // Stranded same-MAC neighbor that the fallback should convert.
+        IpAddress ip_stranded("192.168.0.3");
+        NeighborEntry stranded_entry(ip_stranded, VLAN_1000);
+        NextHopKey stranded_nh(ip_stranded, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[stranded_entry] =
+            { shared_mac, /*hw_configured*/ false, 0, /*prefix_route*/ false };
+
+        // Different-MAC neighbor — must hit the mac-mismatch continue.
+        IpAddress ip_other_mac("192.168.0.4");
+        NeighborEntry other_mac_entry(ip_other_mac, VLAN_1000);
+        NextHopKey other_mac_nh(ip_other_mac, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[other_mac_entry] =
+            { other_mac, false, 0, false };
+
+        // Prefix-route same-MAC neighbor — must hit the prefix_route continue.
+        IpAddress ip_prefix("192.168.0.5");
+        NeighborEntry prefix_entry(ip_prefix, VLAN_1000);
+        NextHopKey prefix_nh(ip_prefix, VLAN_1000);
+        gNeighOrch->m_syncdNeighbors[prefix_entry] =
+            { shared_mac, false, 0, /*prefix_route*/ true };
+
+        // Pre-populate the FDB cache so getMuxPort() resolves shared_mac to
+        // TEST_INTERFACE without going through SAI notifications.
+        Port vlan_port, eth_port;
+        ASSERT_TRUE(gPortsOrch->getVlanByVlanId(1000, vlan_port));
+        ASSERT_TRUE(gPortsOrch->getPort(TEST_INTERFACE, eth_port));
+        FdbEntry fdb_entry;
+        fdb_entry.mac = shared_mac;
+        fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+        fdb_entry.port_name = TEST_INTERFACE;
+        FdbData fdb_data{};
+        fdb_data.bridge_port_id = eth_port.m_bridge_port_id;
+        fdb_data.type = "dynamic";
+        fdb_data.origin = FDB_ORIGIN_LEARN;
+        gFdbOrch->m_entries[fdb_entry] = fdb_data;
+
+        ASSERT_EQ(m_MuxOrch->mux_nexthop_tb_.find(stranded_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+
+        FdbUpdate update;
+        update.entry = fdb_entry;
+        update.add = true;
+        update.type = "dynamic";
+        m_MuxOrch->updateFdb(update);
+
+        // The stranded neighbor must now be a mux nexthop on TEST_INTERFACE.
+        auto it = m_MuxOrch->mux_nexthop_tb_.find(stranded_nh);
+        ASSERT_NE(it, m_MuxOrch->mux_nexthop_tb_.end());
+        EXPECT_EQ(TEST_INTERFACE, it->second);
+
+        // Mac-mismatch and prefix-route neighbors must remain untouched.
+        EXPECT_EQ(m_MuxOrch->mux_nexthop_tb_.find(other_mac_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+        EXPECT_EQ(m_MuxOrch->mux_nexthop_tb_.find(prefix_nh),
+                  m_MuxOrch->mux_nexthop_tb_.end());
+
+        // Clean up the entries we injected so we don't bleed into other tests.
+        gNeighOrch->m_syncdNeighbors.erase(stranded_entry);
+        gNeighOrch->m_syncdNeighbors.erase(other_mac_entry);
+        gNeighOrch->m_syncdNeighbors.erase(prefix_entry);
+        m_MuxOrch->mux_nexthop_tb_.erase(stranded_nh);
+        gFdbOrch->m_entries.erase(fdb_entry);
+    }
+
+    // Delete FDB events must be a no-op for updateFdb so that mac aging does
+    // not tear down mux neighbor state out from under the cable.
+    TEST_F(MuxRollbackTest, UpdateFdbDeleteIsNoOp)
+    {
+        FdbUpdate update;
+        update.entry.mac = MacAddress("62:f9:65:10:2f:04");
+        update.entry.port_name = TEST_INTERFACE;
+        update.add = false;
+
+        size_t before = m_MuxOrch->mux_nexthop_tb_.size();
+        m_MuxOrch->updateFdb(update);
+        EXPECT_EQ(before, m_MuxOrch->mux_nexthop_tb_.size());
+    }
+
+    // Deleting a zero-MAC (FAILED) neighbor that has a standalone tunnel route
+    // must call remove_route_entry exactly once, not twice.
+    // Regression test for sonic-net/sonic-swss#2579.
+    TEST_F(MuxRollbackTest, StandaloneTunnelRouteDeleteNoDoubleRemove)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+
+        // SERVER_IP1 was added with valid MAC during ApplyInitialConfigs,
+        // so it is in MuxNbrHandler::neighbors_. In the real system,
+        // NeighOrch::doTask drops zero-MAC updates for neighbors already in
+        // m_syncdNeighbors, so a standalone route is only created after the
+        // neighbor is first deleted. Simulate that sequence here.
+        NeighborUpdate remove_valid;
+        remove_valid.entry = entry;
+        remove_valid.mac = MacAddress();
+        remove_valid.add = false;
+        m_MuxOrch->updateNeighbor(remove_valid);
+
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(SERVER_IP1)), 0);
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+
+        // Step 1: Zero-MAC add creates standalone tunnel route
+        NeighborUpdate add_update;
+        add_update.entry = entry;
+        add_update.mac = MacAddress();
+        add_update.add = true;
+        m_MuxOrch->updateNeighbor(add_update);
+
+        EXPECT_TRUE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+        EXPECT_EQ(m_MuxCable->nbr_handler_->neighbors_.count(IpAddress(SERVER_IP1)), 0);
+
+        // Step 2: Delete the zero-MAC neighbor — must remove route exactly once
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry(_))
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        NeighborUpdate del_update;
+        del_update.entry = entry;
+        del_update.mac = MacAddress();
+        del_update.add = false;
+        m_MuxOrch->updateNeighbor(del_update);
+
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+    }
+
+    // Verify that NeighOrch::doTask silently drops a zero-MAC update when the
+    // neighbor already exists in m_syncdNeighbors with a valid MAC, preventing
+    // a standalone tunnel route from being created alongside the per-mux route.
+    TEST_F(MuxRollbackTest, ZeroMacUpdateDroppedForExistingNeighbor)
+    {
+        // SERVER_IP1 was added with valid MAC during ApplyInitialConfigs,
+        // so it should be in m_syncdNeighbors and MuxNbrHandler::neighbors_.
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+
+        EXPECT_NE(gNeighOrch->m_syncdNeighbors.find(entry),
+                  gNeighOrch->m_syncdNeighbors.end());
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+
+        // Push a zero-MAC update through NeighOrch::doTask (not MuxOrch directly)
+        Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        string key = VLAN_1000 + neigh_table.getTableNameSeparator() + SERVER_IP1;
+        neigh_table.set(key, { { "neigh", "00:00:00:00:00:00" }, { "family", "IPv4" } });
+        gNeighOrch->addExistingData(&neigh_table);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+        neigh_table.del(key);
+
+        // Standalone tunnel route must NOT be created — NeighOrch should have
+        // silently dropped the zero-MAC update for an already-known neighbor.
+        EXPECT_FALSE(m_MuxOrch->isStandaloneTunnelRouteInstalled(IpAddress(SERVER_IP1)));
+
+        // The original neighbor should still be in m_syncdNeighbors with its valid MAC
+        auto it = gNeighOrch->m_syncdNeighbors.find(entry);
+        EXPECT_NE(it, gNeighOrch->m_syncdNeighbors.end());
+        EXPECT_NE(it->second.mac, MacAddress());
+    }
+    // removeNextHopTunnel must defer while NeighOrch still references the NH.
+    TEST_F(MuxRollbackTest, RemoveNextHopTunnelDeferredWhileReferenced)
+    {
+        IpAddress tunnel_dst("3.3.3.3");
+        const sai_object_id_t fake_nh_id = 0x6000000000001ULL;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+
+        // Simulate a consumer (route/NHG) still referencing the tunnel NH.
+        gNeighOrch->m_syncdNextHops[nhKey].ref_count = 1;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+
+        EXPECT_FALSE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+
+        EXPECT_NE(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
+        EXPECT_TRUE(gNeighOrch->hasNextHop(nhKey));
+
+        // Cleanup injected state.
+        gNeighOrch->m_syncdNextHops[nhKey].ref_count = 0;
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+    }
+
+    // Unreferenced: removeNextHopTunnel deletes the SAI object and local state.
+    TEST_F(MuxRollbackTest, RemoveNextHopTunnelSucceedsWhenUnreferenced)
+    {
+        IpAddress tunnel_dst("3.3.3.4");
+        const sai_object_id_t fake_nh_id = 0x6000000000002ULL;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+        ASSERT_EQ(0, gNeighOrch->getNextHopRefCount(nhKey));
+
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+
+        EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
+        EXPECT_FALSE(gNeighOrch->hasNextHop(nhKey));
+    }
+
+    // ITEM_NOT_FOUND on delete is tolerated as already-removed.
+    TEST_F(MuxRollbackTest, RemoveNextHopTunnelToleratesItemNotFound)
+    {
+        IpAddress tunnel_dst("3.3.3.9");
+        const sai_object_id_t fake_nh_id = 0x6000000000004ULL;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+        ASSERT_EQ(0, gNeighOrch->getNextHopRefCount(nhKey));
+
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
+
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+
+        EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
+        EXPECT_FALSE(gNeighOrch->hasNextHop(nhKey));
+    }
+
+    // On SAI delete failure the removal is deferred so it can be retried.
+    TEST_F(MuxRollbackTest, RemoveNextHopTunnelKeepsStateOnSaiFailure)
+    {
+        IpAddress tunnel_dst("3.3.3.5");
+        const sai_object_id_t fake_nh_id = 0x6000000000003ULL;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        EXPECT_FALSE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+
+        EXPECT_NE(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
+        EXPECT_TRUE(gNeighOrch->hasNextHop(nhKey));
+
+        // Cleanup injected state.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+    }
+
+    // A shared tunnel NH key can have another registrant (e.g. TunnelDecapOrch);
+    // removeNextHopTunnel() must not delete the SAI object while it remains.
+    TEST_F(MuxRollbackTest, RemoveNextHopTunnelDeferredWhileOtherRegistrantExists)
+    {
+        IpAddress tunnel_dst("3.3.3.6");
+        const sai_object_id_t fake_nh_id = 0x6000000000005ULL;
+        const sai_object_id_t other_tunnel_id = 0x7000;
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(fake_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), fake_nh_id);
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+
+        // Simulate a second registrant reusing the existing SAI object.
+        sai_object_id_t reused_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).Times(0);
+        ASSERT_EQ(gNeighOrch->addIpinipTunnelNextHop(nhKey, other_tunnel_id, reused_nh_id),
+                  TunnelNhOpStatus::REUSED);
+        ASSERT_EQ(2u, gNeighOrch->m_ipinipTunnelNextHopRegRefs[nhKey]);
+        ASSERT_EQ(0, gNeighOrch->getNextHopRefCount(nhKey));
+
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop).Times(0);
+
+        EXPECT_TRUE(m_MuxOrch->removeNextHopTunnel(MUX_TUNNEL, tunnel_dst));
+
+        // NeighOrch entry survives for the other registrant.
+        EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_.find(tunnel_dst), m_MuxOrch->mux_tunnel_nh_.end());
+        EXPECT_TRUE(gNeighOrch->hasNextHop(nhKey));
+        EXPECT_EQ(1u, gNeighOrch->m_ipinipTunnelNextHopRegRefs[nhKey]);
+
+        // Cleanup: drop the remaining registrant.
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+    }
+
+    // createNextHopTunnel() must reuse an existing NeighOrch registration
+    // instead of creating a second SAI object for the same key.
+    TEST_F(MuxRollbackTest, CreateNextHopTunnelReusesExistingNeighOrchRegistration)
+    {
+        IpAddress tunnel_dst("3.3.3.7");
+        const sai_object_id_t existing_nh_id = 0x6000000000006ULL;
+        const sai_object_id_t other_tunnel_id = 0x7000;
+
+        NextHopKey nhKey(tunnel_dst, MUX_TUNNEL, true /*tunnel_nh*/, 0 /*tag*/);
+
+        // Simulate a prior registration by another producer.
+        sai_object_id_t created_nh_id;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .Times(1)
+            .WillOnce(DoAll(SetArgPointee<0>(existing_nh_id), Return(SAI_STATUS_SUCCESS)));
+        ASSERT_EQ(gNeighOrch->addIpinipTunnelNextHop(nhKey, other_tunnel_id, created_nh_id),
+                  TunnelNhOpStatus::CREATED);
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop).Times(0);
+
+        EXPECT_EQ(m_MuxOrch->createNextHopTunnel(MUX_TUNNEL, tunnel_dst), existing_nh_id);
+
+        EXPECT_EQ(m_MuxOrch->mux_tunnel_nh_[tunnel_dst], existing_nh_id);
+        EXPECT_EQ(2u, gNeighOrch->m_ipinipTunnelNextHopRegRefs[nhKey]);
+
+        // Cleanup injected state.
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .Times(1)
+            .WillOnce(Return(SAI_STATUS_SUCCESS));
+        gNeighOrch->removeIpinipTunnelNextHop(nhKey);
+        m_MuxOrch->mux_tunnel_nh_.erase(tunnel_dst);
+    }
+
+    // NeighOrch::addNeighbor update path: NO_HOST_ROUTE and the explicit /32
+    // are one state. A neighbor that is already programmed and only later
+    // qualifies as a prefix neighbor must get its prefix route created here,
+    // otherwise it is recorded as prefix_route with nothing in hardware and
+    // every later mux transition fails on it.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdateCreatesMissingPrefixRoute)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        // Neighbor was programmed before it was classified as a prefix neighbor.
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = false;
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_TRUE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+    }
+
+    // A failed prefix route must not be recorded as prefix_route, so the task
+    // retries instead of latching a state that does not exist in hardware.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdatePrefixRouteFailureIsNotRecorded)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = false;
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry)
+            .WillRepeatedly(Return(SAI_STATUS_TABLE_FULL));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_FALSE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+    }
+
+    // Inverse transition: a neighbor that stops qualifying as a prefix neighbor
+    // must have its /32 removed here, because removeNeighbor() only deletes the
+    // route when prefix_route is still set.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdateRemovesStalePrefixRoute)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        m_MuxOrch->prefix_nbrs_supported_ = false;
+
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
+            .Times(AtLeast(1))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_TRUE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxOrch->prefix_nbrs_supported_ = true;
+    }
+
+    // A failed prefix route deletion must keep prefix_route set so the delete is
+    // retried, instead of recording success and leaking the route.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdateStalePrefixRouteRemovalFailureRetries)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        m_MuxOrch->prefix_nbrs_supported_ = false;
+
+        EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
+            .WillRepeatedly(Return(SAI_STATUS_FAILURE));
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_FALSE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_TRUE(gNeighOrch->isPrefixNeighbor(entry));
+
+        m_MuxOrch->prefix_nbrs_supported_ = true;
+    }
+
+    // The prefix route points at the neighbor next hop, so without it nothing can
+    // be programmed and the neighbor must not be recorded as a prefix neighbor.
+    TEST_F(MuxRollbackPrefixRouteTest, AddNeighborUpdateMissingNextHopIsNotRecorded)
+    {
+        NeighborEntry entry(IpAddress(SERVER_IP1), VLAN_1000);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(entry));
+        ASSERT_TRUE(IsPrefixBasedMuxNeighbor());
+
+        gNeighOrch->m_syncdNeighbors[entry].prefix_route = false;
+
+        NextHopKey nh_key(IpAddress(SERVER_IP1), VLAN_1000);
+        auto saved_next_hop = gNeighOrch->m_syncdNextHops[nh_key];
+        gNeighOrch->m_syncdNextHops.erase(nh_key);
+
+        EXPECT_CALL(*mock_sai_route_api, create_route_entry).Times(0);
+
+        NeighborContext ctx(entry);
+        ctx.mac = MacAddress("62:f9:65:10:2f:06");
+
+        EXPECT_FALSE(gNeighOrch->addNeighbor(ctx));
+        EXPECT_FALSE(gNeighOrch->isPrefixNeighbor(entry));
+
+        gNeighOrch->m_syncdNextHops[nh_key] = saved_next_hop;
     }
 }

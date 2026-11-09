@@ -5,6 +5,7 @@
 #include <string>
 #include <set>
 #include <unordered_map>
+#include <boost/optional.hpp>
 
 #include "dbconnector.h"
 #include "orch.h"
@@ -42,13 +43,23 @@ struct SidTunnelEntry
 
 struct MySidEntry
 {
-    sai_my_sid_entry_t entry;
-    sai_my_sid_entry_endpoint_behavior_t endBehavior;
+    sai_my_sid_entry_t entry{};
+    sai_my_sid_entry_endpoint_behavior_t endBehavior{};
+    sai_my_sid_entry_endpoint_behavior_flavor_t endFlavor{SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_NONE};
     string            endVrfString; // Used for END.T, END.DT4, END.DT6 and END.DT46,
     string            endAdjString; // Used for END.X, END.DX4, END.DX6
-    sai_tunnel_dscp_mode_t dscp_mode;    // Used for decapsulation configuration
-    sai_object_id_t   tunnel_term_entry; // Used for decapsulation configuration
-    sai_object_id_t   counter;
+    sai_object_id_t   vrf_oid{SAI_NULL_OBJECT_ID};
+    sai_object_id_t   next_hop_oid{SAI_NULL_OBJECT_ID};
+    sai_tunnel_dscp_mode_t dscp_mode{};    // Used for decapsulation configuration
+    sai_object_id_t   tunnel_oid{SAI_NULL_OBJECT_ID};
+    sai_object_id_t   tunnel_term_entry{SAI_NULL_OBJECT_ID};
+    sai_object_id_t   stale_tunnel_term_entry{SAI_NULL_OBJECT_ID};
+    sai_tunnel_dscp_mode_t stale_dscp_mode{};
+    bool              stale_tunnel_ref{false};
+    sai_object_id_t   counter{SAI_NULL_OBJECT_ID};
+    bool              sai_removed{false};
+    bool              crm_released{false};
+    bool              references_released{false};
 };
 
 struct MySidIpInIpTunnel
@@ -144,7 +155,7 @@ typedef map<string, Srv6PrefixAggIdEntry> Srv6PrefixAggIdTableForNhg;
 typedef set<uint32_t> Srv6PrefixAggIdSet;
 typedef map<Srv6TunnelMapEntryKey, Srv6TunnelMapEntryEntry> Srv6TunnelMapEntryTable;
 typedef map<string, Srv6PicContextInfo> Srv6PicContextTable;
-typedef pair<string, sai_tunnel_dscp_mode_t> Srv6MySidDscpCfgCacheVal;
+typedef pair<string, boost::optional<sai_tunnel_dscp_mode_t>> Srv6MySidDscpCfgCacheVal;
 typedef std::unordered_multimap<string, Srv6MySidDscpCfgCacheVal> Srv6MySidDscpCfg;
 
 #define SID_LIST_DELIMITER ','
@@ -169,14 +180,21 @@ class Srv6Orch : public Orch, public Observer
         bool removeSrv6NexthopWithoutVpn(const NextHopKey &nhKey);
         bool removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv);
         void update(SubjectType, void *);
+        void notifyVrfAvailable(const std::string &vrf);
         bool contextIdExists(const std::string &context_id);
         void setCountersState(bool enable);
 
     private:
+        struct MySidTaskResult
+        {
+            task_process_status status;
+            boost::optional<Constraint> dependency;
+        };
+
         void doTask(Consumer &consumer);
         void doTask(SelectableTimer &timer);
         task_process_status doTaskSidTable(const KeyOpFieldsValuesTuple &tuple);
-        void doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple);
+        MySidTaskResult doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple);
         task_process_status doTaskPicContextTable(const KeyOpFieldsValuesTuple &tuple);
         void doTaskCfgMySidTable(const KeyOpFieldsValuesTuple &tuple);
         bool createUpdateSidList(const string seg_name, const string ips, const string sidlist_type);
@@ -185,8 +203,8 @@ class Srv6Orch : public Orch, public Observer
         bool createSrv6Nexthop(const NextHopKey &nh);
         bool deleteSrv6Nexthop(const NextHopKey &nh);
         bool srv6NexthopExists(const NextHopKey &nh);
-        bool createUpdateMysidEntry(string my_sid_string, const string vrf, const string adj, const string end_action);
-        bool deleteMysidEntry(const string my_sid_string);
+        task_process_status createUpdateMysidEntry(string my_sid_string, const string vrf, const string adj, const string end_action);
+        task_process_status deleteMysidEntry(const string my_sid_string);
         bool sidEntryEndpointBehavior(const string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                       sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor);
         MySidLocatorCfg getMySidEntryLocatorCfg(const sai_my_sid_entry_t& sai_entry) const;
@@ -196,11 +214,11 @@ class Srv6Orch : public Orch, public Observer
         void mySidCfgCacheRefresh();
         void addMySidCfgCacheEntry(const string& my_sid_key, const vector<FieldValueTuple>& fvs);
         void removeMySidCfgCacheEntry(const string& my_sid_key);
-        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, sai_tunnel_dscp_mode_t& dscp_mode);
+        bool getMySidEntryDscpMode(const string& my_sid_addr, const MySidLocatorCfg& locator_cfg, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode);
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
-        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, sai_tunnel_dscp_mode_t& dscp_mode);
+        bool mySidTunnelRequired(const string& my_sid_addr, const sai_my_sid_entry_t& sai_entry, sai_my_sid_entry_endpoint_behavior_t end_behavior, boost::optional<sai_tunnel_dscp_mode_t>& dscp_mode);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
         bool initIpInIpTunnel(MySidIpInIpTunnel& tunnel, sai_tunnel_dscp_mode_t dscp_mode);
@@ -209,6 +227,7 @@ class Srv6Orch : public Orch, public Observer
         bool removeMySidIpInIpTunnel(sai_tunnel_dscp_mode_t dscp_mode);
         bool createMySidIpInIpTunnelTermEntry(sai_object_id_t tunnel_oid, const sai_ip6_t& sid_ip, sai_object_id_t& term_entry_oid);
         bool removeMySidIpInIpTunnelTermEntry(sai_object_id_t term_entry_oid);
+        bool cleanupStaleMySidTunnel(MySidEntry& entry);
         bool sidListExists(const string &segment_name);
         bool srv6P2pTunnelExists(const string &endpoint);
         bool createSrv6P2pTunnel(const string &src, const string &endpoint);
@@ -231,7 +250,7 @@ class Srv6Orch : public Orch, public Observer
         string getMySidCounterKey(const sai_my_sid_entry_t& sai_entry) const;
         IpAddress getMySidAddress(const sai_my_sid_entry_t& sai_entry) const;
         bool addMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid);
-        void removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid);
+        bool removeMySidCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t& counter_oid);
         void setMySidEntryCounter(const sai_my_sid_entry_t& sai_entry, sai_object_id_t counter_oid);
 
         ProducerStateTable m_sidTable;
@@ -266,14 +285,6 @@ class Srv6Orch : public Orch, public Observer
         bool m_mysid_counters_enabled = false;
         bool m_mysid_counters_supported = false;
 
-        /*
-         * Map to store the SRv6 MySID entries not yet configured in ASIC because associated to a non-ready nexthop
-         * 
-         *    Key: nexthop
-         *    Value: a set of SID entries that are waiting for the nexthop to be ready
-         *           each SID entry is encoded as a tuple <My SID key, VRF name, Adjacency, SRv6 Behavior>
-         */
-        map<NextHopKey, set<tuple<string, string, string, string>>> m_pendingSRv6MySIDEntries;
 };
 
 #endif // SWSS_SRV6ORCH_H

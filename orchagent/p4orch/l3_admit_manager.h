@@ -2,12 +2,14 @@
 
 #include <deque>
 
+#include "dbconnector.h"
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
 #include "p4orch/p4oidmapper.h"
 #include "p4orch/p4orch_util.h"
 #include "response_publisher_interface.h"
 #include "return_code.h"
+#include "table.h"
 
 #define EMPTY_STRING ""
 
@@ -49,7 +51,7 @@ class L3AdmitManager : public ObjectManagerInterface
 {
   public:
     L3AdmitManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher)
-    {
+      : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
         SWSS_LOG_ENTER();
 
         assert(p4oidMapper != nullptr);
@@ -92,7 +94,8 @@ class L3AdmitManager : public ObjectManagerInterface
 
     // m_l3AdmitTable: l3_admit_key, P4L3AdmitEntry
     std::unordered_map<std::string, P4L3AdmitEntry> m_l3AdmitTable;
-
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
     P4OidMapper *m_p4OidMapper;

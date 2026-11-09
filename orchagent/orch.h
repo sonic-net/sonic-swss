@@ -8,6 +8,7 @@
 #include <memory>
 #include <utility>
 #include <condition_variable>
+#include <deque>
 
 extern "C" {
 #include <sai.h>
@@ -21,11 +22,13 @@ extern "C" {
 #include "zmqconsumerstatetable.h"
 #include "zmqserver.h"
 #include "notificationconsumer.h"
+#include "selectableevent.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
 #include "response_publisher.h"
 #include "recorder.h"
 #include "schema.h"
+#include "retrycache.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -46,6 +49,8 @@ const char state_db_key_delimiter  = '|';
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
+#define CLX_PLATFORM_SUBSTRING  "clounix"
+#define VPP_PLATFORM_SUBSTRING "vpp"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -53,6 +58,9 @@ const char state_db_key_delimiter  = '|';
 
 #define RING_SIZE 30
 #define SLEEP_MSECONDS 500
+
+// Max number of PFC traffic classes
+#define PFC_WD_TC_MAX 8
 
 const int default_orch_pri = 0;
 
@@ -165,23 +173,64 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+    // virtual so consumers with additional pending state (e.g.
+    // ZmqRouteConsumer's m_ingress staging map) can report it too.
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
 
+    // If m_orderedQueue is set, use m_toSyncQueue instead of m_toSync.
+    // Note:
+    // * Application layer should make use of m_toSyncQueue if the flag is set.
+    // * m_toSyncQueue is a std::deque that maintains the request order. It is
+    //   possible that the same key appears in multiple requests. The
+    //   application layer should handle the request merging for the same key if
+    //   needed.
+    // * Typically application should set m_orderedQueue in the constructor by
+    //   calling setOrderedQueue(), and the implementation should use m_toSync
+    //   or m_toSyncQueue accordingly. In the rare case that an application
+    //   changes m_orderedQueue in runtime, the implementation needs to process
+    //   both m_toSync and m_toSyncQueue.
+    // * m_toSyncQueue is currently not supported in Orch2.
+    bool m_orderedQueue = false;
+    std::deque<swss::KeyOpFieldsValuesTuple> m_toSyncQueue;
+
     /* record the tuple */
     void recordTuple(const swss::KeyOpFieldsValuesTuple &tuple);
+    void recordTuples(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
-    void addToSync(const swss::KeyOpFieldsValuesTuple &entry);
+    /* Enable or disable swss.rec recording for this consumer */
+    void setRecordable(bool recordable) { m_recordable = recordable; }
+    bool isRecordable() const { return m_recordable; }
+
+    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
 
     // Returns: the number of entries added to m_toSync
-    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
-    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries);
+    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
+
+    /**
+     * @brief Add the failed task and its constraint to the consumer's RetryCache
+     * @param task - the task that has failed due to the unmet constraint
+     * @param cst - the unmet constraint that blocks the task from being retried
+     */
+    bool addToRetry(const Task &task, const Constraint &cst);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
+
+    // Set the m_orderedQueue flag.
+    // This will change the ConsumerBase to use m_toSync or m_toSyncQueue.
+    void setOrderedQueue(bool orderedQueue)
+    {
+        m_orderedQueue = orderedQueue;
+    }
+
+private:
+    void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
+    bool m_recordable = true;
 };
 
 class RingBuffer
@@ -263,6 +312,8 @@ typedef enum
 
 typedef std::pair<swss::DBConnector *, std::string> TableConnector;
 typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector;
+#define CACHE "| ++++ |"
+#define DECACHE "| ---- |"
 
 class Orch
 {
@@ -274,6 +325,11 @@ public:
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
+
+    // TODO: override in every Orch that attaches as an Observer in its
+    //       constructor so OrchDaemon can detach all observers while every
+    //       subject is still alive, eliminating shutdown-order UAFs.
+    virtual void detachObservers() {}
 
     static std::shared_ptr<RingBuffer> gRingBuffer;
 
@@ -294,6 +350,11 @@ public:
     virtual void doTask(Consumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
+    virtual void doTask(swss::SelectableEvent &event) { }
+
+    virtual void setWarmbootStateOnFailure(const std::string& app_name,
+                                            bool set_on_fail);
+    virtual void setEnableNotify(bool enable);
 
     /*
      * Called once after APPLY_VIEW in warm/fast boot scenario.
@@ -306,13 +367,48 @@ public:
     virtual void onWarmBootEnd() { }
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+    
+    void createRetryCache(const std::string &executorName);
+    RetryCache* getRetryCache(const std::string &executorName);
+    ConsumerBase* getConsumerBase(const std::string &executorName);
+
+    /** 
+     * @brief Add the failed task and its constraint to the consumer's RetryCache
+     * @param executorName - name of the consumer
+     * @param task - the task that has failed due to the unmet constraint
+     * @param cst - the unmet constraint that blocks the task from being retried
+     * @return true only if the consumer has initialized a retry cache and the task is successfully added into it
+     */
+    bool addToRetry(const std::string &executorName, const Task &task, const Constraint &cst);
+
+    /** 
+     * @brief Check the consumer's RetryCache for pending tasks with constraints already resolved.
+     * If any, move them from RetryMap back to SyncMap, such that they can be retried when the consumer's execute() method is invoked.
+     * Make sure to limit the number of tasks added to SyncMap in one call, to avoid starvation of new tasks in SyncMap.
+     * @param executorName - name of the consumer
+     * @param quota - maximum number of tasks to be moved back to SyncMap in a single call
+     */
+    virtual size_t retryToSync(const std::string &executorName, size_t quota=30000);
+
+    /** 
+     * @brief Notify the consumer that the constraint is already resolved
+     * @param retryOrch - the consumer's Orch instance, used to get the consumer's RetryCache
+     * @param executorName - name of the consumer to be notified
+     * @param cst - the constraint that is resolved
+     */
+    virtual void notifyRetry(Orch *retryOrch, const std::string &executorName, const Constraint &cst);
+
+    // Set the m_orderedQueue flag in each consumer.
+    // Refer to m_orderedQueue in ConsumerBase.
+    void setOrderedQueueForAllConsumers(bool orderedQueue);
 
     /**
      * @brief Flush pending responses
      */
-    void flushResponses();
+    virtual void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
+    RetryCacheMap m_retryCaches;
 
     Orch();
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);

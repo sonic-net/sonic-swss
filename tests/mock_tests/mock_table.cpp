@@ -14,10 +14,29 @@ namespace testing_db
     TableDataT gTableData;
     TablesT gTables;
     std::map<int, TablesT> gDB;
+    std::map<std::string, std::size_t> gProducerSetCounts;
+    std::map<std::string, std::size_t> gProducerDelCounts;
 
     void reset()
     {
         gDB.clear();
+        resetOperationCounters();
+    }
+
+    void resetOperationCounters()
+    {
+        gProducerSetCounts.clear();
+        gProducerDelCounts.clear();
+    }
+
+    std::size_t getProducerSetCount(const std::string &tableName)
+    {
+        return gProducerSetCounts[tableName];
+    }
+
+    std::size_t getProducerDelCount(const std::string &tableName)
+    {
+        return gProducerDelCounts[tableName];
     }
 }
 
@@ -126,12 +145,42 @@ namespace swss
             table->second.erase(key);
         }
     }
+
+    void Table::hdel(const std::string &key, const std::string &field, const std::string &op, const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        auto key_iter = table.find(key);
+        if (key_iter == table.end())
+        {
+            return;
+        }
+
+        auto &attrs = key_iter->second;
+        std::vector<FieldValueTuple> new_attrs;
+        for (const auto &attr : attrs)
+        {
+            if (attr.first != field)
+            {
+                new_attrs.push_back(attr);
+            }
+        }
+
+        if (new_attrs.empty())
+        {
+            table.erase(key);
+        }
+        else
+        {
+            table[key] = new_attrs;
+        }
+    }
     
     void ProducerStateTable::set(const std::string &key,
                                  const std::vector<FieldValueTuple> &values,
                                  const std::string &op,
                                  const std::string &prefix)
     {
+        ++gProducerSetCounts[getTableName()];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         auto iter = table.find(key);
         if (iter == table.end())
@@ -148,26 +197,18 @@ namespace swss
                                  const std::string &op,
                                  const std::string &prefix)
     {
+        ++gProducerDelCounts[getTableName()];
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table.erase(key);
+        // The real del() also drops the staged entry ("_" + table); model that.
+        gDB[m_pipe->getDbId()]["_" + getTableName()].erase(key);
     }
 
     void ProducerStateTable::set(const std::vector<KeyOpFieldsValuesTuple>& values)
     {
         for (const auto& kfv : values)
         {
-            const std::string& key = kfvKey(kfv);
-            const std::string& op = kfvOp(kfv);
-            const std::vector<FieldValueTuple>& fvs = kfvFieldsValues(kfv);
-
-            if (op == SET_COMMAND)
-            {
-                set(key, fvs);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                del(key);
-            }
+            set(kfvKey(kfv), kfvFieldsValues(kfv));
         }
     }
 

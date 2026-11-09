@@ -1,5 +1,31 @@
+// IMPORTANT: pull in libstdc++ headers BEFORE any `#define private public`
+// block below. <sstream>'s internal forward decl + definition of
+// basic_stringbuf::__xfer_bufptrs rely on the access keyword being parsed
+// verbatim; the access-mangling #define triggers an ODR redeclaration error
+// otherwise (g++ 12: "redeclared with different access"). Locking the STL
+// in first avoids a re-parse when copporch.h/flexcounterorch.h transitively
+// drag the STL in under the #define.
+#include <sstream>
+#include <iostream>
+#include <memory>
+#include <vector>
+#include <string>
+#include <unordered_set>
+#include <unordered_map>
+#include <utility>
+
 #define private public // make Directory::m_values available to clean it.
 #include "directory.h"
+#undef private
+
+// Expose copporch.h / flexcounterorch.h internals BEFORE any other header
+// indirectly pulls them in (mock_orchagent_main.h does). The include guards
+// would otherwise pin them at "private private" for the rest of this TU.
+#define private public
+#define protected public
+#include "copporch.h"
+#include "flexcounterorch.h"
+#undef protected
 #undef private
 
 #include "json.h"
@@ -10,6 +36,7 @@
 #include "dashmeterorch.h"
 #include "mock_table.h"
 #include "notifier.h"
+#include "coppstats_sai_wrap.h"
 #define private public
 #include "pfcactionhandler.h"
 #include "switchorch.h"
@@ -18,8 +45,6 @@
 #define private public
 #include "warm_restart.h"
 #undef private
-
-#include <sstream>
 
 extern bool gTraditionalFlexCounter;
 
@@ -274,7 +299,13 @@ namespace flexcounter_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, uint32_t>>
+    enum class StartType
+    {
+        Cold,
+        Warm,
+    };
+
+    struct FlexCounterTest : public ::testing::TestWithParam<std::tuple<bool, bool, StartType>>
     {
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
@@ -284,6 +315,7 @@ namespace flexcounter_test
         shared_ptr<swss::DBConnector> m_asic_db;
         shared_ptr<swss::DBConnector> m_flex_counter_db;
         bool create_only_config_db_buffers;
+        StartType m_start_type;
 
         FlexCounterTest()
         {
@@ -310,7 +342,7 @@ namespace flexcounter_test
 
             gTraditionalFlexCounter = get<0>(GetParam());
             create_only_config_db_buffers = get<1>(GetParam());
-            gFlexCounterDelaySec = get<2>(GetParam());
+            m_start_type = get<2>(GetParam());
 
             if (gTraditionalFlexCounter)
             {
@@ -357,7 +389,17 @@ namespace flexcounter_test
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
 
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = true;
+            }
+
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+
+            if (m_start_type == StartType::Warm)
+            {
+                WarmStart::getInstance().m_enabled = false;
+            }
 
             gDirectory.set(flexCounterOrch);
 
@@ -391,8 +433,14 @@ namespace flexcounter_test
             gPortsOrch->addExistingData(&portTable);
             static_cast<Orch *>(gPortsOrch)->doTask();
 
+
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
+
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
         }
 
         virtual void TearDown() override
@@ -424,9 +472,6 @@ namespace flexcounter_test
             gDirectory.m_values.clear();
 
             _unhook_sai_switch_api();
-
-            // reset flex counter delay sec
-            gFlexCounterDelaySec = 0;
         }
 
         static void SetUpTestCase()
@@ -537,6 +582,7 @@ namespace flexcounter_test
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
         auto firstPortName = ports.begin()->first;
+        auto firstPortValues = ports.begin()->second;
 
         // Create test buffer pool
         poolTable.set(
@@ -627,7 +673,7 @@ namespace flexcounter_test
         flexCounterOrch->addExistingData(&flexCounterCfg);
         static_cast<Orch *>(flexCounterOrch)->doTask();
 
-        if (gFlexCounterDelaySec > 0)
+        if (m_start_type == StartType::Warm)
         {
             // Expire timer
             flexCounterOrch->doTask(*flexCounterOrch->m_delayTimer);
@@ -742,8 +788,39 @@ namespace flexcounter_test
         // Do not check the content of port counter since it's large and varies among platforms.
         ASSERT_TRUE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, oid, PORT_COUNTER_ID_LIST));
 
-        // create a routing interface
+        auto it = ports.begin();
+        it++;
+        auto secondPortName= it->first;
+        auto secondPortValues = it->second;
+        Port secondPort;
+        ASSERT_TRUE(gPortsOrch->getPort(secondPortName, secondPort));
+        auto second_oid = secondPort.m_port_id;
+
+
+        //Verify the Port Stats counter after DEL
         std::deque<KeyOpFieldsValuesTuple> entries;
+        auto port_consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({secondPortName, "DEL",  {} });
+        port_consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        auto ret = gPortsOrch->getPort(secondPortName, secondPort);
+        if (ret == true)
+        {
+           // Temporary work around since remove_port fails in sonic-sairedis/vslib in remove_internal due
+           // to switch_create doesn't seem to be calling create_internal for the ports when it is called from
+           // portsorch removePort->sai_port_api.remove_port
+            gPortsOrch->removePortFromLanesMap(secondPortName);
+            gPortsOrch->removePortFromPortListMap(secondPort.m_port_id);
+            gPortsOrch->m_portConfigMap.erase(secondPortName);
+            gPortsOrch->m_portList.erase(secondPortName);
+            gPortsOrch->saiOidToAlias.erase(secondPort.m_port_id);
+
+        }
+        ASSERT_FALSE(gPortsOrch->getPort(secondPortName, secondPort));
+        ASSERT_FALSE(checkFlexCounter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, second_oid, PORT_COUNTER_ID_LIST));
+
+        // create a routing interface
+        entries.clear();
         entries.push_back({firstPort.m_alias, "SET", { {"mtu", "9100"}}});
         auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
         consumer->addToSync(entries);
@@ -1001,16 +1078,14 @@ namespace flexcounter_test
         FlexCounterTests,
         FlexCounterTest,
         ::testing::Values(
-            // traditional_flex_counter, create_only_config_db_buffers, flex_counter_delay_sec
-            std::make_tuple(false, true, 0),
-            std::make_tuple(false, false, 0),
-            std::make_tuple(true, true, 0),
-            std::make_tuple(true, false, 0),
-            std::make_tuple(false, true, 120),
-            std::make_tuple(false, false, 120),
-            std::make_tuple(true, true, 120),
-            std::make_tuple(true, false, 120)
-        )
+            std::make_tuple(false, true, StartType::Cold),
+            std::make_tuple(false, false, StartType::Cold),
+            std::make_tuple(true, true, StartType::Cold),
+            std::make_tuple(true, false, StartType::Cold),
+            std::make_tuple(false, true, StartType::Warm),
+            std::make_tuple(false, false, StartType::Warm),
+            std::make_tuple(true, true, StartType::Warm),
+            std::make_tuple(true, false, StartType::Warm))
     );
 
     using namespace mock_orch_test;
@@ -1034,12 +1109,82 @@ namespace flexcounter_test
 
         /* Should create ENI Counter stats for existing ENI's */
         m_DashOrch->handleFCStatusUpdate(true);
-        m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
+        // m_DashOrch->doTask(*(m_DashOrch->m_fc_update_timer));
         ASSERT_TRUE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
 
         /* This should delete the STATS */
         m_DashOrch->handleFCStatusUpdate(false);
         ASSERT_FALSE(checkFlexCounter(ENI_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, ENI_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestMeterStatusUpdate)
+    {
+        /* Add a mock ENI */
+        EniEntry tmp_entry;
+        tmp_entry.eni_id = 0x7008000000021;
+        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
+
+        /* Should create Meter Counter stats for existing ENI's */
+        m_DashOrch->handleMeterFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+
+        /* This should delete the STATS */
+        m_DashOrch->handleMeterFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+    }
+
+    TEST_F(StandaloneFCTest, TestHaSetStatusUpdate)
+    {
+        vector<string> dash_ha_tables = {
+            APP_DASH_HA_SET_TABLE_NAME,
+            APP_DASH_HA_SCOPE_TABLE_NAME,
+            APP_BFD_SESSION_TABLE_NAME
+        };
+        m_dashHaOrch = new DashHaOrch(m_dpu_app_db.get(), dash_ha_tables, m_DashOrch, nullptr, m_dpu_app_state_db.get(), nullptr);
+
+        auto consumer = unique_ptr<Consumer>(new Consumer(
+            new swss::ConsumerStateTable(m_dpu_app_db.get(), APP_DASH_HA_SET_TABLE_NAME, 1, 1),
+            m_dashHaOrch, APP_DASH_HA_SET_TABLE_NAME));
+
+        consumer->addToSync(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        "HA_SET_1",
+                        SET_COMMAND,
+                        {
+                            {"version", "1"},
+                            {"vip_v4", "10.0.0.1"},
+                            {"vip_v6", "3:2::1:0"},
+                            {"owner", "dpu"},
+                            {"scope", "dpu"},
+                            {"local_npu_ip", "192.168.1.10"},
+                            {"local_ip", "192.168.2.1"},
+                            {"peer_ip", "192.168.2.2"},
+                            {"cp_data_channel_port", "4789"},
+                            {"dp_channel_dst_port", "4790"},
+                            {"dp_channel_src_port_min", "5000"},
+                            {"dp_channel_src_port_max", "6000"},
+                            {"dp_channel_probe_interval_ms", "1000"},
+                            {"dp_channel_probe_fail_threshold", "3"}
+                        }
+                    }
+                }
+            )
+        );
+        static_cast<Orch *>(m_dashHaOrch)->doTask(*consumer.get());
+
+        auto ha_set_entry = m_dashHaOrch->getHaSetEntries().find("HA_SET_1");
+        ASSERT_NE(ha_set_entry, m_dashHaOrch->getHaSetEntries().end());
+
+        m_dashHaOrch->handleHaSetFCStatusUpdate(true);
+        ASSERT_TRUE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
+
+        m_dashHaOrch->handleHaSetFCStatusUpdate(false);
+        ASSERT_FALSE(checkFlexCounter(HA_SET_STAT_COUNTER_FLEX_COUNTER_GROUP, ha_set_entry->second.ha_set_id, HA_SET_COUNTER_ID_LIST));
+
+        delete m_dashHaOrch;
+        m_dashHaOrch = nullptr;
     }
 
     TEST_F(StandaloneFCTest, TestCaching)
@@ -1132,31 +1277,163 @@ namespace flexcounter_test
                                      }));
     }
 
-    class MeterStatFlexCounterTest : public MockOrchTest
-    {
-        virtual void PostSetUp() {
-            _hook_sai_switch_api();
+    // COPP policer stats: sai_query_stats_capability is stubbed via --wrap (coppstats_sai_wrap.cpp).
+
+    namespace {
+        // The ctor probes and caches the capability, so the hook must be set first.
+        std::unique_ptr<CoppOrch> makeCoppOrchUnderHook(swss::DBConnector* db)
+        {
+            return std::unique_ptr<CoppOrch>(new CoppOrch(db, APP_COPP_TABLE_NAME));
         }
 
-        virtual void PreTearDown() {
-           _unhook_sai_switch_api();
+        void seedTrapGroupWithPolicer(CoppOrch& orch,
+                                      const std::string& tg_name,
+                                      sai_object_id_t tg_oid,
+                                      sai_object_id_t policer_oid)
+        {
+            orch.m_trap_group_map[tg_name] = tg_oid;
+            policer_object pol;
+            pol.policer_id = policer_oid;
+            orch.m_trap_group_policer_map[tg_oid] = pol;
         }
-    };
 
-    TEST_F(MeterStatFlexCounterTest, TestStatusUpdate)
+        // Registration waits for the policer's VID->RID mapping; seed it and fire the timer.
+        void flushPendingPolicerRegistrations(CoppOrch& orch, sai_object_id_t policer_oid)
+        {
+            swss::DBConnector asic_db("ASIC_DB", 0);
+            swss::Table vidToRid(&asic_db, "VIDTORID");
+            vidToRid.hset("", sai_serialize_object_id(policer_oid), "oid:0x0");
+            orch.doTask(*orch.m_FlexCounterUpdTimer);
+        }
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsStatusUpdate)
     {
-        /* Add a mock ENI */
-        EniEntry tmp_entry;
-        tmp_entry.eni_id = 0x7008000000021;
-        m_DashOrch->eni_entries_["497f23d7-f0ac-4c99-a98f-59b470e8c7c"] = tmp_entry;
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsAll);
 
-        /* Should create Meter Counter stats for existing ENI's */
-        m_DashMeterOrch->handleMeterFCStatusUpdate(true);
-        m_DashMeterOrch->doTask(*(m_DashMeterOrch->m_meter_fc_update_timer));
-        ASSERT_TRUE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        auto coppOrch = makeCoppOrchUnderHook(app_db.get());
 
-        /* This should delete the STATS */
-        m_DashMeterOrch->handleMeterFCStatusUpdate(false);
-        ASSERT_FALSE(checkFlexCounter(METER_STAT_COUNTER_FLEX_COUNTER_GROUP, tmp_entry.eni_id, DASH_METER_COUNTER_ID_LIST));
+        sai_object_id_t tg_oid     = 0x4000000000001;
+        sai_object_id_t policer_id = 0x5000000000001;
+        seedTrapGroupWithPolicer(*coppOrch, "test_group_full", tg_oid, policer_id);
+
+        ASSERT_TRUE(coppOrch->isPolicerStatsCapable());
+        EXPECT_EQ(coppOrch->getSupportedPolicerStatIds().size(), 8u);
+
+        // bindPolicerCounter gates on the user-intent flag; flip it directly.
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+        coppOrch->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*coppOrch, policer_id);
+        ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     policer_id, POLICER_COUNTER_ID_LIST));
+
+        coppOrch->clearPolicerCounterIdList();
+        ASSERT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                      policer_id, POLICER_COUNTER_ID_LIST));
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsUnsupportedPlatform)
+    {
+        // vslib returns NOT_SUPPORTED for POLICER, so no hook is needed.
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookNone);
+
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        auto coppOrch = makeCoppOrchUnderHook(app_db.get());
+
+        sai_object_id_t tg_oid     = 0x4000000000002;
+        sai_object_id_t policer_id = 0x5000000000002;
+        seedTrapGroupWithPolicer(*coppOrch, "test_group_unsupported", tg_oid, policer_id);
+
+        ASSERT_FALSE(coppOrch->isPolicerStatsCapable());
+        EXPECT_TRUE(coppOrch->getSupportedPolicerStatIds().empty());
+
+        // Clear any list left by earlier tests sharing this STATE_DB.
+        swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        capTable.hdel("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED);
+        coppOrch->publishPolicerStatsCapability();
+        std::string val;
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
+        EXPECT_EQ(val, "false");
+        EXPECT_FALSE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
+
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+        coppOrch->generatePolicerCounterIdList();
+        ASSERT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                      policer_id, POLICER_COUNTER_ID_LIST));
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsPartialCapability)
+    {
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsPartial);
+
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        auto coppOrch = makeCoppOrchUnderHook(app_db.get());
+
+        sai_object_id_t tg_oid     = 0x4000000000003;
+        sai_object_id_t policer_id = 0x5000000000003;
+        seedTrapGroupWithPolicer(*coppOrch, "test_group_partial", tg_oid, policer_id);
+
+        ASSERT_TRUE(coppOrch->isPolicerStatsCapable());
+        auto stat_ids = coppOrch->getSupportedPolicerStatIds();
+        EXPECT_EQ(stat_ids.size(), 2u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_PACKETS"), 1u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_ATTR_BYTES"), 1u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_GREEN_PACKETS"), 0u);
+        EXPECT_EQ(stat_ids.count("SAI_POLICER_STAT_RED_BYTES"), 0u);
+
+        swss::Table capTable(m_state_db.get(), "SWITCH_CAPABILITY");
+        std::string val;
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_CAPABLE, val));
+        EXPECT_EQ(val, "true");
+        EXPECT_TRUE(capTable.hget("switch", SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED, val));
+        EXPECT_EQ(val, "SAI_POLICER_STAT_PACKETS,SAI_POLICER_STAT_ATTR_BYTES");
+
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+        coppOrch->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*coppOrch, policer_id);
+        // checkFlexCounter asserts the entry exists, not the bound stat list.
+        ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     policer_id, POLICER_COUNTER_ID_LIST));
+
+        coppOrch->clearPolicerCounterIdList();
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
+    }
+
+    TEST_F(StandaloneFCTest, TestCoppPolicerStatsWarmRebootDropsStaleVid)
+    {
+        copp_stats_ut::SaiHookGuard guard(copp_stats_ut::setSaiHookPolicerStatsAll);
+        auto app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = true;
+
+        sai_object_id_t tg_oid     = 0x4000000000004;
+        sai_object_id_t old_policer = 0x5000000000004;
+        sai_object_id_t new_policer = 0x5000000000005;
+
+        auto before = makeCoppOrchUnderHook(app_db.get());
+        seedTrapGroupWithPolicer(*before, "test_group_warm", tg_oid, old_policer);
+        before->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*before, old_policer);
+        ASSERT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     old_policer, POLICER_COUNTER_ID_LIST));
+
+        // A restarted orchagent has empty process-local maps and a new VID for the same trap group.
+        auto after = makeCoppOrchUnderHook(app_db.get());
+        seedTrapGroupWithPolicer(*after, "test_group_warm", tg_oid, new_policer);
+        after->generatePolicerCounterIdList();
+        flushPendingPolicerRegistrations(*after, new_policer);
+
+        EXPECT_FALSE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                      old_policer, POLICER_COUNTER_ID_LIST));
+        EXPECT_TRUE(checkFlexCounter(COPP_STATS_COUNTER_FLEX_COUNTER_GROUP,
+                                     new_policer, POLICER_COUNTER_ID_LIST));
+        std::string mapped;
+        ASSERT_TRUE(after->m_policerCounterTable->hget("", "test_group_warm", mapped));
+        EXPECT_EQ(mapped, sai_serialize_object_id(new_policer));
+
+        after->clearPolicerCounterIdList();
+        m_FlexCounterOrch->m_copp_stats_counter_enabled = false;
     }
 }

@@ -151,6 +151,7 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
 
         print ("\tTesting VLAN 100 interface creation")
+        vxlan_obj.fetch_exist_entries(dvs)
         vxlan_obj.create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vrf-RED", "100.100.3.1/24")
         vxlan_obj.check_router_interface(dvs, 'Vrf-RED', vlan_oid, 2)
 
@@ -245,6 +246,7 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
 
         print ("\tTesting VLAN 100 interface creation")
+        vxlan_obj.fetch_exist_entries(dvs)
         vxlan_obj.create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vrf-RED", "100.100.3.1/24")
         vxlan_obj.check_router_interface(dvs, 'Vrf-RED', vxlan_obj.vlan_id_map['100'], 2)
 
@@ -570,14 +572,15 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
 
-        print ("\tCreate Vlan-VNI map")
-        vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
-
         print ("\tTesting VRF-VNI map in APP DB")
         vxlan_obj.create_vrf(dvs, "Vrf-RED")
 
         vlanlist = ['100']
         vnilist = ['1000']
+
+        vxlan_obj.fetch_exist_entries(dvs)
+        print ("\tCreate Vlan-VNI map")
+        vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
 
         print ("\tTesting SIP Tunnel Creation")
         vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False, tunnel_map_entry_count=1)

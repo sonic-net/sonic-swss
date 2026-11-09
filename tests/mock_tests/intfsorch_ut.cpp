@@ -16,6 +16,10 @@ namespace intfsorch_test
 
     int create_rif_count = 0;
     int remove_rif_count = 0;
+    bool saw_loopback_action = false;
+    bool fail_next_rif_set = false;
+    int loopback_action_set_count = 0;
+    sai_packet_action_t last_loopback_action = SAI_PACKET_ACTION_FORWARD;
     sai_router_interface_api_t *pold_sai_rif_api;
     sai_router_interface_api_t ut_sai_rif_api;
 
@@ -26,14 +30,35 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->create_router_interface(
+            router_interface_id, switch_id, attr_count, attr_list);
     }
 
     sai_status_t _ut_remove_router_interface(
             _In_ sai_object_id_t router_interface_id)
     {
         ++remove_rif_count;
-        return SAI_STATUS_SUCCESS;
+        return pold_sai_rif_api->remove_router_interface(router_interface_id);
+    }
+
+    sai_status_t _ut_set_router_interface_attribute(
+            _In_ sai_object_id_t router_interface_id,
+            _In_ const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION)
+        {
+            ++loopback_action_set_count;
+            last_loopback_action = static_cast<sai_packet_action_t>(attr->value.s32);
+            if (fail_next_rif_set)
+            {
+                fail_next_rif_set = false;
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
+            saw_loopback_action = true;
+            return SAI_STATUS_SUCCESS;
+        }
+        return pold_sai_rif_api->set_router_interface_attribute(
+            router_interface_id, attr);
     }
 
     struct IntfsOrchTest : public ::testing::Test
@@ -61,6 +86,11 @@ namespace intfsorch_test
 
             sai_router_intfs_api->create_router_interface = _ut_create_router_interface;
             sai_router_intfs_api->remove_router_interface = _ut_remove_router_interface;
+            sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
+            saw_loopback_action = false;
+            fail_next_rif_set = false;
+            loopback_action_set_count = 0;
+            last_loopback_action = SAI_PACKET_ACTION_FORWARD;
 
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
@@ -148,8 +178,13 @@ namespace intfsorch_test
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
             gDirectory.set(gVrfOrch);
 
+            vector<table_name_with_pri_t> intf_tables = {
+                { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+                { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+            };
+
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
 
             const int fdborch_pri = 20;
 
@@ -162,7 +197,8 @@ namespace intfsorch_test
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
             TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
             ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                                   m_config_db.get());
 
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
@@ -393,5 +429,151 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         m_syncdIntfses = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(m_syncdIntfses["Loopback3"].vrf_id, gVirtualRouterId);    
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchSagEnableDisable)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        entries.push_back({"GLOBAL", "SET", {{"gateway_mac", "02:03:04:05:06:07"}}});
+        auto sagConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_SAG_TABLE_NAME));
+        ASSERT_NE(sagConsumer, nullptr);
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"mtu", "9100"}, {"static_anycast_gateway", "true"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(intfConsumer, nullptr);
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        auto syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncdIntfses.find("Ethernet0"), syncdIntfses.end());
+        EXPECT_TRUE(syncdIntfses.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", {{"static_anycast_gateway", "false"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        syncdIntfses = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncdIntfses.find("Ethernet0"), syncdIntfses.end());
+        EXPECT_FALSE(syncdIntfses.at("Ethernet0").sag_enabled);
+
+        entries.clear();
+        entries.push_back({"GLOBAL", "DEL", {}});
+        sagConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+    }
+
+    // Regression test for the batched IP-removal + VRF-bind race.
+    // m_toSync is an ordered multimap, so within a single drain the bare interface
+    // key ("Loopback6") is processed before the per-IP key ("Loopback6:6.6.6.6/32").
+    // When a config sequence removes the loopback IPs and rebinds the interface to a
+    // VRF back-to-back, both land in one batch and the VRF-change SET is evaluated
+    // while the IP is still present. The fix defers (retains) that SET instead of
+    // logging an error and dropping it, so the bind converges on a later drain.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfBindDeferredUntilIpRemoved)
+    {
+        // create a new vrf
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+        auto base_vrf_ref = gVrfOrch->getVrfRefCount("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        // create a loopback in the default vrf and give it an IP address
+        entries.clear();
+        entries.push_back({"Loopback6", "SET", {}});
+        entries.push_back({"Loopback6:6.6.6.6/32", "SET", {{"scope", "global"}, {"family", "IPv4"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        auto syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVirtualRouterId);
+        ASSERT_EQ(syncd["Loopback6"].ip_addresses.size(), static_cast<size_t>(1));
+
+        // Single batch: remove the IP AND rebind the interface to Vrf-Blue.
+        // The bare "Loopback6" SET sorts before "Loopback6:6.6.6.6/32" DEL, so the
+        // bind is evaluated first (IP still present) and must be deferred, not dropped.
+        entries.clear();
+        entries.push_back({"Loopback6", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        entries.push_back({"Loopback6:6.6.6.6/32", "DEL", {}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // After the first drain: IP removed, interface still present and still in the
+        // default vrf (the bind is pending, not lost).
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_NE(syncd.find("Loopback6"), syncd.end());
+        ASSERT_EQ(syncd["Loopback6"].ip_addresses.size(), static_cast<size_t>(0));
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVirtualRouterId);
+
+        // The deferred bind is retried on the next drain and now succeeds.
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        syncd = gIntfsOrch->getSyncdIntfses();
+        ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        fail_next_rif_set = true;
+        entries = {
+            {"Ethernet0", "SET", {{"loopback_action", "drop"}}}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(consumer->m_toSync.size(), 1u);
+        ASSERT_EQ(loopback_action_set_count, 1);
+        ASSERT_FALSE(saw_loopback_action);
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(loopback_action_set_count, 2);
+        ASSERT_TRUE(saw_loopback_action);
+        ASSERT_EQ(last_loopback_action, SAI_PACKET_ACTION_DROP);
+    }
+
+    TEST_F(IntfsOrchTest, IntfsOrchIgnoresInvalidLoopbackActionField)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries{
+            {"Ethernet0", "SET", {{"mtu", "9100"}}}
+        };
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        entries = {
+            {"Ethernet0", "SET", {
+                {"loopback_action", "invalid"},
+                {"nat_zone", "7"}
+            }}
+        };
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(loopback_action_set_count, 0);
+        ASSERT_FALSE(saw_loopback_action);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_nat_zone_id, 7u);
     }
 }

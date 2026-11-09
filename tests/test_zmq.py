@@ -154,3 +154,38 @@ class TestZmqDash(object):
         dvs.runcmd("cp /usr/bin/orchagent.sh_usage_ut_backup /usr/bin/orchagent.sh")
         dvs.stop_swss()
         dvs.start_swss()
+
+    def test_ring_thread(self, dvs):
+        # Improve test code coverage, change orchagent to enable ring thread
+        dvs.runcmd("cp /usr/bin/orchagent.sh /usr/bin/orchagent.sh_ring_ut_backup")
+        dvs.runcmd("sed -i.bak 's/\/usr\/bin\/orchagent /\/usr\/bin\/orchagent -R /g' /usr/bin/orchagent.sh")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        # wait orchagent start
+        time.sleep(3)
+
+        try:
+            # orchagent must be running; catches "option requires an argument -- 'R'"
+            rc, _ = dvs.runcmd("pgrep -x orchagent")
+            assert rc == 0, "orchagent did not start with -R flag (getopt may require an argument)"
+
+            # '-R' must be in the running argv, not silently consumed as another flag's argument
+            rc, ps_out = dvs.runcmd("ps -ef")
+            assert rc == 0
+            orch_lines = [l for l in ps_out.splitlines() if "/usr/bin/orchagent " in l and "grep" not in l]
+            assert orch_lines, "no /usr/bin/orchagent process found:\n{}".format(ps_out)
+            assert any(" -R" in l for l in orch_lines), \
+                "orchagent running but '-R' not in its argv:\n{}".format("\n".join(orch_lines))
+
+            # orchagent log must not contain a getopt failure
+            _, log_out = dvs.runcmd("sh -c 'tail -n 200 /var/log/swss/orchagent.log 2>/dev/null || true'")
+            assert "option requires an argument" not in log_out, \
+                "orchagent logged getopt failure:\n{}".format(log_out)
+
+            zmq_logger.debug("Process status: {}".format(ps_out))
+        finally:
+            # revert change (always, even on assertion failure)
+            dvs.runcmd("cp /usr/bin/orchagent.sh_ring_ut_backup /usr/bin/orchagent.sh")
+            dvs.stop_swss()
+            dvs.start_swss()

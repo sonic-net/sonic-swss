@@ -452,11 +452,11 @@ namespace twamporch_test
         // Process Notification
         {
             // mock a redis reply for notification
-            mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->type = REDIS_REPLY_ARRAY;
             mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-            mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-            mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+            mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+            mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
             mockReply->element[2]->type = REDIS_REPLY_STRING;
             sai_twamp_session_event_notification_data_t twamp_session_data;
             sai_twamp_session_stat_t counters_ids[SAI_TWAMP_SESSION_STAT_DURATION_TS];
@@ -629,11 +629,11 @@ namespace twamporch_test
             for (uint8_t i = 1; i <= 10; i++)
             {
                 // mock a redis reply for notification
-                mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+                mockReply = (redisReply *)calloc(1, sizeof(redisReply));
                 mockReply->type = REDIS_REPLY_ARRAY;
                 mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
-                mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
-                mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+                mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+                mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
                 mockReply->element[2]->type = REDIS_REPLY_STRING;
 
                 twamp_session_data.session_state = (i<10) ? SAI_TWAMP_SESSION_STATE_ACTIVE : SAI_TWAMP_SESSION_STATE_INACTIVE;

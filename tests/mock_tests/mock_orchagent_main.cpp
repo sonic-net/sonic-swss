@@ -10,6 +10,7 @@ sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
+MacAddress gSagMacAddress;
 MacAddress gVxlanMacAddress;
 
 string gMySwitchType = "switch";
@@ -18,15 +19,18 @@ int32_t gVoqMySwitchId = 0;
 string gMyHostName = "Linecard1";
 string gMyAsicName = "Asic0";
 bool gTraditionalFlexCounter = false;
+bool gRouteStateAsyncPublish = false;
 bool gSyncMode = false;
+bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
 VRFOrch *gVrfOrch;
+PfcWdHwOrch *gPfcWdHwOrch = nullptr;
 
 void syncd_apply_view() {}
 
 bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }

@@ -64,6 +64,7 @@ typedef struct
     uint32_t bus_id;
     uint32_t context_id;
     uint32_t macsec_ipg;
+    bool macsec_supported;
 } gearbox_phy_t;
 
 typedef struct

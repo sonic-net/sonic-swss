@@ -10,6 +10,8 @@ PRE_INGRESS_STAGE = "SAI_ACL_STAGE_PRE_INGRESS"
 class P4RtAclTableDefinitionWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT ACL table definition object."""
 
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
+
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE"
     SAI_ATTR_MATCH_ETHER_TYPE = "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE"
@@ -25,7 +27,6 @@ class P4RtAclTableDefinitionWrapper(util.DBInterface):
     SAI_ACL_TABLE_ATTR_SIZE = "SAI_ACL_TABLE_ATTR_SIZE"
 
     # table name in APP_DB and attribute fields
-    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
     TBL_NAME = swsscommon.APP_P4RT_ACL_TABLE_DEFINITION_NAME
     STAGE_FIELD = "stage"
     PRIORITY_FIELD = "priority"
@@ -42,6 +43,8 @@ class P4RtAclTableDefinitionWrapper(util.DBInterface):
     ACTION_COPY_AND_SET_TC = "action/copy_and_set_tc"
     ACTION_PUNT_AND_SET_TC = "action/punt_and_set_tc"
     ACTION_SET_QOS_QUEUE = "action/qos_queue"
+    ACTION_SET_ACL_RATE_LIMIT_COPY = "action/acl_rate_limit_copy"
+    ACTION_SET_ACL_METADATA = "action/set_acl_metadata"
     METER_UNIT = "meter/unit"
     COUNTER_UNIT = "counter/unit"
 
@@ -67,6 +70,7 @@ class P4RtAclRuleWrapper(util.DBInterface):
     SAI_ATTR_ACTION_PACKET_ACTION = "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"
     SAI_ATTR_ACTION_SET_TC = "SAI_ACL_ENTRY_ATTR_ACTION_SET_TC"
     SAI_ATTR_ACTION_SET_USER_TRAP_ID = "SAI_ACL_ENTRY_ATTR_ACTION_SET_USER_TRAP_ID"
+    SAI_ATTR_ACTION_SET_ACL_META_DATA = "SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA"
 
     # table name in APP_DB and attribute fields
     APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
@@ -75,20 +79,26 @@ class P4RtAclRuleWrapper(util.DBInterface):
     METER_CBURST = "meter/cburst"
     METER_PIR = "meter/pir"
     METER_PBURST = "meter/pburst"
+    METER_MODE = "meter/mode"
 
 
 class P4RtAclCounterWrapper(util.DBInterface):
     """Interface to interact with APP DB and ASIC DB tables for P4RT ACL counter object."""
+
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_COUNTER"
     SAI_ATTR_TABLE_ID = "SAI_ACL_COUNTER_ATTR_TABLE_ID"
     SAI_ATTR_ENABLE_BYTE_COUNT = "SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT"
     SAI_ATTR_ENABLE_PACKET_COUNT = "SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT"
+    SAI_ACL_COUNTER_ATTR_LABEL = "SAI_ACL_COUNTER_ATTR_LABEL"
 
 
 class P4RtAclMeterWrapper(util.DBInterface):
     """Interface in ASIC DB tables for P4RT ACL policer object."""
+
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_POLICER"
@@ -98,6 +108,7 @@ class P4RtAclMeterWrapper(util.DBInterface):
     SAI_ATTR_METER_CIR = "SAI_POLICER_ATTR_CIR"
     SAI_ATTR_METER_PBS = "SAI_POLICER_ATTR_PBS"
     SAI_ATTR_METER_PIR = "SAI_POLICER_ATTR_PIR"
+    SAI_ATTR_METER_LABEL = "SAI_POLICER_ATTR_LABEL"
     SAI_ATTR_GREEN_PACKET_ACTION = "SAI_POLICER_ATTR_GREEN_PACKET_ACTION"
     SAI_ATTR_RED_PACKET_ACTION = "SAI_POLICER_ATTR_RED_PACKET_ACTION"
     SAI_ATTR_YELLOW_PACKET_ACTION = "SAI_POLICER_ATTR_YELLOW_PACKET_ACTION"
@@ -105,6 +116,8 @@ class P4RtAclMeterWrapper(util.DBInterface):
 
 class P4RtAclGroupWrapper(util.DBInterface):
     """Interface in ASIC DB tables for P4RT ACL group object."""
+
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP"
@@ -129,6 +142,8 @@ class P4RtAclGroupWrapper(util.DBInterface):
 class P4RtAclGroupMemberWrapper(util.DBInterface):
     """Interface in ASIC DB tables for P4RT ACL group member object."""
 
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
+
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER"
     SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID = "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID"
@@ -138,6 +153,8 @@ class P4RtAclGroupMemberWrapper(util.DBInterface):
 
 class P4RtUserDefinedTrapWrapper(util.DBInterface):
     """Interface in ASIC DB tables for SAI user defined trap object."""
+
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP"
@@ -163,6 +180,8 @@ class P4RtTrapGroupWrapper(util.DBInterface):
 class P4RtHostifWrapper(util.DBInterface):
     """Interface in ASIC DB tables for SAI hostif object."""
 
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
+
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF"
     SAI_HOSTIF_ATTR_TYPE = "SAI_HOSTIF_ATTR_TYPE"
@@ -172,6 +191,8 @@ class P4RtHostifWrapper(util.DBInterface):
 
 class P4RtHostifTableEntryWrapper(util.DBInterface):
     """Interface in ASIC DB tables for SAI hostif table entry object."""
+
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF_TABLE_ENTRY"
@@ -183,10 +204,13 @@ class P4RtHostifTableEntryWrapper(util.DBInterface):
 class P4RtUdfGroupWrapper(util.DBInterface):
     """Interface in ASIC DB tables for SAI UDF Group object."""
 
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
+
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_UDF_GROUP"
     SAI_UDF_GROUP_ATTR_TYPE = "SAI_UDF_GROUP_ATTR_TYPE"
     SAI_UDF_GROUP_ATTR_LENGTH = "SAI_UDF_GROUP_ATTR_LENGTH"
+    SAI_UDF_GROUP_ATTR_LABEL = "SAI_UDF_GROUP_ATTR_LABEL"
 
     SAI_UDF_GROUP_TYPE_GENERIC = "SAI_UDF_GROUP_TYPE_GENERIC"
 
@@ -194,12 +218,16 @@ class P4RtUdfGroupWrapper(util.DBInterface):
 class P4RtUdfMatchWrapper(util.DBInterface):
     """Interface in ASIC DB tables for SAI UDF Match object."""
 
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
+
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_UDF_MATCH"
 
 
 class P4RtUdfWrapper(util.DBInterface):
     """Interface in ASIC DB tables for SAI UDF object."""
+
+    APP_DB_TBL_NAME = swsscommon.APP_P4RT_TABLE_NAME
 
     # table name in ASIC_DB and SAI constants
     ASIC_DB_TBL_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_UDF"

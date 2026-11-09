@@ -6,6 +6,11 @@ namespace swss
         ConsumerTableBase(db, tableName, popBatchSize, pri),
 	m_table(db, tableName)
     {
+        m_keyspace = "__keyspace@";
+
+        m_keyspace += std::to_string(db->getDbId()) + "__:" + tableName + m_table.getTableNameSeparator() + "*";
+
+        psubscribe(m_db, m_keyspace);
     }
 
     void SubscriberStateTable::pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const std::string& /*prefix*/)

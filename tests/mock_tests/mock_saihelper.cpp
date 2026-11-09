@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "dash/dashresulthelper.h"
 #include "saihelper.h"
 #include <sys/mman.h>
 
@@ -30,6 +31,7 @@ namespace saihelper_test
     bool record_output_dir_failure;
     bool record_filename_failure;
     bool record_failure;
+    bool syncd_dump_failure;
     bool response_timeout_failure;
     uint32_t *_sai_syncd_notifications_count;
     int32_t *_sai_syncd_notification_event;
@@ -77,6 +79,10 @@ namespace saihelper_test
                 }
                 break;
             case SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD:
+                if (syncd_dump_failure)
+                {
+                    return SAI_STATUS_FAILURE;
+                }
                 *_sai_syncd_notifications_count = *_sai_syncd_notifications_count + 1;
                 *_sai_syncd_notification_event = attr[0].value.s32;
                 break;
@@ -131,6 +137,7 @@ namespace saihelper_test
                 record_output_dir_failure = false;
                 record_filename_failure = false;
                 record_failure = false;
+                syncd_dump_failure = false;
                 response_timeout_failure = false;
 
                 map<string, string> profile = {
@@ -189,11 +196,8 @@ namespace saihelper_test
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
-        uint32_t notif_count = *_sai_syncd_notifications_count;
 
-        initSaiRedis();
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_DEATH({initSaiRedis();}, "");
 
         set_comm_mode_not_supported = false;
         _unhook_sai_apis();
@@ -209,11 +213,8 @@ namespace saihelper_test
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
-        uint32_t notif_count = *_sai_syncd_notifications_count;
 
-        initSaiRedis();
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_DEATH({initSaiRedis();}, "");
 
         use_pipeline_not_supported = false;
         _unhook_sai_apis();
@@ -229,11 +230,8 @@ namespace saihelper_test
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
-        uint32_t notif_count = *_sai_syncd_notifications_count;
 
-        initSaiRedis();
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_DEATH({initSaiRedis();}, "");
 
         record_output_dir_failure = false;
         _unhook_sai_apis();
@@ -249,11 +247,8 @@ namespace saihelper_test
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
-        uint32_t notif_count = *_sai_syncd_notifications_count;
 
-        initSaiRedis();
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_DEATH({initSaiRedis();}, "");
 
         record_filename_failure = false;
         _unhook_sai_apis();
@@ -269,11 +264,8 @@ namespace saihelper_test
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
-        uint32_t notif_count = *_sai_syncd_notifications_count;
 
-        initSaiRedis();
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_DEATH({initSaiRedis();}, "");
 
         record_failure = false;
         _unhook_sai_apis();
@@ -289,12 +281,9 @@ namespace saihelper_test
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
-        uint32_t notif_count = *_sai_syncd_notifications_count;
         (void) setenv("platform", "mellanox", 1);
 
-        initSaiRedis();
-        ASSERT_EQ(*_sai_syncd_notifications_count, ++notif_count);
-        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        ASSERT_DEATH({initSaiRedis();}, "");
 
         response_timeout_failure = false;
         (void) unsetenv("platform");
@@ -495,6 +484,14 @@ namespace saihelper_test
         ASSERT_EQ(*_sai_syncd_notifications_count, 0);
         ASSERT_EQ(status, task_success);
 
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
+        status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, SAI_STATUS_ITEM_NOT_FOUND);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+        ASSERT_EQ(status, task_success);
+
         _unhook_sai_apis();
     }
 
@@ -582,5 +579,32 @@ namespace saihelper_test
         removeResultFromDB(mockTable, key);
     }
 
+    TEST_F(SaihelperTest, TestSaiDumpFailure)
+    {
+        syncd_dump_failure = true;
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        // Call with abort_on_fail = false
+        handleSaiFailure(SAI_API_SWITCH, "set", SAI_STATUS_FAILURE, false);
+        ASSERT_EQ(*_sai_syncd_notifications_count, 0);
+
+        _unhook_sai_apis();
+        syncd_dump_failure = false;
+    }
+
+    TEST(FlushToDBTest, NullTable) {
+        std::unique_ptr<swss::Table> nullTable;
+        // Should not crash when table is null
+        flushResultsToDB(nullTable);
+    }
+
+    TEST(FlushToDBTest, FlushValidTable) {
+        auto db = std::make_shared<swss::DBConnector>("DPU_APPL_STATE_DB", 0);
+        std::unique_ptr<swss::Table> table = std::make_unique<swss::Table>(db.get(), "TEST_TABLE");
+
+        // Should not crash or throw with a valid table
+        flushResultsToDB(table);
+    }
 }
 

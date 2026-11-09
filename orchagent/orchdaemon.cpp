@@ -2,16 +2,21 @@
 #include <unordered_map>
 #include <chrono>
 #include <limits.h>
+#include <errno.h>
+#include <signal.h>
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
+#include "namelabelmapper.h"
 #include "warm_restart.h"
 #include <iostream>
 #include "orch_zmq_config.h"
+#include "saihelper.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "notificationconsumerstatsorch.h"
 #include "stporch.h"
 
 using namespace std;
@@ -19,7 +24,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
@@ -28,6 +32,7 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern string                      gMySwitchType;
 extern string                      gMySwitchSubType;
+volatile sig_atomic_t              gOrchShutdownRequested = 0;
 
 extern void syncd_apply_view();
 /*
@@ -63,12 +68,17 @@ Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 MonitorOrch *gMonitorOrch;
+BfdMonitorOrch *gBfdMonitorOrch;
 TunnelDecapOrch *gTunneldecapOrch;
 StpOrch *gStpOrch;
 MuxOrch *gMuxOrch;
 IcmpOrch *gIcmpOrch;
 HFTelOrch *gHFTOrch;
+ShlOrch *gShlOrch;
+EvpnMhOrch *gEvpnMhOrch;
+L2NhgOrch *gL2NhgOrch;
 
+NameLabelMapper *gLabelMapper;
 bool gIsNatSupported = false;
 event_handle_t g_events_handle;
 
@@ -91,14 +101,41 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
-    // Stop the ring thread before delete orch pointers
+    /*
+     * Stop the ring thread before deleting orch pointers.
+     *
+     * OrchDaemon::start() always launches ring_thread, but popRingBuffer()
+     * returns immediately when gRingBuffer is null (ring mode disabled).
+     * In that case ring_thread is still "joinable" after its entry function
+     * returns, so this teardown path would otherwise dereference a null
+     * gRingBuffer. Before PR #4400 this was unreachable: SIGTERM was not
+     * handled, so ~OrchDaemon() never ran on signal-driven shutdown. The
+     * new graceful shutdown path reaches this destructor on clean exit and
+     * exposes the latent null dereference. Guard the ring buffer accesses
+     * so teardown is safe whether ring mode is enabled or not.
+     */
     if (ring_thread.joinable()) {
-        // notify the ring_thread to exit
-        gRingBuffer->thread_exited = true;
-        gRingBuffer->notify();
+        if (gRingBuffer) {
+            // notify the ring_thread to exit
+            gRingBuffer->thread_exited = true;
+            gRingBuffer->notify();
+        }
         // wait for the ring_thread to exit
         ring_thread.join();
-        disableRingBuffer();
+        if (gRingBuffer) {
+            disableRingBuffer();
+        }
+    }
+
+    /*
+     * Detach observers while all orchs are still alive.
+     * m_orchList reverse deletion can destroy a Subject before its
+     * Observers (e.g. FdbOrch before MuxOrch/NeighOrch). Calling
+     * detachObservers() here avoids the ordering dependency entirely.
+     */
+    for (auto* orch : m_orchList)
+    {
+        orch->detachObservers();
     }
 
     /*
@@ -164,6 +201,7 @@ void OrchDaemon::disableRingBuffer() {
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+    gLabelMapper = new NameLabelMapper();
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
@@ -171,16 +209,26 @@ bool OrchDaemon::init()
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
+    // Construct the NotificationConsumer stats publisher before any
+    // orch that owns a NotificationConsumer it cares to publish, so
+    // each of those orchs can call
+    // gNotifConsumerStatsOrch->registerConsumer(...) from its
+    // constructor.  A null gNotifConsumerStatsOrch means publish is
+    // disabled; the registerConsumer call sites all null-check.
+    gNotifConsumerStatsOrch = new NotificationConsumerStatsOrch();
+
     TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
     TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
     TableConnector conf_switch_trim(m_configDb, CFG_SWITCH_TRIMMING_TABLE_NAME);
+    TableConnector conf_switch_fast_linkup(m_configDb, CFG_SWITCH_FAST_LINKUP_TABLE_NAME);
     TableConnector conf_suppress_asic_sdk_health_categories(m_configDb, CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME);
 
     vector<TableConnector> switch_tables = {
         conf_switch_hash,
         conf_switch_trim,
+        conf_switch_fast_linkup,
         conf_asic_sensors,
         conf_suppress_asic_sdk_health_categories,
         app_switch_table
@@ -206,9 +254,23 @@ bool OrchDaemon::init()
     };
 
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
+
+    // Create EvpnMhOrch early so its ES/DF state is available when PortsOrch
+    // processes bridge ports and VLAN members (fixes warm boot ordering)
+    TableConnector appDbDfTable(m_applDb, "EVPN_DF_TABLE");
+    TableConnector confDbEvpnEsTable(m_configDb, "EVPN_ETHERNET_SEGMENT");
+
+    vector<TableConnector> evpn_df_es_table_connectors = {
+        appDbDfTable,
+        confDbEvpnEsTable,
+    };
+
+    gEvpnMhOrch = new EvpnMhOrch(evpn_df_es_table_connectors);
+
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch,
+                           m_configDb);
 
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
 
@@ -260,6 +322,8 @@ bool OrchDaemon::init()
     gDirectory.set(vrf_orch);
     gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
     gDirectory.set(gMonitorOrch);
+    gBfdMonitorOrch = new BfdMonitorOrch(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+    gDirectory.set(gBfdMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
@@ -267,10 +331,17 @@ bool OrchDaemon::init()
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
-    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
+    vector<table_name_with_pri_t> intf_tables = {
+        { APP_INTF_TABLE_NAME,  IntfsOrch::intfsorch_pri},
+        { APP_SAG_TABLE_NAME,   IntfsOrch::intfsorch_pri}
+    };
+
+    gIntfsOrch = new IntfsOrch(m_applDb, intf_tables, vrf_orch, m_chassisAppDb);
     gDirectory.set(gIntfsOrch);
+
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
     gDirectory.set(gNeighOrch);
+    gNeighOrch->attach(gBfdOrch);
 
     const int fgnhgorch_pri = 15;
 
@@ -305,10 +376,10 @@ bool OrchDaemon::init()
     };
 
     // Enable the fpmsyncd service to send Route events to orchagent via the ZMQ channel.
-    auto enable_route_zmq = get_feature_status(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
-    auto route_zmq_sever = enable_route_zmq ? m_zmqServer : nullptr;
+    auto enable_route_zmq = get_route_perf_zmq_enabled();
+    auto route_zmq_server = enable_route_zmq ? dynamic_cast<ZmqRouteServer *>(m_zmqServer) : nullptr;
 
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_sever);
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_server);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
@@ -463,6 +534,8 @@ bool OrchDaemon::init()
 
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
+    gL2NhgOrch = new L2NhgOrch(m_applDb, APP_L2_NEXTHOP_GROUP_TABLE_NAME);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -471,8 +544,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gStpOrch};
-
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch, gNotifConsumerStatsOrch};
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {
@@ -520,6 +592,13 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    TableConnector appDbShlTbl(m_applDb, APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<TableConnector> shl_tbl_ctrs = {
+        appDbShlTbl
+    };
+
+    gShlOrch = new ShlOrch(shl_tbl_ctrs);
+
     //
     // Policy Based Hashing (PBH) orchestrator
     //
@@ -547,6 +626,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+    m_orchList.push_back(gShlOrch);
 
     if (vxlan_tunnel_orch->isDipTunnelsSupported())
     {
@@ -647,6 +727,7 @@ bool OrchDaemon::init()
     }
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
 	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
+             || (platform == CLX_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
@@ -681,6 +762,7 @@ bool OrchDaemon::init()
 
         if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
 	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
+	    (platform == CLX_PLATFORM_SUBSTRING) ||
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
@@ -736,6 +818,7 @@ bool OrchDaemon::init()
         };
 
         bool pfcDlrInit = gSwitchOrch->checkPfcDlrInitEnable();
+        bool pfcDldrEnable = gSwitchOrch->checkPfcDldrEnable();
 
         // Override pfcDlrInit if needed, and this change is only for PFC tests.
         if(getenv("PFC_DLR_INIT_ENABLE"))
@@ -749,12 +832,33 @@ bool OrchDaemon::init()
             else if(envPfcDlrInit == "0")
             {
                 pfcDlrInit = false;
+                // Asking for a software handler also rules out the hardware
+                // watchdog, which would otherwise take precedence below. The
+                // virtual switch advertises every queue attribute, DLDR
+                // included, so without this the software handlers are
+                // unreachable there and the tests that set this variable cannot
+                // exercise them.
+                pfcDldrEnable = false;
                 SWSS_LOG_NOTICE("Override PfcDlrInitEnable to false");
             }
         }
 
-        if(pfcDlrInit)
+        // Both DLDR and DLR_INIT select hardware; DLR_INIT alone selects hybrid.
+        const PfcWdRecoveryMode pfcWdMode = selectPfcWdRecoveryMode(pfcDldrEnable, pfcDlrInit);
+
+        if (pfcWdMode == PfcWdRecoveryMode::Hardware)
         {
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds));
+        }
+        else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
+        {
+            SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -765,6 +869,7 @@ bool OrchDaemon::init()
         }
         else
         {
+            SWSS_LOG_NOTICE("Starting acl handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
@@ -805,19 +910,22 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+        // LCOV_EXCL_START: cisco-8000 platform branch is not exercised by the VS test environment
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
+        // LCOV_EXCL_STOP
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
     vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+    m_p4OrchZmqServer = new swss::ZmqServer(m_p4OrchZmqServerEp, "", false, true);
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, m_p4OrchZmqServer, vrf_orch);
     m_orchList.push_back(gP4Orch);
 
     TableConnector confDbTwampTable(m_configDb, CFG_TWAMP_SESSION_TABLE_NAME);
@@ -863,7 +971,7 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        handleSaiFailure(SAI_API_SWITCH, "set", status);
+        handleSaiFailure(SAI_API_SWITCH, "set", status, true);
     }
 
     /*
@@ -901,6 +1009,90 @@ void OrchDaemon::logRotate() {
 }
 
 
+void OrchDaemon::initTaskStatsChannel()
+{
+    SWSS_LOG_ENTER();
+
+    m_taskStatsDb = std::make_unique<swss::DBConnector>("APPL_DB", 0);
+    m_taskStatsQuery = std::make_unique<swss::NotificationConsumer>(
+            m_taskStatsDb.get(), "ORCH_TASK_STATS_QUERY");
+    m_taskStatsReply = std::make_unique<swss::NotificationProducer>(
+            m_taskStatsDb.get(), "ORCH_TASK_STATS_REPLY");
+
+    m_select->addSelectable(m_taskStatsQuery.get());
+}
+
+void OrchDaemon::handleTaskStatsQuery()
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> req_values;
+    m_taskStatsQuery->pop(op, data, req_values);
+
+    std::vector<swss::FieldValueTuple> reply_values;
+
+    if (op == "show")
+    {
+        reply_values.reserve(m_taskStats.size());
+        // Helper: round a P^2 double estimate to a non-negative uint64.
+        auto round_p2 = [](double v) -> uint64_t
+        {
+            return static_cast<uint64_t>(v < 0.0 ? 0.0 : v + 0.5);
+        };
+
+        for (auto &kv : m_taskStats)
+        {
+            auto &s = kv.second;
+            // Pipe-separated, 14 fields:
+            //   count | total_run_ns
+            //   | median_run_ns | q1_run_ns | q3_run_ns | max_run_ns
+            //   | high_outliers | low_outliers
+            //   | sched_count | total_sched_ns
+            //   | median_sched_ns | q1_sched_ns | q3_sched_ns | max_sched_ns
+            // Empty slots emit zeros so the CLI can format them as "-".
+            uint64_t med_run = (s.count == 0) ? 0 : round_p2(s.median.value());
+            uint64_t q1_run  = (s.count == 0) ? 0 : round_p2(s.q1.value());
+            uint64_t q3_run  = (s.count == 0) ? 0 : round_p2(s.q3.value());
+
+            uint64_t med_sched = (s.sched_count == 0) ? 0 : round_p2(s.sched_median.value());
+            uint64_t q1_sched  = (s.sched_count == 0) ? 0 : round_p2(s.sched_q1.value());
+            uint64_t q3_sched  = (s.sched_count == 0) ? 0 : round_p2(s.sched_q3.value());
+
+            std::string v = std::to_string(s.count) + "|"
+                          + std::to_string(s.total_ns) + "|"
+                          + std::to_string(med_run) + "|"
+                          + std::to_string(q1_run) + "|"
+                          + std::to_string(q3_run) + "|"
+                          + std::to_string(s.max_ns) + "|"
+                          + std::to_string(s.high_outliers) + "|"
+                          + std::to_string(s.low_outliers) + "|"
+                          + std::to_string(s.sched_count) + "|"
+                          + std::to_string(s.total_sched_ns) + "|"
+                          + std::to_string(med_sched) + "|"
+                          + std::to_string(q1_sched) + "|"
+                          + std::to_string(q3_sched) + "|"
+                          + std::to_string(s.sched_max_ns);
+            reply_values.emplace_back(kv.first, v);
+        }
+        m_taskStatsReply->send("ok", "", reply_values);
+    }
+    else if (op == "clear")
+    {
+        for (auto &kv : m_taskStats)
+        {
+            kv.second.reset();
+        }
+        m_taskStatsReply->send("ok", "", reply_values);
+    }
+    else
+    {
+        SWSS_LOG_WARN("ORCH_TASK_STATS_QUERY: unknown op '%s'", op.c_str());
+        m_taskStatsReply->send("error", "unknown op", reply_values);
+    }
+}
+
 void OrchDaemon::start(long heartBeatInterval)
 {
     SWSS_LOG_ENTER();
@@ -914,6 +1106,8 @@ void OrchDaemon::start(long heartBeatInterval)
         m_select->addSelectables(o->getSelectables());
     }
 
+    initTaskStatsChannel();
+
     auto tstart = std::chrono::high_resolution_clock::now();
 
     while (true)
@@ -921,7 +1115,19 @@ void OrchDaemon::start(long heartBeatInterval)
         Selectable *s;
         int ret;
 
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
+
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        if (gOrchShutdownRequested != 0)
+        {
+            SWSS_LOG_NOTICE("Received signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+            break;
+        }
 
         auto tend = std::chrono::high_resolution_clock::now();
         heartBeat(tend, heartBeatInterval);
@@ -932,11 +1138,27 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             tstart = std::chrono::high_resolution_clock::now();
 
+            { TaskTimer t(m_taskStats["flush"]); flush(); }
+            /*
+             * Log an error message periodically if a previous SAI API call failed with
+             * an unrecoverable error.
+             */
+            string orchHealthError;
+            if (getSaiFailureStatus(orchHealthError))
+            {
+                SWSS_LOG_ERROR("%s", orchHealthError.c_str());
+            }
+
             flush();
         }
 
         if (ret == Select::ERROR)
         {
+            if (errno == EINTR && gOrchShutdownRequested != 0)
+            {
+                SWSS_LOG_NOTICE("Interrupted by signal %d, shutting down orchagent gracefully", gOrchShutdownRequested);
+                break;
+            }
             SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
             continue;
         }
@@ -948,7 +1170,7 @@ void OrchDaemon::start(long heartBeatInterval)
              * accumulated. Still it is possible that small amount of
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
-            flush();
+            { TaskTimer t(m_taskStats["flush"]); flush(); }
 
             if (gRingBuffer)
             {
@@ -971,11 +1193,17 @@ void OrchDaemon::start(long heartBeatInterval)
         {
             SWSS_LOG_NOTICE("Performing %s log rotate", Recorder::Instance().sairedis.getName().c_str());
             Recorder::Instance().sairedis.setRotate(false);
-            logRotate();
+            { TaskTimer t(m_taskStats["logRotate"]); logRotate(); }
+        }
+
+        if (s == m_taskStatsQuery.get())
+        {
+            handleTaskStatsQuery();
+            continue;
         }
 
         auto *c = (Executor *)s;
-        c->execute();
+        { TaskTimer t(m_taskStats[c->getName()]); c->execute(); }
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -1023,7 +1251,7 @@ void OrchDaemon::start(long heartBeatInterval)
                     }
 
                     // Flush sairedis's redis pipeline
-                    flush();
+                    { TaskTimer t(m_taskStats["flush"]); flush(); }
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
                     freezeAndHeartBeat(UINT_MAX, heartBeatInterval);
@@ -1031,6 +1259,39 @@ void OrchDaemon::start(long heartBeatInterval)
             }
         }
     }
+}
+
+#ifdef GCOV_ENABLED
+extern "C" void __gcov_dump(void);
+extern "C" void __gcov_reset(void);
+#endif
+
+void exit_if_graceful_shutdown_requested(void (*exit_fn)(int))
+{
+    if (gOrchShutdownRequested == 0)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Exiting on graceful shutdown request (signal %d) without running destructors", gOrchShutdownRequested);
+
+    /*
+     * Drain the async swss recorder before exiting: setAsync(false) stops the
+     * recorder worker only after any queued records have been written out.
+     */
+    Recorder::Instance().swss.setAsync(false);
+
+#ifdef GCOV_ENABLED
+    /*
+     * _exit() skips libgcov's exit hook, so persist coverage data explicitly.
+     * Reset the counters afterwards so a unit-test caller passing a
+     * non-exiting exit_fn still dumps the remainder of its run at exit.
+     */
+    __gcov_dump();
+    __gcov_reset(); // LCOV_EXCL_LINE (resets its own arc counter, so it can never self-report)
+#endif
+
+    exit_fn(0);
 }
 
 /*
@@ -1042,6 +1303,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     SWSS_LOG_ENTER();
 
     WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
+
+    // Configure response publisher before warm-boot starts.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/true);
 
     for (Orch *o : m_orchList)
     {
@@ -1086,6 +1350,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // after the rest of the data has been processed.
     gMirrorOrch->doTask();
     gAclOrch->doTask();
+
+    // Configure response publisher after warm-boot completes.
+    configureResponsePublisherForWarmBoot(/*warm_boot_start=*/false);
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and
@@ -1194,6 +1461,25 @@ void OrchDaemon::addOrchList(Orch *o)
     m_orchList.push_back(o);
 }
 
+void OrchDaemon::configureResponsePublisherForWarmBoot(bool warm_boot_start)
+{
+     for (Orch *o : m_orchList)
+     {
+        /* During warmboot, we will enable setWarmbootStateOnFailure, so that
+         * failure during warmboot will update the warmboot state to FAILED
+         * indicating that the reconciliation process failed. */
+        o->setWarmbootStateOnFailure("orchagent", warm_boot_start);
+
+        /* During warmboot, we will disable setEnableNotify, so that no
+         * response notification will be generated when processing warmboot
+         * entries. The response notification is not needed during warmboot as
+         * there is no application client receiving the response during
+         * warmboot. */
+        o->setEnableNotify(!warm_boot_start);
+     }
+}
+
+
 void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent, long interval)
 {
     if (interval == 0)
@@ -1281,7 +1567,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_dpu_appDb, dash_vnet_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_vnet_orch);
 
     vector<string> dash_tables = {
@@ -1292,7 +1578,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashOrch *dash_orch = new DashOrch(m_dpu_appDb, dash_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_orch);
 
     vector<string> dash_ha_tables = {
@@ -1310,7 +1596,7 @@ bool DpuOrchDaemon::init()
         APP_DASH_ROUTE_GROUP_TABLE_NAME
     };
 
-    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_dpu_appDb, dash_route_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
@@ -1320,28 +1606,36 @@ bool DpuOrchDaemon::init()
         APP_DASH_ACL_GROUP_TABLE_NAME,
         APP_DASH_ACL_RULE_TABLE_NAME
     };
-    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_dpu_appDb, dash_acl_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_acl_orch);
 
     vector<string> dash_tunnel_tables = {
         APP_DASH_TUNNEL_TABLE_NAME
     };
-    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_applDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashTunnelOrch *dash_tunnel_orch = new DashTunnelOrch(m_dpu_appDb, dash_tunnel_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_tunnel_orch);
 
     vector<string> dash_meter_tables = {
         APP_DASH_METER_POLICY_TABLE_NAME,
         APP_DASH_METER_RULE_TABLE_NAME
     };
-    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_applDb, dash_meter_tables, dash_orch, m_dpu_appstateDb, dash_zmq_server);
+
+    DashMeterOrch *dash_meter_orch = new DashMeterOrch(m_dpu_appDb, dash_meter_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_meter_orch);
 
     vector<string> dash_port_map_tables = {
         APP_DASH_OUTBOUND_PORT_MAP_TABLE_NAME,
         APP_DASH_OUTBOUND_PORT_MAP_RANGE_TABLE_NAME
     };
-    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_applDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
+    DashPortMapOrch *dash_port_map_orch = new DashPortMapOrch(m_dpu_appDb, dash_port_map_tables, m_dpu_appstateDb, dash_zmq_server);
     gDirectory.set(dash_port_map_orch);
+
+    vector<string> dash_ha_flow_tables = {
+        APP_DASH_FLOW_SYNC_SESSION_TABLE_NAME,
+        APP_DASH_FLOW_DUMP_FILTER_TABLE_NAME
+    };
+    DashHaFlowOrch *dash_ha_flow_orch = new DashHaFlowOrch(m_dpu_appDb, dash_ha_flow_tables, m_dpu_appstateDb, dash_zmq_server);
+    gDirectory.set(dash_ha_flow_orch);
 
     addOrchList(dash_acl_orch);
     addOrchList(dash_vnet_orch);
@@ -1351,6 +1645,7 @@ bool DpuOrchDaemon::init()
     addOrchList(dash_meter_orch);
     addOrchList(dash_ha_orch);
     addOrchList(dash_port_map_orch);
+    addOrchList(dash_ha_flow_orch);
 
     return true;
 }

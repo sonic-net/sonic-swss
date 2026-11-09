@@ -1,0 +1,93 @@
+# Upstream artifacts used by sonic-swss Build and by the shared VS test host.
+#
+# Build scope declares only immediate dependencies: sairedis (which cascades to
+# swss-common/common-libs/VPP) and dash-api. Test scope uses Ubuntu-host-specific
+# artifacts because VS tests execute outside the Debian build container.
+
+upstream:
+  # ------------------------------ Build ---------------------------------- #
+  # SWSS directly requires the SONiC-patched libnl headers on every
+  # architecture (for example rtnl_route_get_nh_id). Keep this entry before
+  # sonic-sairedis: the cascade deduplicates upstreams by name, so this superset
+  # replaces sairedis's nested common-libs selection (which intentionally uses
+  # stock apt libnl on ARM) while retaining its libyang requirements.
+  - name: common-libs
+    project: build
+    pipeline: Azure.sonic-buildimage.common_libs
+    scopes: [build, test]
+    cascade_optional: true
+    result_filter: [succeeded]
+    apt_fix_broken: true
+    artifact_name:
+      - { when: { arch: amd64 },          value: 'common-lib' }
+      - { when: { arch: { not: amd64 } }, value: 'common-lib.{arch}' }
+    debs:
+      - { path: 'target/debs/{debian_version}/libnl-3-200_*.deb',       scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-3-dev_*.deb',       scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-genl-3-200_*.deb',  scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-genl-3-dev_*.deb',  scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-route-3-200_*.deb', scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-route-3-dev_*.deb', scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-nf-3-200_*.deb',    scopes: [build] }
+      - { path: 'target/debs/{debian_version}/libnl-nf-3-dev_*.deb',    scopes: [build] }
+      - 'target/debs/{debian_version}/libyang3_*.deb'
+      - 'target/debs/{debian_version}/libyang-dev_3*.deb'
+
+  - name: sonic-sairedis
+    project: build
+    pipeline: Azure.sonic-sairedis
+    scopes: [build]
+    cascade_optional: false
+    result_filter: [succeeded, partiallySucceeded]
+    artifact_name:
+      - { when: { arch: amd64 },          value: 'sonic-sairedis-{debian_version}' }
+      - { when: { arch: { not: amd64 } }, value: 'sonic-sairedis-{debian_version}.{arch}' }
+    debs:
+      - 'libsaivs_1.0.0_{arch}.deb'
+      - 'libsaivs-dev_1.0.0_{arch}.deb'
+      - 'libsairedis_1.0.0_{arch}.deb'
+      - 'libsairedis-dev_1.0.0_{arch}.deb'
+      - 'libsaimetadata_1.0.0_{arch}.deb'
+      - 'libsaimetadata-dev_1.0.0_{arch}.deb'
+      - 'syncd-vs_1.0.0_{arch}.deb'
+
+  - name: sonic-dash-api
+    project: build
+    pipeline: sonic-net.sonic-dash-api
+    scopes: [build]
+    cascade_optional: true
+    result_filter: [succeeded]
+    artifact_name:
+      - { when: { arch: amd64, debian_version: { not: trixie } }, value: 'sonic-dash-api' }
+      - { when: { arch: { not: amd64 }, debian_version: { not: trixie } }, value: 'sonic-dash-api.{arch}' }
+      - { when: { arch: amd64, debian_version: trixie }, value: 'sonic-dash-api-trixie' }
+      - { when: { arch: { not: amd64 }, debian_version: trixie }, value: 'sonic-dash-api-trixie.{arch}' }
+    debs:
+      - 'libdashapi*.deb'
+
+  # ------------------------------- Test ---------------------------------- #
+  - name: sonic-swss-common-test-host
+    project: build
+    pipeline: Azure.sonic-swss-common
+    scopes: [test]
+    cascade_optional: false
+    result_filter: [succeeded, partiallySucceeded]
+    apt_fix_broken: true
+    dpkg_args: ["--force-confask,confnew"]
+    artifact_name: sonic-swss-common.amd64.ubuntu22_04
+    debs:
+      - 'libswsscommon_1.0.0_amd64.deb'
+      - 'python3-swsscommon_1.0.0_amd64.deb'
+
+  - name: sonic-buildimage-ubuntu22-04
+    project: build
+    pipeline: sonic-net.sonic-buildimage-ubuntu22.04
+    scopes: [test]
+    cascade_optional: true
+    result_filter: [succeeded]
+    apt_fix_broken: true
+    artifact_name: sonic-buildimage.amd64.ubuntu22_04
+    debs:
+      - 'libprotobuf*_amd64.deb'
+      - 'python3-protobuf*_amd64.deb'
+      - 'libdashapi*.deb'

@@ -137,6 +137,9 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
         {
             gearbox_phy_t phy = {};
 
+            // default capability if absent
+            phy.macsec_supported = true;
+
             gearboxTable->get(k, ovalues);
             for (auto &val : ovalues)
             {
@@ -192,6 +195,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 else if (val.first == "macsec_ipg")
                 {
                     phy.macsec_ipg = std::stoi(val.second);
+                }
+                else if (val.first == "macsec_supported")
+                {
+                    phy.macsec_supported = (val.second == "true");
                 }
             }
             gearboxPhyMap[phy.phy_id] = phy;

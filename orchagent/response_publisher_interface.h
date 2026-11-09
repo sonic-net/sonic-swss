@@ -32,4 +32,12 @@ class ResponsePublisherInterface
     virtual void writeToDB(const std::string &table, const std::string &key,
                            const std::vector<swss::FieldValueTuple> &values, const std::string &op,
                            bool replace = false) = 0;
+
+    virtual void setWarmbootStateOnFailure(const std::string& app_name,
+                                           bool set_on_fail) = 0;
+    // Flag to enable/disable DB write.
+    virtual void setEnableDbWrite(bool enable) = 0;
+
+    // Flag to enable/disable notification.
+    virtual void setEnableNotify(bool enable) = 0;
 };

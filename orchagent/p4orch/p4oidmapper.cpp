@@ -45,7 +45,7 @@ bool P4OidMapper::getOID(_In_ sai_object_type_t object_type, _In_ const std::str
 
     if (m_oidTables[object_type].find(key) == m_oidTables[object_type].end())
     {
-        SWSS_LOG_ERROR("Key %s with SAI object type %d does not exist in centralized mapper", key.c_str(), object_type);
+        SWSS_LOG_INFO("Key %s with SAI object type %d does not exist in centralized mapper", key.c_str(), object_type);
         return false;
     }
 

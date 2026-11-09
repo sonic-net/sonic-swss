@@ -2,21 +2,35 @@
 #define __FDBSYNC__
 
 #include <string>
+#include <vector>
+#include <unordered_map>
 #include <arpa/inet.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
+#include "table.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
+#include "lib/fdb_defs.h"
+
+#ifndef CFG_FDB_SYNC_TABLE_NAME
+// TODO: drop once sonic-net/sonic-buildimage#30365 is merged.
+#define CFG_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
+
+/* The mode fpmsyncd runs, which fdbsyncd follows. */
+#ifndef STATE_FDB_SYNC_TABLE_NAME
+#define STATE_FDB_SYNC_TABLE_NAME "FDB_SYNC"
+#endif
 
 /*
- * Default timer interval for fdbsyncd reconcillation 
+ * Default timer interval for fdbsyncd reconcillation
  */
 #define DEFAULT_FDBSYNC_WARMSTART_TIMER 120
 
 /*
  * This is the MAX time in seconds, fdbsyncd will wait after warm-reboot
- * for the interface entries to be recreated in kernel before attempting to 
+ * for the interface entries to be recreated in kernel before attempting to
  * write the FDB data to kernel
  */
 #define INTF_RESTORE_MAX_WAIT_TIME 180
@@ -48,9 +62,10 @@ public:
     enum { MAX_ADDR_SIZE = 64 };
 
     FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db);
-    ~FdbSync();
+    virtual ~FdbSync();
 
-    virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+    virtual void onMsg(int nlmsg_type, struct nl_object *obj) override;
+    virtual void onMsgRaw(struct nlmsghdr *) override;
 
     bool isIntfRestoreDone();
 
@@ -74,23 +89,64 @@ public:
         return &m_cfgEvpnNvoTable;
     }
 
+    SubscriberStateTable *getStateFdbSyncTable()
+    {
+        return &m_stateFdbSyncTable;
+    }
+
     void processStateFdb();
 
     void processStateMclagRemoteFdb();
 
     void processCfgEvpnNvo();
 
+    void processStateFdbSync();
+
+    /* True when fpmsyncd owns MAC synchronization over the FPM channel. */
+    bool isFpmMacSync() const
+    {
+        return m_fpmMacSync;
+    }
+
+    /* Apply a mac_sync_mode change held during warm-restart reconciliation. */
+    void applyPendingMacSyncMode();
+
     bool m_reconcileDone = false;
 
     bool m_isEvpnNvoExist = false;
 
 private:
+    static bool parseFdbStateKey(
+        const std::string &key,
+        std::string &vlanName,
+        std::string &macAddress
+    );
+    void processStateFdbEntry(
+        const KeyOpFieldsValuesTuple &entry,
+        bool remote
+    );
+    void readMacSyncMode();
+    void processStateFdbSyncEntry(const KeyOpFieldsValuesTuple& entry);
+    void setMacSyncMode(const std::string& mode);
+    void adoptRemoteMacs();
+
+    bool m_fpmMacSync = false;
+    /* An L3EvpnMH device always syncs MACs over FPM, whatever FDB_SYNC says. */
+    bool m_l3EvpnMh = false;
+    bool m_macSyncModePending = false;
+    std::string m_pendingMacSyncMode;
+
     ProducerStateTable m_fdbTable;
+    Table m_fdbTableRead;
     ProducerStateTable m_imetTable;
+    ProducerStateTable m_l2NhgTable;
     SubscriberStateTable m_fdbStateTable;
     SubscriberStateTable m_mclagRemoteFdbStateTable;
-    AppRestartAssist  *m_AppRestartAssist;
+    AppRestartAssist  *m_AppRestartAssist = nullptr;
     SubscriberStateTable m_cfgEvpnNvoTable;
+    SubscriberStateTable m_stateFdbSyncTable;
+    Table m_stateFdbSyncTableRead;
+    Table m_cfgFdbSyncTableRead;
 
     struct m_local_fdb_info
     {
@@ -101,11 +157,12 @@ private:
 
     std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
 
-    void macDelVxlanEntry(std::string auxkey, struct m_fdb_info *info);
+    void macDelVxlanEntry(struct m_fdb_info *info);
 
     void macUpdateCache(struct m_fdb_info *info);
 
     bool macCheckSrcDB(struct m_fdb_info *info);
+    bool macCheckMclagRemoteSrcDB(struct m_fdb_info *info);
 
     void updateLocalMac(struct m_fdb_info *info);
 
@@ -125,10 +182,16 @@ private:
 
     struct m_mac_info
     {
-        std::string vtep;
+        FdbDest nhtype;
         std::string type;
         unsigned int vni;
-        std::string  ifname;
+        std::string ifname;
+
+        // Nexthop destination value - interpretation depends on nhtype:
+        // - nhtype == VTEP: contains remote VTEP IP address
+        // - nhtype == NEXTHOPGROUP: contains nexthop group ID
+        // - nhtype == IFNAME: contains interface name
+        std::string nexthop_value;
     };
     std::unordered_map<std::string, m_mac_info> m_mac;
 
@@ -146,13 +209,28 @@ private:
     std::unordered_map<int, intf> m_intf_info;
 
     void addLocalMac(std::string key, std::string op);
-    void macAddVxlan(std::string key, struct in_addr vtep, std::string type, uint32_t vni, std::string intf_name);
+    void macAddVxlan(std::string key, struct nl_addr *vtep, std::string type, uint32_t vni, std::string intf_name, std::string nexthop_group, FdbDest dest_type);
     void macDelVxlan(std::string auxkey);
     void macDelVxlanDB(std::string key);
-    void imetAddRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
-    void imetDelRoute(struct in_addr vtep, std::string ifname, uint32_t vni);
-    void onMsgNbr(int nlmsg_type, struct nl_object *obj);
+    void imetAddRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
+    void imetDelRoute(struct nl_addr *vtep, std::string ifname, uint32_t vni);
+    void onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h);
     void onMsgLink(int nlmsg_type, struct nl_object *obj);
+    void onMsgNhg(struct nlmsghdr *msg);
+    void clearL2Nhg();
+
+    enum L2NhgType {
+        L2_NHG_TYPE_VTEP,
+        L2_NHG_TYPE_GROUP,
+    };
+
+    struct l2_nhg_info
+    {
+        L2NhgType type;
+        std::string vtep_ip;                /* For VTEP type */
+        std::vector<uint32_t> member_ids;   /* For GROUP type */
+    };
+    std::unordered_map<uint32_t, l2_nhg_info> m_l2NhgMap;
 };
 
 }

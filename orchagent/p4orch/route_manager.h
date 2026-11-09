@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "dbconnector.h"
 #include "bulker.h"
 #include "ipprefix.h"
 #include "orch.h"
@@ -16,6 +17,8 @@
 #include "response_publisher_interface.h"
 #include "return_code.h"
 #include "vrforch.h"
+#include "table.h"
+
 extern "C"
 {
 #include "sai.h"
@@ -29,7 +32,7 @@ struct P4RouteEntry
     std::string action;
     std::string nexthop_id;
     std::string wcmp_group;
-    std::string route_metadata; // go/gpins-pinball-vip-stats
+    std::string route_metadata;  // go/gpins-pinball-vip-stats
     sai_route_entry_t sai_route_entry;
 };
 
@@ -158,6 +161,8 @@ class RouteManager : public ObjectManagerInterface
     P4OidMapper *m_p4OidMapper;
     VRFOrch *m_vrfOrch;
     EntityBulker<sai_route_api_t> m_routerBulker;
+    swss::DBConnector m_asic_db;
+    swss::Table m_asic_state_table;
     ResponsePublisherInterface *m_publisher;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
 
