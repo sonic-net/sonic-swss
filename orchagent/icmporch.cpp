@@ -52,8 +52,7 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
         return;
     }
 
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_icmpStateNotificationConsumer = new OwningNotificationConsumer("ASIC_DB", "NOTIFICATIONS");
     m_icmpStateNotificationConsumer->setOpAllowList({"icmp_echo_session_state_change"});
     m_icmpStateNotificationConsumer->setStatsLabel("IcmpOrch:icmp_echo_session_state_change");
     if (gNotifConsumerStatsOrch)
