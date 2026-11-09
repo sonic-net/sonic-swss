@@ -4033,3 +4033,27 @@ TEST_F(BpProtectionFsmTest, ValidConfigAndChangedOperStatePreemptCleanupBackoff)
     link(false); EXPECT_EQ(bridgeWrites.size(), retried + 1);
     bridgeFault.clear(); tick(100); EXPECT_EQ(refs(), 0u);
 }
+
+TEST_F(BpProtectionFsmTest, DuplicateOperAfterConfigDeletionDoesNotBypassCleanupDeadline)
+{
+    start("AUTO", false); bridgeFault = "clear"; config(DEL_COMMAND);
+    link(false); const auto writes = bridgeWrites.size();
+    for (unsigned i = 0; i < 10; ++i) { link(false); protection->doTask(); }
+    EXPECT_EQ(bridgeWrites.size(), writes); EXPECT_EQ(refs(), 1u);
+    bridgeFault.clear(); now += 100; protection->doTask(*protection->m_fsmTimer);
+    EXPECT_EQ(refs(), 0u);
+}
+
+TEST_F(BpProtectionFsmTest, CleanupRetryCounterAndDeadlineCannotOverflow)
+{
+    start("AUTO", false); bridgeFault = "clear"; config(DEL_COMMAND);
+    runtime().cleanupRetryAttempts = std::numeric_limits<unsigned>::max();
+    now = std::numeric_limits<uint64_t>::max() - 1;
+    protection->doTask(*protection->m_fsmTimer);
+    EXPECT_EQ(runtime().cleanupRetryAttempts, std::numeric_limits<unsigned>::max());
+    EXPECT_EQ(runtime().cleanupRetryAt, std::numeric_limits<uint64_t>::max());
+    const auto writes = bridgeWrites.size(); protection->doTask();
+    EXPECT_EQ(bridgeWrites.size(), writes); EXPECT_EQ(refs(), 1u);
+    bridgeFault.clear(); ++now; protection->doTask(*protection->m_fsmTimer);
+    EXPECT_EQ(refs(), 0u);
+}
