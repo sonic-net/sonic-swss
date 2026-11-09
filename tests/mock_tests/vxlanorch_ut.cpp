@@ -11,6 +11,7 @@
 #include "vxlanorch.h"
 #include "portsorch.h"
 #include "vrforch.h"
+#include "stporch.h"
 
 #undef protected
 #undef private
@@ -1772,12 +1773,17 @@ protected:
     unique_ptr<VxlanVrfMapOrch> vrfMaps;
     VxlanTunnel *source = nullptr;
     sai_object_id_t vlanOid = SAI_NULL_OBJECT_ID;
+    unique_ptr<StpOrch> stp;
+    StpOrch *previousStp = nullptr;
     void PostSetUp() override
     {
         vlanMaps.reset(new VxlanTunnelMapOrch(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME));
         vrfMaps.reset(new VxlanVrfMapOrch(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME));
         gDirectory.set(vlanMaps.get()); gDirectory.set(vrfMaps.get());
         m_VxlanTunnelOrch->is_dip_tunnel_supported = true;
+        previousStp = gStpOrch;
+        vector<string> tables;
+        stp.reset(new StpOrch(m_app_db.get(), m_state_db.get(), tables)); gStpOrch = stp.get();
         source = new VxlanTunnel("SharedSip", IpAddress("10.40.0.1"), IpAddress("0.0.0.0"), TNL_CREATION_SRC_CLI);
         m_VxlanTunnelOrch->addTunnel("SharedSip", source);
         sai_attribute_t attr{}; attr.id = SAI_VLAN_ATTR_VLAN_ID; attr.value.u16 = 1000;
@@ -1812,12 +1818,20 @@ protected:
     }
     void PreTearDown() override
     {
+        Port sourcePort;
+        auto name = m_VxlanTunnelOrch->getTunnelPortName(source->getSrcIP().to_string(), true);
+        if (gPortsOrch->getPort(name, sourcePort))
+        {
+            sourcePort.m_fdb_count = 0; gPortsOrch->setPort(name, sourcePort);
+        }
         if (vlanMaps->isTunnelMapExists("SharedSip:L2")) removeMap(true);
         if (vrfMaps->isVrfMapExists("SharedSip:VrfShared")) removeMap(false);
         uint8_t maps = 0; TUNNELMAP_SET_VLAN(maps); TUNNELMAP_SET_VRF(maps);
+        source->deletePendingSIPTunnel();
         if (source->isActive()) { EXPECT_TRUE(source->deleteTunnelHw(maps, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP)); }
         VRFRequest vrf; vrf.parse({"VrfShared", DEL_COMMAND, {}}); EXPECT_TRUE(gVrfOrch->delOperation(vrf));
         gPortsOrch->m_portList.erase("Vlan1000"); EXPECT_EQ(sai_vlan_api->remove_vlan(vlanOid), SAI_STATUS_SUCCESS);
+        gStpOrch = previousStp; stp.reset();
     }
 };
 
@@ -1844,5 +1858,24 @@ TEST_P(VxlanSharedTunnelTest, SharedPeerOwnersDelayPhysicalRemovalUntilFinalRele
     }
     EXPECT_TRUE(source->tnl_users_.empty()); expectRemoved(tunnel);
 }
+TEST_P(VxlanSharedTunnelTest, P2mpFdbOwnerDefersSourceBridgeAndTunnelRemoval)
+{
+    m_VxlanTunnelOrch->is_dip_tunnel_supported = false;
+    const auto tunnel = source->getTunnelId();
+    auto name = m_VxlanTunnelOrch->getTunnelPortName(source->getSrcIP().to_string(), true);
+    ASSERT_TRUE(gPortsOrch->addTunnel(name, tunnel, false));
+    Port port; ASSERT_TRUE(gPortsOrch->getPort(name, port));
+    ASSERT_TRUE(gPortsOrch->addBridgePort(port));
+    const auto bridge = port.m_bridge_port_id;
+    port.m_fdb_count = 1; gPortsOrch->setPort(name, port);
+    removeMap(GetParam()); removeMap(!GetParam());
+    EXPECT_TRUE(source->isActive()); EXPECT_TRUE(source->del_tnl_hw_pending);
+    ASSERT_TRUE(gPortsOrch->getPort(name, port)); EXPECT_EQ(port.m_bridge_port_id, bridge);
+    port.m_fdb_count = 0; gPortsOrch->setPort(name, port); source->deletePendingSIPTunnel();
+    EXPECT_FALSE(gPortsOrch->getPort(name, port)); expectRemoved(tunnel);
+    sai_attribute_t attr{}; attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+    EXPECT_EQ(sai_bridge_api->get_bridge_port_attribute(bridge, 1, &attr), SAI_STATUS_ITEM_NOT_FOUND);
+}
+
 INSTANTIATE_TEST_SUITE_P(MapDeletionOrders, VxlanSharedTunnelTest, ::testing::Bool());
 }
