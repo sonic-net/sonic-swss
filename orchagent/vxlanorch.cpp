@@ -2524,8 +2524,10 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
 
     if (!isVrfMapExists(full_map_entry_name))
     {
-        SWSS_LOG_ERROR("VxlanVrfMapOrch Vxlan map '%s' do not exist", full_map_entry_name.c_str());
-        return false;
+        // A completed/duplicate DEL owns no map and must not survive to
+        // remove a later SET of the same key. Do not decrement counters twice.
+        SWSS_LOG_DEBUG("Vxlan VRF map '%s' is already absent", full_map_entry_name.c_str());
+        return true;
     }
 
     size_t pos = full_map_entry_name.find("Vrf");

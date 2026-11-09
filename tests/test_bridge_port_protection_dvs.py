@@ -1375,5 +1375,7 @@ def test_shared_source_tunnel_outlives_protection_until_final_vlan_or_vrf_map(bp
         assert source in bpp.asic.get_keys(TUNNEL)
         last(); bpp.asic.wait_for_deleted_entry(TUNNEL,source)
     finally:
+        # Cleanup is deliberately idempotent, including after explicit removal.
         bpp.delete_app('VXLAN_VRF_TABLE',map_key)
         bpp.config.delete_entry('VRF',vrf)
+        bpp.state_db.wait_for_deleted_entry('VRF_OBJECT_TABLE',vrf)

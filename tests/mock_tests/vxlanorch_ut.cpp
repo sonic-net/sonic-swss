@@ -1877,5 +1877,25 @@ TEST_P(VxlanSharedTunnelTest, P2mpFdbOwnerDefersSourceBridgeAndTunnelRemoval)
     EXPECT_EQ(sai_bridge_api->get_bridge_port_attribute(bridge, 1, &attr), SAI_STATUS_ITEM_NOT_FOUND);
 }
 
+TEST_P(VxlanSharedTunnelTest, DuplicateVrfDeleteCannotRemoveRecreatedSameKeyMap)
+{
+    removeMap(false);
+    auto consumer = dynamic_cast<Consumer *>(vrfMaps->getConsumerBase(APP_VXLAN_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    consumer->addToSync(KeyOpFieldsValuesTuple{"SharedSip:VrfShared", DEL_COMMAND, {}});
+    vrfMaps->doTask(*consumer);
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(source->vlan_vrf_vni_count, 1u);
+    consumer->addToSync(KeyOpFieldsValuesTuple{"SharedSip:VrfShared", SET_COMMAND,
+                        {{"vni", GetParam() ? "2000" : "3000"}, {"vrf", "VrfShared"}}});
+    vrfMaps->doTask(*consumer);
+    ASSERT_TRUE(vrfMaps->isVrfMapExists("SharedSip:VrfShared"));
+    vrfMaps->doTask(*consumer);
+    EXPECT_TRUE(vrfMaps->isVrfMapExists("SharedSip:VrfShared"));
+    EXPECT_EQ(source->vlan_vrf_vni_count, 2u);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfShared"), 2);
+    EXPECT_TRUE(consumer->m_toSync.empty());
+}
+
 INSTANTIATE_TEST_SUITE_P(MapDeletionOrders, VxlanSharedTunnelTest, ::testing::Bool());
 }
