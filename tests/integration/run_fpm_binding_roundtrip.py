@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Compile the actual buildimage binding encoder with synthetic ctx getters.
 
-No FRR daemon, privileges or network namespace is needed. The function and
-contract are extracted unchanged from buildimage, rather than reimplemented.
+No FRR daemon, privileges or network namespace is needed. The production
+adapter and port wrapper are compiled unchanged from buildimage with the
+protocol declarations from its kernel_netlink.h patch.
 FPM framing uses the header from buildimage's pinned upstream FRR revision.
 This does not build the entire FRR module or exercise live zebra replay.
 """
@@ -11,7 +12,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
 
@@ -26,13 +26,14 @@ def main():
     source = args.buildimage / 'src/sonic-frr/dplane_fpm_sonic/dplane_fpm_sonic.c'
     patch = args.buildimage / 'src/sonic-frr/patch/0077-zebra-Add-FPM-EVPN-MH-message-types-and-structures.patch'
     text = source.read_text()
-    start = text.index('/* Keep the native EVPN-MH binding layout')
+    start = text.rindex('static ssize_t', 0, text.index('dplane_fpm_nl_send_br_port_backup_nhg('))
     end = text.index('\nstatic ssize_t\ndplane_fpm_nl_handle_br_port_update', start)
     encoder = text[start:end]
     additions = '\n'.join(line[1:] for line in patch.read_text().splitlines()
                           if line.startswith('+') and not line.startswith('+++'))
-    enum = re.search(r'typedef enum \{.*?\} rtm_fpm_msg_types_et;', additions, re.S).group()
-    wire = re.search(r'struct evpn_backup_nhg_msg \{.*?\};', additions, re.S).group()
+    adapter = source.parent / 'bridge_port_protection.h'
+    if not adapter.is_file():
+        raise ValueError('Buildimage must provide the production bridge protection adapter')
     # Fail closed if the supplied producer framing header is not the pinned one.
     framing = args.frr_fpm_header.read_bytes()
     framing_sha = hashlib.sha256(framing).hexdigest()
@@ -44,6 +45,10 @@ def main():
         directory = Path(temporary)
         header = directory / 'fpm.h'
         header.write_bytes(framing)
+        contract = directory / 'zebra' / 'kernel_netlink.h'
+        contract.parent.mkdir()
+        contract.write_text('#include <stddef.h>\n#include <stdint.h>\n'
+                            '#include <linux/netlink.h>\n' + additions + '\n')
         program = directory / 'encoder.c'
         prelude = r'''
 #include <arpa/inet.h>
@@ -56,12 +61,12 @@ def main():
 #include <stdio.h>
 #include <string.h>
 #include <sys/types.h>
-#include <stdarg.h>
-static void zlog_warn(const char *format, ...) { (void)format; }
 #define MULTIPATH_NUM 64
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #include "fpm.h"
+enum dplane_op_e { DPLANE_OP_BR_PORT_UPDATE, DPLANE_OP_BR_PORT_DELETE };
 struct zebra_dplane_ctx { uint32_t index; uint32_t group; unsigned short vlan; };
+static enum dplane_op_e dplane_ctx_get_op(const struct zebra_dplane_ctx *c) { (void)c; return DPLANE_OP_BR_PORT_UPDATE; }
 static uint32_t dplane_ctx_get_ifindex(const struct zebra_dplane_ctx *c) { return c->index; }
 static uint32_t dplane_ctx_get_br_port_backup_nhg_id(const struct zebra_dplane_ctx *c) { return c->group; }
 static unsigned short dplane_ctx_get_br_port_vlan_id(const struct zebra_dplane_ctx *c) { return c->vlan; }
@@ -103,16 +108,18 @@ int main(int argc, char **argv) {
     return 0;
 }
 '''
-        program.write_text(prelude + enum + '\n' + wire + '\n' + encoder + checks)
+        program.write_text(prelude + '#include "' + str(adapter.resolve()) + '"\n' + encoder + checks)
         executable = directory / 'encoder'
         subprocess.run(['gcc', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '--coverage',
-                        '-O0', '-g', str(program), '-o', str(executable)], check=True)
+                        '-O0', '-g', '-I' + str(directory), str(program), '-o', str(executable)], check=True)
         fixtures = args.report_dir / 'producer-frames.bin'
         subprocess.run([str(executable), str(fixtures)], check=True)
         subprocess.run(['gcov', '-b', '-c', str(program)], cwd=directory, check=True)
         gcov = directory / 'encoder.c.gcov'
         # Retain actual encoder coverage, distinct from harness assertions/getters.
         args.report_dir.joinpath('producer-encoder.gcov').write_bytes(gcov.read_bytes())
+        args.report_dir.joinpath('producer-adapter.gcov').write_bytes(
+            (directory / 'bridge_port_protection.h.gcov').read_bytes())
         args.report_dir.joinpath('producer-encoder.c').write_text(program.read_text())
         environment = dict(os.environ, SONIC_FPM_BINDING_FIXTURES=str(fixtures))
         subprocess.run([str(args.binary.resolve()), '--gtest_filter=FpmBindingTest.*:FpmsyncdEvpnMhTest.*:FpmLinkTest.*',
@@ -120,11 +127,12 @@ int main(int argc, char **argv) {
                        env=environment, cwd=args.binary.resolve().parent, check=True)
         args.report_dir.joinpath('producer-provenance.json').write_text(json.dumps({
             'source': str(source), 'source_sha256': hashlib.sha256(source.read_bytes()).hexdigest(),
+            'adapter_sha256': hashlib.sha256(adapter.read_bytes()).hexdigest(),
             'encoder_sha256': hashlib.sha256(encoder.encode()).hexdigest(),
             'contract_patch_sha256': hashlib.sha256(patch.read_bytes()).hexdigest(),
             'framing_revision': 'f8c0b08dcb0c78f9e42b9b86ae70b049e4e617c1',
             'framing_sha256': framing_sha,
-            'scope': 'Actual binding encoder with synthetic context getters; FPM header wrapper; actual FpmLink/RouteSync decoder. Full FRR module/live zebra not run.'
+            'scope': 'Actual binding adapter/port wrapper with synthetic context getters; FPM header wrapper; actual FpmLink/RouteSync decoder. Full FRR module/live zebra not run.'
         }, indent=2) + '\n')
 
 
