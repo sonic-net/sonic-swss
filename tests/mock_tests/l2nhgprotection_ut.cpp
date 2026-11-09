@@ -136,6 +136,7 @@ protected:
     std::unique_ptr<L2NhgOrch> builder;
     std::unique_ptr<EvpnNvoOrch> nvo;
     VxlanTunnel *source = nullptr;
+    vector<sai_object_id_t> sourceMapperIds;
     sai_tunnel_api_t savedTunnel{};
     sai_next_hop_api_t savedHop{};
     sai_next_hop_group_api_t savedGroup{};
@@ -164,8 +165,21 @@ protected:
         source = new VxlanTunnel("source", IpAddress("10.0.0.1"), IpAddress("0.0.0.0"), TNL_CREATION_SRC_CLI);
         source->active_=true; m_VxlanTunnelOrch->addTunnel("source", source); nvo->source_vtep_ptr=source;
         m_VxlanTunnelOrch->is_dip_tunnel_supported=true;
+        // Model the mapper dependencies of the already-active source. Upstream
+        // rejects peer creation when both encap and decap mapper lists are empty.
+        addSourceMappers(source);
         builder.reset(new L2NhgOrch(m_app_db.get(), APP_L2_NEXTHOP_GROUP_TABLE_NAME));
         ASSERT_GT(gRouteOrch->getMaxNhgCount(), 0u);
+    }
+    void addSourceMappers(VxlanTunnel *tunnel)
+    {
+        uint8_t mapper = 0; TUNNELMAP_SET_VLAN(mapper); TUNNELMAP_SET_VRF(mapper);
+        ASSERT_TRUE(tunnel->createMapperHw(mapper, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP));
+        for (auto type : {TUNNEL_MAP_T_VLAN, TUNNEL_MAP_T_VIRTUAL_ROUTER})
+        {
+            sourceMapperIds.push_back(tunnel->getEncapMapId(type));
+            sourceMapperIds.push_back(tunnel->getDecapMapId(type));
+        }
     }
     void PreTearDown() override
     {
@@ -179,6 +193,15 @@ protected:
         for (int i=0;i<4;++i) step();
         EXPECT_TRUE(nhTunnels.empty()); EXPECT_TRUE(gmGroups.empty()); EXPECT_TRUE(tunnels.empty());
         builder.reset(); nvo.reset();
+        // Some lifecycle cases already remove these maps; release only survivors.
+        for (auto oid : sourceMapperIds)
+        {
+            sai_attribute_t attr{}; attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
+            const auto status = savedTunnel.get_tunnel_map_attribute(oid, 1, &attr);
+            if (status == SAI_STATUS_ITEM_NOT_FOUND) continue;
+            EXPECT_EQ(status, SAI_STATUS_SUCCESS);
+            EXPECT_EQ(savedTunnel.remove_tunnel_map(oid), SAI_STATUS_SUCCESS);
+        }
         *sai_tunnel_api=savedTunnel; *sai_next_hop_api=savedHop;
         *sai_next_hop_group_api=savedGroup; *sai_switch_api=savedSwitch;
     }
@@ -353,6 +376,7 @@ TEST_F(L2ProtectionTest, SourceChangesAndAddressFamiliesReconcileWithoutStaleRef
     source->active_=false; step(); EXPECT_FALSE(builder->hasActiveL2Nhg("2147483649"));
     source->active_=true; step(); EXPECT_TRUE(builder->hasActiveL2Nhg("2147483649"));
     auto replacement=new VxlanTunnel("replacement",IpAddress("10.1.0.1"),IpAddress("0.0.0.0"),TNL_CREATION_SRC_CLI);
+    addSourceMappers(replacement);
     replacement->active_=true; m_VxlanTunnelOrch->addTunnel("replacement",replacement); nvo->source_vtep_ptr=replacement;
     step(); step(); EXPECT_TRUE(builder->hasActiveL2Nhg("2147483649"));
     EXPECT_TRUE(source->tnl_users_.empty()); EXPECT_EQ(replacement->getRemoteEndPointRefCnt("10.0.0.2"),1);
@@ -360,6 +384,7 @@ TEST_F(L2ProtectionTest, SourceChangesAndAddressFamiliesReconcileWithoutStaleRef
     member("1073741826","2001:db8::2"); group("2147483650","1073741826"); step();
     EXPECT_FALSE(builder->hasActiveL2Nhg("2147483650")); // IPv4 source cannot serve an IPv6 peer.
     auto v6=new VxlanTunnel("v6",IpAddress("2001:db8::1"),IpAddress("::"),TNL_CREATION_SRC_CLI);
+    addSourceMappers(v6);
     v6->active_=true; m_VxlanTunnelOrch->addTunnel("v6",v6); nvo->source_vtep_ptr=v6;
     step(); step(); EXPECT_TRUE(builder->hasActiveL2Nhg("2147483650"));
     EXPECT_FALSE(builder->hasActiveL2Nhg("2147483649"));
@@ -467,6 +492,7 @@ TEST_F(L2ProtectionTest, SourceReplacementWaitsForOtherUsersBeforeReusingDipName
 {
     ASSERT_TRUE(source->createDynamicDIPTunnel("10.0.0.2",TUNNEL_USER_IP)); install();
     auto oldTunnel=*tunnels.begin(); auto replacement=new VxlanTunnel("replacement",IpAddress("10.1.0.1"),IpAddress("0.0.0.0"),TNL_CREATION_SRC_CLI);
+    addSourceMappers(replacement);
     replacement->active_=true; m_VxlanTunnelOrch->addTunnel("replacement",replacement); nvo->source_vtep_ptr=replacement;
     step(); step();
     EXPECT_FALSE(builder->hasActiveL2Nhg("2147483649")); EXPECT_TRUE(tunnels.count(oldTunnel));
