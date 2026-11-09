@@ -4075,6 +4075,7 @@ namespace portsorch_test
                                          APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
                                          APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
 
+        delete gBufferOrch;
         gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
         // Populate pot table with SAI ports

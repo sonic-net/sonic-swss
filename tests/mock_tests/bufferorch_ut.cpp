@@ -441,6 +441,9 @@ namespace bufferorch_test
 
             gDirectory.m_values.clear();
 
+            delete gHFTOrch;
+            gHFTOrch = nullptr;
+
             delete gCrmOrch;
             gCrmOrch = nullptr;
 
