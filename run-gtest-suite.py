@@ -78,9 +78,12 @@ def main():
         testsuite_name = testsuite.get("name")
         for testcase in testsuite:
             testcase_name = testcase.get("name")
-            was_skipped = testcase.get("result") == "suppressed"
-            has_failed = len(list(testcase)) > 0
-            result = "SKIP" if was_skipped else "FAIL" if has_failed else "PASS"
+            was_skipped = (testcase.get("result") in ("suppressed", "skipped") or
+                           testcase.find("skipped") is not None)
+            has_failed = (testcase.find("failure") is not None or
+                          testcase.find("error") is not None)
+            # A failure before GTEST_SKIP must still fail the case.
+            result = "FAIL" if has_failed else "SKIP" if was_skipped else "PASS"
             print(f":test-result: {result} {testsuite_name}:{testcase_name}", file=args.trs_file)
 
     args.trs_file.flush()
