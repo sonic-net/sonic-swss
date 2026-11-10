@@ -11,6 +11,7 @@
 #include "converter.h"
 #include "mirrororch.h"
 #include "tokenize.h"
+#include "warm_restart.h"
 
 #define MIRROR_SESSION_STATUS               "status"
 #define MIRROR_SESSION_STATUS_ACTIVE        "active"
@@ -113,6 +114,15 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
     {
         m_maxNumTC = attr.value.u8;
     }
+
+    m_isWarmRestoreStage = WarmStart::isWarmStart();
+}
+
+void MirrorOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
 }
 
 bool MirrorOrch::bake()
@@ -1382,8 +1392,9 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
         mirror_attr.value.objlist.count = 0;
     }
 
-    // Check for samplepacket conflict before binding
-    if (set)
+    // Check for samplepacket conflict before binding. During warm restore the port
+    // still reports the pre-reboot samplepacket OID; APPLY_VIEW reconciles it.
+    if (set && !m_isWarmRestoreStage)
     {
         sai_attribute_t check_attr;
         check_attr.id = samplepacketEnableAttrId;

@@ -16,6 +16,7 @@
 #include <cstring>
 #include <deque>
 #include <set>
+#include <unistd.h>
 
 EXTERN_MOCK_FNS
 
@@ -272,6 +273,14 @@ namespace vnetorch_test
         // conflicting create actually hit an ITEM_ALREADY_EXISTS/NOT_EXECUTED.
         vector<sai_status_t> lastBulkCreateStatuses;
         bool splitBulkCreates = false;
+        // Statuses the non-bulk create_route_entry returned. VNetRouteOrch's own
+        // add_route() uses that call, so this is what proves the connected-route
+        // replay really collided with an existing entry.
+        vector<sai_status_t> lastCreateStatuses;
+        // In-place repoints and the last NEXT_HOP_ID written, which distinguish a
+        // converge-onto-existing from a plain create.
+        int setAttrCount = 0;
+        sai_object_id_t lastSetNextHop = SAI_NULL_OBJECT_ID;
     };
 
     // Captured SAI BFD sessions gBfdOrch programs for a monitored VNET route's
@@ -315,6 +324,8 @@ namespace vnetorch_test
         if (g_activeRouteCaptures && e && attr &&
             attr->id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
         {
+            g_activeRouteCaptures->setAttrCount++;
+            g_activeRouteCaptures->lastSetNextHop = attr->value.oid;
             for (auto &r : g_activeRouteCaptures->routes)
             {
                 if (r.vr == e->vr_id && saiIpPrefixEquals(r.dest, e->destination))
@@ -1001,6 +1012,7 @@ namespace vnetorch_test
                 .WillByDefault(Invoke([this](const sai_route_entry_t *e, uint32_t n,
                                              const sai_attribute_t *l) {
                     sai_status_t st = old_sai_route_api->create_route_entry(e, n, l);
+                    m_rt.lastCreateStatuses.push_back(st);
                     if (st == SAI_STATUS_SUCCESS)
                     {
                         RouteCaptures::Route r;
@@ -2194,6 +2206,13 @@ namespace vnetorch_test
                 if (prefixAddrEquals(d, ip)) removes++;
             }
             return creates > removes ? last : nullptr;
+        }
+
+        uint32_t ipv4RouteCrmUsed() const
+        {
+            const auto &resources = Portal::CrmOrchInternal::getResourceMap(gCrmOrch);
+            return resources.at(CrmResourceType::CRM_IPV4_ROUTE)
+                .countersMap.at("STATS").usedCounter;
         }
 
         // STATE_DB VNET_ROUTE_TUNNEL_TABLE assertions -- the mock equivalent of
@@ -6293,5 +6312,291 @@ namespace vnetorch_test
         EXPECT_TRUE(removed);
 
         delVxlanTunnel("tunnel_ip2me");
+    }
+
+    // Stands in for the orchs that register interest in a VNET next hop. The
+    // observer-walk regression only needs an observer to be present.
+    class NullObserver : public Observer
+    {
+    public:
+        void update(SubjectType, void *) override {}
+    };
+
+    // The connected route for an interface assigned to a VNET is programmed by
+    // RouteOrch; IntfsOrch contributes only the ip2me host route. A config
+    // reload replays that same prefix to VNetRouteOrch as a subnet route -- a
+    // VNET_ROUTE carrying an ifname and no nexthop, so doRouteTask() takes the
+    // is_subnet path with nh_id set to the port's RIF. The CREATE then lands on
+    // a route libsaivs already holds and returns SAI_STATUS_ITEM_ALREADY_EXISTS.
+    // Before the fix it logged "SAI failed to create route" and failed the task
+    // on every replay. RouteOrch's connected route already forwards to that RIF,
+    // so add_route() borrows the entry without writing it. The duplicate is real
+    // rather than injected: the route is programmed first and libsaivs rejects
+    // the second create.
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteReplayConverges)
+    {
+        setVxlanTunnel("tunnel_replay", "40.40.40.40");
+        // scope=default keeps the VNET on gVirtualRouterId, which is the VR
+        // gRouteOrch programs the connected route into, so both writes target
+        // the same (VR, prefix) exactly as they do on a box.
+        setVnet("Vnet_replay", "tunnel_replay", "6000", "", false, "", "default");
+
+        createVnetL3Interface("Ethernet20", "Vnet_replay", "10.10.0.1/24");
+
+        const sai_object_id_t rif = rifOf("Ethernet20");
+        ASSERT_NE(rif, SAI_NULL_OBJECT_ID);
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        // The connected route as fpmsyncd delivers it: IntfsOrch has no
+        // addSubnetRoute, so a VNET interface's prefix reaches the ASIC through
+        // gRouteOrch like any other route, with the RIF as its next hop.
+        setRoute("10.10.0.0/24", "0.0.0.0", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        ASSERT_NE(findRoute("10.10.0.0"), nullptr);
+        ASSERT_EQ(findRoute("10.10.0.0")->next_hop_id, rif);
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+
+        // The replay: the prefix that is already programmed, with no nexthop.
+        setVnetLocalRoute("Vnet_replay", "10.10.0.0/24", "Ethernet20", "");
+
+        bool sawDuplicate = false;
+        for (auto s : m_rt.lastCreateStatuses)
+            if (s == SAI_STATUS_ITEM_ALREADY_EXISTS) sawDuplicate = true;
+        ASSERT_TRUE(sawDuplicate)
+            << "the replayed create did not collide with the connected route, so "
+               "this test is not exercising the regression";
+
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a borrowed entry that already forwards to the RIF must not be rewritten";
+        EXPECT_EQ(findRoute("10.10.0.0")->next_hop_id, rif);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1)
+            << "adopting an existing SAI route must not count it twice";
+
+        // Withdrawing the VNET replay must leave the physical route and its CRM
+        // count to RouteOrch.
+        delVnetLocalRoute("Vnet_replay", "10.10.0.0/24");
+        ASSERT_NE(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(findRoute("10.10.0.0")->next_hop_id, rif);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delRoute("10.10.0.0/24");
+        EXPECT_EQ(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // RouteOrch owns the prefix through a gateway. A VNET subnet route for the
+    // same prefix must not repoint it at the VNET RIF: VNetRouteOrch cannot put
+    // the gateway back when the VNET route is withdrawn, so the owner's next hop
+    // stays in place through both the SET and the DEL.
+    TEST_F(VNetOrchTest, VnetSubnetRouteKeepsOwnerNextHopOnConflict)
+    {
+        setVxlanTunnel("tunnel_conflict", "44.44.44.44");
+        setVnet("Vnet_conflict", "tunnel_conflict", "6004", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_conflict", "10.12.0.1/24");
+        addNeighbor("Ethernet20", "10.12.0.2", "00:01:02:03:04:07");
+
+        const uint32_t baseline = ipv4RouteCrmUsed();
+        setRoute("10.12.1.0/24", "10.12.0.2", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        ASSERT_NE(findRoute("10.12.1.0"), nullptr);
+        const sai_object_id_t ownerNh = findRoute("10.12.1.0")->next_hop_id;
+        ASSERT_NE(ownerNh, rifOf("Ethernet20"));
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+        setVnetLocalRoute("Vnet_conflict", "10.12.1.0/24", "Ethernet20", "");
+
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a conflicting VNET subnet route repointed RouteOrch's entry";
+        EXPECT_EQ(findRoute("10.12.1.0")->next_hop_id, ownerNh);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delVnetLocalRoute("Vnet_conflict", "10.12.1.0/24");
+        ASSERT_NE(findRoute("10.12.1.0"), nullptr)
+            << "withdrawing the VNET route removed RouteOrch's entry";
+        EXPECT_EQ(findRoute("10.12.1.0")->next_hop_id, ownerNh);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delRoute("10.12.1.0/24");
+        EXPECT_EQ(findRoute("10.12.1.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // Some orch other than RouteOrch programmed the prefix, already on the VNET
+    // RIF. With no RouteOrch record to compare against, the entry is borrowed
+    // without being written and withdrawing the VNET route leaves it alone.
+    TEST_F(VNetOrchTest, VnetSubnetRouteLeavesUnknownOwnerEntry)
+    {
+        setVxlanTunnel("tunnel_unknown", "46.46.46.46");
+        setVnet("Vnet_unknown", "tunnel_unknown", "6006", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_unknown", "10.14.0.1/24");
+        const sai_object_id_t rif = rifOf("Ethernet20");
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        sai_route_entry_t entry = {};
+        entry.switch_id = gSwitchId;
+        entry.vr_id = gVirtualRouterId;
+        copy(entry.destination, IpPrefix("10.14.1.0/24"));
+        sai_attribute_t attr;
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = rif;
+        ASSERT_EQ(sai_route_api->create_route_entry(&entry, 1, &attr), SAI_STATUS_SUCCESS);
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+        setVnetLocalRoute("Vnet_unknown", "10.14.1.0/24", "Ethernet20", "");
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(m_rt.setAttrCount, 0);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+
+        delVnetLocalRoute("Vnet_unknown", "10.14.1.0/24");
+        ASSERT_NE(findRoute("10.14.1.0"), nullptr)
+            << "withdrawing the VNET route removed an entry it never owned";
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+
+        EXPECT_EQ(sai_route_api->remove_route_entry(&entry), SAI_STATUS_SUCCESS);
+    }
+
+    // A SET that moves a VNET subnet route from one interface to another
+    // repoints the SAI entry, and the cached next hop and RIF references have to
+    // follow it. Otherwise the old RIF keeps a reference it can never drop and
+    // the new one is released on DEL without ever having been taken.
+    TEST_F(VNetOrchTest, VnetSubnetRouteInterfaceChangeMovesRifReference)
+    {
+        setVxlanTunnel("tunnel_move", "45.45.45.45");
+        setVnet("Vnet_move", "tunnel_move", "6005", "");
+        createVnetL3Interface("Ethernet20", "Vnet_move", "10.13.0.1/24");
+        createVnetL3Interface("Ethernet24", "Vnet_move", "10.13.1.1/24");
+
+        auto refCount = [](const string &alias) {
+            return gIntfsOrch->getSyncdIntfses().at(alias).ref_count;
+        };
+        const int ref20 = refCount("Ethernet20");
+        const int ref24 = refCount("Ethernet24");
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        setVnetLocalRoute("Vnet_move", "10.13.2.0/24", "Ethernet20", "0.0.0.0");
+        ASSERT_NE(findRoute("10.13.2.0"), nullptr);
+        EXPECT_EQ(findRoute("10.13.2.0")->next_hop_id, rifOf("Ethernet20"));
+        EXPECT_EQ(refCount("Ethernet20"), ref20 + 1);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        setVnetLocalRoute("Vnet_move", "10.13.2.0/24", "Ethernet24", "0.0.0.0");
+        EXPECT_EQ(findRoute("10.13.2.0")->next_hop_id, rifOf("Ethernet24"));
+        EXPECT_EQ(refCount("Ethernet20"), ref20)
+            << "the old RIF kept the reference of a route that moved away";
+        EXPECT_EQ(refCount("Ethernet24"), ref24 + 1);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // An identical replay stays a no-op for the references.
+        setVnetLocalRoute("Vnet_move", "10.13.2.0/24", "Ethernet24", "0.0.0.0");
+        EXPECT_EQ(refCount("Ethernet20"), ref20);
+        EXPECT_EQ(refCount("Ethernet24"), ref24 + 1);
+
+        delVnetLocalRoute("Vnet_move", "10.13.2.0/24");
+        EXPECT_EQ(findRoute("10.13.2.0"), nullptr);
+        EXPECT_EQ(refCount("Ethernet20"), ref20);
+        EXPECT_EQ(refCount("Ethernet24"), ref24);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // The plain create path still has to work: a subnet route for a prefix no
+    // one else owns is created outright, with no in-place repoint.
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteFirstCreateHasNoUpdate)
+    {
+        setVxlanTunnel("tunnel_first", "41.41.41.41");
+        setVnet("Vnet_first", "tunnel_first", "6001", "");
+        createVnetL3Interface("Ethernet20", "Vnet_first", "10.10.0.8/31");
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+
+        setVnetLocalRoute("Vnet_first", "10.20.0.0/24", "Ethernet20", "");
+
+        for (auto s : m_rt.lastCreateStatuses)
+            EXPECT_NE(s, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a fresh subnet route should be created, not updated";
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // Replaying a route VNetRouteOrch created must not turn it into a
+        // borrowed route merely because the second create finds it in SAI.
+        m_rt.lastCreateStatuses.clear();
+        setVnetLocalRoute("Vnet_first", "10.20.0.0/24", "Ethernet20", "");
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delVnetLocalRoute("Vnet_first", "10.20.0.0/24");
+        EXPECT_EQ(findRoute("10.20.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteOwnerWithdrawsFirst)
+    {
+        setVxlanTunnel("tunnel_owner_first", "43.43.43.43");
+        setVnet("Vnet_owner_first", "tunnel_owner_first", "6003", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_owner_first", "10.11.0.1/24");
+        addNeighbor("Ethernet20", "10.11.0.2", "00:01:02:03:04:06");
+
+        const uint32_t baseline = ipv4RouteCrmUsed();
+        setRoute("10.11.0.0/24", "10.11.0.2", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        setVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24", "Ethernet20", "");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // Once RouteOrch removes its route, VNetRouteOrch's borrowed-route DEL
+        // must not decrement the same CRM entry a second time.
+        delRoute("10.11.0.0/24");
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+        delVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24");
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // VNetRouteOrch::delRoute() walks next_hop_observers_ and advances the
+    // iterator only at the bottom of the loop body. An observer covered by the
+    // prefix but holding no route state for it -- what a replay leaves behind --
+    // hit a `continue` that skipped the advance, so the walk never terminated.
+    // mock_tests builds with -DNDEBUG, so the assert(false) on that branch
+    // compiles away and the spin is unbounded. Run it in a child under alarm(2)
+    // so a regression fails the expectation instead of hanging the suite.
+    TEST_F(VNetOrchTest, VnetReplayedDeleteDoesNotSpinInObserverWalk)
+    {
+        // The fixture leaves libsaivs threads running, and the default
+        // fork-without-exec death test style is unsafe alongside them.
+        GTEST_FLAG_SET(death_test_style, "threadsafe");
+
+        setVxlanTunnel("tunnel_spin", "42.42.42.42");
+        setVnet("Vnet_spin", "tunnel_spin", "6002", "");
+        createVnetL3Interface("Ethernet20", "Vnet_spin", "10.10.0.8/31");
+
+        IpPrefix prefix("10.10.0.8/31");
+        nextHop nh;
+        nh.ifname = "Ethernet20";
+
+        NullObserver observer;
+        m_vnetRouteOrch->attach(&observer, IpAddress("10.10.0.9"));
+        Portal::VNetRouteOrchInternal::addRoute(*m_vnetRouteOrch, "Vnet_spin",
+                                                prefix, nh);
+
+        // An observer inside the prefix that never received route state. It
+        // sorts before 10.10.0.9, so the walk reaches it first.
+        Portal::VNetRouteOrchInternal::getNextHopObservers(*m_vnetRouteOrch)
+            [IpAddress("10.10.0.8")].observers.push_back(&observer);
+
+        EXPECT_EXIT(
+            {
+                alarm(10);
+                Portal::VNetRouteOrchInternal::delRoute(*m_vnetRouteOrch, prefix);
+                Portal::VNetRouteOrchInternal::delRoute(*m_vnetRouteOrch, prefix);
+                _exit(0);
+            },
+            ::testing::ExitedWithCode(0), "");
     }
 }

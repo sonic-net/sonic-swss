@@ -5,7 +5,7 @@ import itertools
 
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
-from dvslib.dvs_common import PollingConfig
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 from mux_neigh_miss_hostroute_tests import *
 
@@ -241,16 +241,26 @@ class TestMuxTunnelBase():
         assert tunnel_nh_id
 
     def check_nexthop_in_asic_db(self, asicdb, key, standby=False):
+        # orchagent programs a route over a mux neighbor in several steps (a
+        # standby neighbor prefix route starts as neighbor next hop + drop and
+        # then moves to tunnel next hop + forward), so wait for the end state.
+        def _access_function():
+            fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
+            if not fvs:
+                return (False, None)
 
-        fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
-        if not fvs:
-            assert False
+            nhid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            action = fvs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION", "SAI_PACKET_ACTION_FORWARD")
+            forwarding = action != "SAI_PACKET_ACTION_DROP"
+            return (forwarding and (nhid == tunnel_nh_id) == standby, (nhid, action))
 
-        nhid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
-        if standby:
-            assert (nhid == tunnel_nh_id)
-        else:
-            assert (nhid != tunnel_nh_id)
+        status, result = wait_for_result(
+            _access_function,
+            PollingConfig(polling_interval=0.01, timeout=5.0, strict=False)
+        )
+
+        assert status, "Route {} has (next hop, packet action) {}, expected {} tunnel next hop {} and no drop".format(
+            key, result, "the" if standby else "anything but the", tunnel_nh_id)
 
     def check_nexthop_group_in_asic_db(self, asicdb, key, num_tnl_nh=0):
 
@@ -1499,19 +1509,44 @@ class TestMuxTunnelBase():
             self.DEFAULT_TUNNEL_PARAMS
         )
 
-    @pytest.fixture
+    @pytest.fixture(scope='class')
     def setup_peer_switch(self, dvs):
+        # Add PEER_SWITCH once per class and restart neighsyncd so it re-reads the
+        # dual-ToR role (neighsyncd caches it at startup).
         config_db = dvs.get_config_db()
         config_db.create_entry(
             self.CONFIG_PEER_SWITCH,
             self.PEER_SWITCH_HOST,
             self.DEFAULT_PEER_SWITCH_PARAMS
         )
+        self._restart_neighsyncd(dvs)
 
         yield
 
         config_db = dvs.get_config_db()
         config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self._restart_neighsyncd(dvs)
+
+    @pytest.fixture
+    def remove_peer_switch(self, dvs, setup_peer_switch):
+        # Drop PEER_SWITCH and restart neighsyncd for a true no-peer state; restore on teardown.
+        config_db = dvs.get_config_db()
+        config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self._restart_neighsyncd(dvs)
+
+        yield
+
+        config_db.create_entry(
+            self.CONFIG_PEER_SWITCH,
+            self.PEER_SWITCH_HOST,
+            self.DEFAULT_PEER_SWITCH_PARAMS
+        )
+        self._restart_neighsyncd(dvs)
+
+    def _restart_neighsyncd(self, dvs):
+        # Restart neighsyncd so it re-reads the PEER_SWITCH (dual-ToR) role.
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart neighsyncd'])
+        time.sleep(3)
 
     @pytest.fixture(params=['IPv4', 'IPv6'])
     def ip_version(self, request):
@@ -2066,7 +2101,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_neighbor_miss_no_peer(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            neighbor_cleanup, testlog
+            remove_peer_switch, neighbor_cleanup, testlog
     ):
         """
         test neighbor miss with no peer switch configured

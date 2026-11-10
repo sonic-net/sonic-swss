@@ -172,7 +172,7 @@ jobs:
         pipeline: sonic-net.sonic-platform-vpp
         artifact: ${{ parameters.vpp_artifact_name }}
         runVersion: latestFromBranch
-        runBranch: refs/heads/master
+        runBranch: refs/heads/$(BUILD_BRANCH)
         allowPartiallySucceededBuilds: true
         path: $(Build.ArtifactStagingDirectory)/download
       displayName: "Download VPP artifacts"

@@ -2,6 +2,8 @@
 import pytest
 import time
 
+from dvslib.dvs_common import wait_for_result
+
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
 @pytest.mark.usefixtures('dvs_lag_manager')
@@ -92,6 +94,23 @@ class TestSampledMirror(object):
         assert cap.get("PORT_INGRESS_SAMPLE_MIRROR_CAPABLE") == ("true" if ingress else "false")
         assert cap.get("PORT_EGRESS_SAMPLE_MIRROR_CAPABLE") == ("true" if egress else "false")
         assert cap.get("SAMPLEPACKET_TRUNCATION_CAPABLE") == ("true" if truncation else "false")
+
+    def _wait_sflow_samplepacket(self, dvs, port, sample_rate):
+        """Wait until the port's ingress SAMPLEPACKET has the given rate; return its OID."""
+        port_oid = dict(dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")).get(port)
+
+        def _bound():
+            port_entry = dvs.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+            sp_oid = port_entry.get("SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE", "oid:0x0")
+            if sp_oid == "oid:0x0":
+                return (False, None)
+            sp_entry = dvs.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sp_oid)
+            return (sp_entry.get("SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE") == sample_rate, sp_oid)
+
+        _, sp_oid = wait_for_result(
+            _bound,
+            failure_message=f"{port} has no ingress SAMPLEPACKET with rate {sample_rate}")
+        return sp_oid
 
     def test_SampledMirrorCreateRemove(self, dvs, testlog):
         """
@@ -411,9 +430,10 @@ class TestSampledMirror(object):
         dvs.config_db.create_entry("SFLOW_SESSION", "Ethernet12",
                                     {"sample_rate": "1000", "admin_state": "up"})
 
-        # Wait for sFlow samplepacket to appear in ASIC_DB
-        dvs.asic_db.wait_for_n_keys(
-            "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1, wait_at_least_n_keys=True)
+        # Wait for the sFlow samplepacket to be bound on Ethernet12. With sFlow
+        # enabled globally the other ports share a second samplepacket at the
+        # default rate, so the one under test is found through the port.
+        sflow_sp_oid = self._wait_sflow_samplepacket(dvs, "Ethernet12", "1000")
 
         # Step 2: Create sampled mirror on same port
         self.dvs_mirror.create_erspan_session_sampled(
@@ -435,11 +455,8 @@ class TestSampledMirror(object):
                                            "CONFLICT_SESSION",
                                            {"status": "inactive"})
 
-        # Step 4: Verify sFlow samplepacket still exists (not overwritten)
-        sp_keys = dvs.asic_db.wait_for_n_keys(
-            "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 1, wait_at_least_n_keys=True)
-        sp_entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sp_keys[0])
-        assert sp_entry["SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE"] == "1000"
+        # Step 4: Verify Ethernet12 still has the sFlow samplepacket (not overwritten)
+        assert self._wait_sflow_samplepacket(dvs, "Ethernet12", "1000") == sflow_sp_oid
 
         # Cleanup
         dvs.remove_route("2.2.2.2")
