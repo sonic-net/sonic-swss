@@ -870,6 +870,42 @@ class TestVrf(object):
         vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan.remove_vlan(dvs, "110")
 
+    def test_VRFMgr_DefaultVrfAcceptsMaximumVni(self, dvs, testlog):
+        """Program the inclusive 24-bit maximum VNI through orchagent."""
+        self.setup_db(dvs)
+
+        vxlan = VxlanTunnel()
+        tunnel_name = "tunnel-default-max-vni"
+        nvo_name = "nvo-default-max-vni"
+        vni = "16777215"
+        map_key = "%s:evpn_map_%s_default" % (tunnel_name, vni)
+        app_db = dvs.get_app_db()
+
+        initial_vrs = self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+
+        vxlan.create_vxlan_tunnel(dvs, tunnel_name, "8.8.8.15")
+        vxlan.create_evpn_nvo(dvs, nvo_name, tunnel_name)
+        self.create_entry_tbl(
+            self.cdb, "VRF", "default", [("vni", vni)])
+
+        app_db.wait_for_field_match(
+            "VRF_TABLE", "default", {"vni": vni})
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", map_key, {"vni": vni, "vrf": "default"})
+
+        default_vr = self.default_virtual_router_id()
+        self.wait_for_vrf_tunnel_map_association(
+            vni, default_vr, "8.8.8.15")
+        assert self.entries(
+            self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == initial_vrs
+
+        self.delete_entry_tbl(self.cdb, "VRF", "default")
+        app_db.wait_for_deleted_entry("VRF_TABLE", "default")
+        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", map_key)
+        vxlan.remove_evpn_nvo(dvs, nvo_name)
+        vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
+
     def test_VRFMgr_UnrelatedTunnelMapDoesNotChangeL3Vni(self, dvs, testlog):
         """An unrelated L2VNI event must not alter an existing L3VNI map."""
         self.setup_db(dvs)
