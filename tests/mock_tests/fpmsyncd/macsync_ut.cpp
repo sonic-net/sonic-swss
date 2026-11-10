@@ -35,6 +35,7 @@
 #undef private
 
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/fpmsyncd.h"
 
 using namespace swss;
 
@@ -1516,19 +1517,23 @@ TEST_F(MacSyncStaleTest, SweepRunsByTheBoundOnABusyChannel)
     EXPECT_FALSE(hasEntry(key(100, 0x01)));
 }
 
-/* fpmsyncd re-arms macStaleTimer from its own expiry, while the periodic timer
- * still runs; a start() without the stop() keeps the first interval. */
-TEST(MacStaleTimerTest, ReArmWhileRunningTakesTheNewInterval)
+/* fpmsyncd re-arms eoiuCheckTimer (5 s, then 1 s) and macStaleTimer from their
+ * own expiry, while the periodic timer still runs. */
+TEST(RestartTimerTest, ReArmWhileRunningTakesTheNewInterval)
 {
     SelectableTimer timer(timespec{0, 0});
-    timer.setInterval(timespec{1, 0});
+    timer.setInterval(timespec{5, 0});
     timer.start();
 
-    timer.stop();
-    timer.setInterval(timespec{3, 0});
-    timer.start();
+    restartTimer(timer, timespec{1, 0});
 
     itimerspec armed;
+    ASSERT_EQ(timerfd_gettime(timer.getFd(), &armed), 0);
+    EXPECT_EQ(armed.it_interval.tv_sec, 1);
+    EXPECT_LE(armed.it_value.tv_sec, 1);
+
+    restartTimer(timer, timespec{3, 0});
+
     ASSERT_EQ(timerfd_gettime(timer.getFd(), &armed), 0);
     EXPECT_EQ(armed.it_interval.tv_sec, 3);
     EXPECT_GE(armed.it_value.tv_sec, 2);
