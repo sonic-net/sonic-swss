@@ -445,6 +445,25 @@ void VrfMgr::doTask(Consumer &consumer)
             {
                 vector<FieldValueTuple> temp;
 
+                if (is_default_vrf)
+                {
+                    vector<FieldValueTuple> config_fields;
+                    if (m_cfgVrfTable.get(vrfName, config_fields))
+                    {
+                        /*
+                         * Removing the default-VRF VNI deletes VRF|default,
+                         * so its DEL can remain pending while VRFOrch removes
+                         * the logical object. If the key is re-added before
+                         * that cleanup completes, the CONFIG_DB row is newer
+                         * intent and the stale DEL must not remove the new
+                         * APP_DB mapping.
+                         */
+                        SWSS_LOG_NOTICE("Discarding superseded deletion for default VRF");
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                }
+
                 if (m_stateVrfTable.get(vrfName, temp))
                 {
                     /* VRFOrch add delay so wait */
