@@ -444,6 +444,7 @@ void VrfMgr::doTask(Consumer &consumer)
                      (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME))
             {
                 vector<FieldValueTuple> temp;
+                m_reportedVniOwnershipConflicts.erase(vrfName);
 
                 if (is_default_vrf)
                 {
@@ -597,6 +598,7 @@ bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vn
         const string raw_vni = fvValue(field_value);
         if (!canonicalizeVni(raw_vni, vni, s_vni))
         {
+            m_reportedVniOwnershipConflicts.erase(vrf_name);
             SWSS_LOG_ERROR("Invalid VNI '%s' for VRF %s", raw_vni.c_str(), vrf_name.c_str());
             return false;
         }
@@ -616,14 +618,22 @@ bool VrfMgr::validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vn
                  * Supported CLIs reject permanent duplicate ownership before
                  * writing CONFIG_DB.
                  */
-                SWSS_LOG_INFO("Deferring VNI %u for VRF %s; it is currently mapped to VRF %s",
-                              vni, vrf_name.c_str(), mapping.first.c_str());
+                const auto conflict = std::make_pair(vni, mapping.first);
+                const auto reported = m_reportedVniOwnershipConflicts.find(vrf_name);
+                if ((reported == m_reportedVniOwnershipConflicts.end()) ||
+                    (reported->second != conflict))
+                {
+                    SWSS_LOG_WARN("VNI %u for VRF %s is currently owned by VRF %s; waiting for ownership release",
+                                  vni, vrf_name.c_str(), mapping.first.c_str());
+                    m_reportedVniOwnershipConflicts[vrf_name] = conflict;
+                }
                 retry = true;
                 return false;
             }
         }
     }
 
+    m_reportedVniOwnershipConflicts.erase(vrf_name);
     return true;
 }
 

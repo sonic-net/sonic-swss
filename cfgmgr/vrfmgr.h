@@ -44,6 +44,7 @@ private:
     std::map<std::string, uint32_t> m_vrfTableMap;
     std::set<uint32_t> m_freeTables;
     std::set<std::string> m_publishedVrfVxlanMappings;
+    std::map<std::string, std::pair<uint32_t, std::string>> m_reportedVniOwnershipConflicts;
     std::string m_evpnVxlanNvo;
     VRFNameVNIMapTable m_vrfVniMapTable;
 
