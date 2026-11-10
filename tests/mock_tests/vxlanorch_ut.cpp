@@ -17,6 +17,7 @@
 #include "ut_helper.h"
 #include "common/vxlan_ut_helpers.h"
 #include "mock_orchagent_main.h"
+#include "mock_sai_switch_env.h"
 #include "mock_sai_api.h"
 #include "mock_sai_tunnel.h"
 #include "mock_orch_test.h"
@@ -53,6 +54,16 @@ namespace vxlanorch_test
             ~VxlanOrchTest()
             {
             };
+
+            static void SetUpTestCase()
+            {
+                m_saiEnv.reset(new MockSaiSwitchEnv());
+            }
+
+            static void TearDownTestCase()
+            {
+                m_saiEnv.reset();
+            }
 
 
             void _hook_sai_apis()
@@ -96,6 +107,7 @@ namespace vxlanorch_test
             }
 
         protected:
+            static std::unique_ptr<MockSaiSwitchEnv> m_saiEnv;
             StrictMock<MockSaiTunnel> mock_sai_tunnel_;
             decltype(sai_tunnel_api->create_tunnel) saved_create_tunnel{};
             decltype(sai_tunnel_api->create_tunnel_map) saved_create_tunnel_map{};
@@ -134,21 +146,8 @@ namespace vxlanorch_test
                 gDirectory.set(m_evpnNvoOrch);
                 gDirectory.set(m_evpnRemoteVnip2pOrch);
 
-                map<string, string> profile = {
-                    { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
-                    { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
-                };
-
-                ut_helper::initSaiApi(profile);
+                ASSERT_TRUE(m_saiEnv->ready());
                 _hook_sai_apis();
-
-                sai_attribute_t attr;
-
-                attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
-                attr.value.booldata = true;
-
-                auto status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
-                ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             }
 
             void initSwitchOrch()
@@ -216,12 +215,6 @@ namespace vxlanorch_test
                 gDirectory.m_values.clear();
                 delete gSwitchOrch;
                 gSwitchOrch = nullptr;
-
-                auto status = sai_switch_api->remove_switch(gSwitchId);
-                ASSERT_EQ(status, SAI_STATUS_SUCCESS);
-                gSwitchId = 0;
-
-                ut_helper::uninitSaiApi();
             }
 
             // Helper function to create a basic VXLAN tunnel
@@ -262,6 +255,7 @@ namespace vxlanorch_test
             }
     };
 
+    std::unique_ptr<MockSaiSwitchEnv> VxlanOrchTest::m_saiEnv;
 
     TEST_F(VxlanOrchTest, TunnelCreateFailure)
     {

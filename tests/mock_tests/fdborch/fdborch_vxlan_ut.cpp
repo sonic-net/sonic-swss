@@ -3,6 +3,7 @@
 #include "l2nhgorch.h"
 #undef private
 #include "mock_orchagent_main.h"
+#include "mock_sai_switch_env.h"
 
 #define SAI_MOCK_FILENAME fdborch_vxlan_ut
 #include "mock_sai_api.h"
@@ -90,6 +91,7 @@ namespace fdborch_vxlan_ut
 
     struct VxlanFdbOrchTest : public ::testing::Test
     {
+        static std::unique_ptr<MockSaiSwitchEnv> m_saiEnv;
         std::shared_ptr<swss::DBConnector> m_config_db;
         std::shared_ptr<swss::DBConnector> m_app_db;
         std::shared_ptr<swss::DBConnector> m_state_db;
@@ -101,33 +103,20 @@ namespace fdborch_vxlan_ut
         VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
         FlowCounterRouteOrch *m_flowCounterRouteOrch = nullptr;
 
+        static void SetUpTestCase()
+        {
+            m_saiEnv.reset(new MockSaiSwitchEnv());
+        }
+
+        static void TearDownTestCase()
+        {
+            m_saiEnv.reset();
+        }
+
         virtual void SetUp() override
         {
+            ASSERT_TRUE(m_saiEnv->ready());
             testing_db::reset();
-
-            map<string, string> profile = {
-                { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
-                { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
-            };
-
-            ut_helper::initSaiApi(profile);
-
-            /* Create Switch */
-            sai_attribute_t attr;
-            attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
-            attr.value.booldata = true;
-            auto status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
-            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
-
-            attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
-            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
-            gMacAddress = attr.value.mac;
-
-            attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
-            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
-            gVirtualRouterId = attr.value.oid;
 
             ut_sai_route_api = *sai_route_api;
             pold_sai_route_api = sai_route_api;
@@ -338,9 +327,10 @@ namespace fdborch_vxlan_ut
             sai_router_intfs_api = pold_sai_router_intfs_api;
             sai_next_hop_api = pold_sai_next_hop_api;
             RestoreSaiApis();
-            ut_helper::uninitSaiApi();
         }
     };
+
+    std::unique_ptr<MockSaiSwitchEnv> VxlanFdbOrchTest::m_saiEnv;
 
     /* Helper Methods */
     void setUpVlan(PortsOrch* m_portsOrch){
