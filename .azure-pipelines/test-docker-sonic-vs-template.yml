@@ -10,9 +10,9 @@ parameters:
 - name: log_artifact_name
   type: string
 
-- name: docker_sonic_vs_name
+- name: docker_sonic_vpp_name
   type: string
-  default: docker-sonic-vs
+  default: vpp-bookworm
 
 - name: archive_gcov
   type: boolean
@@ -63,7 +63,7 @@ parameters:
 
 jobs:
 - job:
-  displayName: vstest
+  displayName: vpptest
   timeoutInMinutes: ${{ parameters.timeout }}
   variables:
     isAsan: ${{ parameters.asan }}
@@ -125,9 +125,9 @@ jobs:
 
   - task: DownloadPipelineArtifact@2
     inputs:
-      artifact: ${{ parameters.docker_sonic_vs_name }}
+      artifact: ${{ parameters.docker_sonic_vpp_name }}
       path: $(Build.ArtifactStagingDirectory)/download
-    displayName: "Download current-run ${{ parameters.docker_sonic_vs_name }}"
+    displayName: "Download current-run ${{ parameters.docker_sonic_vpp_name }}"
 
   - script: |
       set -ex
@@ -240,7 +240,7 @@ jobs:
   - task: PublishTestResults@2
     inputs:
       testResultsFiles: '**/*_tr.xml'
-      testRunTitle: vstest
+      testRunTitle: vpptest
     condition: and(eq(variables['TestsRun'], 'Yes'), ne(variables['isAsan'], 'true'))
 
   - script: |
