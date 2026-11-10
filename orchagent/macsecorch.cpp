@@ -1,8 +1,7 @@
 #include "macsecorch.h"
 #include "macsecpost.h"
 #include "notifier.h"
-#include "sainotificationorch.h"
-#include "saiextensions.h"
+#include "notifications.h"
 
 #include <macaddress.h>
 #include <sai_serialize.h>
@@ -689,25 +688,11 @@ MACsecOrch::MACsecOrch(
         post_state == "macsec-level-post-in-progress" )
     {
         m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-        m_postCompletionNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+        m_postCompletionNotificationConsumer = createSaiNotificationConsumer(m_notificationsDb.get());
+        registerSaiNotificationConsumer("switch_macsec_post_status", m_postCompletionNotificationConsumer);
+        registerSaiNotificationConsumer("macsec_post_status", m_postCompletionNotificationConsumer);
         auto postCompletionNotificatier = new Notifier(m_postCompletionNotificationConsumer, this, "POST_COMPLETION__NOTIFICATIONS");
         Orch::addExecutor(postCompletionNotificatier);
-
-        if (gSaiNotificationOrch)
-        {
-            gSaiNotificationOrch->registerHandler(
-                SAI_SWITCH_NOTIFICATION_NAME_SWITCH_MACSEC_POST_STATUS,
-                [this](KeyOpFieldsValuesTuple &entry)
-                {
-                    handleNotification(entry);
-                });
-            gSaiNotificationOrch->registerHandler(
-                SAI_SWITCH_NOTIFICATION_NAME_MACSEC_POST_STATUS,
-                [this](KeyOpFieldsValuesTuple &entry)
-                {
-                    handleNotification(entry);
-                });
-        }
     }
 
     if (post_state == "switch-level-post-in-progress")
@@ -770,24 +755,24 @@ void MACsecOrch::doTask(NotificationConsumer &consumer)
     consumer.pops(entries);
     for (auto& entry : entries)
     {
-        handleNotification(entry);
+        handleNotification(consumer, entry);
     }
 }
 
-void MACsecOrch::handleNotification(KeyOpFieldsValuesTuple& entry)
+void MACsecOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry)
 {
     SWSS_LOG_ENTER();
 
-    handleMacsecPostNotification(kfvOp(entry), kfvKey(entry));
-}
+    if (&consumer != m_postCompletionNotificationConsumer)
+    {
+        return;
+    }
 
-void MACsecOrch::handleMacsecPostNotification(const std::string &op, const std::string &data)
-{
-    SWSS_LOG_ENTER();
-
+    auto op = kfvOp(entry);
+    auto data = kfvKey(entry);
     SWSS_LOG_NOTICE("Received SAI notification: op %s, data %s", op.c_str(), data.c_str());
 
-    if (op == SAI_SWITCH_NOTIFICATION_NAME_SWITCH_MACSEC_POST_STATUS)
+    if (op == "switch_macsec_post_status")
     {
         sai_object_id_t switch_id;
         sai_switch_macsec_post_status_t switch_macsec_post_status;
@@ -816,7 +801,7 @@ void MACsecOrch::handleMacsecPostNotification(const std::string &op, const std::
         }
     }
 
-    if (op == SAI_SWITCH_NOTIFICATION_NAME_MACSEC_POST_STATUS)
+    if (op == "macsec_post_status")
     {
         sai_object_id_t macsec_id;
         sai_macsec_post_status_t macsec_post_status;

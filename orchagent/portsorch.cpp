@@ -12,7 +12,6 @@
 #include "directory.h"
 #include "subintf.h"
 #include "notifications.h"
-#include "sainotificationorch.h"
 #include "stporch.h"
 
 #include <inttypes.h>
@@ -1105,46 +1104,23 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
      * Also install an op-allowlist so cross-fanout messages on the
      * shared "NOTIFICATIONS" channel are dropped at admission. */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(
-        m_notificationsDb.get(), "NOTIFICATIONS",
-        100,                                       // pri -- match swss-common default
-        swss::DEFAULT_NC_POP_BATCH_SIZE,
-        swss::NotificationQueuePolicy::LruDedup);
+    m_portStatusNotificationConsumer = createSaiNotificationConsumer(
+        m_notificationsDb.get(), swss::NotificationQueuePolicy::LruDedup);
     m_portStatusNotificationConsumer->setOpAllowList({"port_state_change"});
     m_portStatusNotificationConsumer->setStatsLabel("PortsOrch:port_state_change");
+    registerSaiNotificationConsumer("port_state_change", m_portStatusNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("PortsOrch:port_state_change", m_portStatusNotificationConsumer);
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
 
-    if (gSaiNotificationOrch)
-    {
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_PORT_STATE_CHANGE,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            },
-            [this]() { return allPortsReady(); });
-
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_PORT_HOST_TX_READY,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            },
-            [this]() { return allPortsReady(); });
-    }
-
     if (m_cmisModuleAsicSyncSupported)
     {
-        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(
-            m_notificationsDb.get(), "NOTIFICATIONS",
-            100,                                       // pri -- match swss-common default
-            swss::DEFAULT_NC_POP_BATCH_SIZE,
-            swss::NotificationQueuePolicy::LruDedup);
+        m_portHostTxReadyNotificationConsumer = createSaiNotificationConsumer(
+            m_notificationsDb.get(), swss::NotificationQueuePolicy::LruDedup);
         m_portHostTxReadyNotificationConsumer->setOpAllowList({"port_host_tx_ready"});
         m_portHostTxReadyNotificationConsumer->setStatsLabel("PortsOrch:port_host_tx_ready");
+        registerSaiNotificationConsumer("port_host_tx_ready", m_portHostTxReadyNotificationConsumer);
         if (gNotifConsumerStatsOrch)
             gNotifConsumerStatsOrch->registerConsumer("PortsOrch:port_host_tx_ready", m_portHostTxReadyNotificationConsumer);
         auto portHostTxReadyNotificatier = new Notifier(m_portHostTxReadyNotificationConsumer, this, "PORT_HOST_TX_NOTIFICATIONS");
@@ -1760,11 +1736,16 @@ bool PortsOrch::allPortsReady()
     return m_initDone && m_pendingPortSet.empty();
 }
 
-void PortsOrch::maybeWakeSaiNotificationQueues()
+/*
+ * Notification doTask()s return early until allPortsReady(), leaving entries
+ * queued.  An in-process consumer is only re-selected on a new enqueue(), so
+ * re-arm the registered consumers when readiness may have just been reached.
+ */
+void PortsOrch::maybeWakeSaiNotificationConsumers()
 {
-    if (gSaiNotificationOrch && allPortsReady())
+    if (allPortsReady())
     {
-        gSaiNotificationOrch->wakeReadyQueues();
+        wakeSaiNotificationConsumers();
     }
 }
 
@@ -4776,7 +4757,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 addSystemPorts();
                 m_initDone = true;
                 SWSS_LOG_INFO("Got PortInitDone notification from portsyncd");
-                maybeWakeSaiNotificationQueues();
+                maybeWakeSaiNotificationConsumers();
             }
 
             it = taskMap.erase(it);
@@ -4822,7 +4803,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     // allPortsReady() false and block every other port.
                     SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
-                    maybeWakeSaiNotificationQueues();
+                    maybeWakeSaiNotificationConsumers();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4831,7 +4812,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
-                    maybeWakeSaiNotificationQueues();
+                    maybeWakeSaiNotificationConsumers();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4848,7 +4829,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
-                    maybeWakeSaiNotificationQueues();
+                    maybeWakeSaiNotificationConsumers();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4955,7 +4936,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 m_pendingPortSet.erase(pCfg.key);
-                maybeWakeSaiNotificationQueues();
+                maybeWakeSaiNotificationConsumers();
             }
 
             Port p;
@@ -9917,114 +9898,105 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
     for (auto& entry : entries)
     {
-        handleNotification(entry);
+        handleNotification(consumer, entry);
     }
 }
 
-void PortsOrch::handleNotification(KeyOpFieldsValuesTuple& entry)
+void PortsOrch::handleNotification(NotificationConsumer &consumer, KeyOpFieldsValuesTuple& entry)
 {
     auto op = kfvOp(entry);
     auto data = kfvKey(entry);
+    auto values = kfvFieldsValues(entry);
 
-    if (op == SAI_SWITCH_NOTIFICATION_NAME_PORT_STATE_CHANGE)
+    if (&consumer == m_portStatusNotificationConsumer && op == "port_state_change")
     {
-        handlePortStateChangeNotification(data);
-    }
-    else if (op == SAI_SWITCH_NOTIFICATION_NAME_PORT_HOST_TX_READY)
-    {
-        handlePortHostTxReadyNotification(data);
-    }
-}
+        uint32_t count;
+        sai_port_oper_status_notification_t *portoperstatus = nullptr;
 
-void PortsOrch::handlePortStateChangeNotification(const std::string &data)
-{
-    uint32_t count;
-    sai_port_oper_status_notification_t *portoperstatus = nullptr;
+        sai_deserialize_port_oper_status_ntf(data, count, &portoperstatus);
 
-    sai_deserialize_port_oper_status_ntf(data, count, &portoperstatus);
-
-    for (uint32_t i = 0; i < count; i++)
-    {
-        Port port;
-        sai_object_id_t id = portoperstatus[i].port_id;
-        sai_port_oper_status_t status = portoperstatus[i].port_state;
-        sai_port_error_status_t port_oper_err = portoperstatus[i].port_error_status;
-
-        SWSS_LOG_NOTICE("Get port state change notification id:%" PRIx64 " status:%d "
-                            "oper_error_status:0x%" PRIx32,
-                            id, status, port_oper_err);
-
-        if (!getPort(id, port))
+        for (uint32_t i = 0; i < count; i++)
         {
-            SWSS_LOG_NOTICE("Got port state change for port id 0x%" PRIx64 " which does not exist, possibly outdated event", id);
-            continue;
-        }
+            Port port;
+            sai_object_id_t id = portoperstatus[i].port_id;
+            sai_port_oper_status_t status = portoperstatus[i].port_state;
+            sai_port_error_status_t port_oper_err = portoperstatus[i].port_error_status;
 
-        updatePortOperStatus(port, status);
-        if (status == SAI_PORT_OPER_STATUS_UP)
-        {
-            sai_uint32_t speed;
-            if (getPortOperSpeed(port, speed))
+            SWSS_LOG_NOTICE("Get port state change notification id:%" PRIx64 " status:%d "
+                                "oper_error_status:0x%" PRIx32,
+                                id, status, port_oper_err);
+
+            if (!getPort(id, port))
             {
-                SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
-                updateDbPortOperSpeed(port, speed);
+                SWSS_LOG_NOTICE("Got port state change for port id 0x%" PRIx64 " which does not exist, possibly outdated event", id);
+                continue;
             }
-            else
+
+            updatePortOperStatus(port, status);
+            if (status == SAI_PORT_OPER_STATUS_UP)
             {
-                updateDbPortOperSpeed(port, 0);
-            }
-            sai_port_fec_mode_t fec_mode;
-            string fec_str;
-            if (oper_fec_sup && getPortOperFec(port, fec_mode))
-            {
-                if (!m_portHlpr.fecToStr(fec_str, fec_mode))
+                sai_uint32_t speed;
+                if (getPortOperSpeed(port, speed))
                 {
-                    SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
-                                static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
-                    fec_str = "N/A";
+                    SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
+                    updateDbPortOperSpeed(port, speed);
                 }
-                updateDbPortOperFec(port,fec_str);
+                else
+                {
+                    updateDbPortOperSpeed(port, 0);
+                }
+                sai_port_fec_mode_t fec_mode;
+                string fec_str;
+                if (oper_fec_sup && getPortOperFec(port, fec_mode))
+                {
+                    if (!m_portHlpr.fecToStr(fec_str, fec_mode))
+                    {
+                        SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
+                                    static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
+                        fec_str = "N/A";
+                    }
+                    updateDbPortOperFec(port,fec_str);
+                }
+                else
+                {
+                    updateDbPortOperFec(port, "N/A");
+                }
+            } else {
+                if (port_oper_err)
+                {
+                    updatePortErrorStatus(port, port_oper_err);
+                }
             }
-            else
+
+            /* update m_portList */
+            m_portList[port.m_alias] = port;
+
+            if (gP4Orch)
             {
-                updateDbPortOperFec(port, "N/A");
-            }
-        } else {
-            if (port_oper_err)
-            {
-                updatePortErrorStatus(port, port_oper_err);
+                // Process port_state_change in P4Orch after PortsOrch
+                gP4Orch->handlePortStatusUpdate(port.m_alias, status);
             }
         }
 
-        /* update m_portList */
-        m_portList[port.m_alias] = port;
-
-        if (gP4Orch)
-        {
-            // Process port_state_change in P4Orch after PortsOrch
-            gP4Orch->handlePortStatusUpdate(port.m_alias, status);
-        }
+        sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
     }
-
-    sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
-}
-
-void PortsOrch::handlePortHostTxReadyNotification(const std::string &data)
-{
-    sai_object_id_t port_id;
-    sai_object_id_t switch_id;
-    sai_port_host_tx_ready_status_t host_tx_ready_status;
-
-    sai_deserialize_port_host_tx_ready_ntf(data, switch_id, port_id, host_tx_ready_status);
-    SWSS_LOG_DEBUG("Recieved host_tx_ready notification for port 0x%" PRIx64, port_id);
-
-    Port p;
-    if (!getPort(port_id, p))
+    else if (&consumer == m_portHostTxReadyNotificationConsumer && op == "port_host_tx_ready")
     {
-        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
-        return;
+        sai_object_id_t port_id;
+        sai_object_id_t switch_id;
+        sai_port_host_tx_ready_status_t host_tx_ready_status;
+
+        sai_deserialize_port_host_tx_ready_ntf(data, switch_id, port_id, host_tx_ready_status);
+        SWSS_LOG_DEBUG("Recieved host_tx_ready notification for port 0x%" PRIx64, port_id);
+
+        Port p;
+        if (!getPort(port_id, p))
+        {
+            SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+            return;
+        }
+        setHostTxReady(p, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
     }
-    setHostTxReady(p, host_tx_ready_status == SAI_PORT_HOST_TX_READY_STATUS_READY ? "true" : "false");
 }
 
 void PortsOrch::updatePortErrorStatus(Port &port, sai_port_error_status_t errstatus)

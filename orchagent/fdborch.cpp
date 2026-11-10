@@ -8,6 +8,7 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "notificationconsumerstatsorch.h"
+#include "notifications.h"
 #include "fdborch.h"
 #include "macmoveguard.h"
 #include "crmorch.h"
@@ -19,8 +20,6 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
-#include "notifications.h"
-#include "sainotificationorch.h"
 
 #define VLAN_PREFIX         "Vlan"
 
@@ -73,34 +72,21 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
      * preserves the final FDB_TABLE state while bounding queue depth
      * to count(distinct in-flight payloads) instead of event rate.
      *
-     * pri=100 / popBatchSize match swss-common's 4-arg ctor defaults;
-     * the 5-arg ctor has no defaults so they must be passed
-     * explicitly.  No change in Select-loop priority vs. the prior
-     * 2-arg call.
+     * In ZMQ mode createSaiNotificationConsumer() returns an in-process
+     * consumer fed from the SAI callback via NotificationConsumer::enqueue();
+     * otherwise it is the usual Redis-subscribed consumer.  The Notifier
+     * and doTask() below are the same either way.
      */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_fdbNotificationConsumer = new swss::NotificationConsumer(
-        m_notificationsDb.get(), "NOTIFICATIONS",
-        100,                                       // pri -- match swss-common default
-        swss::DEFAULT_NC_POP_BATCH_SIZE,
-        swss::NotificationQueuePolicy::LruDedup);
+    m_fdbNotificationConsumer = createSaiNotificationConsumer(
+        m_notificationsDb.get(), swss::NotificationQueuePolicy::LruDedup);
     m_fdbNotificationConsumer->setOpAllowList({"fdb_event"});
     m_fdbNotificationConsumer->setStatsLabel("FdbOrch:fdb_event");
+    registerSaiNotificationConsumer("fdb_event", m_fdbNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("FdbOrch:fdb_event", m_fdbNotificationConsumer);
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
-
-    if (gSaiNotificationOrch)
-    {
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_FDB_EVENT,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            },
-            [this]() { return m_portsOrch->allPortsReady(); });
-    }
 
     /* MAC Move Guard: detects MAC flapping between ports and applies a
        remediation (admin-disable port, or pre-ingress ACL learn-suppress).
@@ -1429,48 +1415,32 @@ void FdbOrch::handleNotification(NotificationConsumer& consumer, const KeyOpFiel
     }
     else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
     {
-        KeyOpFieldsValuesTuple notificationEntry = entry;
-        handleNotification(notificationEntry);
-    }
-}
+        uint32_t count;
+        sai_fdb_event_notification_data_t *fdbevent = nullptr;
+        sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
-void FdbOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
-{
-    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_FDB_EVENT)
-    {
-        handleFdbEventNotification(kfvKey(entry));
-    }
-}
-
-void FdbOrch::handleFdbEventNotification(const std::string& data)
-{
-    SWSS_LOG_ENTER();
-
-    uint32_t count;
-    sai_fdb_event_notification_data_t *fdbevent = nullptr;
-    sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
-
-    for (uint32_t i = 0; i < count; ++i)
-    {
-        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-        sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
-
-        for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
+        for (uint32_t i = 0; i < count; ++i)
         {
-            if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            sai_fdb_entry_type_t sai_fdb_type = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+
+            for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
             {
-                oid = fdbevent[i].attr[j].value.oid;
+                if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
+                {
+                    oid = fdbevent[i].attr[j].value.oid;
+                }
+                else if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_TYPE)
+                {
+                    sai_fdb_type = (sai_fdb_entry_type_t)fdbevent[i].attr[j].value.s32;
+                }
             }
-            else if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_TYPE)
-            {
-                sai_fdb_type = (sai_fdb_entry_type_t)fdbevent[i].attr[j].value.s32;
-            }
+
+            this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid, sai_fdb_type);
         }
 
-        this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid, sai_fdb_type);
+        sai_deserialize_free_fdb_event_ntf(count, fdbevent);
     }
-
-    sai_deserialize_free_fdb_event_ntf(count, fdbevent);
 }
 
 /*

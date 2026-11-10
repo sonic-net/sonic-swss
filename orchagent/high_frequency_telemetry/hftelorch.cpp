@@ -2,7 +2,6 @@
 #include "hftelutils.h"
 
 #include "notifications.h"
-#include "sainotificationorch.h"
 
 #include <swss/schema.h>
 #include <swss/redisutility.h>
@@ -77,7 +76,8 @@ HFTelOrch::HFTelOrch(
     createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
 
-    m_asic_notification_consumer = new NotificationConsumer(&m_asic_db, "NOTIFICATIONS");
+    m_asic_notification_consumer = createSaiNotificationConsumer(&m_asic_db);
+    registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE, m_asic_notification_consumer);
     auto notifier = new Notifier(m_asic_notification_consumer, this, "TAM_TEL_TYPE_STATE");
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY;
@@ -91,16 +91,6 @@ HFTelOrch::HFTelOrch(
     }
 
     Orch::addExecutor(notifier);
-
-    if (gSaiNotificationOrch)
-    {
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            });
-    }
 }
 
 HFTelOrch::~HFTelOrch()
@@ -515,25 +505,11 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
 
     consumer.pop(op, data, values);
 
-    KeyOpFieldsValuesTuple entry = std::make_tuple(data, op, values);
-    handleNotification(entry);
-}
-
-void HFTelOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
-{
-    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
+    if (op != SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE)
     {
-        handleTamTelTypeConfigChangeNotification(kfvKey(entry));
+        SWSS_LOG_DEBUG("Unknown operation type %s for HFTel Orch", op.c_str());
+        return;
     }
-    else
-    {
-        SWSS_LOG_DEBUG("Unknown operation type %s for HFTel Orch", kfvOp(entry).c_str());
-    }
-}
-
-void HFTelOrch::handleTamTelTypeConfigChangeNotification(const std::string &data)
-{
-    SWSS_LOG_ENTER();
 
     sai_object_id_t tam_tel_type_obj = SAI_NULL_OBJECT_ID;
 

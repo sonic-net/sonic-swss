@@ -9,7 +9,6 @@
 #include "tokenize.h"
 #include "notifier.h"
 #include "notifications.h"
-#include "sainotificationorch.h"
 
 #include <exception>
 
@@ -148,25 +147,15 @@ TwampOrch::TwampOrch(TableConnector confDbConnector, TableConnector stateDbConne
 
     /* Add TWAMP session event notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_twampNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_twampNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
     m_twampNotificationConsumer->setOpAllowList({"twamp_session_event"});
     m_twampNotificationConsumer->setStatsLabel("TwampOrch:twamp_session_event");
+    registerSaiNotificationConsumer("twamp_session_event", m_twampNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("TwampOrch:twamp_session_event", m_twampNotificationConsumer);
     auto twampNotifier = new Notifier(m_twampNotificationConsumer, this, "TWAMP_NOTIFICATIONS");
     Orch::addExecutor(twampNotifier);
     register_event_notif = false;
-
-    if (gSaiNotificationOrch)
-    {
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_TWAMP_SESSION_EVENT,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            },
-            [this]() { return m_portsOrch->allPortsReady(); });
-    }
 
     /* Initialize DB connectors */
     m_asicDb = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
@@ -1006,76 +995,65 @@ void TwampOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
-    KeyOpFieldsValuesTuple entry = std::make_tuple(data, op, values);
-    handleNotification(entry);
-}
-
-void TwampOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
-{
-    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_TWAMP_SESSION_EVENT)
+    if (op == "twamp_session_event")
     {
-        handleTwampSessionEventNotification(kfvKey(entry));
-    }
-}
+        uint32_t count = 0;
+        sai_twamp_session_event_notification_data_t *twamp_session = nullptr;
 
-void TwampOrch::handleTwampSessionEventNotification(const std::string &data)
-{
-    uint32_t count = 0;
-    sai_twamp_session_event_notification_data_t *twamp_session = nullptr;
+        sai_deserialize_twamp_session_event_ntf(data, count, &twamp_session);
 
-    sai_deserialize_twamp_session_event_ntf(data, count, &twamp_session);
-
-    for (uint32_t i = 0; i < count; i++)
-    {
-        string name;
-        sai_object_id_t session_id = twamp_session[i].twamp_session_id;
-        sai_twamp_session_state_t session_state = twamp_session[i].session_state;
-        uint32_t stats_index = twamp_session[i].session_stats.index;
-
-        if (!getSessionName(session_id, name))
+        for (uint32_t i = 0; i < count; i++)
         {
-            continue;
-        }
+            string name;
+            sai_object_id_t session_id = twamp_session[i].twamp_session_id;
+            sai_twamp_session_state_t session_state = twamp_session[i].session_state;
+            uint32_t stats_index = twamp_session[i].session_stats.index;
 
-        /* update state db */
-        if (session_state == SAI_TWAMP_SESSION_STATE_ACTIVE)
-        {
-            setSessionStatus(name, TWAMP_SESSION_STATUS_ACTIVE);
-        }
-        else
-        {
-            setSessionStatus(name, TWAMP_SESSION_STATUS_INACTIVE);
-        }
-
-        /* save counter db */
-        if (twamp_session[i].session_stats.number_of_counters)
-        {
-            if (0 == stats_index)
+            if (!getSessionName(session_id, name))
             {
                 continue;
             }
-            else if (1 == stats_index)
+
+            /* update state db */
+            if (session_state == SAI_TWAMP_SESSION_STATE_ACTIVE)
             {
-                addCounterNameMap(name, session_id);
+                setSessionStatus(name, TWAMP_SESSION_STATUS_ACTIVE);
+            }
+            else
+            {
+                setSessionStatus(name, TWAMP_SESSION_STATUS_INACTIVE);
             }
 
-            vector<uint64_t> hw_stats;
-            hw_stats.resize(twamp_session_stat_ids.size());
-            for (uint32_t j = 0; j < twamp_session[i].session_stats.number_of_counters; j++)
+            /* save counter db */
+            if (twamp_session[i].session_stats.number_of_counters)
             {
-                uint32_t counters_id = twamp_session[i].session_stats.counters_ids[j];
-                auto it = find(twamp_session_stat_ids.begin(), twamp_session_stat_ids.end(), counters_id);
-                if (it != twamp_session_stat_ids.end())
+                if (0 == stats_index)
                 {
-                    hw_stats[counters_id] = twamp_session[i].session_stats.counters[j];
+                    continue;
                 }
+                else if (1 == stats_index)
+                {
+                    addCounterNameMap(name, session_id);
+                }
+
+                vector<uint64_t> hw_stats;
+                hw_stats.resize(twamp_session_stat_ids.size());
+                for (uint32_t j = 0; j < twamp_session[i].session_stats.number_of_counters; j++)
+                {
+                    uint32_t counters_id = twamp_session[i].session_stats.counters_ids[j];
+                    auto it = find(twamp_session_stat_ids.begin(), twamp_session_stat_ids.end(), counters_id);
+                    if (it != twamp_session_stat_ids.end())
+                    {
+                        hw_stats[counters_id] = twamp_session[i].session_stats.counters[j];
+                    }
+                }
+
+                saveSessionStatsLatest(session_id, stats_index, hw_stats);
+                calculateCounters(name, stats_index, hw_stats);
+                saveCountersTotal(name, session_id);
             }
-
-            saveSessionStatsLatest(session_id, stats_index, hw_stats);
-            calculateCounters(name, stats_index, hw_stats);
-            saveCountersTotal(name, session_id);
         }
-    }
 
-    sai_deserialize_free_twamp_session_event_ntf(count, twamp_session);
+        sai_deserialize_free_twamp_session_event_ntf(count, twamp_session);
+    }
 }

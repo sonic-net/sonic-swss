@@ -8,8 +8,6 @@
 #include <string>
 #include <vector>
 
-class SaiNotificationQueue;
-
 /*
  * NotificationConsumerStatsOrch
  *
@@ -47,9 +45,6 @@ public:
     // pointer must outlive this orch.
     void registerConsumer(const std::string &name, swss::NotificationConsumer *consumer);
 
-    // Option 3 per-consumer in-process notification queue (ZMQ mode).
-    void registerSaiNotificationQueue(const std::string &name, SaiNotificationQueue *queue);
-
     // Fires the COUNTERS_DB publish on every tick of the internal timer.
     void doTask(swss::SelectableTimer &timer) override;
 
@@ -66,19 +61,9 @@ private:
         swss::NotificationConsumer *consumer;
     };
 
-    struct SaiQueueEntry
-    {
-        std::string name;
-        SaiNotificationQueue *queue;
-    };
-
-    void publishConsumerStats(const Entry &entry);
-    void publishSaiQueueStats(const SaiQueueEntry &entry);
-
     std::shared_ptr<swss::DBConnector> m_countersDb;
     std::shared_ptr<swss::Table>       m_table;
     std::vector<Entry>                 m_consumers;
-    std::vector<SaiQueueEntry>         m_saiQueues;
     swss::SelectableTimer             *m_timer = nullptr;
 
     static constexpr int kPublishIntervalSec = 10;

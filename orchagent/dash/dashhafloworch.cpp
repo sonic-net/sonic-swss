@@ -7,11 +7,11 @@
 #include "table.h"
 #include "taskworker.h"
 #include "converter.h"
+#include "notifications.h"
 #include "ipaddress.h"
 #include "macaddress.h"
 #include "swssnet.h"
 #include "schema.h"
-#include "sainotificationorch.h"
 
 #include <chrono>
 #include <cinttypes>
@@ -781,22 +781,13 @@ DashHaFlowOrch::DashHaFlowOrch(DBConnector *db, const vector<string> &tableNames
     m_handlers[SESSION_TYPE_FLOW_DUMP] = make_shared<FlowDumpHandler>(m_dpuStateDb.get(), m_dump_timer, m_filter_manager);
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_flowBulkGetSessionNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_flowBulkGetSessionNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
+    registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT, m_flowBulkGetSessionNotificationConsumer);
     auto flowBulkGetSessionNotifier = new Notifier(m_flowBulkGetSessionNotificationConsumer, this, SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT);
 
     Orch::addExecutor(flowBulkGetSessionNotifier);
 
     registerFlowBulkGetSessionNotifier();
-
-    if (gSaiNotificationOrch)
-    {
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            });
-    }
 }
 
 bool DashHaFlowOrch::registerFlowBulkGetSessionNotifier()
@@ -865,22 +856,13 @@ void DashHaFlowOrch::doTask(NotificationConsumer &consumer)
 
     consumer.pop(notification_name, data, values);
 
-    KeyOpFieldsValuesTuple entry = std::make_tuple(data, notification_name, values);
-    handleNotification(entry);
-}
-
-void DashHaFlowOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
-{
-    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT)
+    if (notification_name == SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT)
     {
-        handleSessionNotification(
-                kfvOp(entry),
-                kfvKey(entry),
-                kfvFieldsValues(entry));
+        handleSessionNotification(notification_name, data, values);
     }
     else
     {
-        SWSS_LOG_WARN("Unknown notification: %s", kfvOp(entry).c_str());
+        SWSS_LOG_WARN("Unknown notification: %s", notification_name.c_str());
     }
 }
 

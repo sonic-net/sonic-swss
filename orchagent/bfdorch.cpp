@@ -9,7 +9,6 @@
 #include "sai_serialize.h"
 #include "directory.h"
 #include "notifications.h"
-#include "sainotificationorch.h"
 #include "schema.h"
 
 using namespace std;
@@ -65,9 +64,10 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     SWSS_LOG_ENTER();
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_bfdStateNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
     m_bfdStateNotificationConsumer->setOpAllowList({"bfd_session_state_change"});
     m_bfdStateNotificationConsumer->setStatsLabel("BfdOrch:bfd_session_state_change");
+    registerSaiNotificationConsumer("bfd_session_state_change", m_bfdStateNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("BfdOrch:bfd_session_state_change", m_bfdStateNotificationConsumer);
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
@@ -93,16 +93,6 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     }
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
-
-    if (gSaiNotificationOrch)
-    {
-        gSaiNotificationOrch->registerHandler(
-            SAI_SWITCH_NOTIFICATION_NAME_BFD_SESSION_STATE_CHANGE,
-            [this](KeyOpFieldsValuesTuple &entry)
-            {
-                handleNotification(entry);
-            });
-    }
 }
 
 BfdOrch::~BfdOrch(void)
@@ -255,50 +245,39 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
         return;
     }
 
-    KeyOpFieldsValuesTuple entry = std::make_tuple(data, op, values);
-    handleNotification(entry);
-}
-
-void BfdOrch::handleNotification(KeyOpFieldsValuesTuple &entry)
-{
-    if (kfvOp(entry) == SAI_SWITCH_NOTIFICATION_NAME_BFD_SESSION_STATE_CHANGE)
+    if (op == "bfd_session_state_change")
     {
-        handleBfdSessionStateChangeNotification(kfvKey(entry));
-    }
-}
+        uint32_t count;
+        sai_bfd_session_state_notification_t *bfdSessionState = nullptr;
 
-void BfdOrch::handleBfdSessionStateChangeNotification(const std::string &data)
-{
-    uint32_t count;
-    sai_bfd_session_state_notification_t *bfdSessionState = nullptr;
+        sai_deserialize_bfd_session_state_ntf(data, count, &bfdSessionState);
 
-    sai_deserialize_bfd_session_state_ntf(data, count, &bfdSessionState);
-
-    for (uint32_t i = 0; i < count; i++)
-    {
-        sai_object_id_t id = bfdSessionState[i].bfd_session_id;
-        sai_bfd_session_state_t state = bfdSessionState[i].session_state;
-
-        SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
-
-        if (state != bfd_session_lookup[id].state)
+        for (uint32_t i = 0; i < count; i++)
         {
-            auto key = bfd_session_lookup[id].peer;
-            m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
+            sai_object_id_t id = bfdSessionState[i].bfd_session_id;
+            sai_bfd_session_state_t state = bfdSessionState[i].session_state;
 
-            SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
-                        session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());
+            SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
 
-            BfdUpdate update;
-            update.peer = key;
-            update.state = state;
-            notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
+            if (state != bfd_session_lookup[id].state)
+            {
+                auto key = bfd_session_lookup[id].peer;
+                m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
 
-            bfd_session_lookup[id].state = state;
+                SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
+                            session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());
+
+                BfdUpdate update;
+                update.peer = key;
+                update.state = state;
+                notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
+
+                bfd_session_lookup[id].state = state;
+            }
         }
-    }
 
-    sai_deserialize_free_bfd_session_state_ntf(count, bfdSessionState);
+        sai_deserialize_free_bfd_session_state_ntf(count, bfdSessionState);
+    }
 }
 
 bool BfdOrch::register_bfd_state_change_notification(void)
