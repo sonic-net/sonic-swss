@@ -441,4 +441,51 @@ TEST_F(VrfMgrTest, CoalescedNamedVrfVniReplacementRemovesOldMappingBeforeAdd)
     EXPECT_EQ(m_vrf_mgr->getVRFmappedVNI(vrf_name), 5000u);
 }
 
+TEST_F(VrfMgrTest, DefaultVrfReaddSupersedesPendingDelete)
+{
+    const string old_map_key = "tunnel0:evpn_map_6000_default";
+    const string new_map_key = "tunnel0:evpn_map_5000_default";
+
+    addNvo("tunnel0");
+    addDefaultVrf("6000");
+
+    Table state_vrf_object(m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+    state_vrf_object.set("default", {{"state", "ok"}});
+
+    Table config_vrf(m_config_db.get(), CFG_VRF_TABLE_NAME);
+    config_vrf.del("default");
+
+    auto consumer = dynamic_cast<Consumer *>(
+        m_vrf_mgr->getExecutor(CFG_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    consumer->addToSync(KeyOpFieldsValuesTuple{"default", DEL_COMMAND, {}});
+    m_vrf_mgr->doTask();
+
+    ASSERT_EQ(consumer->m_toSync.size(), 1u);
+    EXPECT_EQ(kfvOp(consumer->m_toSync.begin()->second), DEL_COMMAND);
+
+    Table app_vrf(m_app_db.get(), APP_VRF_TABLE_NAME);
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(app_vrf.get("default", values));
+    values.clear();
+    EXPECT_FALSE(app_vxlan_vrf.get(old_map_key, values));
+
+    config_vrf.set("default", {{"vni", "5000"}});
+    consumer->addToSync(KeyOpFieldsValuesTuple{
+        "default", SET_COMMAND, {{"vni", "5000"}}});
+    m_vrf_mgr->doTask();
+    m_vrf_mgr->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    values.clear();
+    ASSERT_TRUE(app_vrf.get("default", values));
+    const auto app_vni = fvsGetValue(values, "vni", true);
+    ASSERT_TRUE(app_vni);
+    EXPECT_EQ(app_vni.get(), "5000");
+    values.clear();
+    EXPECT_TRUE(app_vxlan_vrf.get(new_map_key, values));
+    EXPECT_EQ(m_vrf_mgr->getVRFmappedVNI("default"), 5000u);
+}
+
 } // namespace vrfmgr_ut
