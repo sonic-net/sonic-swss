@@ -22,6 +22,7 @@
 #include "mock_orch_test.h"
 #include "mock_sai_api.h"
 #include "mock_table.h"
+#include "saimetadatautils.h"
 
 extern Directory<Orch*> gDirectory;
 extern RouteOrch *gRouteOrch;
@@ -2010,6 +2011,35 @@ protected:
         ASSERT_EQ(sai_lag_api->create_lag(&nativeLag, gSwitchId, 0, nullptr), SAI_STATUS_SUCCESS);
         po(SAI_PORT_OPER_STATUS_UP, 0); Port value = port(); value.m_lag_id = nativeLag;
         gPortsOrch->setPort(value.m_alias, value);
+
+        // Headers/metadata may expose protection before libVS implements its
+        // read-only path state. Require that native behavior for these cases;
+        // the mock-based suites do not depend on a particular libVS build.
+        const auto metadata = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_BRIDGE_PORT,
+            SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_STATE);
+        if (!metadata || string(metadata->attridname) != "SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_STATE")
+        {
+            GTEST_SKIP() << "Native protection tests require matching protection-state SAI metadata";
+        }
+        sai_attribute_t attrs[2]{};
+        attrs[0].id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attrs[0].value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+        attrs[1].id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+        attrs[1].value.oid = nativeLag;
+        sai_object_id_t probe = SAI_NULL_OBJECT_ID;
+        ASSERT_EQ(savedBridge.create_bridge_port(&probe, gSwitchId, 2, attrs), SAI_STATUS_SUCCESS);
+        sai_attribute_t state{};
+        state.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_STATE;
+        const auto status = savedBridge.get_bridge_port_attribute(probe, 1, &state);
+        ASSERT_EQ(savedBridge.remove_bridge_port(probe), SAI_STATUS_SUCCESS);
+        if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+            status == SAI_STATUS_ATTR_NOT_SUPPORTED_0 || status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 ||
+            status == SAI_STATUS_UNKNOWN_ATTRIBUTE_0)
+        {
+            GTEST_SKIP() << "Native protection tests require libVS protection-state readback; SAI status=" << status;
+        }
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
+        ASSERT_EQ(state.value.s32, SAI_BRIDGE_PORT_PROTECTION_STATE_NOT_APPLICABLE);
     }
     void PreTearDown() override
     {
