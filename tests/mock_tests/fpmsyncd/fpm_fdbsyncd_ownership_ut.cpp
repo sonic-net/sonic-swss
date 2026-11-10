@@ -33,19 +33,19 @@ public:
 
 struct KernelFrame
 {
-    alignas(nlmsghdr) std::array<unsigned char, 256> bytes{};
+    std::array<nlmsghdr, 256 / sizeof(nlmsghdr)> storage{};
     explicit KernelFrame(unsigned short operation)
     {
         header()->nlmsg_type = operation;
         header()->nlmsg_len = NLMSG_LENGTH(sizeof(nhmsg));
         header()->nlmsg_flags = NLM_F_REQUEST;
     }
-    nlmsghdr *header() { return reinterpret_cast<nlmsghdr *>(bytes.data()); }
+    nlmsghdr *header() { return storage.data(); }
     void attribute(unsigned short type, const void *value, size_t size)
     {
         auto *h = header();
         auto offset = NLMSG_ALIGN(h->nlmsg_len);
-        auto *attr = reinterpret_cast<rtattr *>(bytes.data() + offset);
+        auto *attr = static_cast<rtattr *>(static_cast<void *>(reinterpret_cast<unsigned char *>(storage.data()) + offset));
         attr->rta_type = type; attr->rta_len = static_cast<uint16_t>(RTA_LENGTH(size));
         if (size) memcpy(RTA_DATA(attr), value, size);
         h->nlmsg_len = offset + RTA_ALIGN(attr->rta_len);
@@ -133,12 +133,12 @@ protected:
         member.l2nm_type = 1; member.l2nm_family = AF_INET;
         inet_pton(AF_INET, "10.0.0.3", &member.l2nm_remote_vtep);
         member.l2nm_router_mac[0] = 2; member.l2nm_router_mac[5] = 3;
-        alignas(nlmsghdr) unsigned char bytes[NLMSG_SPACE(sizeof(body)+sizeof(member))]{};
-        auto *header = reinterpret_cast<nlmsghdr *>(bytes);
+        std::array<nlmsghdr, (NLMSG_SPACE(sizeof(body)+sizeof(member)) + sizeof(nlmsghdr)-1) / sizeof(nlmsghdr)> storage{};
+        auto *header = storage.data();
         header->nlmsg_type = deleting ? RTM_FPM_DEL_L2_NEXTHOP_GROUP : RTM_FPM_ADD_L2_NEXTHOP_GROUP;
         header->nlmsg_len = NLMSG_LENGTH(sizeof(body)+sizeof(member));
         memcpy(NLMSG_DATA(header), &body, sizeof(body));
-        memcpy(bytes + NLMSG_HDRLEN + sizeof(body), &member, sizeof(member));
+        memcpy(reinterpret_cast<unsigned char *>(storage.data()) + NLMSG_HDRLEN + sizeof(body), &member, sizeof(member));
         fpm->onMsgRaw(header); pipeline.flush();
     }
     void seedFpm()

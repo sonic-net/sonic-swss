@@ -769,7 +769,17 @@ l2_nhg_member_msg bppWireMember(uint32_t id = 0x40000007u, const char *ip = "10.
     member.l2nm_router_mac[0] = 2; member.l2nm_router_mac[5] = 3;
     return member;
 }
-std::vector<unsigned char> bppWireGroup(uint32_t id,
+// Byte access is for serialization; header access retains the allocation's
+// native alignment on strict-alignment targets such as ARMHF.
+class NetlinkMessage
+{
+    std::vector<nlmsghdr> storage;
+public:
+    explicit NetlinkMessage(size_t bytes) : storage((bytes + sizeof(nlmsghdr) - 1) / sizeof(nlmsghdr)) {}
+    unsigned char *data() { return reinterpret_cast<unsigned char *>(storage.data()); }
+    nlmsghdr *header() { return storage.data(); }
+};
+NetlinkMessage bppWireGroup(uint32_t id,
         const std::vector<l2_nhg_member_msg> &members, bool deleting = false)
 {
     l2_nhg_group_msg body{};
@@ -778,7 +788,7 @@ std::vector<unsigned char> bppWireGroup(uint32_t id,
     nlmsghdr header{};
     header.nlmsg_type = deleting ? RTM_FPM_DEL_L2_NEXTHOP_GROUP : RTM_FPM_ADD_L2_NEXTHOP_GROUP;
     header.nlmsg_len = static_cast<uint32_t>(NLMSG_LENGTH(sizeof(body) + members.size() * sizeof(l2_nhg_member_msg)));
-    std::vector<unsigned char> bytes(NLMSG_ALIGN(header.nlmsg_len));
+    NetlinkMessage bytes(NLMSG_ALIGN(header.nlmsg_len));
     memcpy(bytes.data(), &header, sizeof(header));
     memcpy(bytes.data() + NLMSG_HDRLEN, &body, sizeof(body));
     if (!members.empty()) memcpy(bytes.data() + NLMSG_HDRLEN + sizeof(body), members.data(), members.size() * sizeof(l2_nhg_member_msg));
@@ -1000,7 +1010,7 @@ TEST_F(FpmBindingTest, ActualProducerFramesThroughFpmLink)
     {
         alignas(nlmsghdr) unsigned char buffer[28]{};
         ASSERT_TRUE(input.read(reinterpret_cast<char *>(buffer), sizeof(buffer)));
-        auto *fpm = reinterpret_cast<fpm_msg_hdr_t *>(buffer);
+        auto *fpm = static_cast<fpm_msg_hdr_t *>(static_cast<void *>(buffer));
         EXPECT_EQ(fpm->version, FPM_PROTO_VERSION);
         EXPECT_EQ(fpm_msg_len(fpm), sizeof(buffer));
         link.processFpmMessage(fpm); pipeline.flush();
@@ -1065,14 +1075,14 @@ TEST_F(FpmBindingTest, MemberValidationAndReplacement)
 TEST_F(FpmBindingTest, GroupValidationOwnershipAndRestartCleanup)
 {
     auto good = bppWireGroup(0x80000001u, {bppWireMember(), bppWireMember(0x40000008u, "2001:db8::2")});
-    auto sendGroup = [&](std::vector<unsigned char> bytes) { sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush(); };
+    auto sendGroup = [&](NetlinkMessage bytes) { sync->onMsgRaw(bytes.header()); pipeline.flush(); };
     Table table(&db, "L2_NEXTHOP_GROUP_TABLE"); std::string value;
     sendGroup(good);
     ASSERT_TRUE(table.hget("2147483649", "nexthop_group", value)); EXPECT_EQ(value,"1073741831,1073741832");
     ASSERT_TRUE(table.hget("1073741832", "remote_vtep", value)); EXPECT_EQ(value,"2001:db8::2");
     for (int fault = 0; fault < 9; ++fault)
     {
-        auto bytes = good; auto *header = reinterpret_cast<nlmsghdr *>(bytes.data());
+        auto bytes = good; auto *header = bytes.header();
         l2_nhg_group_msg group; memcpy(&group, NLMSG_DATA(header), sizeof(group));
         if (fault == 0) group.l2ng_count = UINT32_MAX;
         if (fault == 1) header->nlmsg_len = NLMSG_LENGTH(sizeof(group)-1);
@@ -1116,7 +1126,7 @@ TEST_F(FpmBindingTest, ReferenceGroupSerializerThroughFpmLink)
     for (int i=0; i<4; ++i) {
         alignas(nlmsghdr) unsigned char buffer[FPM_MAX_MSG_LEN]{};
         ASSERT_TRUE(input.read(reinterpret_cast<char *>(buffer), 4));
-        auto *fpm = reinterpret_cast<fpm_msg_hdr_t *>(buffer);
+        auto *fpm = static_cast<fpm_msg_hdr_t *>(static_cast<void *>(buffer));
         const size_t length = fpm_msg_len(fpm);
         ASSERT_LE(length, sizeof(buffer)); ASSERT_GE(length, 4u);
         ASSERT_TRUE(input.read(reinterpret_cast<char *>(buffer+4), length-4));
@@ -1168,7 +1178,7 @@ TEST_F(FpmBindingTest, ResetRequiresAcceptedKeyAndUnambiguousRow)
 TEST_F(FpmBindingTest, HldRowsAndAcceptedIdsPersistAcrossOrphanGroupRestart)
 {
     auto bytes = bppWireGroup(0x80000001u, {bppWireMember()});
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    sync->onMsgRaw(bytes.header()); pipeline.flush();
     Table objects(&db, "L2_NEXTHOP_GROUP_TABLE"), accepted(&db, FPM_PROTECTION_ID_TABLE);
     std::vector<FieldValueTuple> row;
     ASSERT_TRUE(objects.get("2147483649", row));
@@ -1200,7 +1210,7 @@ TEST_F(FpmBindingTest, PendingObjectsAreIsolatedAndCanceledBeforeReplay)
     for (uint32_t id : {200u,201u,203u})
     {
         auto bytes = bppWireGroup(bppGroupId(id), {});
-        sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+        sync->onMsgRaw(bytes.header()); pipeline.flush();
         EXPECT_EQ(hasFpmProtectionId(accepted,key(id)), id==203);
     }
     sync=std::make_unique<BindingRouteSync>(&pipeline);
@@ -1213,7 +1223,7 @@ TEST_F(FpmBindingTest, PendingObjectsAreIsolatedAndCanceledBeforeReplay)
         EXPECT_FALSE(accepted.get(key(id),row));
     }
     auto bytes = bppWireGroup(bppGroupId(203), {});
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    sync->onMsgRaw(bytes.header()); pipeline.flush();
     ASSERT_TRUE(objects.get(key(203),row)); EXPECT_EQ(row,(std::vector<FieldValueTuple>{{"nexthop_group",""}}));
 }
 
@@ -1252,8 +1262,8 @@ TEST_F(FpmBindingTest, EveryWrongIdTagIsRejectedForObjectsAndBindings)
             auto binding = frame(); binding.binding.ebnm_backup_nhg_id = id;
             send(binding); EXPECT_TRUE(absent("PortChannel0"));
             auto bytes = bppWireGroup(id, {});
-            sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data()));
-            auto *header = reinterpret_cast<nlmsghdr *>(bytes.data());
+            sync->onMsgRaw(bytes.header());
+            auto *header = bytes.header();
             header->nlmsg_type = RTM_FPM_DEL_L2_NEXTHOP_GROUP; sync->onMsgRaw(header);
         }
         if (tag != FPM_NHG_TYPE_L3_BPP_NH)
@@ -1278,11 +1288,11 @@ TEST_F(FpmBindingTest, GroupValidatesAllMembersAndOwnershipBeforeAnyPublication)
     auto first = bppWireMember(0x40000008u), second = bppWireMember(0x40000009u);
     second.l2nm_family = 0;
     auto bytes = bppWireGroup(0x80000002u, {first,second});
-    testing_db::resetOperationCounters(); sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    testing_db::resetOperationCounters(); sync->onMsgRaw(bytes.header()); pipeline.flush();
     EXPECT_EQ(testing_db::getProducerSetCount("L2_NEXTHOP_GROUP_TABLE"), 0u);
     objects.set("1073741833", {{"remote_vtep","10.0.0.99"}});
     second = bppWireMember(0x40000009u); bytes = bppWireGroup(0x80000002u, {first,second});
-    testing_db::resetOperationCounters(); sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    testing_db::resetOperationCounters(); sync->onMsgRaw(bytes.header()); pipeline.flush();
     EXPECT_EQ(testing_db::getProducerSetCount("L2_NEXTHOP_GROUP_TABLE"), 0u);
     std::vector<FieldValueTuple> row; EXPECT_FALSE(objects.get("1073741832",row)); EXPECT_FALSE(objects.get("2147483650",row));
     ASSERT_TRUE(objects.get("1073741833",row)); EXPECT_EQ(row,(std::vector<FieldValueTuple>{{"remote_vtep","10.0.0.99"}}));
@@ -1292,10 +1302,10 @@ TEST_F(FpmBindingTest, FullGroupSnapshotRefreshesMembersAndRetainsHldRowShape)
 {
     Table objects(&db, "L2_NEXTHOP_GROUP_TABLE");
     auto member = bppWireMember(); auto bytes = bppWireGroup(0x80000001u, {member});
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    sync->onMsgRaw(bytes.header()); pipeline.flush();
     member.l2nm_router_mac[5] = 9;
     bytes = bppWireGroup(0x80000001u, {member,bppWireMember(0x4fffffffu,"2001:db8::9")});
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    sync->onMsgRaw(bytes.header()); pipeline.flush();
     std::vector<FieldValueTuple> row;
     ASSERT_TRUE(objects.get("1073741831",row));
     EXPECT_EQ(row,(std::vector<FieldValueTuple>{{"remote_vtep","10.0.0.2"},{"type","l3"},{"router_mac","02:00:00:00:00:09"}}));
@@ -1310,12 +1320,12 @@ TEST_F(FpmBindingTest, GroupTransportBoundaryAndOldIdOnlyLayoutAreRejectedSafely
     std::vector<l2_nhg_member_msg> members;
     for (uint32_t i=0;i<maximum;++i) members.push_back(bppWireMember(0x40000001u+i));
     auto bytes = bppWireGroup(0x80000001u,members);
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    sync->onMsgRaw(bytes.header()); pipeline.flush();
     Table objects(&db,"L2_NEXTHOP_GROUP_TABLE"); std::vector<FieldValueTuple> before,after;
     ASSERT_TRUE(objects.get("2147483649",before));
     members.push_back(bppWireMember(0x40000001u+static_cast<uint32_t>(maximum)));
     bytes=bppWireGroup(0x80000001u,members); testing_db::resetOperationCounters();
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+    sync->onMsgRaw(bytes.header()); pipeline.flush();
     EXPECT_EQ(testing_db::getProducerSetCount("L2_NEXTHOP_GROUP_TABLE"),0u);
     struct { nlmsghdr header; uint32_t id,count,member; } old{};
     old.header.nlmsg_type=RTM_FPM_ADD_L2_NEXTHOP_GROUP; old.header.nlmsg_len=NLMSG_LENGTH(12);
@@ -1347,11 +1357,12 @@ TEST_F(FpmBindingTest, ReplayDoneRequiresEmptyPayloadAndDoesNotGateBindings)
 TEST_F(FpmBindingTest, ReplayDoneTravelsThroughFpmLinkWithoutPublishingState)
 {
     FpmLink link(sync.get(),0);
+    ASSERT_EQ(FPM_MSG_HDR_LEN % alignof(nlmsghdr), 0u);
     alignas(nlmsghdr) unsigned char bytes[FPM_MSG_HDR_LEN+NLMSG_HDRLEN]{};
-    auto *fpm=reinterpret_cast<fpm_msg_hdr_t *>(bytes);
+    auto *fpm=static_cast<fpm_msg_hdr_t *>(static_cast<void *>(bytes));
     fpm->version=FPM_PROTO_VERSION; fpm->msg_type=FPM_MSG_TYPE_NETLINK;
     fpm->msg_len=htons(static_cast<uint16_t>(sizeof(bytes)));
-    auto *header=reinterpret_cast<nlmsghdr *>(bytes+FPM_MSG_HDR_LEN);
+    auto *header=static_cast<nlmsghdr *>(static_cast<void *>(bytes+FPM_MSG_HDR_LEN));
     header->nlmsg_type=RTM_FPM_EVPN_MH_REPLAY_DONE; header->nlmsg_len=NLMSG_HDRLEN;
     testing_db::resetOperationCounters(); link.processFpmMessage(fpm); pipeline.flush();
     EXPECT_TRUE(absent("PortChannel0"));
@@ -1374,12 +1385,12 @@ TEST_F(FpmBindingTest, NativeAlignedMemberAndGroupIgnorePaddingBytes)
         return body;
     };
     auto deliver = [&](uint16_t type, const std::vector<unsigned char> &body) {
-        std::vector<unsigned char> bytes(NLMSG_SPACE(body.size()));
+        NetlinkMessage bytes(NLMSG_SPACE(body.size()));
         nlmsghdr header{}; header.nlmsg_type = type;
         header.nlmsg_len = static_cast<uint32_t>(NLMSG_LENGTH(body.size()));
         memcpy(bytes.data(), &header, sizeof(header));
         memcpy(bytes.data() + NLMSG_HDRLEN, body.data(), body.size());
-        sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(bytes.data())); pipeline.flush();
+        sync->onMsgRaw(bytes.header()); pipeline.flush();
     };
     const auto first = rawMember(0x40000007u, "10.0.0.2");
     const auto second = rawMember(0x40000008u, "2001:db8::2");
@@ -1405,22 +1416,22 @@ TEST_F(FpmBindingTest, PackedLayoutsCannotReplaceAcceptedNativeRows)
     natural.header.nlmsg_len = NLMSG_LENGTH(sizeof(member)); natural.member = member;
     sync->onMsgRaw(&natural.header); pipeline.flush();
     auto group = bppWireGroup(0x80000001u, {member});
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(group.data())); pipeline.flush();
+    sync->onMsgRaw(group.header()); pipeline.flush();
     Table objects(&db, "L2_NEXTHOP_GROUP_TABLE");
     std::vector<FieldValueTuple> memberBefore, groupBefore, after;
     ASSERT_TRUE(objects.get("1073741831", memberBefore)); ASSERT_TRUE(objects.get("2147483649", groupBefore));
-    std::vector<unsigned char> packedMember(NLMSG_SPACE(28));
+    NetlinkMessage packedMember(NLMSG_SPACE(28));
     nlmsghdr header{}; header.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP; header.nlmsg_len = NLMSG_LENGTH(28);
     memcpy(packedMember.data(), &header, sizeof(header));
     auto *payload = packedMember.data() + NLMSG_HDRLEN;
     memcpy(payload, &member.l2nm_nh_id, 4); payload[4] = 1; payload[5] = AF_INET;
     memcpy(payload + 6, &member.l2nm_remote_vtep, 16); memcpy(payload + 22, member.l2nm_router_mac, 6);
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(packedMember.data())); pipeline.flush();
-    std::vector<unsigned char> packedGroup(NLMSG_SPACE(18));
+    sync->onMsgRaw(packedMember.header()); pipeline.flush();
+    NetlinkMessage packedGroup(NLMSG_SPACE(18));
     header.nlmsg_type = RTM_FPM_ADD_L2_NEXTHOP_GROUP; header.nlmsg_len = NLMSG_LENGTH(18);
     memcpy(packedGroup.data(), &header, sizeof(header));
     const uint32_t id = 0x80000001u; memcpy(packedGroup.data() + NLMSG_HDRLEN, &id, sizeof(id));
-    sync->onMsgRaw(reinterpret_cast<nlmsghdr *>(packedGroup.data())); pipeline.flush();
+    sync->onMsgRaw(packedGroup.header()); pipeline.flush();
     ASSERT_TRUE(objects.get("1073741831", after)); EXPECT_EQ(after, memberBefore);
     ASSERT_TRUE(objects.get("2147483649", after)); EXPECT_EQ(after, groupBefore);
 }
