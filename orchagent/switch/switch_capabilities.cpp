@@ -22,6 +22,7 @@ extern "C" {
 
 #include "switch_schema.h"
 #include "switch_capabilities.h"
+#include "switch_helper.h"
 
 using namespace swss;
 
@@ -36,6 +37,11 @@ using namespace swss;
 #define SWITCH_CAPABILITY_ECMP_HASH_ALGORITHM_CAPABLE_FIELD "ECMP_HASH_ALGORITHM_CAPABLE"
 #define SWITCH_CAPABILITY_LAG_HASH_ALGORITHM_FIELD          "LAG_HASH_ALGORITHM"
 #define SWITCH_CAPABILITY_LAG_HASH_ALGORITHM_CAPABLE_FIELD  "LAG_HASH_ALGORITHM_CAPABLE"
+
+#define SWITCH_CAPABILITY_ECMP_PKT_TYPE_HASH_CAPABLE_FIELD  "ECMP_PKT_TYPE_HASH_CAPABLE"
+#define SWITCH_CAPABILITY_LAG_PKT_TYPE_HASH_CAPABLE_FIELD   "LAG_PKT_TYPE_HASH_CAPABLE"
+#define SWITCH_CAPABILITY_HASH_ECMP_PKT_TYPE_LIST_FIELD     "HASH|ECMP_PKT_TYPE_LIST"
+#define SWITCH_CAPABILITY_HASH_LAG_PKT_TYPE_LIST_FIELD      "HASH|LAG_PKT_TYPE_LIST"
 
 #define SWITCH_CAPABILITY_KEY "switch"
 
@@ -64,7 +70,9 @@ static const std::unordered_map<sai_native_hash_field_t, std::string> swHashHash
     { SAI_NATIVE_HASH_FIELD_INNER_SRC_IP,      SWITCH_HASH_FIELD_INNER_SRC_IP      },
     { SAI_NATIVE_HASH_FIELD_INNER_L4_DST_PORT, SWITCH_HASH_FIELD_INNER_L4_DST_PORT },
     { SAI_NATIVE_HASH_FIELD_INNER_L4_SRC_PORT, SWITCH_HASH_FIELD_INNER_L4_SRC_PORT },
-    { SAI_NATIVE_HASH_FIELD_IPV6_FLOW_LABEL,   SWITCH_HASH_FIELD_IPV6_FLOW_LABEL   }
+    { SAI_NATIVE_HASH_FIELD_IPV6_FLOW_LABEL,   SWITCH_HASH_FIELD_IPV6_FLOW_LABEL   },
+    { SAI_NATIVE_HASH_FIELD_RDMA_BTH_OPCODE,   SWITCH_HASH_FIELD_RDMA_BTH_OPCODE   },
+    { SAI_NATIVE_HASH_FIELD_RDMA_BTH_DEST_QP,  SWITCH_HASH_FIELD_RDMA_BTH_DEST_QP  }
 };
 
 static const std::unordered_map<sai_hash_algorithm_t, std::string> swHashAlgorithmMap =
@@ -137,6 +145,18 @@ static std::string toStr(const std::set<sai_hash_algorithm_t> &value)
     return join(",", strList.cbegin(), strList.cend());
 }
 
+static std::string toPktTypeListStr(const std::set<HashPktType>& pktTypeList)
+{
+    std::vector<std::string> names;
+
+    for (auto pktType : pktTypeList)
+    {
+        names.push_back(hashPktTypeToString(pktType));
+    }
+
+    return names.empty() ? "N/A" : join(",", names.cbegin(), names.cend());
+}
+
 static std::string toStr(bool value)
 {
     return value ? "true" : "false";
@@ -176,6 +196,22 @@ bool SwitchCapabilities::isSwitchLagHashSupported() const
     const auto &lagHash = switchCapabilities.lagHash;
 
     return nativeHashFieldList.isAttrSupported && lagHash.isAttrSupported;
+}
+
+bool SwitchCapabilities::isSwitchEcmpPktTypeHashSupported() const
+{
+    const auto &nativeHashFieldList = hashCapabilities.nativeHashFieldList;
+    const auto &ecmpPktTypeHashCapable = switchCapabilities.ecmpPktTypeHashCapable;
+
+    return nativeHashFieldList.isAttrSupported && ecmpPktTypeHashCapable;
+}
+
+bool SwitchCapabilities::isSwitchLagPktTypeHashSupported() const
+{
+    const auto &nativeHashFieldList = hashCapabilities.nativeHashFieldList;
+    const auto &lagPktTypeHashCapable = switchCapabilities.lagPktTypeHashCapable;
+
+    return nativeHashFieldList.isAttrSupported && lagPktTypeHashCapable;
 }
 
 bool SwitchCapabilities::isSwitchEcmpHashAlgorithmSupported() const
@@ -250,6 +286,31 @@ bool SwitchCapabilities::validateSwitchHashAlgorithmCap(const T &obj, sai_hash_a
     return true;
 }
 
+bool SwitchCapabilities::validatePktTypeHashCap(const std::set<HashPktType> &supportedTypes, HashPktType pktType) const
+{
+    SWSS_LOG_ENTER();
+
+    if (supportedTypes.count(pktType) == 0)
+    {
+        SWSS_LOG_ERROR("Failed to validate hash packet type: value %d (%s) is not supported.",
+                       static_cast<int>(pktType),
+                       hashPktTypeToString(pktType).c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool SwitchCapabilities::validateSwitchEcmpPktTypeHashCap(HashPktType pktType) const
+{
+    return validatePktTypeHashCap(switchCapabilities.ecmpPktTypeList, pktType);
+}
+
+bool SwitchCapabilities::validateSwitchLagPktTypeHashCap(HashPktType pktType) const
+{
+    return validatePktTypeHashCap(switchCapabilities.lagPktTypeList, pktType);
+}
+
 FieldValueTuple SwitchCapabilities::makeHashFieldCapDbEntry() const
 {
     const auto &nativeHashFieldList = hashCapabilities.nativeHashFieldList;
@@ -310,6 +371,38 @@ std::vector<FieldValueTuple> SwitchCapabilities::makeLagHashAlgorithmCapDbEntry(
     );
 
     return fvList;
+}
+
+FieldValueTuple SwitchCapabilities::makeEcmpPktTypeHashCapDbEntry() const
+{
+    auto field = SWITCH_CAPABILITY_ECMP_PKT_TYPE_HASH_CAPABLE_FIELD;
+    auto value = toStr(isSwitchEcmpPktTypeHashSupported());
+
+    return FieldValueTuple(field, value);
+}
+
+FieldValueTuple SwitchCapabilities::makeLagPktTypeHashCapDbEntry() const
+{
+    auto field = SWITCH_CAPABILITY_LAG_PKT_TYPE_HASH_CAPABLE_FIELD;
+    auto value = toStr(isSwitchLagPktTypeHashSupported());
+
+    return FieldValueTuple(field, value);
+}
+
+FieldValueTuple SwitchCapabilities::makeEcmpPktTypeListDbEntry() const
+{
+    auto field = SWITCH_CAPABILITY_HASH_ECMP_PKT_TYPE_LIST_FIELD;
+    auto value = toPktTypeListStr(switchCapabilities.ecmpPktTypeList);
+
+    return FieldValueTuple(field, value);
+}
+
+FieldValueTuple SwitchCapabilities::makeLagPktTypeListDbEntry() const
+{
+    auto field = SWITCH_CAPABILITY_HASH_LAG_PKT_TYPE_LIST_FIELD;
+    auto value = toPktTypeListStr(switchCapabilities.lagPktTypeList);
+
+    return FieldValueTuple(field, value);
 }
 
 sai_status_t SwitchCapabilities::queryEnumCapabilitiesSai(std::vector<sai_int32_t> &capList, sai_object_type_t objType, sai_attr_id_t attrId) const
@@ -387,6 +480,39 @@ void SwitchCapabilities::queryHashNativeHashFieldListAttrCapabilities()
     }
 
     hashCapabilities.nativeHashFieldList.isAttrSupported = true;
+}
+
+bool SwitchCapabilities::isHashObjectPktTypeCapable() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attr_capability_t attrCap{};
+
+    auto status = queryAttrCapabilitiesSai(
+        attrCap, SAI_OBJECT_TYPE_HASH, SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST
+    );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN(
+            "Failed to get attribute(%s) capabilities for packet-type hash",
+            toStr(SAI_OBJECT_TYPE_HASH, SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST).c_str()
+        );
+        return false;
+    }
+
+    if (!attrCap.create_implemented || !attrCap.set_implemented)
+    {
+        SWSS_LOG_NOTICE(
+            "Packet-type hash requires HASH attribute(%s) CREATE/SET support, but got "
+            "create_implemented=%d set_implemented=%d; disabling packet-type hash",
+            toStr(SAI_OBJECT_TYPE_HASH, SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST).c_str(),
+            attrCap.create_implemented,
+            attrCap.set_implemented
+        );
+        return false;
+    }
+
+    return true;
 }
 
 void SwitchCapabilities::queryHashCapabilities()
@@ -567,6 +693,128 @@ void SwitchCapabilities::querySwitchLagHashAlgorithmAttrCapabilities()
     switchCapabilities.lagHashAlgorithm.isAttrSupported = true;
 }
 
+void SwitchCapabilities::querySwitchEcmpHashPktTypeCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    // Verify that HASH object can be created and set
+    if (!isHashObjectPktTypeCapable())
+    {
+        SWSS_LOG_NOTICE("HASH object is not packet-type capable; disabling ECMP packet-type hash");
+        switchCapabilities.ecmpPktTypeHashCapable = false;
+        switchCapabilities.ecmpPktTypeList.clear();
+        return;
+    }
+
+    struct AttrMapEntry {
+        sai_attr_id_t attrId;
+        HashPktType pktType;
+    };
+
+    // List all ECMP hash packet type attributes and their corresponding enum
+    const std::vector<AttrMapEntry> attrMap = {
+        {SAI_SWITCH_ATTR_ECMP_HASH_IPV4, HashPktType::IPV4},
+        {SAI_SWITCH_ATTR_ECMP_HASH_IPV6, HashPktType::IPV6},
+        {SAI_SWITCH_ATTR_ECMP_HASH_IPV4_IN_IPV4, HashPktType::IPNIP},
+        {SAI_SWITCH_ATTR_ECMP_HASH_IPV4_RDMA, HashPktType::IPV4_RDMA},
+        {SAI_SWITCH_ATTR_ECMP_HASH_IPV6_RDMA, HashPktType::IPV6_RDMA}
+    };
+
+    bool foundAny = false;
+    for (const auto& entry : attrMap)
+    {
+        sai_attr_capability_t attrCap;
+        auto status = queryAttrCapabilitiesSai(attrCap, SAI_OBJECT_TYPE_SWITCH, entry.attrId);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN(
+                "Failed to get ECMP hash packet type attribute(%s) capabilities",
+                toStr(SAI_OBJECT_TYPE_SWITCH, entry.attrId).c_str()
+            );
+            continue;
+        }
+
+        if (attrCap.set_implemented)
+        {
+            // Mark capability and insert supported packet type
+            switchCapabilities.ecmpPktTypeList.insert(entry.pktType);
+            foundAny = true;
+        }
+        else
+        {
+            SWSS_LOG_WARN(
+                "Attribute(%s) SET is not implemented in SAI",
+                toStr(SAI_OBJECT_TYPE_SWITCH, entry.attrId).c_str()
+            );
+        }
+    }
+
+    // Set flag if at least one packet type is supported
+    switchCapabilities.ecmpPktTypeHashCapable = foundAny;
+}
+
+void SwitchCapabilities::querySwitchLagHashPktTypeCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    // Verify that HASH object can be created and set
+    if (!isHashObjectPktTypeCapable())
+    {
+        SWSS_LOG_NOTICE("HASH object is not packet-type capable; disabling LAG packet-type hash");
+        switchCapabilities.lagPktTypeHashCapable = false;
+        switchCapabilities.lagPktTypeList.clear();
+        return;
+    }
+
+    struct AttrMapEntry {
+        sai_attr_id_t attrId;
+        HashPktType pktType;
+    };
+
+    // List all LAG hash packet type attributes and their corresponding enum
+    const std::vector<AttrMapEntry> attrMap = {
+        {SAI_SWITCH_ATTR_LAG_HASH_IPV4, HashPktType::IPV4},
+        {SAI_SWITCH_ATTR_LAG_HASH_IPV6, HashPktType::IPV6},
+        {SAI_SWITCH_ATTR_LAG_HASH_IPV4_IN_IPV4, HashPktType::IPNIP},
+        {SAI_SWITCH_ATTR_LAG_HASH_IPV4_RDMA, HashPktType::IPV4_RDMA},
+        {SAI_SWITCH_ATTR_LAG_HASH_IPV6_RDMA, HashPktType::IPV6_RDMA}
+    };
+
+    bool foundAny = false;
+    for (const auto& entry : attrMap)
+    {
+        sai_attr_capability_t attrCap;
+        auto status = queryAttrCapabilitiesSai(attrCap, SAI_OBJECT_TYPE_SWITCH, entry.attrId);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN(
+                "Failed to get LAG hash packet type attribute(%s) capabilities",
+                toStr(SAI_OBJECT_TYPE_SWITCH, entry.attrId).c_str()
+            );
+            continue;
+        }
+
+        if (attrCap.set_implemented)
+        {
+            // Mark capability and insert supported packet type
+            switchCapabilities.lagPktTypeList.insert(entry.pktType);
+            foundAny = true;
+        }
+        else
+        {
+            SWSS_LOG_WARN(
+                "Attribute(%s) SET is not implemented in SAI",
+                toStr(SAI_OBJECT_TYPE_SWITCH, entry.attrId).c_str()
+            );
+        }
+    }
+
+    // Set flag if at least one packet type is supported
+    switchCapabilities.lagPktTypeHashCapable = foundAny;
+}
+
 void SwitchCapabilities::querySwitchCapabilities()
 {
     querySwitchEcmpHashAttrCapabilities();
@@ -576,6 +824,9 @@ void SwitchCapabilities::querySwitchCapabilities()
     querySwitchEcmpHashAlgorithmAttrCapabilities();
     querySwitchLagHashAlgorithmEnumCapabilities();
     querySwitchLagHashAlgorithmAttrCapabilities();
+
+    querySwitchEcmpHashPktTypeCapabilities();
+    querySwitchLagHashPktTypeCapabilities();
 }
 
 void SwitchCapabilities::writeHashCapabilitiesToDb()
@@ -600,7 +851,11 @@ void SwitchCapabilities::writeSwitchCapabilitiesToDb()
 
     std::vector<FieldValueTuple> fvList = {
         makeEcmpHashCapDbEntry(),
-        makeLagHashCapDbEntry()
+        makeLagHashCapDbEntry(),
+        makeEcmpPktTypeHashCapDbEntry(),      // ECMP packet type hash support flag
+        makeLagPktTypeHashCapDbEntry(),       // LAG packet type hash support flag
+        makeEcmpPktTypeListDbEntry(),         // ECMP packet type list
+        makeLagPktTypeListDbEntry()           // LAG packet type list
     };
     insertBack(fvList, makeEcmpHashAlgorithmCapDbEntry());
     insertBack(fvList, makeLagHashAlgorithmCapDbEntry());
