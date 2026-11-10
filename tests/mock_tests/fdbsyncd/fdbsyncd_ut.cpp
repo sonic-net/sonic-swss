@@ -2725,14 +2725,14 @@ static int failBridgeDelete(const std::string &cmd, std::string &out)
     return 255;
 }
 
-/* Runs fn with swss ERROR logs sent to stdout and returns what it logged.
+/* Runs fn with swss logs of minPrio and above sent to stdout and returns what it logged.
    These tests log to syslog, so that is the output restored afterwards. */
 template <typename Fn>
-static std::string errorLogsOf(Fn fn)
+static std::string errorLogsOf(Fn fn, swss::Logger::Priority minPrio = swss::Logger::SWSS_ERROR)
 {
     auto prio = swss::Logger::getMinPrio();
     swss::Logger::swssOutputNotify("fdbsyncd", "STDOUT");
-    swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+    swss::Logger::setMinPrio(minPrio);
     testing::internal::CaptureStdout();
     fn();
     std::string out = testing::internal::GetCapturedStdout();
@@ -3014,6 +3014,7 @@ TEST_F(FdbSyncdLeftVlanTest, FailedDeleteAfterRejoinIsAnError)
     addMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
     addMac("02:4c:45:00:00:52", FDB_TYPE_STATIC);
     addMac("02:4c:45:00:00:53", FDB_TYPE_STATIC);
+    addMac("02:4c:45:00:00:54", FDB_TYPE_STATIC);
 
     // The port left the VLAN: the first failed delete flushes
     deleteMac("02:4c:45:00:00:51", FDB_TYPE_STATIC);
@@ -3027,9 +3028,15 @@ TEST_F(FdbSyncdLeftVlanTest, FailedDeleteAfterRejoinIsAnError)
               std::string::npos);
     ASSERT_EQ(mockCallArgs.size(), 1u);
 
-    // It left again: the next failed delete flushes again, without an error
+    // The skipped flush is logged as a warning
+    setMember(true);
+    auto warnings = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:54", FDB_TYPE_STATIC); }, swss::Logger::SWSS_WARN);
+    EXPECT_NE(warnings.find("Ethernet160 is a member of VLAN 2100, its kernel FDB entries there are not flushed and may be stale"),
+              std::string::npos);
+
+    // It left again: the next failed delete flushes again, without an error or a warning
     setMember(false);
-    errors = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:53", FDB_TYPE_STATIC); });
+    errors = errorLogsOf([&]() { deleteMac("02:4c:45:00:00:53", FDB_TYPE_STATIC); }, swss::Logger::SWSS_WARN);
     EXPECT_EQ(errors, "");
     ASSERT_EQ(mockCallArgs.size(), 3u);
     EXPECT_EQ(mockCallArgs[2], "bridge fdb flush dev Ethernet160 master vlan 2100 static");

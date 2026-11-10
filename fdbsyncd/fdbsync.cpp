@@ -626,6 +626,7 @@ bool FdbSync::flushLeftVlanMacs(const std::string &port_name, const std::string 
     {
         /* A flush from an earlier leave says nothing about a port that is a member again */
         m_leftVlanFlushed.erase(key);
+        SWSS_LOG_WARN("%s is a member of VLAN %s, its kernel FDB entries there are not flushed and may be stale if it left and rejoined", port_name.c_str(), vlan.c_str());
         return false;
     }
 
