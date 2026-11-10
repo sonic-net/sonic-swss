@@ -2165,7 +2165,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     }
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
+    if (vni_id > MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2341,7 +2341,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     }
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
+    if (vni_id > MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan vni id is too big: %d", vni_id);
         return true;
@@ -2579,7 +2579,7 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     sai_vlan_id_t vlan_id = (sai_vlan_id_t) stoi(vlan_name.substr(4));
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
+    if (vni_id > MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2708,7 +2708,7 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     sai_vlan_id_t vlan_id = (sai_vlan_id_t)stoi(vlan_name.substr(4));
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
+    if (vni_id > MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2794,7 +2794,7 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
+    if (vni_id > MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2893,7 +2893,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
+    if (vni_id > MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
