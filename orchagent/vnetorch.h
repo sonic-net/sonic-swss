@@ -507,11 +507,10 @@ struct TunnelRouteContext
     bool is_custom_monitor_pinned_state_updated = false;
     std::map<NextHopKey, IpAddress> origin_primary_monitors;
     std::map<NextHopKey, IpAddress> origin_secondary_monitors;
-    bool collision = false;
     sai_object_id_t old_nh_id_for_fg = SAI_NULL_OBJECT_ID;
     bool old_group_has_active_members = false;
     NextHopGroupKey old_nhg_key;
-    NextHopGroupInfo saved_old_nhg_info;
+    bool skip_route_post = false;
     TunnelRouteContext(const string& vnet_name, sai_object_id_t vrf_id, const IpPrefix& pfx,
                        bool set_op, SaiOp op)
         : ip_prefix(pfx), vnet(vnet_name), vr_id(vrf_id), nhg("", true), primary("", true), secondary("", true),
