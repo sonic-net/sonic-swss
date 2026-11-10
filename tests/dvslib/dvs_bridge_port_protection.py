@@ -34,6 +34,36 @@ MODE_ATTR = 'SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_MODE'
 ADMIN_ATTR = 'SAI_BRIDGE_PORT_ATTR_BRIDGE_PORT_PROTECTION_ADMIN_MODE'
 
 
+# These integration modules need the companion CLI/model and protection-capable
+# SAI image. Supplying artifacts explicitly enables the full-stack contract;
+# missing/broken prerequisites in that mode are errors, never silent skips.
+bpp_dvs_enabled = pytest.mark.skipif(
+    not os.environ.get('BPP_DVS_ARTIFACT_DIR'),
+    reason='Requires protection-capable SAI/CLI/model and BPP_DVS_ARTIFACT_DIR; '
+           'build tests/dvs_test_tools/build_artifacts.py to enable',
+)
+
+
+def require_bpp_artifacts():
+    directory = os.environ.get('BPP_DVS_ARTIFACT_DIR')
+    assert directory, 'Build tests/dvs_test_tools/build_artifacts.py and set BPP_DVS_ARTIFACT_DIR before DVS execution'
+    artifacts = Path(directory)
+    for name in ('manifest.json', 'libbpp_dvs_fault.so', 'fpm_encoder'):
+        assert (artifacts/name).is_file(), str(artifacts/name)
+    return artifacts
+
+
+@pytest.fixture(scope='module')
+def bpp_requirements(dvs):
+    require_bpp_artifacts()
+    # Check before adding any configuration: an unavailable delete command
+    # would otherwise fail teardown and contaminate subsequent tests.
+    for command in (['config', 'portchannel', 'protection', '--help'],
+                    ['show', 'bridge-port-protection', '--help']):
+        rc, output = dvs.runcmd(command)
+        assert rc == 0, ('Protection DVS requires the companion sonic-utilities changes', command, output)
+
+
 def run(dvs, command):
     rc, output = dvs.runcmd(command)
     assert rc == 0, (command, output)
@@ -130,11 +160,7 @@ class InstrumentedDVS:
     """Install the opt-in test interposer only in this module's DVS container."""
     def __init__(self, dvs):
         self.dvs = dvs
-        directory = os.environ.get('BPP_DVS_ARTIFACT_DIR')
-        assert directory, 'Build tests/dvs_test_tools/build_artifacts.py and set BPP_DVS_ARTIFACT_DIR before DVS execution'
-        self.artifacts = Path(directory)
-        for name in ('manifest.json','libbpp_dvs_fault.so','fpm_encoder'):
-            assert (self.artifacts/name).is_file(), str(self.artifacts/name)
+        self.artifacts = require_bpp_artifacts()
         self.manifest = json.loads((self.artifacts/'manifest.json').read_text())
         self.constants = self.manifest['constants']
         self.directory = '/tmp/bpp-dvs-'+uuid.uuid4().hex
@@ -466,7 +492,7 @@ class FpmSession:
 
 
 @pytest.fixture(scope='module')
-def bpp_instrumented(dvs):
+def bpp_instrumented(dvs, bpp_requirements):
     instance = InstrumentedDVS(dvs)
     try: yield instance
     finally: instance.close()

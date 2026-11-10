@@ -10,10 +10,13 @@ import subprocess
 from pathlib import Path
 import pytest
 from dvslib.dvs_bridge_port_protection import (
+    bpp_dvs_enabled, bpp_requirements,
     bpp_instrumented, ProtectionDVS, FpmSession, CONFIG, STATE, BP,
     GROUP_ATTR, BINDING, OBJECTS, NHG, NHGM, TUNNEL,
     run, poll, stable,
 )
+
+pytestmark = [bpp_dvs_enabled, pytest.mark.usefixtures('bpp_requirements')]
 
 FDB = 'ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY'
 

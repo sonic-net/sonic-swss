@@ -8,7 +8,9 @@ import uuid
 
 import pytest
 from dvslib.dvs_common import wait_for_result
-from dvslib.dvs_bridge_port_protection import parse_show
+from dvslib.dvs_bridge_port_protection import parse_show, bpp_dvs_enabled, bpp_requirements
+
+pytestmark = [bpp_dvs_enabled, pytest.mark.usefixtures('bpp_requirements')]
 
 
 PORTCHANNEL = "PortChannel999"

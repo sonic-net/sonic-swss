@@ -6,9 +6,12 @@ prerequisites. FPM socket fixtures use a synthetic sender; live FRR is separate.
 import time
 import pytest
 from dvslib.dvs_bridge_port_protection import (
+    bpp_dvs_enabled, bpp_requirements,
     bpp, bpp_instrumented, BP, NH, NHG, NHGM, TUNNEL, OBJECTS, BINDING,
     CONFIG, STATE, GROUP_ATTR, ADMIN_ATTR, run, poll, stable,
 )
+
+pytestmark = [bpp_dvs_enabled, pytest.mark.usefixtures('bpp_requirements')]
 
 
 def peer(bpp, ip=None):

@@ -6,10 +6,13 @@ that the companion zebra dispatcher/getters have been integrated.
 import struct
 import pytest
 from dvslib.dvs_bridge_port_protection import (
+    bpp_dvs_enabled, bpp_requirements,
     bpp, bpp_instrumented, bpp_fpm, FpmSession, BINDING, OBJECTS, FPM_IDS, CONFIG, STATE,
     BP, NHG, NH, TUNNEL, GROUP_ATTR, ADMIN_ATTR, run, poll, stable,
     frame, binding_frame, member_frame, group_frame, restart_fpmsyncd_after_sigkill,
 )
+
+pytestmark = [bpp_dvs_enabled, pytest.mark.usefixtures('bpp_requirements')]
 
 
 def exact(bpp, table, key, expected):
