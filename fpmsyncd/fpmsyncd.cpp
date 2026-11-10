@@ -358,10 +358,7 @@ int main(int argc, char **argv)
 
                     if (wait)
                     {
-                        /* start() is a no-op on a running timer, so stop() first. */
-                        macStaleTimer.stop();
-                        macStaleTimer.setInterval(timespec{wait, 0});
-                        macStaleTimer.start();
+                        restartTimer(macStaleTimer, timespec{wait, 0});
                     }
                     else
                     {
@@ -392,9 +389,7 @@ int main(int argc, char **argv)
                             s.removeSelectable(&eoiuCheckTimer);
                             continue;
                         }
-                        eoiuCheckTimer.setInterval(timespec{1, 0});
-                        // re-start eoiu check timer
-                        eoiuCheckTimer.start();
+                        restartTimer(eoiuCheckTimer, timespec{1, 0});
                         SWSS_LOG_DEBUG("Warm-Restart eoiuCheckTimer restarted");
                     }
                     else
