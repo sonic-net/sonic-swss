@@ -348,7 +348,11 @@ namespace vnetorch_test
     using RouteBulkCreateFn = std::function<sai_status_t(
         uint32_t, const sai_route_entry_t *, const uint32_t *,
         const sai_attribute_t **, sai_bulk_op_error_mode_t, sai_status_t *)>;
+    using RouteBulkSetFn = std::function<sai_status_t(
+        uint32_t, const sai_route_entry_t *, const sai_attribute_t *,
+        sai_bulk_op_error_mode_t, sai_status_t *)>;
     static RouteBulkCreateFn g_routeBulkCreateHook;
+    static RouteBulkSetFn g_routeBulkSetHook;
     static sai_status_t (*g_savedCreateRouteEntries)(
         uint32_t, const sai_route_entry_t *, const uint32_t *,
         const sai_attribute_t **, sai_bulk_op_error_mode_t, sai_status_t *) = nullptr;
@@ -431,11 +435,20 @@ namespace vnetorch_test
         const sai_attribute_t *attr_list, sai_bulk_op_error_mode_t mode,
         sai_status_t *statuses)
     {
-        sai_status_t st = g_savedSetRouteEntries(count, entries, attr_list, mode, statuses);
+        sai_status_t st = SAI_STATUS_SUCCESS;
+        if (g_routeBulkSetHook)
+        {
+            st = g_routeBulkSetHook(count, entries, attr_list, mode, statuses);
+        }
+        else
+        {
+            st = g_savedSetRouteEntries(count, entries, attr_list, mode, statuses);
+        }
         if (g_activeRouteCaptures)
         {
             for (uint32_t i = 0; i < count; ++i)
             {
+                if (statuses[i] != SAI_STATUS_SUCCESS) continue;
                 if (attr_list[i].id != SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID) continue;
                 for (auto &r : g_activeRouteCaptures->routes)
                     if (r.vr == entries[i].vr_id &&
@@ -775,6 +788,7 @@ namespace vnetorch_test
                 g_savedSetRouteAttr = nullptr;
             }
             g_routeBulkCreateHook = nullptr;
+            g_routeBulkSetHook = nullptr;
             g_activeRouteCaptures = nullptr;
             m_vrMock.reset();
             RestoreSaiApis();
@@ -960,6 +974,11 @@ namespace vnetorch_test
         void setRouteBulkCreateHook(RouteBulkCreateFn fn)
         {
             g_routeBulkCreateHook = std::move(fn);
+        }
+
+        void setRouteBulkSetHook(RouteBulkSetFn fn)
+        {
+            g_routeBulkSetHook = std::move(fn);
         }
 
         void setNextHopCreateHook(NextHopCreateFn fn)
@@ -3350,6 +3369,163 @@ namespace vnetorch_test
         EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
         EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
         checkStateDbRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+    }
+
+    // Overlay UPDATE fail after the replacement group is created must keep
+    // syncd_tunnel_routes_ so retry UPDATEs in place (not ADD of a prefix still
+    // in hardware).
+    TEST_F(VNetOrchTest, VnetEcmpRouteUpdateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        const sai_object_id_t oldNhg = r->next_hop_id;
+        const size_t creates = routeCreateCount("100.100.1.1");
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        setRouteBulkSetHook([](uint32_t count, const sai_route_entry_t *,
+                               const sai_attribute_t *, sai_bulk_op_error_mode_t,
+                               sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        const RouteCaptures::Route *kept = findRoute("100.100.1.1");
+        ASSERT_NE(kept, nullptr);
+        EXPECT_EQ(kept->next_hop_id, oldNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 1U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        setRouteBulkSetHook(nullptr);
+        runVnetRouteOrch();
+
+        const RouteCaptures::Route *updated = findRoute("100.100.1.1");
+        ASSERT_NE(updated, nullptr);
+        EXPECT_NE(updated->next_hop_id, oldNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+    }
+
+    // Overlay UPDATE onto an already-installed group (not deferred) must keep the
+    // live route on failure and retry UPDATE, not ADD.
+    TEST_F(VNetOrchTest, VnetEcmpSharedGroupUpdateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        setVnetRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        const RouteCaptures::Route *ra = findRoute("100.100.1.1");
+        const RouteCaptures::Route *rb = findRoute("100.100.1.2");
+        ASSERT_NE(ra, nullptr);
+        ASSERT_NE(rb, nullptr);
+        const sai_object_id_t oldNhg = ra->next_hop_id;
+        const sai_object_id_t sharedNhg = rb->next_hop_id;
+        ASSERT_NE(oldNhg, sharedNhg);
+        const size_t creates_a = routeCreateCount("100.100.1.1");
+        const size_t creates_b = routeCreateCount("100.100.1.2");
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        checkStateDbRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        setRouteBulkSetHook([](uint32_t count, const sai_route_entry_t *,
+                               const sai_attribute_t *, sai_bulk_op_error_mode_t,
+                               sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        ASSERT_NE(findRoute("100.100.1.1"), nullptr);
+        EXPECT_EQ(findRoute("100.100.1.1")->next_hop_id, oldNhg);
+        EXPECT_EQ(findRoute("100.100.1.2")->next_hop_id, sharedNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates_a);
+        EXPECT_EQ(routeCreateCount("100.100.1.2"), creates_b);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_FALSE(groupRemoved(oldNhg));
+        EXPECT_FALSE(groupRemoved(sharedNhg));
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 1U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.2/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        checkStateDbRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        setRouteBulkSetHook(nullptr);
+        runVnetRouteOrch();
+
+        ASSERT_NE(findRoute("100.100.1.1"), nullptr);
+        EXPECT_EQ(findRoute("100.100.1.1")->next_hop_id, sharedNhg);
+        EXPECT_EQ(findRoute("100.100.1.2")->next_hop_id, sharedNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates_a);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+        checkStateDbRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+    }
+
+    // Regular→FG overlay UPDATE fail must keep the regular ASIC route and retry
+    // UPDATE onto the FG group (not ADD).
+    TEST_F(VNetOrchTest, VnetFgEcmpRegularToFgUpdateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.1/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+
+        setVnetRoute("Vnet37", prefix, endpointsCsv);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t regularNhg = m_rt.groups[0].oid;
+        const size_t creates = routeCreateCount("100.100.37.1");
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+
+        setRouteBulkSetHook([](uint32_t count, const sai_route_entry_t *,
+                               const sai_attribute_t *, sai_bulk_op_error_mode_t,
+                               sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetFgEcmpRoute("Vnet37", prefix, endpointsCsv, 60);
+
+        const RouteCaptures::Route *kept = findRoute("100.100.37.1");
+        ASSERT_NE(kept, nullptr);
+        EXPECT_EQ(kept->next_hop_id, regularNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
+        EXPECT_FALSE(groupRemoved(regularNhg));
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet37", prefix)), 1U);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix);
+
+        setRouteBulkSetHook(nullptr);
+        runVnetRouteOrch();
+
+        ASSERT_GE(m_rt.groups.size(), 2U);
+        const sai_object_id_t fgNhg = m_rt.groups.back().oid;
+        EXPECT_EQ(m_rt.groups.back().type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        const RouteCaptures::Route *updated = findRoute("100.100.37.1");
+        ASSERT_NE(updated, nullptr);
+        EXPECT_EQ(updated->next_hop_id, fgNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
+        EXPECT_TRUE(groupRemoved(regularNhg));
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet37", prefix)), 0U);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
     }
 
     // A single-endpoint route whose tunnel next hop cannot be created is not

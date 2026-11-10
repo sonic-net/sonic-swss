@@ -1312,14 +1312,20 @@ void VNetRouteOrch::cleanupFailedBulkRouteDependencies(const VNetRouteBulkContex
     set<pair<string, NextHopGroupKey>> cleaned_nhg;
     set<pair<string, IpPrefix>> cleaned_fg;
 
-    auto erase_tunnel_route = [this](const string& vnet, const IpPrefix& prefix)
+    auto erase_tunnel_route = [this](const TunnelRouteContext& tr_ctx)
     {
-        auto route_vnet_it = syncd_tunnel_routes_.find(vnet);
+        // Overlay still in hardware: keep syncd_tunnel_routes_ so retry UPDATEs
+        // instead of ADD (ITEM_ALREADY_EXISTS).
+        if (tr_ctx.old_group_has_active_members)
+        {
+            return;
+        }
+        auto route_vnet_it = syncd_tunnel_routes_.find(tr_ctx.vnet);
         if (route_vnet_it == syncd_tunnel_routes_.end())
         {
             return;
         }
-        auto route_it = route_vnet_it->second.find(prefix);
+        auto route_it = route_vnet_it->second.find(tr_ctx.ip_prefix);
         if (route_it != route_vnet_it->second.end())
         {
             route_vnet_it->second.erase(route_it);
@@ -1350,14 +1356,14 @@ void VNetRouteOrch::cleanupFailedBulkRouteDependencies(const VNetRouteBulkContex
             auto fg_vnet_it = syncd_fg_nexthop_groups_.find(tr_ctx.vnet);
             if (fg_vnet_it == syncd_fg_nexthop_groups_.end())
             {
-                erase_tunnel_route(tr_ctx.vnet, tr_ctx.ip_prefix);
+                erase_tunnel_route(tr_ctx);
                 continue;
             }
 
             auto fg_it = fg_vnet_it->second.find(tr_ctx.ip_prefix);
             if (fg_it == fg_vnet_it->second.end())
             {
-                erase_tunnel_route(tr_ctx.vnet, tr_ctx.ip_prefix);
+                erase_tunnel_route(tr_ctx);
                 continue;
             }
             if (fg_it->second.ref_count != 0)
@@ -1372,7 +1378,7 @@ void VNetRouteOrch::cleanupFailedBulkRouteDependencies(const VNetRouteBulkContex
             }
             auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(tr_ctx.vnet);
             removeFgNextHopGroup(tr_ctx.vnet, tr_ctx.nhg, tr_ctx.ip_prefix, vrf_obj);
-            erase_tunnel_route(tr_ctx.vnet, tr_ctx.ip_prefix);
+            erase_tunnel_route(tr_ctx);
             continue;
         }
 
@@ -1386,14 +1392,14 @@ void VNetRouteOrch::cleanupFailedBulkRouteDependencies(const VNetRouteBulkContex
         auto vnet_it = syncd_nexthop_groups_.find(tr_ctx.vnet);
         if (vnet_it == syncd_nexthop_groups_.end())
         {
-            erase_tunnel_route(tr_ctx.vnet, tr_ctx.ip_prefix);
+            erase_tunnel_route(tr_ctx);
             continue;
         }
 
         auto nhg_it = vnet_it->second.find(tr_ctx.nhg);
         if (nhg_it == vnet_it->second.end())
         {
-            erase_tunnel_route(tr_ctx.vnet, tr_ctx.ip_prefix);
+            erase_tunnel_route(tr_ctx);
             continue;
         }
         if (nhg_it->second.ref_count != 0)
@@ -1422,7 +1428,7 @@ void VNetRouteOrch::cleanupFailedBulkRouteDependencies(const VNetRouteBulkContex
             syncd_nexthop_groups_[tr_ctx.vnet].erase(tr_ctx.nhg);
         }
 
-        erase_tunnel_route(tr_ctx.vnet, tr_ctx.ip_prefix);
+        erase_tunnel_route(tr_ctx);
     }
 }
 
