@@ -1,5 +1,6 @@
 #include "gtest/gtest.h"
 
+#include "logger.h"
 #include "mock_table.h"
 #include "redisutility.h"
 #include "vrfmgr.h"
@@ -376,6 +377,65 @@ TEST_F(VrfMgrTest, VniOwnershipMoveWaitsForOldOwnerRelease)
     EXPECT_EQ(app_vni.get(), "5000");
     values.clear();
     EXPECT_TRUE(app_vxlan_vrf.get(new_map_key, values));
+}
+
+TEST_F(VrfMgrTest, VniOwnershipConflictWarningIsLoggedOncePerWaitingEpisode)
+{
+    const string warning =
+        "VNI 5000 for VRF VrfPending is currently owned by VRF default; "
+        "waiting for ownership release";
+    auto countWarnings = [&warning](const string& output) {
+        size_t count = 0;
+        for (size_t pos = output.find(warning);
+             pos != string::npos;
+             pos = output.find(warning, pos + 1))
+        {
+            ++count;
+        }
+        return count;
+    };
+
+    addDefaultVrf("5000");
+
+    auto consumer = dynamic_cast<Consumer *>(
+        m_vrf_mgr->getExecutor(CFG_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+
+    swss::Logger::swssOutputNotify("vrfmgrd", "STDERR");
+    testing::internal::CaptureStderr();
+
+    consumer->addToSync(KeyOpFieldsValuesTuple{
+        "VrfPending", SET_COMMAND, {{"vni", "5000"}}});
+    m_vrf_mgr->doTask();
+    m_vrf_mgr->doTask();
+    m_vrf_mgr->doTask();
+
+    const string output = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(countWarnings(output), 1u);
+    EXPECT_EQ(consumer->m_toSync.size(), 1u);
+
+    // Release the VNI and allow the pending request to converge. This must
+    // clear the reporting state so a later, distinct wait is visible again.
+    Table config_vrf(m_config_db.get(), CFG_VRF_TABLE_NAME);
+    config_vrf.set("default", {{"vni", "0"}});
+    consumer->addToSync({"default", SET_COMMAND, {{"vni", "0"}}});
+    m_vrf_mgr->doTask();
+    m_vrf_mgr->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
+
+    config_vrf.set("VrfPending", {{"vni", "0"}});
+    process(CFG_VRF_TABLE_NAME, "VrfPending", SET_COMMAND, {{"vni", "0"}});
+    addDefaultVrf("5000");
+
+    testing::internal::CaptureStderr();
+    consumer->addToSync({
+        "VrfPending", SET_COMMAND, {{"vni", "5000"}}});
+    m_vrf_mgr->doTask();
+    const string next_output = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(countWarnings(next_output), 1u);
+    EXPECT_EQ(consumer->m_toSync.size(), 1u);
+
+    swss::Logger::swssOutputNotify("vrfmgrd", "SYSLOG");
 }
 
 TEST_F(VrfMgrTest, CoalescedDefaultVrfVniReplacementRemovesOldMappingBeforeAdd)
