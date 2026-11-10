@@ -2882,7 +2882,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
                         port.m_alias.c_str(), port.m_type);
             return false;
         }
-        sai_object_id_t bp_list[] = { bind_type };
+        int32_t bp_list[] = { bind_type };
 
         vector<sai_attribute_t> group_attrs;
         sai_attribute_t group_attr;
@@ -2893,8 +2893,8 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
         group_attrs.push_back(group_attr);
 
         group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST;
-        group_attr.value.objlist.count = 1;
-        group_attr.value.objlist.list = bp_list;
+        group_attr.value.s32list.count = 1;
+        group_attr.value.s32list.list = bp_list;
         group_attrs.push_back(group_attr);
 
         group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
