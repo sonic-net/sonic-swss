@@ -104,6 +104,14 @@ protected:
         consumer->m_toSync.emplace(key, KeyOpFieldsValuesTuple(key, DEL_COMMAND, {}));
         gMirrorOrch->doTask(*consumer);
     }
+    void setAdmin(const string& key, const string& state)
+    {
+        auto consumer = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor("PORT_MIRROR_SAMPLE"));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(KeyOpFieldsValuesTuple(key, SET_COMMAND, {{"admin_state", state}}));
+        gMirrorOrch->doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+    }
 };
 
 TEST_F(SampleBindingTest, ConsumerCreatesBindingAndDeletionPreservesExport)
@@ -164,14 +172,48 @@ TEST_F(SampleBindingTest, DisabledAndDefaultDownAllocateNothing)
     EXPECT_EQ(gMirrorOrch->deleteEntry("export1"), task_need_retry);
 }
 
-TEST_F(SampleBindingTest, DuplicateSetDoesNotChangePolicyOrState)
+TEST_F(SampleBindingTest, AdminStateUpdatesPreservePolicyAndSharedExport)
+{
+    ASSERT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields("5000", "down", "128")), task_success);
+    ASSERT_EQ(gMirrorOrch->createSampleBinding("Ethernet4|tx", fields()), task_success);
+    auto otherOid = sampleOn("Ethernet4", false);
+    auto exportOid = gMirrorOrch->m_syncdMirrors.at("export1").sessionId;
+    setAdmin("Ethernet0|rx", "up");
+    auto oid = sampleOn("Ethernet0");
+    EXPECT_NE(oid, SAI_NULL_OBJECT_ID);
+    setAdmin("Ethernet0|rx", "up");
+    EXPECT_EQ(sampleOn("Ethernet0"), oid);
+    setAdmin("Ethernet0|rx", "down");
+    setAdmin("Ethernet0|rx", "down");
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    const auto& binding = gMirrorOrch->m_sampleBindings.at("Ethernet0|rx");
+    EXPECT_FALSE(binding.enabled);
+    EXPECT_FALSE(binding.deleting);
+    EXPECT_EQ(binding.rate, 5000u);
+    EXPECT_EQ(binding.truncate, 128u);
+    EXPECT_EQ(binding.session, "export1");
+    EXPECT_EQ(binding.samplepacketId, SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(sampleOn("Ethernet4", false), otherOid);
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").sessionId, exportOid);
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").refCount, 1);
+}
+
+TEST_F(SampleBindingTest, PolicyUpdatesRejectedWithoutChangingAdminState)
 {
     ASSERT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields()), task_success);
     auto oid = sampleOn("Ethernet0");
-    EXPECT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields("1000", "down", "128")), task_duplicated);
+    for (const auto& change : vector<FieldValueTuple>{{"sample_rate", "1000"},
+                                                     {"truncate_size", "128"},
+                                                     {"mirror_session", "export2"},
+                                                     {"admin_state", "invalid"}})
+        EXPECT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", {{"admin_state", "down"}, change}),
+                  task_invalid_entry);
+    EXPECT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", {{"sample_rate", "5000"}}), task_duplicated);
     EXPECT_EQ(sampleOn("Ethernet0"), oid);
     EXPECT_EQ(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").rate, 5000u);
     EXPECT_TRUE(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").enabled);
+    EXPECT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields("5000", "down")), task_success);
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
 }
 
 TEST_F(SampleBindingTest, InvalidConfigurationAllocatesNothing)
@@ -274,12 +316,19 @@ TEST_F(SampleBindingTest, FailedDetachRetainsOwnershipAndExportReference)
     ASSERT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields()), task_success);
     auto oid = sampleOn("Ethernet0");
     g_fail_mirror_session_set = true;
-    remove("Ethernet0|rx");
+    setAdmin("Ethernet0|rx", "down");
     EXPECT_EQ(sampleOn("Ethernet0"), oid);
     EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").refCount, 1);
     EXPECT_FALSE(gMirrorOrch->m_sampleOwners.empty());
-    EXPECT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields("1000")), task_need_retry);
+    EXPECT_TRUE(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").cleanupPending);
+    setAdmin("Ethernet0|rx", "up");
+    EXPECT_EQ(sampleOn("Ethernet0"), oid);
+    EXPECT_TRUE(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").cleanupPending);
     g_fail_mirror_session_set = false;
+    static_cast<Orch*>(gMirrorOrch)->doTask();
+    EXPECT_FALSE(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").cleanupPending);
+    EXPECT_TRUE(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").enabled);
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     remove("Ethernet0|rx");
     EXPECT_TRUE(gMirrorOrch->m_sampleBindings.empty());
 }
@@ -303,6 +352,7 @@ TEST_F(SampleBindingTest, FailedSamplePacketDetachAndRemovalRetried)
     EXPECT_EQ(sampleOn("Ethernet0"), oid);
     EXPECT_EQ(gMirrorOrch->deleteEntry("export1"), task_need_retry);
     EXPECT_TRUE(gMirrorOrch->hasSampleBindings());
+    EXPECT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields("1000")), task_need_retry);
 
     g_fail_samplepacket_enable_set = false;
     g_fail_samplepacket_remove = true;

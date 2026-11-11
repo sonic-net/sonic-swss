@@ -1280,12 +1280,9 @@ bool MirrorOrch::hasSflowGlobal()
 
 task_process_status MirrorOrch::createSampleBinding(const string& key, const vector<FieldValueTuple>& fields)
 {
-    if (m_sampleBindings.count(key))
-    {
-        if (m_sampleBindings.at(key).deleting) return task_need_retry;
-        SWSS_LOG_NOTICE("Failed to create session %s: object already exists", key.c_str());
-        return task_duplicated;
-    }
+    auto existing = m_sampleBindings.find(key);
+    if (existing != m_sampleBindings.end() && existing->second.deleting)
+        return task_need_retry;
     auto separator = key.find('|');
     if (separator == string::npos || separator == 0 || key.find('|', separator + 1) != string::npos)
         return task_invalid_entry;
@@ -1296,6 +1293,14 @@ task_process_status MirrorOrch::createSampleBinding(const string& key, const vec
         return task_invalid_entry;
     binding.ingress = direction == "rx";
     bool ratePresent = false;
+    if (existing != m_sampleBindings.end())
+    {
+        binding.session = existing->second.session;
+        binding.rate = existing->second.rate;
+        binding.truncate = existing->second.truncate;
+        binding.enabled = existing->second.enabled;
+        ratePresent = true;
+    }
     try
     {
         for (const auto& field : fields)
@@ -1328,6 +1333,21 @@ task_process_status MirrorOrch::createSampleBinding(const string& key, const vec
         return task_invalid_entry;
     }
     if (!ratePresent || binding.session.empty()) return task_invalid_entry;
+    if (existing != m_sampleBindings.end())
+    {
+        auto& current = existing->second;
+        if (binding.session != current.session || binding.rate != current.rate ||
+            binding.truncate != current.truncate)
+        {
+            SWSS_LOG_ERROR("Cannot update policy for sampled binding %s; remove and recreate it", key.c_str());
+            return task_invalid_entry;
+        }
+        if (binding.enabled == current.enabled)
+            return task_duplicated;
+        current.enabled = binding.enabled;
+        syncSampleBindings();
+        return task_success;
+    }
     if (hasSflowGlobal())
     {
         SWSS_LOG_ERROR("SFLOW global conflicts with sampled binding %s", key.c_str());

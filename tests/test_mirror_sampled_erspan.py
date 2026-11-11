@@ -109,18 +109,22 @@ class TestSampledMirror:
         assert self.attached('Ethernet0', 'tx', '1000') == third
         assert self.dvs.config_db.get_entry('MIRROR_SESSION', name)
 
-    def test_disabled_binding_then_remove_and_recreate(self):
+    def test_binding_admin_state_updates(self):
         name = self.export()
         self.add_route()
-        self.binding(name, 'Ethernet0', admin='down')
+        key = self.binding(name, 'Ethernet0', admin='down')
+        original = self.dvs.config_db.get_entry('PORT_MIRROR_SAMPLE', key)
         self.dvs.state_db.wait_for_field_match('MIRROR_SESSION_TABLE', name, {'status': 'active'})
         self.detached('Ethernet0')
         self.dvs.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET', 0)
-        self.dvs_mirror.remove_sample_binding('Ethernet0', 'rx')
-        # Drain the deletion before reusing the same key; no in-place policy update.
-        self.dvs.runcmd('sleep 2')
-        self.binding(name, 'Ethernet0', rate='1000')
-        self.attached('Ethernet0', 'rx', '1000')
+        self.dvs.config_db.update_entry('PORT_MIRROR_SAMPLE', key, {'admin_state': 'up'})
+        self.attached('Ethernet0', 'rx', '5000')
+        assert self.dvs.config_db.get_entry('PORT_MIRROR_SAMPLE', key) == dict(original, admin_state='up')
+        self.dvs.config_db.update_entry('PORT_MIRROR_SAMPLE', key, {'admin_state': 'down'})
+        self.detached('Ethernet0')
+        self.dvs.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET', 0)
+        assert self.dvs.config_db.get_entry('PORT_MIRROR_SAMPLE', key) == original
+        self.dvs.state_db.wait_for_field_match('MIRROR_SESSION_TABLE', name, {'status': 'active'})
 
     def test_binding_before_export_and_destination_recovery(self):
         self.binding('SAMPLED_EXPORT', 'Ethernet0')
