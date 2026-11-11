@@ -932,8 +932,9 @@ class TestWarmReboot(object):
 
         time.sleep(1)
         # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
-        assert result == "RESTARTCHECK failed\n"
+        # Allow a longer wait so a slow orchagent reports NOT_READY rather than timing out.
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -w 5000", include_stderr=False)
+        assert result == "RESTARTCHECK failed: orchagent is not ready for warm restart, pending tasks remain (status: NOT_READY)\n"
 
         # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
         # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
@@ -949,7 +950,7 @@ class TestWarmReboot(object):
 
         # Should fail since orchagent has been frozen at last step.
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
-        assert result == "RESTARTCHECK failed\n"
+        assert result == "RESTARTCHECK failed: timed out waiting for orchagent to respond; try increasing the wait time (-w) or retry count (-r)\n"
 
         # Cleaning previously pushed route-entry to ease life of subsequent testcases.
         ps._del("2.2.2.0/24")
@@ -2491,6 +2492,9 @@ class TestWarmReboot(object):
         # This test aims to improve code coverage in fpmsyncd.
         warm_restart_set(dvs, "system", "true")
         warm_restart_set(dvs, "bgp", "true")
+        # fpmsyncd holds every APPL_DB update until it reconciles, which can
+        # be 120 seconds after it starts unless a timer is configured.
+        warm_restart_timer_set(dvs, "bgp", "bgp_timer", "5")
 
         # set restore count
         db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
@@ -2503,6 +2507,16 @@ class TestWarmReboot(object):
 
         # Start fpmsyncd
         dvs.start_fpmsyncd()
+
+        # Later tests share this switch: leave it with the restart finished
+        # and warm restart disabled again.
+        dvs.get_state_db().wait_for_field_match(
+            swsscommon.STATE_WARM_RESTART_TABLE_NAME,
+            "bgp",
+            {"state": "reconciled"},
+        )
+        warm_restart_set(dvs, "bgp", "false")
+        warm_restart_set(dvs, "system", "false")
 
 
 class TestSrv6MySidWarmRestart(object):

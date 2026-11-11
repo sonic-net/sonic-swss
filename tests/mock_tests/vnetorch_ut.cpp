@@ -16,6 +16,7 @@
 #include <cstring>
 #include <deque>
 #include <set>
+#include <unistd.h>
 
 EXTERN_MOCK_FNS
 
@@ -243,6 +244,13 @@ namespace vnetorch_test
             sai_object_id_t nh = SAI_NULL_OBJECT_ID;
             bool has_seq = false;
             uint32_t seq = 0;
+            bool has_index = false;
+            uint32_t index = 0;
+        };
+        struct MemberNhUpdate
+        {
+            sai_object_id_t member = SAI_NULL_OBJECT_ID;
+            sai_object_id_t nh = SAI_NULL_OBJECT_ID;
         };
         struct Route
         {
@@ -254,6 +262,7 @@ namespace vnetorch_test
         vector<NextHop> nexthops;
         vector<Group> groups;
         vector<Member> members;
+        vector<MemberNhUpdate> memberNhUpdates;
         vector<Route> routes;
         vector<sai_object_id_t> removedNexthops;
         vector<sai_object_id_t> removedGroups;
@@ -264,6 +273,14 @@ namespace vnetorch_test
         // conflicting create actually hit an ITEM_ALREADY_EXISTS/NOT_EXECUTED.
         vector<sai_status_t> lastBulkCreateStatuses;
         bool splitBulkCreates = false;
+        // Statuses the non-bulk create_route_entry returned. VNetRouteOrch's own
+        // add_route() uses that call, so this is what proves the connected-route
+        // replay really collided with an existing entry.
+        vector<sai_status_t> lastCreateStatuses;
+        // In-place repoints and the last NEXT_HOP_ID written, which distinguish a
+        // converge-onto-existing from a plain create.
+        int setAttrCount = 0;
+        sai_object_id_t lastSetNextHop = SAI_NULL_OBJECT_ID;
     };
 
     // Captured SAI BFD sessions gBfdOrch programs for a monitored VNET route's
@@ -307,6 +324,8 @@ namespace vnetorch_test
         if (g_activeRouteCaptures && e && attr &&
             attr->id == SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID)
         {
+            g_activeRouteCaptures->setAttrCount++;
+            g_activeRouteCaptures->lastSetNextHop = attr->value.oid;
             for (auto &r : g_activeRouteCaptures->routes)
             {
                 if (r.vr == e->vr_id && saiIpPrefixEquals(r.dest, e->destination))
@@ -548,6 +567,10 @@ namespace vnetorch_test
         // producer writes the same way syncBfd() diffs BFD sessions.
         set<string> m_deliveredDecapTermKeys;
 
+        // Prior value of the process-global "platform" env var
+        bool m_platformWasSet = false;
+        string m_savedPlatform;
+
         void SetUp() override
         {
             // gDB (the mock DB backing swss::Table) is process-global and is not
@@ -556,7 +579,27 @@ namespace vnetorch_test
             // be re-consumed by the next test's addExistingData()+doTask(),
             // inflating the captured SAI object counts. Reset before each test.
             testing_db::reset();
+
+            const char *platform = getenv("platform");
+            m_platformWasSet = (platform != nullptr);
+            m_savedPlatform = m_platformWasSet ? platform : "";
+            setenv("platform", VS_PLATFORM_SUBSTRING, 1);
+
             MockOrchTest::SetUp();
+        }
+
+        void TearDown() override
+        {
+            MockOrchTest::TearDown();
+
+            if (m_platformWasSet)
+            {
+                setenv("platform", m_savedPlatform.c_str(), 1);
+            }
+            else
+            {
+                unsetenv("platform");
+            }
         }
 
         // Runs inside PrepareSai(), before any Orch (incl. gRouteOrch) is built.
@@ -941,6 +984,7 @@ namespace vnetorch_test
                         if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID)) m.nhg = a->value.oid;
                         if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID)) m.nh = a->value.oid;
                         if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID)) { m.has_seq = true; m.seq = a->value.u32; }
+                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_GROUP_MEMBER_ATTR_INDEX)) { m.has_index = true; m.index = a->value.u32; }
                         m_rt.members.push_back(m);
                     }
                     return st;
@@ -950,11 +994,25 @@ namespace vnetorch_test
                     m_rt.removedMembers.push_back(id);
                     return old_sai_next_hop_group_api->remove_next_hop_group_member(id);
                 }));
+            // FgNhgOrch reassigns a hash bucket to a different endpoint in place
+            // (writeHashBucketChange, fgnhgorch.cpp) via a SET on the existing
+            // member's NEXT_HOP_ID rather than removing/recreating the member
+            ON_CALL(*mock_sai_next_hop_group_api, set_next_hop_group_member_attribute(_, _))
+                .WillByDefault(Invoke([this](sai_object_id_t id, const sai_attribute_t *attr) {
+                    sai_status_t st = old_sai_next_hop_group_api->set_next_hop_group_member_attribute(id, attr);
+                    if (st == SAI_STATUS_SUCCESS && attr &&
+                        attr->id == SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID)
+                    {
+                        m_rt.memberNhUpdates.push_back({id, attr->value.oid});
+                    }
+                    return st;
+                }));
 
             ON_CALL(*mock_sai_route_api, create_route_entry(_, _, _))
                 .WillByDefault(Invoke([this](const sai_route_entry_t *e, uint32_t n,
                                              const sai_attribute_t *l) {
                     sai_status_t st = old_sai_route_api->create_route_entry(e, n, l);
+                    m_rt.lastCreateStatuses.push_back(st);
                     if (st == SAI_STATUS_SUCCESS)
                     {
                         RouteCaptures::Route r;
@@ -1121,14 +1179,35 @@ namespace vnetorch_test
         // hop; multiple endpoints program an ECMP next hop group.
         void setVnetRoute(const string &vnet, const string &prefix,
                           const string &endpoints, const string &mac = "",
-                          const string &vni = "", const string &metric = "")
+                          const string &vni = "", const string &metric = "",
+                          uint32_t consistent_hashing_buckets = 0)
         {
             vector<FieldValueTuple> fvs = {{"endpoint", endpoints}};
             if (!mac.empty()) fvs.push_back({"mac_address", mac});
             if (!vni.empty()) fvs.push_back({"vni", vni});
             if (!metric.empty()) fvs.push_back({"metric", metric});
+            if (consistent_hashing_buckets > 0)
+                fvs.push_back({"consistent_hashing_buckets", to_string(consistent_hashing_buckets)});
             programVnetRouteViaCfg(CFG_VNET_RT_TUNNEL_TABLE_NAME,
                                    APP_VNET_RT_TUNNEL_TABLE_NAME, vnet, prefix, fvs);
+        }
+
+        void setVnetFgEcmpRoute(const string &vnet, const string &prefix,
+                                const string &endpoints, uint32_t bucketSize)
+        {
+            setVnetRoute(vnet, prefix, endpoints, "", "", "", bucketSize);
+        }
+
+        // The mock Table::set / ProducerStateTable::set merge fields into an
+        // existing row, so dropping a field needs an explicit remove
+        void setVnetRouteRegularEcmp(const string &vnet, const string &prefix,
+                                     const string &endpoints)
+        {
+            Table cfg(m_config_db.get(), CFG_VNET_RT_TUNNEL_TABLE_NAME);
+            cfg.hdel(vnet + "|" + prefix, "consistent_hashing_buckets");
+            Table app(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+            app.hdel(vnet + ":" + prefix, "consistent_hashing_buckets");
+            setVnetRoute(vnet, prefix, endpoints);
         }
 
         void delVnetRoute(const string &vnet, const string &prefix)
@@ -2129,6 +2208,13 @@ namespace vnetorch_test
             return creates > removes ? last : nullptr;
         }
 
+        uint32_t ipv4RouteCrmUsed() const
+        {
+            const auto &resources = Portal::CrmOrchInternal::getResourceMap(gCrmOrch);
+            return resources.at(CrmResourceType::CRM_IPV4_ROUTE)
+                .countersMap.at("STATS").usedCounter;
+        }
+
         // STATE_DB VNET_ROUTE_TUNNEL_TABLE assertions -- the mock equivalent of
         // vnet_lib.check_state_db_routes(). VNetRouteOrch writes this table via a
         // plain swss::Table on STATE_DB, so it is directly readable here (unlike
@@ -2158,6 +2244,88 @@ namespace vnetorch_test
             vector<FieldValueTuple> fvs;
             EXPECT_FALSE(tbl.get(vnet + "|" + prefix, fvs))
                 << "STATE_DB route " << vnet << "|" << prefix << " not removed";
+        }
+
+        // FgNhgOrch::getWarmRebootStateDbKey(vnet, prefix) = "vnet|prefix".
+        static string fgStateDbKey(const string &vnet, const string &prefix)
+        {
+            return vnet + "|" + prefix;
+        }
+
+        bool fgRouteStateDbRowExists(const string &vnet, const string &prefix)
+        {
+            Table tbl(m_state_db.get(), STATE_FG_ROUTE_TABLE_NAME);
+            vector<FieldValueTuple> fvs;
+            return tbl.get(fgStateDbKey(vnet, prefix), fvs);
+        }
+
+        void checkFgRouteStateDbRowRemoved(const string &vnet, const string &prefix)
+        {
+            Table tbl(m_state_db.get(), STATE_FG_ROUTE_TABLE_NAME);
+            vector<FieldValueTuple> fvs;
+            EXPECT_FALSE(tbl.get(fgStateDbKey(vnet, prefix), fvs))
+                << "STATE_DB FG_ROUTE_TABLE row " << fgStateDbKey(vnet, prefix) << " not removed";
+        }
+
+        bool groupRemoved(sai_object_id_t nhg) const
+        {
+            return find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), nhg) !=
+                   m_rt.removedGroups.end();
+        }
+
+        bool nextHopRemoved(sai_object_id_t nh) const
+        {
+            return find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nh) !=
+                   m_rt.removedNexthops.end();
+        }
+
+        sai_object_id_t nhOidForEndpoint(const string &ip) const
+        {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+            for (const auto &nh : m_rt.nexthops)
+            {
+                if (!ipAddrEquals(nh.ip, ip)) continue;
+                if (find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nh.oid) !=
+                    m_rt.removedNexthops.end())
+                    continue;
+                oid = nh.oid;
+            }
+            return oid;
+        }
+
+        // Unlike regular VNET ECMP, FG-ECMP keeps the same member OIDs (and the same
+        // NHG OID) across endpoint-set changes -- only the mapping moves.
+        map<sai_object_id_t, sai_object_id_t> currentFgMemberAssignments(sai_object_id_t nhg) const
+        {
+            map<sai_object_id_t, sai_object_id_t> assignment;
+            for (const auto &m : m_rt.members)
+            {
+                if (m.nhg != nhg) continue;
+                if (find(m_rt.removedMembers.begin(), m_rt.removedMembers.end(), m.oid) !=
+                    m_rt.removedMembers.end())
+                    continue;
+                assignment[m.oid] = m.nh;
+            }
+            for (const auto &u : m_rt.memberNhUpdates)
+            {
+                if (assignment.count(u.member)) assignment[u.member] = u.nh;
+            }
+            return assignment;
+        }
+
+        // Groups nhg's current bucket assignment by endpoint IP
+        map<string, int> fgMemberCountsByEndpoint(sai_object_id_t nhg,
+                                                  const vector<string> &endpoints) const
+        {
+            map<sai_object_id_t, string> nhToIp;
+            for (const auto &ip : endpoints) nhToIp[nhOidForEndpoint(ip)] = ip;
+            map<string, int> counts;
+            for (const auto &kv : currentFgMemberAssignments(nhg))
+            {
+                auto it = nhToIp.find(kv.second);
+                if (it != nhToIp.end()) counts[it->second]++;
+            }
+            return counts;
         }
 
         // The default VNET does not advertise prefixes, so the prefix must be
@@ -3167,6 +3335,583 @@ namespace vnetorch_test
         delVnetRoute("Vnet14", "fd:8:10::32/128");
         EXPECT_EQ(m_rt.removedGroups.size(), removedGroupsAfterFirst);
         checkStateDbRouteRemoved("Vnet14", "fd:8:10::32/128");
+    }
+
+    // A VNET_ROUTE_TUNNEL entry with consistent_hashing_buckets > 0 is
+    // programmed as fine-grained ECMP with exactly
+    // `bucket_size` members, evenly split across the endpoints
+    TEST_F(VNetOrchTest, VnetFgEcmpRouteProgramsFineGrainedGroup)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24", "37.0.0.1,37.0.0.2,37.0.0.3", 60);
+
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+        EXPECT_EQ(m_rt.groups[0].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+
+        auto assignment = currentFgMemberAssignments(nhg);
+        ASSERT_EQ(assignment.size(), 60U);
+
+        auto counts = fgMemberCountsByEndpoint(nhg, endpoints);
+        EXPECT_EQ(counts["37.0.0.1"], 20);
+        EXPECT_EQ(counts["37.0.0.2"], 20);
+        EXPECT_EQ(counts["37.0.0.3"], 20);
+
+        checkStateDbRoute("Vnet37", "100.100.37.0/24", "37.0.0.1,37.0.0.2,37.0.0.3");
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", "100.100.37.0/24"));
+
+        const RouteCaptures::Route *r = findRoute("100.100.37.0");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, nhg);
+    }
+
+    // Growing the endpoint set on an already-FG-ECMP route (same bucket_size)
+    // redistributes the existing 60 buckets across all 6 endpoints in place
+    TEST_F(VNetOrchTest, VnetFgEcmpRouteRedistributesOnEndpointAdd)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24", "37.0.0.1,37.0.0.2,37.0.0.3", 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3",
+                                          "37.0.0.4", "37.0.0.5", "37.0.0.6"};
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24",
+                           "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.5,37.0.0.6", 60);
+
+        // Same group: FG-ECMP never recreates the NHG on endpoint-set changes.
+        EXPECT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_TRUE(m_rt.removedGroups.empty());
+
+        auto assignment = currentFgMemberAssignments(nhg);
+        ASSERT_EQ(assignment.size(), 60U);
+
+        auto counts = fgMemberCountsByEndpoint(nhg, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 10) << "endpoint " << ip;
+
+        checkStateDbRoute("Vnet37", "100.100.37.0/24",
+                          "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.5,37.0.0.6");
+    }
+
+    // Swapping out endpoints (same count, same bucket_size) reassigns only the
+    // buckets that were pointing at the departed endpoints
+    TEST_F(VNetOrchTest, VnetFgEcmpRouteRedistributesOnEndpointUpdate)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24",
+                           "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.5,37.0.0.6", 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3",
+                                          "37.0.0.4", "37.0.0.7", "37.0.0.8"};
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24",
+                           "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7,37.0.0.8", 60);
+
+        EXPECT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(m_rt.groups[0].oid, nhg);
+
+        auto assignment = currentFgMemberAssignments(nhg);
+        ASSERT_EQ(assignment.size(), 60U);
+
+        auto counts = fgMemberCountsByEndpoint(nhg, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 10) << "endpoint " << ip;
+
+        checkStateDbRoute("Vnet37", "100.100.37.0/24",
+                          "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7,37.0.0.8");
+    }
+
+    // Shrinking the endpoint set (same bucket_size) redistributes the buckets
+    // that belonged to the removed endpoint across the survivors
+    TEST_F(VNetOrchTest, VnetFgEcmpRouteRedistributesOnEndpointRemove)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24",
+                           "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7,37.0.0.8", 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3",
+                                          "37.0.0.4", "37.0.0.7"};
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24",
+                           "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7", 60);
+
+        EXPECT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(m_rt.groups[0].oid, nhg);
+
+        auto assignment = currentFgMemberAssignments(nhg);
+        ASSERT_EQ(assignment.size(), 60U);
+
+        auto counts = fgMemberCountsByEndpoint(nhg, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 12) << "endpoint " << ip;
+
+        checkStateDbRoute("Vnet37", "100.100.37.0/24",
+                          "37.0.0.1,37.0.0.2,37.0.0.3,37.0.0.4,37.0.0.7");
+    }
+
+    // Two different VNETs can each have an FG-ECMP route on the identical prefix with independent next-hop groups
+    TEST_F(VNetOrchTest, VnetFgEcmpTwoVnetsShareSamePrefix)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+        const sai_object_id_t vr37 = m_vrMock->created_oid;
+        setVnet("Vnet38", "tunnel_37", "10038", "");
+        const sai_object_id_t vr38 = m_vrMock->created_oid;
+        ASSERT_NE(vr37, vr38);
+
+        const string prefix = "100.100.37.0/24";
+        const vector<string> endpoints1 = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+        const vector<string> endpoints2 = {"38.0.0.1", "38.0.0.2", "38.0.0.3"};
+
+        setVnetFgEcmpRoute("Vnet37", prefix, "37.0.0.1,37.0.0.2,37.0.0.3", 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg1 = m_rt.groups[0].oid;
+
+        setVnetFgEcmpRoute("Vnet38", prefix, "38.0.0.1,38.0.0.2,38.0.0.3", 60);
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t nhg2 = m_rt.groups[1].oid;
+        EXPECT_NE(nhg1, nhg2);
+
+        // Each group still has its own 60 members
+        EXPECT_EQ(currentFgMemberAssignments(nhg1).size(), 60U);
+        EXPECT_EQ(currentFgMemberAssignments(nhg2).size(), 60U);
+        auto counts1 = fgMemberCountsByEndpoint(nhg1, endpoints1);
+        auto counts2 = fgMemberCountsByEndpoint(nhg2, endpoints2);
+        for (const auto &ip : endpoints1) EXPECT_EQ(counts1[ip], 20) << "Vnet37 endpoint " << ip;
+        for (const auto &ip : endpoints2) EXPECT_EQ(counts2[ip], 20) << "Vnet38 endpoint " << ip;
+
+        // Both routes share the identical prefix string, so they must be
+        // told apart by virtual router
+        const RouteCaptures::Route *r1 = nullptr;
+        const RouteCaptures::Route *r2 = nullptr;
+        for (const auto &r : m_rt.routes)
+        {
+            if (!prefixAddrEquals(r.dest, "100.100.37.0")) continue;
+            if (r.vr == vr37) r1 = &r;
+            else if (r.vr == vr38) r2 = &r;
+        }
+        ASSERT_NE(r1, nullptr);
+        ASSERT_NE(r2, nullptr);
+        EXPECT_EQ(r1->next_hop_id, nhg1);
+        EXPECT_EQ(r2->next_hop_id, nhg2);
+
+        checkStateDbRoute("Vnet37", prefix, "37.0.0.1,37.0.0.2,37.0.0.3");
+        checkStateDbRoute("Vnet38", prefix, "38.0.0.1,38.0.0.2,38.0.0.3");
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet38", prefix));
+    }
+
+    // Two FG-ECMP prefixes in the same VNET with an identical endpoint set must
+    // each get their own NHG (FG NHGs are per (vnet, prefix), not per endpoint
+    // set) while sharing the ref-counted tunnel next hops. Deleting one prefix
+    // must not disturb the other's group, members or tunnel next hops.
+    TEST_F(VNetOrchTest, VnetFgEcmpTwoPrefixesShareEndpointSet)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix1 = "100.100.37.30/32";
+        const string prefix2 = "100.100.37.31/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+
+        setVnetFgEcmpRoute("Vnet37", prefix1, endpointsCsv, 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg1 = m_rt.groups[0].oid;
+
+        setVnetFgEcmpRoute("Vnet37", prefix2, endpointsCsv, 60);
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t nhg2 = m_rt.groups[1].oid;
+        EXPECT_NE(nhg1, nhg2);
+        EXPECT_EQ(m_rt.groups[0].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_EQ(m_rt.groups[1].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+
+        ASSERT_EQ(m_rt.nexthops.size(), 3U);
+        vector<sai_object_id_t> nhOids;
+        for (const auto &ip : endpoints) nhOids.push_back(nhOidForEndpoint(ip));
+
+        for (const sai_object_id_t nhg : {nhg1, nhg2})
+        {
+            EXPECT_EQ(currentFgMemberAssignments(nhg).size(), 60U);
+            auto counts = fgMemberCountsByEndpoint(nhg, endpoints);
+            for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 20) << "endpoint " << ip;
+        }
+
+        const RouteCaptures::Route *r1 = findRoute("100.100.37.30");
+        const RouteCaptures::Route *r2 = findRoute("100.100.37.31");
+        ASSERT_NE(r1, nullptr);
+        ASSERT_NE(r2, nullptr);
+        EXPECT_EQ(r1->next_hop_id, nhg1);
+        EXPECT_EQ(r2->next_hop_id, nhg2);
+
+        checkStateDbRoute("Vnet37", prefix1, endpointsCsv);
+        checkStateDbRoute("Vnet37", prefix2, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix1));
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix2));
+
+        delVnetRoute("Vnet37", prefix1);
+
+        EXPECT_NE(find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), nhg1),
+                  m_rt.removedGroups.end());
+        EXPECT_EQ(find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), nhg2),
+                  m_rt.removedGroups.end());
+        EXPECT_EQ(currentFgMemberAssignments(nhg1).size(), 0U);
+        EXPECT_EQ(currentFgMemberAssignments(nhg2).size(), 60U);
+        auto remaining = fgMemberCountsByEndpoint(nhg2, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(remaining[ip], 20) << "endpoint " << ip;
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_EQ(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nh),
+                      m_rt.removedNexthops.end())
+                << "tunnel next hop " << nh << " removed while prefix2 still uses it";
+        }
+        EXPECT_EQ(findRoute("100.100.37.30"), nullptr);
+        const RouteCaptures::Route *r2After = findRoute("100.100.37.31");
+        ASSERT_NE(r2After, nullptr);
+        EXPECT_EQ(r2After->next_hop_id, nhg2);
+        checkStateDbRouteRemoved("Vnet37", prefix1);
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix1);
+        checkStateDbRoute("Vnet37", prefix2, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix2));
+
+        delVnetRoute("Vnet37", prefix2);
+
+        EXPECT_NE(find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), nhg2),
+                  m_rt.removedGroups.end());
+        EXPECT_EQ(currentFgMemberAssignments(nhg2).size(), 0U);
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nh),
+                      m_rt.removedNexthops.end())
+                << "tunnel next hop " << nh << " not removed";
+        }
+        checkStateDbRouteRemoved("Vnet37", prefix2);
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix2);
+    }
+
+    // Deleting an FG-ECMP route removes its NHG, all of its members and its
+    // tunnel next hops, and clears both the VNET_ROUTE_TUNNEL_TABLE and
+    // FG_ROUTE_TABLE STATE_DB rows
+    TEST_F(VNetOrchTest, VnetFgEcmpRouteCleanupRemovesAllObjects)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        setVnetFgEcmpRoute("Vnet37", "100.100.37.0/24", "37.0.0.1,37.0.0.2,37.0.0.3", 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+        const size_t nhopCountBeforeDelete = m_rt.nexthops.size();
+        ASSERT_EQ(nhopCountBeforeDelete, 3U);
+
+        delVnetRoute("Vnet37", "100.100.37.0/24");
+
+        EXPECT_NE(find(m_rt.removedGroups.begin(), m_rt.removedGroups.end(), nhg),
+                  m_rt.removedGroups.end());
+        int remainingMembers = 0;
+        for (const auto &m : m_rt.members)
+        {
+            if (m.nhg != nhg) continue;
+            if (find(m_rt.removedMembers.begin(), m_rt.removedMembers.end(), m.oid) ==
+                m_rt.removedMembers.end())
+                remainingMembers++;
+        }
+        EXPECT_EQ(remainingMembers, 0);
+        for (const auto &nh : m_rt.nexthops)
+        {
+            EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(), nh.oid),
+                      m_rt.removedNexthops.end())
+                << "tunnel next hop for " << nh.oid << " not removed";
+        }
+
+        checkStateDbRouteRemoved("Vnet37", "100.100.37.0/24");
+        checkFgRouteStateDbRowRemoved("Vnet37", "100.100.37.0/24");
+    }
+
+    // A regular ECMP route re-applied with consistent_hashing_buckets moves to a
+    // FG-ECMP group in place: the regular group goes away, the shared tunnel next
+    // hops survive, and the route is repointed.
+    TEST_F(VNetOrchTest, VnetFgEcmpRegularToFgTransition)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.1/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+
+        setVnetRoute("Vnet37", prefix, endpointsCsv);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t regularNhg = m_rt.groups[0].oid;
+        EXPECT_EQ(m_rt.groups[0].type, SAI_NEXT_HOP_GROUP_TYPE_ECMP);
+        EXPECT_EQ(currentFgMemberAssignments(regularNhg).size(), 3U);
+        vector<sai_object_id_t> nhOids;
+        for (const auto &ip : endpoints) nhOids.push_back(nhOidForEndpoint(ip));
+
+        setVnetFgEcmpRoute("Vnet37", prefix, endpointsCsv, 60);
+
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t fgNhg = m_rt.groups[1].oid;
+        EXPECT_EQ(m_rt.groups[1].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 60U);
+        auto counts = fgMemberCountsByEndpoint(fgNhg, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 20) << "endpoint " << ip;
+
+        EXPECT_TRUE(groupRemoved(regularNhg));
+        EXPECT_EQ(currentFgMemberAssignments(regularNhg).size(), 0U);
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_FALSE(nextHopRemoved(nh)) << "shared tunnel next hop " << nh << " removed";
+        }
+
+        const RouteCaptures::Route *r = findRoute("100.100.37.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, fgNhg);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
+    }
+
+    // The reverse: dropping consistent_hashing_buckets moves a FG-ECMP route back
+    // to a regular ECMP group and clears its FG_ROUTE_TABLE row.
+    TEST_F(VNetOrchTest, VnetFgEcmpToRegularTransition)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.1/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+
+        setVnetFgEcmpRoute("Vnet37", prefix, endpointsCsv, 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t fgNhg = m_rt.groups[0].oid;
+        EXPECT_EQ(m_rt.groups[0].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
+        vector<sai_object_id_t> nhOids;
+        for (const auto &ip : endpoints) nhOids.push_back(nhOidForEndpoint(ip));
+
+        setVnetRouteRegularEcmp("Vnet37", prefix, endpointsCsv);
+
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t regularNhg = m_rt.groups[1].oid;
+        EXPECT_EQ(m_rt.groups[1].type, SAI_NEXT_HOP_GROUP_TYPE_ECMP);
+        EXPECT_EQ(currentFgMemberAssignments(regularNhg).size(), 3U);
+
+        EXPECT_TRUE(groupRemoved(fgNhg));
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 0U);
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_FALSE(nextHopRemoved(nh)) << "shared tunnel next hop " << nh << " removed";
+        }
+
+        const RouteCaptures::Route *r = findRoute("100.100.37.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, regularNhg);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix);
+    }
+
+    // Transitions that also change the endpoint set: regular(1,2,3) -> FG(4,5,6)
+    // -> regular(7,8). The departed endpoints' tunnel next hops must be released
+    // and the new ones programmed.
+    TEST_F(VNetOrchTest, VnetFgEcmpTransitionWithEndpointChange)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.1/32";
+        const vector<string> regularEndpoints1 = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+        const vector<string> fgEndpoints = {"37.0.0.4", "37.0.0.5", "37.0.0.6"};
+
+        setVnetRoute("Vnet37", prefix, "37.0.0.1,37.0.0.2,37.0.0.3");
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t regularNhg1 = m_rt.groups[0].oid;
+        vector<sai_object_id_t> oldNhOids;
+        for (const auto &ip : regularEndpoints1) oldNhOids.push_back(nhOidForEndpoint(ip));
+
+        setVnetFgEcmpRoute("Vnet37", prefix, "37.0.0.4,37.0.0.5,37.0.0.6", 60);
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t fgNhg = m_rt.groups[1].oid;
+        EXPECT_EQ(m_rt.groups[1].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_TRUE(groupRemoved(regularNhg1));
+        for (const sai_object_id_t nh : oldNhOids)
+        {
+            EXPECT_TRUE(nextHopRemoved(nh)) << "old tunnel next hop " << nh << " leaked";
+        }
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 60U);
+        auto counts = fgMemberCountsByEndpoint(fgNhg, fgEndpoints);
+        for (const auto &ip : fgEndpoints) EXPECT_EQ(counts[ip], 20) << "endpoint " << ip;
+        checkStateDbRoute("Vnet37", prefix, "37.0.0.4,37.0.0.5,37.0.0.6");
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
+        vector<sai_object_id_t> fgNhOids;
+        for (const auto &ip : fgEndpoints) fgNhOids.push_back(nhOidForEndpoint(ip));
+
+        setVnetRouteRegularEcmp("Vnet37", prefix, "37.0.0.7,37.0.0.8");
+        ASSERT_EQ(m_rt.groups.size(), 3U);
+        const sai_object_id_t regularNhg2 = m_rt.groups[2].oid;
+        EXPECT_EQ(m_rt.groups[2].type, SAI_NEXT_HOP_GROUP_TYPE_ECMP);
+        EXPECT_EQ(currentFgMemberAssignments(regularNhg2).size(), 2U);
+        EXPECT_TRUE(groupRemoved(fgNhg));
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 0U);
+        for (const sai_object_id_t nh : fgNhOids)
+        {
+            EXPECT_TRUE(nextHopRemoved(nh)) << "FG tunnel next hop " << nh << " leaked";
+        }
+        const RouteCaptures::Route *r = findRoute("100.100.37.1");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, regularNhg2);
+        checkStateDbRoute("Vnet37", prefix, "37.0.0.7,37.0.0.8");
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix);
+    }
+
+    // Two regular prefixes share one ECMP group (ref_count 2). Moving one of them
+    // to FG must leave the other on the shared group, which is removed only when
+    // the last regular user is deleted.
+    TEST_F(VNetOrchTest, VnetFgEcmpRegularToFgTransitionWithSharedRegularNhg)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix1 = "100.100.37.30/32";
+        const string prefix2 = "100.100.37.31/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+
+        setVnetRoute("Vnet37", prefix1, endpointsCsv);
+        setVnetRoute("Vnet37", prefix2, endpointsCsv);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t sharedNhg = m_rt.groups[0].oid;
+        ASSERT_NE(findRoute("100.100.37.30"), nullptr);
+        ASSERT_NE(findRoute("100.100.37.31"), nullptr);
+        EXPECT_EQ(findRoute("100.100.37.30")->next_hop_id, sharedNhg);
+        EXPECT_EQ(findRoute("100.100.37.31")->next_hop_id, sharedNhg);
+        vector<sai_object_id_t> nhOids;
+        for (const auto &ip : endpoints) nhOids.push_back(nhOidForEndpoint(ip));
+
+        setVnetFgEcmpRoute("Vnet37", prefix1, endpointsCsv, 60);
+
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t fgNhg = m_rt.groups[1].oid;
+        EXPECT_EQ(m_rt.groups[1].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 60U);
+        auto counts = fgMemberCountsByEndpoint(fgNhg, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 20) << "endpoint " << ip;
+
+        EXPECT_FALSE(groupRemoved(sharedNhg));
+        EXPECT_EQ(currentFgMemberAssignments(sharedNhg).size(), 3U);
+        EXPECT_EQ(findRoute("100.100.37.30")->next_hop_id, fgNhg);
+        EXPECT_EQ(findRoute("100.100.37.31")->next_hop_id, sharedNhg);
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_FALSE(nextHopRemoved(nh)) << "tunnel next hop " << nh << " removed";
+        }
+        checkStateDbRoute("Vnet37", prefix1, endpointsCsv);
+        checkStateDbRoute("Vnet37", prefix2, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix1));
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix2);
+
+        delVnetRoute("Vnet37", prefix2);
+
+        EXPECT_TRUE(groupRemoved(sharedNhg));
+        EXPECT_EQ(currentFgMemberAssignments(sharedNhg).size(), 0U);
+        EXPECT_FALSE(groupRemoved(fgNhg));
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 60U);
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_FALSE(nextHopRemoved(nh)) << "tunnel next hop " << nh << " removed";
+        }
+        checkStateDbRouteRemoved("Vnet37", prefix2);
+        EXPECT_EQ(findRoute("100.100.37.30")->next_hop_id, fgNhg);
+
+        delVnetRoute("Vnet37", prefix1);
+
+        EXPECT_TRUE(groupRemoved(fgNhg));
+        EXPECT_EQ(currentFgMemberAssignments(fgNhg).size(), 0U);
+        for (const sai_object_id_t nh : nhOids)
+        {
+            EXPECT_TRUE(nextHopRemoved(nh)) << "tunnel next hop " << nh << " not removed";
+        }
+        checkStateDbRouteRemoved("Vnet37", prefix1);
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix1);
+    }
+
+    // A route with more distinct next hops than consistent_hashing_buckets is
+    // rejected (no group, no route, no leaked tunnel next hops); exactly
+    // bucket_size next hops is accepted.
+    TEST_F(VNetOrchTest, VnetFgEcmpMemberCountExceedsBucketSize)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.20/32";
+
+        setVnetFgEcmpRoute("Vnet37", prefix, "37.0.0.1,37.0.0.2,37.0.0.3", 2);
+
+        EXPECT_TRUE(m_rt.groups.empty());
+        EXPECT_EQ(findRoute("100.100.37.20"), nullptr);
+        EXPECT_FALSE(fgRouteStateDbRowExists("Vnet37", prefix));
+        for (const auto &nh : m_rt.nexthops)
+        {
+            EXPECT_TRUE(nextHopRemoved(nh.oid)) << "tunnel next hop " << nh.oid << " leaked";
+        }
+
+        setVnetFgEcmpRoute("Vnet37", prefix, "37.0.0.1,37.0.0.2", 2);
+
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(m_rt.groups[0].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+        EXPECT_EQ(currentFgMemberAssignments(nhg).size(), 2U);
+        auto counts = fgMemberCountsByEndpoint(nhg, {"37.0.0.1", "37.0.0.2"});
+        EXPECT_EQ(counts["37.0.0.1"], 1);
+        EXPECT_EQ(counts["37.0.0.2"], 1);
+        const RouteCaptures::Route *r = findRoute("100.100.37.20");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, nhg);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
+    }
+
+    // Re-applying an identical FG-ECMP route programs nothing new.
+    TEST_F(VNetOrchTest, VnetFgEcmpRouteReaddIsIdempotent)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.21/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+        const vector<string> endpoints = {"37.0.0.1", "37.0.0.2", "37.0.0.3"};
+
+        setVnetFgEcmpRoute("Vnet37", prefix, endpointsCsv, 60);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t nhg = m_rt.groups[0].oid;
+        const size_t nexthops = m_rt.nexthops.size();
+        const size_t members = m_rt.members.size();
+        const size_t updates = m_rt.memberNhUpdates.size();
+
+        setVnetFgEcmpRoute("Vnet37", prefix, endpointsCsv, 60);
+
+        EXPECT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(m_rt.nexthops.size(), nexthops);
+        EXPECT_EQ(m_rt.members.size(), members);
+        EXPECT_EQ(m_rt.memberNhUpdates.size(), updates);
+        EXPECT_TRUE(m_rt.removedGroups.empty());
+        EXPECT_TRUE(m_rt.removedMembers.empty());
+        EXPECT_TRUE(m_rt.removedNexthops.empty());
+
+        auto counts = fgMemberCountsByEndpoint(nhg, endpoints);
+        for (const auto &ip : endpoints) EXPECT_EQ(counts[ip], 20) << "endpoint " << ip;
+        const RouteCaptures::Route *r = findRoute("100.100.37.21");
+        ASSERT_NE(r, nullptr);
+        EXPECT_EQ(r->next_hop_id, nhg);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
     }
 
     // Re-applying an identical single-endpoint IPv6 VNET route is idempotent:
@@ -5567,5 +6312,291 @@ namespace vnetorch_test
         EXPECT_TRUE(removed);
 
         delVxlanTunnel("tunnel_ip2me");
+    }
+
+    // Stands in for the orchs that register interest in a VNET next hop. The
+    // observer-walk regression only needs an observer to be present.
+    class NullObserver : public Observer
+    {
+    public:
+        void update(SubjectType, void *) override {}
+    };
+
+    // The connected route for an interface assigned to a VNET is programmed by
+    // RouteOrch; IntfsOrch contributes only the ip2me host route. A config
+    // reload replays that same prefix to VNetRouteOrch as a subnet route -- a
+    // VNET_ROUTE carrying an ifname and no nexthop, so doRouteTask() takes the
+    // is_subnet path with nh_id set to the port's RIF. The CREATE then lands on
+    // a route libsaivs already holds and returns SAI_STATUS_ITEM_ALREADY_EXISTS.
+    // Before the fix it logged "SAI failed to create route" and failed the task
+    // on every replay. RouteOrch's connected route already forwards to that RIF,
+    // so add_route() borrows the entry without writing it. The duplicate is real
+    // rather than injected: the route is programmed first and libsaivs rejects
+    // the second create.
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteReplayConverges)
+    {
+        setVxlanTunnel("tunnel_replay", "40.40.40.40");
+        // scope=default keeps the VNET on gVirtualRouterId, which is the VR
+        // gRouteOrch programs the connected route into, so both writes target
+        // the same (VR, prefix) exactly as they do on a box.
+        setVnet("Vnet_replay", "tunnel_replay", "6000", "", false, "", "default");
+
+        createVnetL3Interface("Ethernet20", "Vnet_replay", "10.10.0.1/24");
+
+        const sai_object_id_t rif = rifOf("Ethernet20");
+        ASSERT_NE(rif, SAI_NULL_OBJECT_ID);
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        // The connected route as fpmsyncd delivers it: IntfsOrch has no
+        // addSubnetRoute, so a VNET interface's prefix reaches the ASIC through
+        // gRouteOrch like any other route, with the RIF as its next hop.
+        setRoute("10.10.0.0/24", "0.0.0.0", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        ASSERT_NE(findRoute("10.10.0.0"), nullptr);
+        ASSERT_EQ(findRoute("10.10.0.0")->next_hop_id, rif);
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+
+        // The replay: the prefix that is already programmed, with no nexthop.
+        setVnetLocalRoute("Vnet_replay", "10.10.0.0/24", "Ethernet20", "");
+
+        bool sawDuplicate = false;
+        for (auto s : m_rt.lastCreateStatuses)
+            if (s == SAI_STATUS_ITEM_ALREADY_EXISTS) sawDuplicate = true;
+        ASSERT_TRUE(sawDuplicate)
+            << "the replayed create did not collide with the connected route, so "
+               "this test is not exercising the regression";
+
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a borrowed entry that already forwards to the RIF must not be rewritten";
+        EXPECT_EQ(findRoute("10.10.0.0")->next_hop_id, rif);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1)
+            << "adopting an existing SAI route must not count it twice";
+
+        // Withdrawing the VNET replay must leave the physical route and its CRM
+        // count to RouteOrch.
+        delVnetLocalRoute("Vnet_replay", "10.10.0.0/24");
+        ASSERT_NE(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(findRoute("10.10.0.0")->next_hop_id, rif);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delRoute("10.10.0.0/24");
+        EXPECT_EQ(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // RouteOrch owns the prefix through a gateway. A VNET subnet route for the
+    // same prefix must not repoint it at the VNET RIF: VNetRouteOrch cannot put
+    // the gateway back when the VNET route is withdrawn, so the owner's next hop
+    // stays in place through both the SET and the DEL.
+    TEST_F(VNetOrchTest, VnetSubnetRouteKeepsOwnerNextHopOnConflict)
+    {
+        setVxlanTunnel("tunnel_conflict", "44.44.44.44");
+        setVnet("Vnet_conflict", "tunnel_conflict", "6004", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_conflict", "10.12.0.1/24");
+        addNeighbor("Ethernet20", "10.12.0.2", "00:01:02:03:04:07");
+
+        const uint32_t baseline = ipv4RouteCrmUsed();
+        setRoute("10.12.1.0/24", "10.12.0.2", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        ASSERT_NE(findRoute("10.12.1.0"), nullptr);
+        const sai_object_id_t ownerNh = findRoute("10.12.1.0")->next_hop_id;
+        ASSERT_NE(ownerNh, rifOf("Ethernet20"));
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+        setVnetLocalRoute("Vnet_conflict", "10.12.1.0/24", "Ethernet20", "");
+
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a conflicting VNET subnet route repointed RouteOrch's entry";
+        EXPECT_EQ(findRoute("10.12.1.0")->next_hop_id, ownerNh);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delVnetLocalRoute("Vnet_conflict", "10.12.1.0/24");
+        ASSERT_NE(findRoute("10.12.1.0"), nullptr)
+            << "withdrawing the VNET route removed RouteOrch's entry";
+        EXPECT_EQ(findRoute("10.12.1.0")->next_hop_id, ownerNh);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delRoute("10.12.1.0/24");
+        EXPECT_EQ(findRoute("10.12.1.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // Some orch other than RouteOrch programmed the prefix, already on the VNET
+    // RIF. With no RouteOrch record to compare against, the entry is borrowed
+    // without being written and withdrawing the VNET route leaves it alone.
+    TEST_F(VNetOrchTest, VnetSubnetRouteLeavesUnknownOwnerEntry)
+    {
+        setVxlanTunnel("tunnel_unknown", "46.46.46.46");
+        setVnet("Vnet_unknown", "tunnel_unknown", "6006", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_unknown", "10.14.0.1/24");
+        const sai_object_id_t rif = rifOf("Ethernet20");
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        sai_route_entry_t entry = {};
+        entry.switch_id = gSwitchId;
+        entry.vr_id = gVirtualRouterId;
+        copy(entry.destination, IpPrefix("10.14.1.0/24"));
+        sai_attribute_t attr;
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = rif;
+        ASSERT_EQ(sai_route_api->create_route_entry(&entry, 1, &attr), SAI_STATUS_SUCCESS);
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+        setVnetLocalRoute("Vnet_unknown", "10.14.1.0/24", "Ethernet20", "");
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(m_rt.setAttrCount, 0);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+
+        delVnetLocalRoute("Vnet_unknown", "10.14.1.0/24");
+        ASSERT_NE(findRoute("10.14.1.0"), nullptr)
+            << "withdrawing the VNET route removed an entry it never owned";
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+
+        EXPECT_EQ(sai_route_api->remove_route_entry(&entry), SAI_STATUS_SUCCESS);
+    }
+
+    // A SET that moves a VNET subnet route from one interface to another
+    // repoints the SAI entry, and the cached next hop and RIF references have to
+    // follow it. Otherwise the old RIF keeps a reference it can never drop and
+    // the new one is released on DEL without ever having been taken.
+    TEST_F(VNetOrchTest, VnetSubnetRouteInterfaceChangeMovesRifReference)
+    {
+        setVxlanTunnel("tunnel_move", "45.45.45.45");
+        setVnet("Vnet_move", "tunnel_move", "6005", "");
+        createVnetL3Interface("Ethernet20", "Vnet_move", "10.13.0.1/24");
+        createVnetL3Interface("Ethernet24", "Vnet_move", "10.13.1.1/24");
+
+        auto refCount = [](const string &alias) {
+            return gIntfsOrch->getSyncdIntfses().at(alias).ref_count;
+        };
+        const int ref20 = refCount("Ethernet20");
+        const int ref24 = refCount("Ethernet24");
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        setVnetLocalRoute("Vnet_move", "10.13.2.0/24", "Ethernet20", "0.0.0.0");
+        ASSERT_NE(findRoute("10.13.2.0"), nullptr);
+        EXPECT_EQ(findRoute("10.13.2.0")->next_hop_id, rifOf("Ethernet20"));
+        EXPECT_EQ(refCount("Ethernet20"), ref20 + 1);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        setVnetLocalRoute("Vnet_move", "10.13.2.0/24", "Ethernet24", "0.0.0.0");
+        EXPECT_EQ(findRoute("10.13.2.0")->next_hop_id, rifOf("Ethernet24"));
+        EXPECT_EQ(refCount("Ethernet20"), ref20)
+            << "the old RIF kept the reference of a route that moved away";
+        EXPECT_EQ(refCount("Ethernet24"), ref24 + 1);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // An identical replay stays a no-op for the references.
+        setVnetLocalRoute("Vnet_move", "10.13.2.0/24", "Ethernet24", "0.0.0.0");
+        EXPECT_EQ(refCount("Ethernet20"), ref20);
+        EXPECT_EQ(refCount("Ethernet24"), ref24 + 1);
+
+        delVnetLocalRoute("Vnet_move", "10.13.2.0/24");
+        EXPECT_EQ(findRoute("10.13.2.0"), nullptr);
+        EXPECT_EQ(refCount("Ethernet20"), ref20);
+        EXPECT_EQ(refCount("Ethernet24"), ref24);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // The plain create path still has to work: a subnet route for a prefix no
+    // one else owns is created outright, with no in-place repoint.
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteFirstCreateHasNoUpdate)
+    {
+        setVxlanTunnel("tunnel_first", "41.41.41.41");
+        setVnet("Vnet_first", "tunnel_first", "6001", "");
+        createVnetL3Interface("Ethernet20", "Vnet_first", "10.10.0.8/31");
+        const uint32_t baseline = ipv4RouteCrmUsed();
+
+        m_rt.lastCreateStatuses.clear();
+        m_rt.setAttrCount = 0;
+
+        setVnetLocalRoute("Vnet_first", "10.20.0.0/24", "Ethernet20", "");
+
+        for (auto s : m_rt.lastCreateStatuses)
+            EXPECT_NE(s, SAI_STATUS_ITEM_ALREADY_EXISTS);
+        EXPECT_EQ(m_rt.setAttrCount, 0)
+            << "a fresh subnet route should be created, not updated";
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // Replaying a route VNetRouteOrch created must not turn it into a
+        // borrowed route merely because the second create finds it in SAI.
+        m_rt.lastCreateStatuses.clear();
+        setVnetLocalRoute("Vnet_first", "10.20.0.0/24", "Ethernet20", "");
+        EXPECT_NE(find(m_rt.lastCreateStatuses.begin(), m_rt.lastCreateStatuses.end(),
+                       SAI_STATUS_ITEM_ALREADY_EXISTS), m_rt.lastCreateStatuses.end());
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        delVnetLocalRoute("Vnet_first", "10.20.0.0/24");
+        EXPECT_EQ(findRoute("10.20.0.0"), nullptr);
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    TEST_F(VNetOrchTest, VnetConnectedSubnetRouteOwnerWithdrawsFirst)
+    {
+        setVxlanTunnel("tunnel_owner_first", "43.43.43.43");
+        setVnet("Vnet_owner_first", "tunnel_owner_first", "6003", "", false, "", "default");
+        createVnetL3Interface("Ethernet20", "Vnet_owner_first", "10.11.0.1/24");
+        addNeighbor("Ethernet20", "10.11.0.2", "00:01:02:03:04:06");
+
+        const uint32_t baseline = ipv4RouteCrmUsed();
+        setRoute("10.11.0.0/24", "10.11.0.2", "Ethernet20");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+        setVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24", "Ethernet20", "");
+        ASSERT_EQ(ipv4RouteCrmUsed(), baseline + 1);
+
+        // Once RouteOrch removes its route, VNetRouteOrch's borrowed-route DEL
+        // must not decrement the same CRM entry a second time.
+        delRoute("10.11.0.0/24");
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+        delVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24");
+        EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // VNetRouteOrch::delRoute() walks next_hop_observers_ and advances the
+    // iterator only at the bottom of the loop body. An observer covered by the
+    // prefix but holding no route state for it -- what a replay leaves behind --
+    // hit a `continue` that skipped the advance, so the walk never terminated.
+    // mock_tests builds with -DNDEBUG, so the assert(false) on that branch
+    // compiles away and the spin is unbounded. Run it in a child under alarm(2)
+    // so a regression fails the expectation instead of hanging the suite.
+    TEST_F(VNetOrchTest, VnetReplayedDeleteDoesNotSpinInObserverWalk)
+    {
+        // The fixture leaves libsaivs threads running, and the default
+        // fork-without-exec death test style is unsafe alongside them.
+        GTEST_FLAG_SET(death_test_style, "threadsafe");
+
+        setVxlanTunnel("tunnel_spin", "42.42.42.42");
+        setVnet("Vnet_spin", "tunnel_spin", "6002", "");
+        createVnetL3Interface("Ethernet20", "Vnet_spin", "10.10.0.8/31");
+
+        IpPrefix prefix("10.10.0.8/31");
+        nextHop nh;
+        nh.ifname = "Ethernet20";
+
+        NullObserver observer;
+        m_vnetRouteOrch->attach(&observer, IpAddress("10.10.0.9"));
+        Portal::VNetRouteOrchInternal::addRoute(*m_vnetRouteOrch, "Vnet_spin",
+                                                prefix, nh);
+
+        // An observer inside the prefix that never received route state. It
+        // sorts before 10.10.0.9, so the walk reaches it first.
+        Portal::VNetRouteOrchInternal::getNextHopObservers(*m_vnetRouteOrch)
+            [IpAddress("10.10.0.8")].observers.push_back(&observer);
+
+        EXPECT_EXIT(
+            {
+                alarm(10);
+                Portal::VNetRouteOrchInternal::delRoute(*m_vnetRouteOrch, prefix);
+                Portal::VNetRouteOrchInternal::delRoute(*m_vnetRouteOrch, prefix);
+                _exit(0);
+            },
+            ::testing::ExitedWithCode(0), "");
     }
 }

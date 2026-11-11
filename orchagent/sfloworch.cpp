@@ -1,6 +1,7 @@
 #include "sai.h"
 #include "sfloworch.h"
 #include "tokenize.h"
+#include "warm_restart.h"
 
 #include <fstream>
 #include "nlohmann/json.hpp"
@@ -703,6 +704,14 @@ SflowOrch::SflowOrch(DBConnector* db, vector<string> &tableNames) :
 {
     SWSS_LOG_ENTER();
     m_sflowStatus = false;
+    m_isWarmRestoreStage = WarmStart::isWarmStart();
+}
+
+void SflowOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
 }
 
 bool SflowOrch::sflowCreateSession(uint32_t rate, SflowSession &session)
@@ -810,6 +819,13 @@ bool SflowOrch::isSflowSamplePacket(sai_object_id_t oid)
 bool SflowOrch::isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_attr_t attr_id,
                                            sai_object_id_t sample_id, const char* dir_name)
 {
+    // During warm restore the port still reports the pre-reboot samplepacket OID,
+    // which is not in the rebuilt map; APPLY_VIEW reconciles it.
+    if (m_isWarmRestoreStage)
+    {
+        return true;
+    }
+
     sai_attribute_t check_attr;
     check_attr.id = attr_id;
     if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS

@@ -157,4 +157,119 @@ namespace hftelgroup_test
         set<string> empty_set;
         EXPECT_TRUE(group.isSameObjects(empty_set));
     }
+
+    /*
+     * updateObjectsPreservingLabels() (MIXED mode's label-preservation path,
+     * HFTelProfile::setObjectNames' counterpart to legacy updateObjects()):
+     * a name already tracked keeps its existing label; only genuinely-new
+     * names consume a fresh one from start_label upward.
+     */
+    TEST_F(HFTelGroupTest, PreservingLabels_FirstCall_AllocatesEveryName)
+    {
+        HFTelGroup group("port");
+
+        set<string> names = {"Ethernet0", "Ethernet4", "Ethernet8"};
+        size_t allocated = group.updateObjectsPreservingLabels(names, 1);
+
+        EXPECT_EQ(allocated, 3u);
+        ASSERT_EQ(group.getObjects().size(), 3u);
+        set<sai_uint16_t> labels;
+        for (const auto &obj : group.getObjects())
+        {
+            EXPECT_GE(obj.second, 1);
+            EXPECT_LE(obj.second, 3);
+            labels.insert(obj.second);
+        }
+        EXPECT_EQ(labels.size(), 3u);
+    }
+
+    TEST_F(HFTelGroupTest, PreservingLabels_UnchangedNamesKeepTheirLabel)
+    {
+        HFTelGroup group("port");
+
+        group.updateObjectsPreservingLabels({"Ethernet0", "Ethernet4", "Ethernet8"}, 1);
+        auto before = group.getObjects();
+        sai_uint16_t label_eth0 = before.at("Ethernet0");
+        sai_uint16_t label_eth8 = before.at("Ethernet8");
+
+        // Remove Ethernet4, add Ethernet12. start_label continues from where
+        // the profile's m_next_label would be (4, since 3 labels were
+        // already allocated) - mirrors how HFTelProfile::setObjectNames
+        // calls this.
+        size_t allocated =
+            group.updateObjectsPreservingLabels({"Ethernet0", "Ethernet8", "Ethernet12"}, 4);
+
+        EXPECT_EQ(allocated, 1u);
+        ASSERT_EQ(group.getObjects().size(), 3u);
+        EXPECT_FALSE(group.isObjectInGroup("Ethernet4"));
+        EXPECT_EQ(group.getObjects().at("Ethernet0"), label_eth0);
+        EXPECT_EQ(group.getObjects().at("Ethernet8"), label_eth8);
+        EXPECT_EQ(group.getObjects().at("Ethernet12"), 4);
+    }
+
+    TEST_F(HFTelGroupTest, PreservingLabels_NoChange_AllocatesNothing)
+    {
+        HFTelGroup group("port");
+
+        group.updateObjectsPreservingLabels({"Ethernet0", "Ethernet4"}, 1);
+        auto before = group.getObjects();
+
+        size_t allocated =
+            group.updateObjectsPreservingLabels({"Ethernet0", "Ethernet4"}, 3);
+
+        EXPECT_EQ(allocated, 0u);
+        EXPECT_EQ(group.getObjects(), before);
+    }
+
+    TEST_F(HFTelGroupTest, PreservingLabels_AllNamesReplaced_AllocatesEveryOne)
+    {
+        HFTelGroup group("port");
+
+        group.updateObjectsPreservingLabels({"Ethernet0", "Ethernet4"}, 1);
+
+        size_t allocated =
+            group.updateObjectsPreservingLabels({"Ethernet8", "Ethernet12"}, 3);
+
+        EXPECT_EQ(allocated, 2u);
+        EXPECT_FALSE(group.isObjectInGroup("Ethernet0"));
+        EXPECT_FALSE(group.isObjectInGroup("Ethernet4"));
+        // Names are visited in std::set (lexicographic) order, so "Ethernet12"
+        // is labelled before "Ethernet8"; only require the labels be 3 and 4.
+        std::set<sai_uint16_t> labels;
+        for (const auto &entry : group.getObjects())
+        {
+            labels.insert(entry.second);
+        }
+        EXPECT_EQ(labels, (std::set<sai_uint16_t>{3, 4}));
+    }
+
+    TEST_F(HFTelGroupTest, PreservingLabels_RepeatedSmallUpdates_NeverDuplicatesALabel)
+    {
+        HFTelGroup group("port");
+        sai_uint16_t next_label = 1;
+
+        next_label += static_cast<sai_uint16_t>(
+            group.updateObjectsPreservingLabels({"Ethernet0", "Ethernet4", "Ethernet8"}, next_label));
+        // Simulate 5 incremental single-object churns, the scenario the fix
+        // targets: each one should only ever allocate at most one new label.
+        vector<set<string>> updates = {
+            {"Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"},
+            {"Ethernet4", "Ethernet8", "Ethernet12"},
+            {"Ethernet4", "Ethernet8", "Ethernet12", "Ethernet16"},
+            {"Ethernet8", "Ethernet12", "Ethernet16"},
+            {"Ethernet8", "Ethernet12", "Ethernet16", "Ethernet20"},
+        };
+        for (const auto &names : updates)
+        {
+            size_t allocated = group.updateObjectsPreservingLabels(names, next_label);
+            EXPECT_LE(allocated, 1u);
+            next_label += static_cast<sai_uint16_t>(allocated);
+        }
+
+        set<sai_uint16_t> labels;
+        for (const auto &obj : group.getObjects())
+        {
+            EXPECT_TRUE(labels.insert(obj.second).second) << "duplicate label " << obj.second;
+        }
+    }
 }

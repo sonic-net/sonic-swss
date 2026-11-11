@@ -144,6 +144,16 @@ create_tunnel_map(MAP_T map_t)
                                 static_cast<uint32_t>(tunnel_map_attrs.size()),
                                 tunnel_map_attrs.data()
                           );
+    if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+    {
+        /* A switch may lack some map types (e.g. VLAN maps on an L3 VNI only
+         * device). The tunnel is created with the maps that exist, and an
+         * entry for a missing map is refused in create_tunnel_map_entry(). */
+        SWSS_LOG_WARN("Tunnel map type %s is not supported",
+                      sai_serialize_enum(attr.value.s32, &sai_metadata_enum_sai_tunnel_map_type_t).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
@@ -160,6 +170,11 @@ create_tunnel_map(MAP_T map_t)
 void
 remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -183,6 +198,14 @@ static sai_object_id_t create_tunnel_map_entry(
     sai_attribute_t attr;
     sai_object_id_t tunnel_map_entry_id;
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
+
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Can't create a tunnel map entry for vni %u: no %s tunnel map", vni,
+                       sai_serialize_enum(static_cast<int32_t>(tunnel_map_type(map_t)),
+                                          &sai_metadata_enum_sai_tunnel_map_type_t).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
     attr.value.s32 = tunnel_map_type(map_t);
@@ -337,6 +360,14 @@ create_tunnel(
             SWSS_LOG_NOTICE("create_tunnel:encapmaplist[%d]=0x%" PRIx64 "",num_emap,emap_list[num_emap]);
             num_emap++;
         }
+    }
+
+    /* No decap or encap map is available when the switch supports none of the
+     * map types or every map create failed. Some SAIs reject such a tunnel. */
+    if (num_map == 0 && num_emap == 0)
+    {
+        SWSS_LOG_WARN("No tunnel maps to attach; not creating the tunnel");
+        return SAI_NULL_OBJECT_ID;
     }
 
     attr.id = SAI_TUNNEL_ATTR_ENCAP_MAPPERS;
@@ -1168,13 +1199,18 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
         dip_tunnel = (new VxlanTunnel(tunnel_name, src_ip_, dipaddr, TNL_CREATION_SRC_EVPN));
         tunnel_orch->addTunnel(tunnel_name,dip_tunnel);
 
+        TUNNELMAP_SET_VLAN(mapper_list);
+        TUNNELMAP_SET_VRF(mapper_list);
+        if (!dip_tunnel->createTunnelHw(mapper_list,TUNNEL_MAP_USE_COMMON_ENCAP_DECAP, false))
+        {
+            SWSS_LOG_ERROR("Failed to create P2P Tunnel remote IP %s", dip.c_str());
+            tunnel_orch->delTunnel(tunnel_name);
+            return false;
+        }
+
         memset(&tnl_refcnts,0,sizeof(tunnel_refcnt_t));
         updateRemoteEndPointRefCnt(true,tnl_refcnts,usr);
         tnl_users_[dip] = tnl_refcnts;
-
-        TUNNELMAP_SET_VLAN(mapper_list);
-        TUNNELMAP_SET_VRF(mapper_list);
-        dip_tunnel->createTunnelHw(mapper_list,TUNNEL_MAP_USE_COMMON_ENCAP_DECAP, false);
         SWSS_LOG_NOTICE("Created P2P Tunnel remote IP %s ", dip.c_str());
     }
     else 
@@ -1740,7 +1776,10 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         return true;
     }
 
-    vtep_ptr->createDynamicDIPTunnel(remote_vtep, usr);
+    if (!vtep_ptr->createDynamicDIPTunnel(remote_vtep, usr))
+    {
+        return false;
+    }
 
     getTunnelNameFromDIP(remote_vtep, tunnel_name);
     dip_tunnel = getVxlanTunnel(tunnel_name);
@@ -1757,7 +1796,13 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         auto port_tunnel_name = getTunnelPortName(remote_vtep);
         gPortsOrch->addTunnel(port_tunnel_name,dip_tunnel->getTunnelId(), false);
         gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-        gPortsOrch->addBridgePort(tunnelPort);
+        if (!gPortsOrch->addBridgePort(tunnelPort))
+        {
+            SWSS_LOG_ERROR("Failed to add bridge port for remote VTEP %s", remote_vtep.c_str());
+            gPortsOrch->removeTunnel(tunnelPort);
+            vtep_ptr->deleteDynamicDIPTunnel(remote_vtep, usr);
+            return false;
+        }
     }
 
     return true;
@@ -2338,7 +2383,12 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
             uint8_t mapper_list = 0;
             TUNNELMAP_SET_VLAN(mapper_list);
             TUNNELMAP_SET_VRF(mapper_list);
-            tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            bool tunnel_created = tunnel_obj->createTunnelHw(mapper_list,
+                                                TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            if (!tunnel_created)
+            {
+                return false;
+            }
             if (!tunnel_orch->isDipTunnelsSupported())
             {
                 Port tunPort;
@@ -2566,7 +2616,21 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
         }
     }
 
-    tunnel_orch->addTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+    /*
+     * The tunnel user reference is taken once per entry and kept while the VLAN member
+     * add is retried, so a retry does not take another reference or rebuild the tunnel.
+     */
+    auto pending_key = make_pair(vlan_id, remote_vtep);
+    if (m_pendingVlanMembers.find(pending_key) == m_pendingVlanMembers.end())
+    {
+        if (!tunnel_orch->addTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR))
+        {
+            SWSS_LOG_WARN("Remote VNI add: tunnel to remote VTEP %s not available, vni %d vid %d",
+                          remote_vtep.c_str(), vni_id, vlan_id);
+            return false;
+        }
+        m_pendingVlanMembers.insert(pending_key);
+    }
 
     if (!tunnel_orch->getTunnelPort(remote_vtep,tunnelPort))
     {
@@ -2577,7 +2641,34 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     // SAI Call to add tunnel to the VLAN flood domain
     // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
-    gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode);
+    if (!gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode))
+    {
+        // A refused add is retried on every pass, so only the first failure of an entry is an ERROR.
+        if (m_vlanMemberFailureLogged.insert(pending_key).second)
+        {
+            SWSS_LOG_ERROR("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), will retry",
+                           remote_vtep.c_str(), vlan_id, vni_id);
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), still retrying",
+                           remote_vtep.c_str(), vlan_id, vni_id);
+        }
+        return false;
+    }
+    m_vlanMemberFailureLogged.erase(pending_key);
+
+    /*
+     * PortsOrch also returns true for a failed create it does not retry. The entry is
+     * consumed, but keeps its tunnel user reference so that its DEL releases it.
+     */
+    if (!gPortsOrch->isVlanMember(vlanPort, tunnelPort))
+    {
+        SWSS_LOG_ERROR("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), not retried",
+                       remote_vtep.c_str(), vlan_id, vni_id);
+        return true;
+    }
+    m_pendingVlanMembers.erase(pending_key);
 
     SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
                    remote_vtep.c_str(), vni_id, vlan_id);
@@ -2594,20 +2685,26 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     // Extract DIP and tunnel
     auto remote_vtep = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN. A DEL carries no fields, so there is no VNI to read: the
+    // VLAN and the remote VTEP in the key identify the flood member.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = (sai_vlan_id_t)stoi(vlan_name.substr(4));
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    m_vlanMemberFailureLogged.erase(make_pair(vlan_id, remote_vtep));
+
+    // The add took a tunnel user reference but never added the VLAN member: release it.
+    if (m_pendingVlanMembers.erase(make_pair(vlan_id, remote_vtep)))
+    {
+        SWSS_LOG_NOTICE("Remote VNI del: remote VTEP %s was never added to vid %d, releasing its tunnel",
+                        remote_vtep.c_str(), vlan_id);
+        // delTunnelUser() does not use the VNI.
+        return tunnel_orch->delTunnelUser(remote_vtep, 0, vlan_id, TUNNEL_USER_IMR);
+    }
+
     Port vlanPort, tunnelPort;
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
     {
@@ -2652,10 +2749,10 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
                    vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
                    tunnelPort.m_fdb_count );
 
-    ret = tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+    ret = tunnel_orch->delTunnelUser(remote_vtep, 0, vlan_id, TUNNEL_USER_IMR);
 
-    SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
-                   remote_vtep.c_str(), vni_id, vlan_id);
+    SWSS_LOG_INFO("remote_vtep=%s vlanid=%d ",
+                   remote_vtep.c_str(), vlan_id);
 
 
     return ret;
@@ -2737,7 +2834,23 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     // SAI Call to add tunnel to the VLAN flood domain
     // NOTE: does 'untagged' make the most sense here?
     string tagging_mode = "untagged";
-    gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode, end_point_ip);
+    auto entry_key = make_pair(vlan_id, end_point_ip);
+    if (!gPortsOrch->addVlanMember(vlanPort, tunnelPort, tagging_mode, end_point_ip))
+    {
+        // A refused add is retried on every pass, so only the first failure of an entry is an ERROR.
+        if (m_vlanMemberFailureLogged.insert(entry_key).second)
+        {
+            SWSS_LOG_ERROR("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), will retry",
+                           end_point_ip.c_str(), vlan_id, vni_id);
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Failed to add remote VTEP %s to the flood list of vid %d (vni %d), still retrying",
+                           end_point_ip.c_str(), vlan_id, vni_id);
+        }
+        return false;
+    }
+    m_vlanMemberFailureLogged.erase(entry_key);
 
     SWSS_LOG_INFO("end_point_ip=%s vni=%d vlanid=%d ",
                    end_point_ip.c_str(), vni_id, vlan_id);
@@ -2752,22 +2865,18 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     // Extract end point ip
     auto end_point_ip = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN. A DEL carries no fields, so there is no VNI to read: the
+    // VLAN and the remote VTEP in the key identify the flood member.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     Port vlanPort, tunnelPort;
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+
+    m_vlanMemberFailureLogged.erase(make_pair(vlan_id, end_point_ip));
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
