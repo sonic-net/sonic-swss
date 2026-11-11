@@ -116,7 +116,6 @@ public:
     bool enableNeighbors(std::list<NeighborContext>&);
     bool disableNeighbors(std::list<NeighborContext>&);
     bool isHwConfigured(const NeighborEntry&);
-    void processFDBDelete(const FdbEntry &entry, bool behind_nhg = false);
     void processFDBAdd(const FdbEntry &entry);
     void processFDBResolve(const FdbEntry &entry);
     void processFDBRemoteUpdate(const FdbEntry &entry);

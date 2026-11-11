@@ -2230,17 +2230,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if ((fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) &&
-            macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
-            (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
-            /*
-             * A local MAC moved to the remote VXLAN side. Behind a single VTEP
-             * the neighbors stay and the SAI follows the MAC onto the tunnel
-             * (those with a host route over a tunnel are already out of the SAI).
-             * Behind a next hop group they are taken out.
-             */
-            gNeighOrch->processFDBDelete(entry, fdbData.dest_type == FdbDest::NEXTHOPGROUP);
-        }
+        /*
+         * A local MAC moved behind a VTEP or a bridge port next hop group keeps its
+         * neighbors in the SAI, which follows the MAC onto the tunnel or group (those
+         * with a host route over a tunnel are already out of the SAI).
+         */
     }
     else if (macUpdate
             && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
