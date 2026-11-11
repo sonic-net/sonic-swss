@@ -476,10 +476,11 @@ time_t MacSync::markRemoteMacsStale(time_t warmRestartTimer, std::chrono::steady
 time_t MacSync::onStaleSweepTimer(std::chrono::steady_clock::time_point now)
 {
     using std::chrono::duration_cast;
-    using std::chrono::seconds;
+    /* Whole seconds in time_t, the type of the interval this returns (32 bits on some targets) */
+    using time_t_seconds = std::chrono::duration<time_t>;
 
-    time_t sinceMsg = duration_cast<seconds>(now - m_lastFpmMessage).count();
-    time_t sinceMark = duration_cast<seconds>(now - m_staleSince).count();
+    time_t sinceMsg = duration_cast<time_t_seconds>(now - m_lastFpmMessage).count();
+    time_t sinceMark = duration_cast<time_t_seconds>(now - m_staleSince).count();
 
     if (m_staleWarmTimer)
     {
