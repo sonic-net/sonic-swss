@@ -1054,11 +1054,34 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
     cmd << TEAMDCTL_CMD << " " << lag << " port remove " << member;
     if (exec(cmd.str(), res) != 0)
     {
-        /* Member is still in teamd, so keep the gate maps and let the
-         * caller retain the delete. */
-        SWSS_LOG_WARN("Failed to remove %s from port channel %s: %s",
-                      member.c_str(), lag.c_str(), res.c_str());
-        return false;
+        /* A failed remove is a real failure only while teamd is still
+         * running and the member is still enslaved. Retry the delete up to
+         * the budget, then drop it: teamd is rejecting the remove and
+         * retrying on every pass would not stop. The gate maps stay,
+         * because the member is still in teamd, and admin status / MTU are
+         * left alone while it is still a member.
+         *
+         * Otherwise the member is already out of teamd (the remove succeeded
+         * on an earlier pass and the admin/MTU restore threw, or teamd is
+         * gone). Carry on and restore the port settings. */
+        if (m_lagList.find(lag) != m_lagList.end() && isPortEnslaved(member))
+        {
+            int attempts = ++m_macsecMemberRemoveAttempts[lag][member];
+            if (attempts < MACSEC_MEMBER_REMOVE_MAX_ATTEMPTS)
+            {
+                SWSS_LOG_WARN("Failed to remove %s from port channel %s (%d/%d): %s",
+                              member.c_str(), lag.c_str(), attempts,
+                              MACSEC_MEMBER_REMOVE_MAX_ATTEMPTS, res.c_str());
+                return false;
+            }
+
+            resetMacsecMemberRemoveAttempts(lag, member);
+            SWSS_LOG_ERROR("Stopped retrying removal of %s from port channel %s after %d failures; member is still in teamd: %s",
+                           member.c_str(), lag.c_str(), attempts, res.c_str());
+            return true;
+        }
+        SWSS_LOG_NOTICE("%s already removed from port channel %s, restoring port settings",
+                        member.c_str(), lag.c_str());
     }
 
     // The port has left the team and its macsec_gate went with it.
@@ -1241,6 +1264,7 @@ void TeamMgr::forgetMacsecMemberGate(const string &lag, const string &member)
     eraseMember(m_macsecMemberGate);
     eraseMember(m_macsecGatePushed);
     resetMacsecGatePushAttempts(lag, member);
+    resetMacsecMemberRemoveAttempts(lag, member);
 }
 
 void TeamMgr::forgetMacsecLagGates(const string &lag)
@@ -1248,6 +1272,21 @@ void TeamMgr::forgetMacsecLagGates(const string &lag)
     m_macsecMemberGate.erase(lag);
     m_macsecGatePushed.erase(lag);
     m_macsecGatePushAttempts.erase(lag);
+    m_macsecMemberRemoveAttempts.erase(lag);
+}
+
+void TeamMgr::resetMacsecMemberRemoveAttempts(const string &lag, const string &member)
+{
+    auto lagIt = m_macsecMemberRemoveAttempts.find(lag);
+    if (lagIt == m_macsecMemberRemoveAttempts.end())
+    {
+        return;
+    }
+    lagIt->second.erase(member);
+    if (lagIt->second.empty())
+    {
+        m_macsecMemberRemoveAttempts.erase(lagIt);
+    }
 }
 
 void TeamMgr::resetMacsecGatePushAttempts(const string &lag, const string &member)
@@ -1279,6 +1318,11 @@ void TeamMgr::forgetMacsecPortGates(const string &port)
     {
         it->second.erase(port);
         it = it->second.empty() ? m_macsecGatePushAttempts.erase(it) : std::next(it);
+    }
+    for (auto it = m_macsecMemberRemoveAttempts.begin(); it != m_macsecMemberRemoveAttempts.end();)
+    {
+        it->second.erase(port);
+        it = it->second.empty() ? m_macsecMemberRemoveAttempts.erase(it) : std::next(it);
     }
 }
 

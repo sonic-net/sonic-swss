@@ -1208,4 +1208,74 @@ namespace teammgr_ut
         static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
         EXPECT_TRUE(findCommandWith({"PortChannel141", "port remove", "Ethernet1"}));
     }
+
+    TEST_F(TeamMgrTest, testMacsecGate_PortRemoveOfAlreadyRemovedMemberRestoresPort)
+    {
+        /* teamdctl port remove fails because the member is already out of
+         * teamd (retried DEL, or DEL after the LAG went away). The delete must
+         * not be retained: admin status / MTU are restored and the task is
+         * consumed. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel142", "Ethernet1", true, true);
+
+        swss::DBConnector *db = m_config_db.get();
+        const std::string table = CFG_LAG_MEMBER_TABLE_NAME;
+        const std::string key = "PortChannel142|Ethernet1";
+        swss::Table t(db, table);
+        t.del(key);
+
+        auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            new swss::SubscriberStateTable(db, table, 1, 1), &teammgr, table));
+        consumer->addToSync({ { key, DEL_COMMAND, {} } });
+
+        failPortRemove = true;
+        mockEnslavedPorts.erase("Ethernet1");   // already out of teamd
+        mockCallArgs.clear();
+        static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
+
+        EXPECT_EQ(countCommandsWith({"PortChannel142", "port remove", "Ethernet1"}), 1);
+        EXPECT_TRUE(findCommandWith({"ip link set dev", "Ethernet1", "mtu"}));
+
+        // The delete was consumed: nothing is retried.
+        mockCallArgs.clear();
+        static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
+        EXPECT_FALSE(findCommandWith({"PortChannel142", "port remove", "Ethernet1"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_PortRemoveFailureStopsAfterBudget)
+    {
+        /* teamd keeps rejecting the remove and the member stays enslaved.
+         * Retry up to the budget, then drop the delete. Do not rewrite admin
+         * status or MTU while the port is still a member, and do not keep
+         * calling teamdctl. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel143", "Ethernet1", true, true);
+
+        swss::DBConnector *db = m_config_db.get();
+        const std::string table = CFG_LAG_MEMBER_TABLE_NAME;
+        const std::string key = "PortChannel143|Ethernet1";
+        swss::Table t(db, table);
+        t.del(key);
+
+        auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            new swss::SubscriberStateTable(db, table, 1, 1), &teammgr, table));
+        consumer->addToSync({ { key, DEL_COMMAND, {} } });
+
+        failPortRemove = true;
+        mockCallArgs.clear();
+        for (int i = 0; i < MACSEC_MEMBER_REMOVE_MAX_ATTEMPTS; ++i)
+        {
+            static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
+        }
+
+        EXPECT_EQ(countCommandsWith({"PortChannel143", "port remove", "Ethernet1"}),
+                  MACSEC_MEMBER_REMOVE_MAX_ATTEMPTS);
+        EXPECT_FALSE(findCommandWith({"ip link set dev", "Ethernet1"}));
+
+        // Budget spent: the delete is gone, so nothing further is attempted.
+        mockCallArgs.clear();
+        static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
+        EXPECT_FALSE(findCommandWith({"PortChannel143", "port remove", "Ethernet1"}));
+        EXPECT_FALSE(findCommandWith({"ip link set dev", "Ethernet1"}));
+    }
 }

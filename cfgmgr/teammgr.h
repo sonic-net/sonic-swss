@@ -15,6 +15,11 @@
  * item stops here instead of being forked forever. */
 #define MACSEC_GATE_MAX_PUSH_ATTEMPTS 5
 
+/* Failed "teamdctl port remove" calls while the member is still enslaved.
+ * The delete is reprocessed on each pass; past this many the delete is
+ * dropped instead of retrying for as long as teamd keeps rejecting it. */
+#define MACSEC_MEMBER_REMOVE_MAX_ATTEMPTS 5
+
 namespace swss {
 
 class TeamMgr : public Orch
@@ -51,6 +56,9 @@ private:
     std::map<std::string, std::map<std::string, bool>> m_macsecMemberGate;
     std::map<std::string, std::map<std::string, bool>> m_macsecGatePushed;
     std::map<std::string, std::map<std::string, int>> m_macsecGatePushAttempts;
+    /* Failed port-remove attempts per member. Cleared once the member has
+     * actually left teamd. */
+    std::map<std::string, std::map<std::string, int>> m_macsecMemberRemoveAttempts;
 
     MacAddress m_mac;
 
@@ -75,6 +83,7 @@ private:
     void forgetMacsecPortGates(const std::string &port);
     void forgetMacsecLagGates(const std::string &lag);
     void resetMacsecGatePushAttempts(const std::string &lag, const std::string &member);
+    void resetMacsecMemberRemoveAttempts(const std::string &lag, const std::string &member);
 
     task_process_status addLag(const std::string &alias, int min_links, bool fall_back, bool fast_rate);
     bool removeLag(const std::string &alias);
