@@ -3,6 +3,8 @@
 #include <string.h>
 #include "logger.h"
 #include "dbconnector.h"
+#include "rediscommand.h"
+#include "redisreply.h"
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
@@ -20,6 +22,7 @@ using namespace swss;
 
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
+        m_cfgDb(cfgDb),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
         m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
@@ -171,12 +174,13 @@ set<string> BufferMgr::losslessPgCombinations(const string &pfc_enable)
 /*
  * Remove the given range keys from the port. Only a key whose profile carries the
  * generated prefix is removed, so a range an operator has pointed at a profile of
- * their own is left as configured.
+ * their own is left as configured. Returns the profiles the removed keys referenced.
  */
-void BufferMgr::removeLosslessPgs(const string &port, const set<string> &pg_ids_set, const string &reason)
+set<string> BufferMgr::removeLosslessPgs(const string &port, const set<string> &pg_ids_set, const string &reason)
 {
     SWSS_LOG_ENTER();
 
+    set<string> profiles;
     for (const auto &pg_ids : pg_ids_set)
     {
         const string key = port + m_cfgBufferPgTable.getTableNameSeparator() + pg_ids;
@@ -195,7 +199,10 @@ void BufferMgr::removeLosslessPgs(const string &port, const set<string> &pg_ids_
 
         SWSS_LOG_NOTICE("Removing lossless PG %s of port %s, %s", key.c_str(), port.c_str(), reason.c_str());
         m_cfgBufferPgTable.del(key);
+        profiles.insert(profile);
     }
+
+    return profiles;
 }
 
 /*
@@ -223,7 +230,58 @@ void BufferMgr::removeAllGeneratedLosslessPgs(const string &port, const string &
         m_portStalePgs.erase(stale);
     }
 
-    removeLosslessPgs(port, to_remove, reason);
+    auto profiles = removeLosslessPgs(port, to_remove, reason);
+    if (!profiles.empty())
+    {
+        removeUnusedLosslessProfiles(profiles);
+    }
+}
+
+/*
+ * Returns every BUFFER_PG key that has a profile, followed by that profile, as one
+ * flat list, so reading the whole table costs one round trip.
+ */
+static const char *bufferPgProfilesLua =
+    "local res = {}\n"
+    "for _, key in ipairs(redis.call('KEYS', KEYS[1] .. '*')) do\n"
+    "    local profile = redis.call('HGET', key, 'profile')\n"
+    "    if profile then\n"
+    "        res[#res + 1] = key\n"
+    "        res[#res + 1] = profile\n"
+    "    end\n"
+    "end\n"
+    "return res\n";
+
+/*
+ * Remove the given generated profiles that no BUFFER_PG entry references any more.
+ * A profile another port still uses is kept.
+ */
+void BufferMgr::removeUnusedLosslessProfiles(set<string> profiles)
+{
+    SWSS_LOG_ENTER();
+
+    const string prefix = m_cfgBufferPgTable.getTableName() + m_cfgBufferPgTable.getTableNameSeparator();
+    RedisCommand cmd;
+    cmd.format("EVAL %s 1 %s", bufferPgProfilesLua, prefix.c_str());
+    // throws on a redis error, so a failed read never removes a profile
+    RedisReply reply(m_cfgDb, cmd, REDIS_REPLY_ARRAY);
+    const redisReply *pgs = reply.getContext();
+    for (size_t i = 0; i + 1 < pgs->elements && !profiles.empty(); i += 2)
+    {
+        const string key(pgs->element[i]->str, pgs->element[i]->len);
+        const string profile(pgs->element[i + 1]->str, pgs->element[i + 1]->len);
+        if (profiles.erase(profile))
+        {
+            SWSS_LOG_INFO("Keeping lossless profile %s, BUFFER_PG %s still references it",
+                          profile.c_str(), key.substr(prefix.size()).c_str());
+        }
+    }
+
+    for (const auto &profile : profiles)
+    {
+        SWSS_LOG_NOTICE("Removing lossless profile %s, no BUFFER_PG references it", profile.c_str());
+        m_cfgBufferProfileTable.del(profile);
+    }
 }
 
 task_process_status BufferMgr::doSpeedUpdateTask(string port)
@@ -347,6 +405,8 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
     }
 
+    // generated profiles the PGs are moved off or removed from, removed below if nothing else uses them
+    set<string> released_profiles;
     for (auto lossless_pg : lossless_pg_combinations)
     {
         vector<FieldValueTuple> fvVectorPg;
@@ -357,11 +417,19 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         /* Check if PG Mapping is already then log message and return. */
         for (auto& prop : fvVectorPg)
         {
-            if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
+            if (fvField(prop) != "profile")
+            {
+                continue;
+            }
+            if (profile_ref == fvValue(prop))
             {
                 SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
                 profile_existing = true;
                 break;
+            }
+            if (fvValue(prop).rfind(LOSSLESS_PROFILE_PREFIX, 0) == 0)
+            {
+                released_profiles.insert(fvValue(prop));
             }
         }
         if (profile_existing)
@@ -390,7 +458,13 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
             }
         }
         m_portStalePgs.erase(stale);
-        removeLosslessPgs(port, to_remove, "pfc_enable is now " + pfc_enable);
+        auto profiles = removeLosslessPgs(port, to_remove, "pfc_enable is now " + pfc_enable);
+        released_profiles.insert(profiles.begin(), profiles.end());
+    }
+
+    if (!released_profiles.empty())
+    {
+        removeUnusedLosslessProfiles(released_profiles);
     }
 
     return task_process_status::task_success;

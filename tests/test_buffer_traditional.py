@@ -81,6 +81,15 @@ class TestBuffer(object):
             pg_name_map[pg_name] = self.get_pg_oid(pg_name)
         return pg_name_map
     
+    def unused_cable_len(self, speed, cable_lens):
+        """A length the lookup has, that no port uses and with no generated profile yet."""
+        in_use = set(cable_lens.values())
+        profiles = set(self.config_db.get_keys("BUFFER_PROFILE"))
+        candidates = [c for c in ("5m", "40m", "300m")
+                      if c not in in_use and "pg_lossless_{}_{}_profile".format(speed, c) not in profiles]
+        assert candidates, "no unused cable length to test with"
+        return candidates[0]
+
     def check_syslog(self, dvs, marker, err_log, expected_cnt=1):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
         assert num.strip() >= str(expected_cnt)
@@ -320,6 +329,228 @@ class TestBuffer(object):
                 self.change_cable_len(orig_cable_len)
             dvs.port_admin_set(self.INTF, "down")
             dvs.runcmd("swssloglevel -l NOTICE -c buffermgrd")
+
+    def test_replaced_profile_removed_when_unused(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        A cable length change moves the port's lossless PGs to a new generated profile.
+        Changing it back must remove that profile from CONFIG_DB, APPL_DB and ASIC_DB
+        once no BUFFER_PG references it, and keep it while another port still does.
+        """
+        extra_port = "Ethernet4"
+        orig_cable_lens = None
+        orig_extra_qos_map = None
+        kept = "Keeping lossless profile"
+
+        try:
+            dvs.runcmd("swssloglevel -l INFO -c buffermgrd")
+            speed = self.config_db.get_entry("PORT", self.INTF)["speed"]
+            assert self.config_db.get_entry("PORT", extra_port)["speed"] == speed
+            orig_cable_lens = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            orig_extra_qos_map = self.config_db.get_entry("PORT_QOS_MAP", extra_port)
+
+            test_cable_len = self.unused_cable_len(speed, orig_cable_lens)
+            test_profile = "pg_lossless_{}_{}_profile".format(speed, test_cable_len)
+
+            # a real length for both ports, so their PGs reference a generated profile
+            base_cable_len = orig_cable_lens[self.INTF]
+            if base_cable_len == "0m":
+                base_cable_len = next(c for c in ("5m", "40m", "300m") if c != test_cable_len)
+            base_profile = "pg_lossless_{}_{}_profile".format(speed, base_cable_len)
+            self.set_port_qos_table(extra_port, '3,4')
+            self.change_cable_len(base_cable_len, extra_port)
+            dvs.port_admin_set(self.INTF, "up")
+            dvs.port_admin_set(extra_port, "up")
+            for port in (self.INTF, extra_port):
+                self.config_db.wait_for_field_match("BUFFER_PG", "{}|3-4".format(port), {"profile": base_profile})
+            self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", base_profile)
+            self.orig_profiles = self.get_asic_buf_profile()
+
+            # both ports move to the test length
+            self.change_cable_len(test_cable_len, extra_port)
+            for port in (self.INTF, extra_port):
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "{}:3-4".format(port), {"profile": test_profile})
+            self.check_new_profile_in_asic_db(test_profile)
+
+            # Ethernet0 moves back; Ethernet4 still references the test profile
+            marker = dvs.add_log_marker()
+            self.change_cable_len(base_cable_len)
+            self.wait_for_syslog(dvs, marker, "{} {}, BUFFER_PG {}|3-4 still".format(kept, test_profile, extra_port))
+            assert self.config_db.get_entry("BUFFER_PROFILE", test_profile), \
+                "{} was removed while {} still references it".format(test_profile, extra_port)
+            assert self.app_db.get_entry("BUFFER_PROFILE_TABLE", test_profile), \
+                "{} was removed from APPL_DB while {} still references it".format(test_profile, extra_port)
+
+            # Ethernet4 moves back too, so nothing references the test profile
+            self.change_cable_len(base_cable_len, extra_port)
+            self.config_db.wait_for_deleted_entry("BUFFER_PROFILE", test_profile)
+            self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_profile)
+            self.asic_db.wait_for_deleted_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", [self.new_profile])
+            # the base profile may have been removed and created again while no port
+            # used it, so compare the count rather than the OIDs
+            self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", len(self.orig_profiles))
+            assert self.config_db.get_entry("BUFFER_PROFILE", base_profile)
+
+        finally:
+            if orig_cable_lens:
+                self.config_db.update_entry("CABLE_LENGTH", "AZURE", orig_cable_lens)
+            if orig_extra_qos_map is not None:
+                if "pfc_enable" in orig_extra_qos_map:
+                    self.config_db.update_entry("PORT_QOS_MAP", extra_port, orig_extra_qos_map)
+                else:
+                    self.config_db.delete_field("PORT_QOS_MAP", extra_port, "pfc_enable")
+            dvs.port_admin_set(self.INTF, "down")
+            dvs.port_admin_set(extra_port, "down")
+            dvs.runcmd("swssloglevel -l NOTICE -c buffermgrd")
+
+    def test_profile_removed_with_pfc_enable(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        Removing pfc_enable removes the port's generated lossless PGs. The profile they
+        referenced must go too once no BUFFER_PG references it.
+        """
+        orig_cable_lens = None
+        orig_qos_map = None
+        pg_key = "{}|3-4".format(self.INTF)
+
+        try:
+            speed = self.config_db.get_entry("PORT", self.INTF)["speed"]
+            orig_cable_lens = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            orig_qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
+            test_cable_len = self.unused_cable_len(speed, orig_cable_lens)
+            test_profile = "pg_lossless_{}_{}_profile".format(speed, test_cable_len)
+
+            dvs.port_admin_set(self.INTF, "up")
+            self.orig_profiles = self.get_asic_buf_profile()
+            self.change_cable_len(test_cable_len)
+            self.config_db.wait_for_field_match("BUFFER_PG", pg_key, {"profile": test_profile})
+            self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", test_profile)
+            self.check_new_profile_in_asic_db(test_profile)
+
+            self.config_db.delete_field("PORT_QOS_MAP", self.INTF, "pfc_enable")
+            self.config_db.wait_for_deleted_entry("BUFFER_PG", pg_key)
+            self.config_db.wait_for_deleted_entry("BUFFER_PROFILE", test_profile)
+            self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_profile)
+            self.asic_db.wait_for_deleted_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", [self.new_profile])
+
+        finally:
+            # cable length first, so restoring pfc_enable renders the original profile only
+            if orig_cable_lens:
+                self.config_db.update_entry("CABLE_LENGTH", "AZURE", orig_cable_lens)
+            if orig_qos_map:
+                self.config_db.update_entry("PORT_QOS_MAP", self.INTF, orig_qos_map)
+                self.lossless_pgs = orig_qos_map["pfc_enable"].split(',')
+            dvs.port_admin_set(self.INTF, "down")
+
+    def test_superseded_range_profile_removed(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        A pfc_enable change made while the port is not rendered (0m cable) leaves the
+        previous range, on the previous length's profile, to be removed by the next
+        render. When that render is for another length, the previous profile is left
+        with no BUFFER_PG and must be removed too.
+        """
+        orig_cable_lens = None
+        old_pg_key = "{}|3-4".format(self.INTF)
+        new_pg_key = "{}|3-5".format(self.INTF)
+        not_rendered = "Not creating/updating PG profile for port {}. Cable length is set to 0m".format(self.INTF)
+
+        try:
+            dvs.runcmd("swssloglevel -l INFO -c buffermgrd")
+            speed = self.config_db.get_entry("PORT", self.INTF)["speed"]
+            orig_cable_lens = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            test_cable_len = self.unused_cable_len(speed, orig_cable_lens)
+            test_profile = "pg_lossless_{}_{}_profile".format(speed, test_cable_len)
+            base_cable_len = orig_cable_lens[self.INTF]
+            if base_cable_len == "0m":
+                base_cable_len = next(c for c in ("5m", "40m", "300m") if c != test_cable_len)
+            base_profile = "pg_lossless_{}_{}_profile".format(speed, base_cable_len)
+
+            dvs.port_admin_set(self.INTF, "up")
+            self.orig_profiles = self.get_asic_buf_profile()
+            self.change_cable_len(test_cable_len)
+            self.config_db.wait_for_field_match("BUFFER_PG", old_pg_key, {"profile": test_profile})
+            self.check_new_profile_in_asic_db(test_profile)
+
+            marker = dvs.add_log_marker()
+            self.change_cable_len("0m")
+            self.wait_for_syslog(dvs, marker, not_rendered)
+
+            marker = dvs.add_log_marker()
+            self.set_port_qos_table(self.INTF, '3,4,5')
+            self.wait_for_syslog(dvs, marker, "Got pfc enable status for port {} status 3,4,5".format(self.INTF))
+
+            # the next render binds 3-5 to the base profile and removes 3-4 with its profile
+            self.change_cable_len(base_cable_len)
+            self.config_db.wait_for_field_match("BUFFER_PG", new_pg_key, {"profile": base_profile})
+            self.config_db.wait_for_deleted_entry("BUFFER_PG", old_pg_key)
+            self.config_db.wait_for_deleted_entry("BUFFER_PROFILE", test_profile)
+            self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_profile)
+            self.asic_db.wait_for_deleted_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", [self.new_profile])
+
+        finally:
+            if orig_cable_lens:
+                self.config_db.update_entry("CABLE_LENGTH", "AZURE", orig_cable_lens)
+            self.set_port_qos_table(self.INTF, '3,4')
+            dvs.port_admin_set(self.INTF, "down")
+            dvs.runcmd("swssloglevel -l NOTICE -c buffermgrd")
+
+    def test_replaced_operator_profile_kept(self, dvs: DockerVirtualSwitch, setup_teardown_test):
+        """
+        A cable length change rebinds a lossless PG even when it points at a profile
+        without the generated pg_lossless_ prefix. That profile is the operator's, so
+        it must stay although nothing references it any more.
+
+        buffermgrd handles cable length changes in order, so once it logs the removal
+        for the second change, it has finished the first.
+        """
+        operator_profile = "operator_lossless_profile"
+        pg_key = "{}|3-4".format(self.INTF)
+        orig_cable_lens = None
+
+        try:
+            speed = self.config_db.get_entry("PORT", self.INTF)["speed"]
+            orig_cable_lens = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            test_cable_len = self.unused_cable_len(speed, orig_cable_lens)
+            test_profile = "pg_lossless_{}_{}_profile".format(speed, test_cable_len)
+
+            base_cable_len = orig_cable_lens[self.INTF]
+            if base_cable_len == "0m":
+                base_cable_len = next(c for c in ("5m", "40m", "300m") if c != test_cable_len)
+                self.change_cable_len(base_cable_len)
+            base_profile = "pg_lossless_{}_{}_profile".format(speed, base_cable_len)
+            dvs.port_admin_set(self.INTF, "up")
+            self.config_db.wait_for_field_match("BUFFER_PG", pg_key, {"profile": base_profile})
+
+            # the operator points the PG at a profile of their own
+            fvs = self.config_db.get_entry("BUFFER_PROFILE", base_profile)
+            self.config_db.update_entry("BUFFER_PROFILE", operator_profile, fvs)
+            self.config_db.update_entry("BUFFER_PG", pg_key, {"profile": operator_profile})
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "{}:3-4".format(self.INTF),
+                                             {"profile": operator_profile})
+
+            # rebinds the PG to the generated profile for the new length
+            self.change_cable_len(test_cable_len)
+            self.config_db.wait_for_field_match("BUFFER_PG", pg_key, {"profile": test_profile})
+
+            # moving back removes the generated test profile, which marks the first change done
+            marker = dvs.add_log_marker()
+            self.change_cable_len(base_cable_len)
+            self.wait_for_syslog(dvs, marker, "Removing lossless profile {}, no BUFFER_PG".format(test_profile))
+
+            assert self.config_db.get_entry("BUFFER_PROFILE", operator_profile), \
+                "{} was removed when the PG was moved off it".format(operator_profile)
+            assert self.app_db.get_entry("BUFFER_PROFILE_TABLE", operator_profile), \
+                "{} was removed from APPL_DB when the PG was moved off it".format(operator_profile)
+
+        finally:
+            # a profile still referenced is never removed by bufferorch, so unbind it first,
+            # before the cable length restore lets buffermgrd rebind the PG as well
+            if self.config_db.get_entry("BUFFER_PG", pg_key).get("profile") == operator_profile:
+                self.config_db.update_entry("BUFFER_PG", pg_key, {"profile": base_profile})
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "{}:3-4".format(self.INTF),
+                                                 {"profile": base_profile})
+            self.config_db.delete_entry("BUFFER_PROFILE", operator_profile)
+            if orig_cable_lens:
+                self.config_db.update_entry("CABLE_LENGTH", "AZURE", orig_cable_lens)
+            dvs.port_admin_set(self.INTF, "down")
 
     def test_buffer_pg_update(self, dvs, setup_teardown_test):
         orig_cable_len = None

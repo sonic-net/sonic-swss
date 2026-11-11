@@ -43,6 +43,7 @@ public:
 private:
     std::string m_platform;
 
+    DBConnector *m_cfgDb;
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
     Table m_cfgBufferProfileTable;
@@ -68,9 +69,10 @@ private:
     task_process_status doCableTask(std::string port, std::string cable_length);
     task_process_status doSpeedUpdateTask(std::string port);
     std::set<std::string> losslessPgCombinations(const std::string &pfc_enable);
-    void removeLosslessPgs(const std::string &port, const std::set<std::string> &pg_ids_set,
+    std::set<std::string> removeLosslessPgs(const std::string &port, const std::set<std::string> &pg_ids_set,
                            const std::string &reason);
     void removeAllGeneratedLosslessPgs(const std::string &port, const std::string &reason);
+    void removeUnusedLosslessProfiles(std::set<std::string> profiles);
     void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
 
     void transformSeperator(std::string &name);
