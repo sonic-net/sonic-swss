@@ -839,8 +839,7 @@ namespace fdborch_vxlan_ut
 
     /*
      * A local MAC that moves behind a bridge port next hop group keeps its neighbor
-     * in the SAI, which resolves it through the group (a MAC moving to a single
-     * remote VTEP still takes it out).
+     * in the SAI, which resolves it through the group.
      */
     TEST_F(VxlanFdbOrchTest, LocalMacMovedToNhgKeepsNeighbor)
     {
@@ -1857,8 +1856,8 @@ namespace fdborch_vxlan_ut
 
     /*
      * The FDB events that act on the neighbors of a MAC (resolve, flush, move
-     * behind a next hop group, move back to a local port) touch the neighbors
-     * on that MAC and VLAN only, among many neighbors on other MACs.
+     * back to a local port) touch the neighbors on that MAC and VLAN only, among
+     * many neighbors on other MACs.
      */
     TEST_F(VxlanFdbOrchTest, TunnelNeighborFdbEventsTouchOnlyTheirMac)
     {
@@ -1913,15 +1912,15 @@ namespace fdborch_vxlan_ut
         gNeighOrch->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, &flush);
         EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), sets + 4);
 
-        /* processFDBDelete(), MAC now behind a next hop group */
-        gNeighOrch->processFDBDelete(entry, true);
+        /* processFDBAdd() re-enables disabled neighbors on its MAC only */
+        ASSERT_TRUE(gNeighOrch->disableNeighbor(n1));
+        ASSERT_TRUE(gNeighOrch->disableNeighbor(n2));
         EXPECT_FALSE(gNeighOrch->isHwConfigured(n1));
         EXPECT_FALSE(gNeighOrch->isHwConfigured(n2));
         EXPECT_TRUE(gNeighOrch->isHwConfigured(other));
         EXPECT_EQ(programmed(), (size_t)others + 1);
         EXPECT_EQ(gNeighOrch->m_syncdNeighbors.size(), (size_t)others + 3);
 
-        /* processFDBAdd(): a disabled neighbor on another MAC stays disabled */
         ASSERT_TRUE(gNeighOrch->disableNeighbor(other));
         ASSERT_EQ(programmed(), (size_t)others);
         gNeighOrch->processFDBAdd(entry);
@@ -2100,37 +2099,6 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), SAI_NULL_OBJECT_ID);
         EXPECT_TRUE(gNeighOrch->m_neighborToRefresh.empty());
         EXPECT_TRUE(gNeighOrch->isHwConfigured(neighbor));
-    }
-
-    /* No L3 VNI: a local MAC that moves behind an ES next hop group still takes its neighbor out. */
-    TEST_F(VxlanFdbOrchTest, TunnelNeighborLocalToNhgStillRemoved)
-    {
-        tnPorts(m_app_db.get(), m_portsOrch.get());
-        setUpNhgPort(m_portsOrch.get());
-        setUpNhg(m_portsOrch.get());
-        gL2NhgOrch->m_nhg_nh["536870913"].oid = 0x5000000000abcULL;
-        gL2NhgOrch->m_nhg_nh["536870913"].is_active = true;
-        ASSERT_TRUE(gIntfsOrch->setIntf(VLAN40));
-        NeighborEntry neighbor(TN_IP, string(VLAN40));
-        sai_object_id_t vlan_oid = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
-
-        triggerUpdate(gFdbOrch, SAI_FDB_EVENT_LEARNED, TN_MAC_BYTES, m_portsOrch->m_portList[ETH0].m_bridge_port_id, vlan_oid);
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
-        learnNeighbor(m_app_db.get(), VLAN40, TN_IP, TN_MAC);
-        ASSERT_TRUE(gNeighOrch->isHwConfigured(neighbor));
-
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).WillOnce(testing::Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
-        auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({ string(VLAN40) + ":" + TN_MAC, SET_COMMAND, {
-            { "vni", "40" }, { "type", "dynamic" }, { "nexthop_group", "536870913" } } });
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gFdbOrch)->doTask();
-
-        ASSERT_EQ(tnMacBridgePort(m_portsOrch.get(), TN_MAC), m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
-        EXPECT_FALSE(gNeighOrch->isHwConfigured(neighbor));
-        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
     }
 
     TEST_F(VxlanFdbOrchTest, DISABLED_RemoteMacLearnAddDeleteForNhg)

@@ -206,49 +206,6 @@ void NeighOrch::processFDBAdd(const FdbEntry &entry)
     }
 }
 
-/**
- * @brief Process FDB delete notification to disable neighbor entries
- *
- * This function handles FDB delete notifications when a MAC address is removed
- * from the FDB table. It searches for neighbor entries that match the deleted
- * FDB entry's MAC address and VLAN, and disables those neighbor entries to
- * prevent traffic from being forwarded to an invalid or unreachable destination.
- *
- * @param entry The FDB entry containing MAC address, VLAN ID, and port information
- * @param behind_nhg The MAC moved behind a bridge port next hop group, not a single VTEP
- */
-void NeighOrch::processFDBDelete(const FdbEntry &entry, bool behind_nhg)
-{
-    // Get Vlan object
-    Port vlan;
-    if (!m_portsOrch->getPort(entry.bv_id, vlan))
-    {
-         SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port \
-                          from bv_id 0x%" PRIx64 ".", entry.bv_id);
-         return;
-    }
-
-    SWSS_LOG_INFO("Delete FDB for mac :%s , VLAN: %s",
-                   entry.mac.to_string().c_str(), vlan.m_alias.c_str());
-
-    if (!behind_nhg)
-    {
-        /*
-         * The neighbors stay programmed and the SAI follows the MAC onto the
-         * tunnel; those of hosts with a host route over a tunnel are already out.
-         */
-        return;
-    }
-
-    // If the FDB entry MAC matches with neighbor/ARP entry MAC,
-    // and ARP entry incoming interface matches with VLAN name,
-    // del neighbor/arp entry.
-    for (const auto &neighborEntry : getNeighborsByMac(vlan.m_alias, entry.mac))
-    {
-        disableNeighbor(neighborEntry);
-    }
-}
-
 /*
  * A host with a host route over a VxLAN tunnel in the VLAN's VRF (symmetric
  * IRB) is reached by that route, so its neighbor stays out of the SAI: a SAI
