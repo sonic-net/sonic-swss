@@ -939,7 +939,7 @@ class TestCopp(object):
     def setup_exclude_ports(self, dvs):
         self.setup_copp(dvs)
         self.exclude_ctbl = swsscommon.Table(self.cdb, "COPP_TRAP_EXCLUDE_PORTS")
-        self.port_oids = dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
+        self.port_oids = dvs.get_counters_db().get_entry("COUNTERS_PORT_NAME_MAP", "")
 
     def set_exclude_ports(self, ports):
         if ports is None:
