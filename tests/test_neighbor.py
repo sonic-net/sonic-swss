@@ -542,7 +542,10 @@ class TestNeighbor(object):
             self.PEER_SWITCH_HOST,
             self.DEFAULT_PEER_SWITCH_PARAMS
         )
-        # nbrmgrd only consumes NEIGH_FAILED_TABLE when PEER_SWITCH exists at startup
+        # neighsyncd and nbrmgrd read the dual-ToR role (PEER_SWITCH) at startup:
+        # neighsyncd only publishes NEIGH_FAILED_TABLE with it, and nbrmgrd only
+        # consumes NEIGH_FAILED_TABLE with it
+        self._restart_neighsyncd(dvs)
         self.restart_nbrmgrd(dvs)
 
         vlan_member_key = self.DUALTOR_VLAN + "|" + self.DUALTOR_VLAN_MEMBER
@@ -571,6 +574,7 @@ class TestNeighbor(object):
         config_db.delete_entry("VLAN", self.DUALTOR_VLAN)
         dvs.port_admin_set(self.DUALTOR_VLAN_MEMBER, "down")
         config_db.delete_entry(self.CONFIG_PEER_SWITCH, self.PEER_SWITCH_HOST)
+        self._restart_neighsyncd(dvs)
         self.restart_nbrmgrd(dvs)
 
     def test_DualToRFailedIpv6NeighborEntryRemovedOnDelete(self, dvs, testlog, setup_dualtor_vlan):
