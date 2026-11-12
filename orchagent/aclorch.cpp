@@ -15,6 +15,7 @@
 #include "directory.h"
 #include "saihelper.h"
 #include "policerorch.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -4506,6 +4507,7 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
 {
     SWSS_LOG_ENTER();
 
+    m_isWarmRestoreStage = WarmStart::isWarmStart();
     init(connectors, portOrch, mirrorOrch, neighOrch, routeOrch);
 
     /* Initialize retry caches for rule consumers so that resource-exhaustion
@@ -6493,7 +6495,12 @@ void AclOrch::registerFlexCounter(const AclRule& rule)
         serializedCounterStatAttrs.insert(sai_serialize_attr_id(*meta));
     }
 
-    m_flex_counter_manager.setCounterIdList(rule.getCounterOid(), CounterType::ACL_COUNTER, serializedCounterStatAttrs);
+    // During warm restore syncd has no VID->RID mapping for new ACL counters
+    // until APPLY_VIEW; onWarmBootEnd() registers them for polling instead.
+    if (!m_isWarmRestoreStage)
+    {
+        m_flex_counter_manager.setCounterIdList(rule.getCounterOid(), CounterType::ACL_COUNTER, serializedCounterStatAttrs);
+    }
     m_countersDb.hset(COUNTERS_ACL_COUNTER_RULE_MAP, ruleIdentifier, counterOidStr);
 }
 
@@ -6502,6 +6509,23 @@ void AclOrch::deregisterFlexCounter(const AclRule& rule)
     auto ruleIdentifier = generateAclRuleIdentifierInCountersDb(rule);
     m_countersDb.hdel(COUNTERS_ACL_COUNTER_RULE_MAP, ruleIdentifier);
     m_flex_counter_manager.clearCounterIdList(rule.getCounterOid());
+}
+
+void AclOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
+    for (const auto& table : m_AclTables)
+    {
+        for (const auto& rule : table.second.rules)
+        {
+            if (rule.second->hasCounter())
+            {
+                registerFlexCounter(*rule.second);
+            }
+        }
+    }
 }
 
 string AclOrch::generateAclRuleIdentifierInCountersDb(const AclRule& rule) const

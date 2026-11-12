@@ -54,7 +54,8 @@ public:
     explicit NextHopGroup(const NextHopGroupKey& key, bool is_temp);
 
     NextHopGroup(NextHopGroup&& nhg) :
-        NhgCommon(move(nhg)), m_is_temp(nhg.m_is_temp), m_is_recursive(nhg.m_is_recursive)
+        NhgCommon(move(nhg)), m_is_temp(nhg.m_is_temp), m_is_recursive(nhg.m_is_recursive),
+        m_keeps_group_object(nhg.m_keeps_group_object)
     { SWSS_LOG_ENTER(); }
 
     NextHopGroup& operator=(NextHopGroup&& nhg);
@@ -73,6 +74,28 @@ public:
      * perform any sync / remove necessary.
      */
     bool update(const NextHopGroupKey& nhg_key);
+
+    /*
+     * True when update(nhg_key) would give the synced group a new SAI ID: a
+     * group without a SAI group object uses its one next hop's own ID.
+     */
+    bool replacesIdOnUpdate(const NextHopGroupKey& nhg_key) const;
+
+    /*
+     * True when the group is a SAI group object. A non-recursive group of one
+     * next hop is not, unless it shrank to that next hop from several: it then
+     * keeps its object, so the routes using it keep their next hop ID.
+     */
+    inline bool usesGroupObject() const
+    {
+        return m_is_recursive || m_keeps_group_object || (m_members.size() != 1);
+    }
+
+    /* True if sync() can add at least one member: a next hop ID, interface up. */
+    bool hasInstallableMember() const;
+
+    /* True if at least one member has a SAI group member object. */
+    bool hasSyncedMember() const;
 
     /* Validate a next hop in the group, syncing it. */
     bool validateNextHop(const NextHopKey& nh_key);
@@ -102,6 +125,9 @@ private:
     /* Whether the group is recursive i.e. having other nexthop group(s) as members */
     bool m_is_recursive;
 
+    /* Whether the group stays a SAI group object with one next hop. */
+    bool m_keeps_group_object = false;
+
     /* Add group's members over the SAI API for the given keys. */
     bool syncMembers(const set<NextHopKey>& nh_keys) override;
 
@@ -125,10 +151,17 @@ public:
     /* Add a temporary next hop group when resources are exhausted. */
     NextHopGroup createTempNhg(const NextHopGroupKey& nhg_key);
 
+    /* Non-recursive groups of one next hop that kept their SAI group object
+     * after shrinking; each holds a group entry a temporary group may wait for. */
+    size_t getKeptSingleNextHopGroupCount() const;
+
     /* Validate / Invalidate a next hop. */
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
 
 private:
     void doTask(Consumer& consumer) override;
+
+    /* Replace a group whose update changes its SAI ID. */
+    bool replaceNhg(const string &index, const NextHopGroupKey &nhg_key);
 };
