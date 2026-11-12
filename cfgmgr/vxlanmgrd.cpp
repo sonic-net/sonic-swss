@@ -102,9 +102,16 @@ int main(int argc, char **argv)
 
         if (WarmStart::isWarmStart())
         {
-            vxlanmgr.waitTillReadyToReconcile();
-            vxlanmgr.restoreVxlanNetDevices();
-            WarmStart::setWarmStartState("vxlanmgrd", WarmStart::REPLAYED);
+            vxlanmgr.waitTillReadyToReconcile(received_sigterm);
+            if (received_sigterm)
+            {
+                SWSS_LOG_NOTICE("Received SIGTERM during warm restart wait, exiting");
+            }
+            else
+            {
+                vxlanmgr.restoreVxlanNetDevices();
+                WarmStart::setWarmStartState("vxlanmgrd", WarmStart::REPLAYED);
+            }
         }
 
         SWSS_LOG_NOTICE("starting main loop");

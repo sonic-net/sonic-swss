@@ -1299,10 +1299,16 @@ void VxlanMgr::disableLearningForAllVxlanNetdevices()
     }
 }
 
-void VxlanMgr::waitTillReadyToReconcile()
+void VxlanMgr::waitTillReadyToReconcile(const bool &stop)
 {
     for (;;)
     {
+        if (stop)
+        {
+            SWSS_LOG_NOTICE("Received SIGTERM while waiting for vlanmgrd to reconcile");
+            return;
+        }
+
         WarmStart::WarmStartState state;
         WarmStart::getWarmStartState("vlanmgrd", state);
 
