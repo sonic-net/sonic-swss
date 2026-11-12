@@ -576,4 +576,130 @@ namespace intfsorch_test
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
         ASSERT_EQ(port.m_nat_zone_id, 7u);
     }
+
+    /*
+     * vlanmgrd writes the VLAN_MEMBER DEL and intfmgrd writes the INTF SET
+     * independently, so orchagent can see the router interface request for a
+     * port before the port has left its VLAN. removeBridgePort() calls into
+     * gStpOrch, which the base fixture does not create.
+     */
+    struct IntfsOrchVlanMemberRaceTest : IntfsOrchTest
+    {
+        const string m_port = "Ethernet0";
+        const string m_vlan = "Vlan1000";
+
+        void SetUp() override
+        {
+            IntfsOrchTest::SetUp();
+            vector<string> stp_tables = {
+                "STP_TABLE",
+                "STP_VLAN_INSTANCE_TABLE",
+                "STP_PORT_TABLE",
+                "STP_PORT_STATE_TABLE",
+                "STP_FASTAGEING_FLUSH_TABLE",
+                "STP_INST_PORT_FLUSH_TABLE"
+            };
+            gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), stp_tables);
+        }
+
+        void TearDown() override
+        {
+            delete gStpOrch;
+            gStpOrch = nullptr;
+            IntfsOrchTest::TearDown();
+        }
+
+        Consumer *consumer(Orch *orch, const string &table)
+        {
+            return dynamic_cast<Consumer *>(orch->getExecutor(table));
+        }
+
+        void addUntaggedMember()
+        {
+            consumer(gPortsOrch, APP_VLAN_TABLE_NAME)->addToSync(
+                std::deque<KeyOpFieldsValuesTuple>{{m_vlan, SET_COMMAND, {{"admin_status", "up"}, {"mtu", "9100"}}}});
+            consumer(gPortsOrch, APP_VLAN_MEMBER_TABLE_NAME)->addToSync(
+                std::deque<KeyOpFieldsValuesTuple>{{m_vlan + ":" + m_port, SET_COMMAND, {{"tagging_mode", "untagged"}}}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            Port port, vlan;
+            ASSERT_TRUE(gPortsOrch->getPort(m_port, port));
+            ASSERT_TRUE(gPortsOrch->getPort(m_vlan, vlan));
+            ASSERT_TRUE(gPortsOrch->isVlanMember(vlan, port));
+            ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+            ASSERT_EQ(port.m_port_vlan_id, 1000);
+        }
+
+        void queueMemberDel()
+        {
+            consumer(gPortsOrch, APP_VLAN_MEMBER_TABLE_NAME)->addToSync(
+                std::deque<KeyOpFieldsValuesTuple>{{m_vlan + ":" + m_port, DEL_COMMAND, {}}});
+        }
+
+        void queueIpAdd()
+        {
+            consumer(gIntfsOrch, APP_INTF_TABLE_NAME)->addToSync(
+                std::deque<KeyOpFieldsValuesTuple>{
+                    {m_port, SET_COMMAND, {{"mtu", "9100"}}},
+                    {m_port + ":100.100.93.254/24", SET_COMMAND, {{"scope", "global"}, {"family", "IPv4"}}}});
+        }
+
+        /* The port ends up routed only: out of the VLAN, no bridge port, default PVID, RIF with its IP. */
+        void expectRoutedPort()
+        {
+            ASSERT_TRUE(consumer(gPortsOrch, APP_VLAN_MEMBER_TABLE_NAME)->m_toSync.empty());
+            ASSERT_TRUE(consumer(gIntfsOrch, APP_INTF_TABLE_NAME)->m_toSync.empty());
+
+            Port port, vlan;
+            ASSERT_TRUE(gPortsOrch->getPort(m_port, port));
+            ASSERT_TRUE(gPortsOrch->getPort(m_vlan, vlan));
+            ASSERT_FALSE(gPortsOrch->isVlanMember(vlan, port));
+            ASSERT_EQ(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+            ASSERT_NE(port.m_rif_id, SAI_NULL_OBJECT_ID);
+            ASSERT_EQ(port.m_port_vlan_id, DEFAULT_PORT_VLAN_ID);
+
+            sai_attribute_t attr;
+            attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
+            ASSERT_EQ(sai_port_api->get_port_attribute(port.m_port_id, 1, &attr), SAI_STATUS_SUCCESS);
+            ASSERT_EQ(attr.value.u16, DEFAULT_PORT_VLAN_ID);
+
+            auto syncd = gIntfsOrch->getSyncdIntfses();
+            ASSERT_EQ(syncd[m_port].ip_addresses.size(), static_cast<size_t>(1));
+        }
+    };
+
+    TEST_F(IntfsOrchVlanMemberRaceTest, VlanMemberDelProcessedBeforeIpAdd)
+    {
+        ASSERT_NO_FATAL_FAILURE(addUntaggedMember());
+        queueMemberDel();
+        queueIpAdd();
+
+        auto rif_creates = create_rif_count;
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(create_rif_count, rif_creates + 1);
+
+        ASSERT_NO_FATAL_FAILURE(expectRoutedPort());
+    }
+
+    TEST_F(IntfsOrchVlanMemberRaceTest, IpAddProcessedBeforeVlanMemberDel)
+    {
+        ASSERT_NO_FATAL_FAILURE(addUntaggedMember());
+        queueMemberDel();
+        queueIpAdd();
+
+        /* IntfsOrch drains first: the router interface must wait for the port to leave the VLAN. */
+        auto rif_creates = create_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(create_rif_count, rif_creates);
+        ASSERT_FALSE(consumer(gIntfsOrch, APP_INTF_TABLE_NAME)->m_toSync.empty());
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(consumer(gPortsOrch, APP_VLAN_MEMBER_TABLE_NAME)->m_toSync.empty());
+
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(create_rif_count, rif_creates + 1);
+
+        ASSERT_NO_FATAL_FAILURE(expectRoutedPort());
+    }
 }
