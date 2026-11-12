@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "fdborch.h"
 #include "stporch.h"
+#include "converter.h"
 
 extern sai_stp_api_t *sai_stp_api;
 extern sai_vlan_api_t *sai_vlan_api;
@@ -393,12 +394,22 @@ void StpOrch::doStpTask(Consumer &consumer)
         {
             uint16_t instance = STP_INVALID_INSTANCE;
 
-            for (auto i : kfvFieldsValues(t))
+            try
             {
-                if (fvField(i) == "stp_instance")
+                for (auto i : kfvFieldsValues(t))
                 {
-                    instance = (uint16_t)std::stoi(fvValue(i));
+                    if (fvField(i) == "stp_instance")
+                    {
+                        instance = swss::to_uint<uint16_t>(fvValue(i));
+                    }
                 }
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                        consumer.getTableName().c_str(), vlan_alias.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if(instance == STP_INVALID_INSTANCE)
@@ -443,7 +454,18 @@ void StpOrch::doStpPortStateTask(Consumer &consumer)
         }
         string port_alias = key.substr(0, found);
         string stp_instance = key.substr(found+1);
-        uint16_t instance = (uint16_t)std::stoi(stp_instance);
+        uint16_t instance = STP_INVALID_INSTANCE;
+        try
+        {
+            instance = swss::to_uint<uint16_t>(stp_instance);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                    consumer.getTableName().c_str(), key.c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         Port port;
 
         if (!gPortsOrch->getPort(port_alias, port))
@@ -457,12 +479,22 @@ void StpOrch::doStpPortStateTask(Consumer &consumer)
         {
             uint8_t state = STP_STATE_INVALID;
 
-            for (auto i : kfvFieldsValues(t))
+            try
             {
-                if (fvField(i) == "state")
+                for (auto i : kfvFieldsValues(t))
                 {
-                    state = (uint8_t)std::stoi(fvValue(i));
+                    if (fvField(i) == "state")
+                    {
+                        state = swss::to_uint<uint8_t>(fvValue(i));
+                    }
                 }
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                        consumer.getTableName().c_str(), key.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
             if(state != STP_STATE_INVALID)
             {
@@ -540,7 +572,18 @@ void StpOrch::doMstInstPortFlushTask(Consumer &consumer)
 
             string instance_alias = key.substr(0, found);
             string port_alias = key.substr(found+1);
-            uint16_t instance = static_cast<uint16_t>(stoi(instance_alias));
+            uint16_t instance = STP_INVALID_INSTANCE;
+            try
+            {
+                instance = swss::to_uint<uint16_t>(instance_alias);
+            }
+            catch (const std::exception &e)
+            {
+                SWSS_LOG_ERROR("Exception caught: type=exception, table=%s, key=%s, error=%s",
+                        consumer.getTableName().c_str(), key.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
