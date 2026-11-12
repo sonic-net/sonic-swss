@@ -133,7 +133,7 @@ class TestPfcwdFunc(object):
             # verify installed ACLs against expected ones
             return (sorted(installed_acls) == sorted(expected_acls), None)
             
-        max_poll = PollingConfig(polling_interval=5, timeout=600, strict=True)
+        max_poll = PollingConfig(polling_interval=1, timeout=600, strict=True)
         wait_for_result(do_verify_egress_acls, polling_config=max_poll)
             
     def test_pfcwd_shared_egress_acl_table(self, setup_teardown_test):
