@@ -136,6 +136,13 @@ static const std::unordered_map<std::string, sai_redis_link_event_damping_algori
     { "aied", SAI_REDIS_LINK_EVENT_DAMPING_ALGORITHM_AIED }
 };
 
+static const std::unordered_map<std::string, sai_port_ptp_mode_t> portPtpModeMap =
+{
+    { PORT_PTP_MODE_NONE,     SAI_PORT_PTP_MODE_NONE                   },
+    { PORT_PTP_MODE_ONE_STEP, SAI_PORT_PTP_MODE_SINGLE_STEP_TIMESTAMP  },
+    { PORT_PTP_MODE_TWO_STEP, SAI_PORT_PTP_MODE_TWO_STEP_TIMESTAMP     }
+};
+
 // functions ----------------------------------------------------------------------------------------------------------
 
 template<typename T>
@@ -1002,6 +1009,21 @@ bool PortHelper::parsePortPtTimestampTemplate(PortConfig &port, const std::strin
     return true;
 }
 
+bool PortHelper::parsePortPtpMode(PortConfig &port,
+    const std::string &field, const std::string &value) const
+{
+    auto cit = portPtpModeMap.find(value);
+    if (cit == portPtpModeMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)",
+                       field.c_str(), value.c_str());
+        return false;
+    }
+    port.pt_ptp_mode.value = cit->second;
+    port.pt_ptp_mode.is_set = true;
+    return true;
+}
+
 bool PortHelper::parsePortMediaType(PortConfig &port, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
@@ -1345,6 +1367,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_PT_TIMESTAMP_TEMPLATE)
         {
             if (!this->parsePortPtTimestampTemplate(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_PTP_MODE)
+        {
+            if (!this->parsePortPtpMode(port, field, value))
             {
                 return false;
             }

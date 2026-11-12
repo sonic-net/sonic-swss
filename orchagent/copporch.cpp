@@ -101,7 +101,8 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"ldp", SAI_HOSTIF_TRAP_TYPE_LDP},
     {"bfd_micro", SAI_HOSTIF_TRAP_TYPE_BFD_MICRO},
     {"bfdv6_micro", SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO},
-    {"neighbor_miss", SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS}
+    {"neighbor_miss", SAI_HOSTIF_TRAP_TYPE_NEIGHBOR_MISS},
+    {"ptp", SAI_HOSTIF_TRAP_TYPE_PTP}
 };
 
 /*
@@ -151,7 +152,8 @@ const vector<sai_hostif_trap_type_t> default_supported_trap_ids = {
     SAI_HOSTIF_TRAP_TYPE_DNAT_MISS,
     SAI_HOSTIF_TRAP_TYPE_LDP,
     SAI_HOSTIF_TRAP_TYPE_BFD_MICRO,
-    SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO
+    SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO,
+    SAI_HOSTIF_TRAP_TYPE_PTP
     /* This list is intended to remain static and should not be updated with new traps. */
 };
 
