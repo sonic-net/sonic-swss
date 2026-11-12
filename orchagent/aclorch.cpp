@@ -23,7 +23,7 @@ map<acl_range_properties_t, AclRange*> AclRange::m_ranges;
 sai_uint32_t AclRule::m_minPriority = 0;
 sai_uint32_t AclRule::m_maxPriority = 0;
 
-swss::DBConnector AclOrch::m_countersDb("COUNTERS_DB", 0);
+swss::DBConnector AclOrch::m_countersDb("COUNTERS_DB", 0, false, "", true);
 swss::Table AclOrch::m_countersTable(&m_countersDb, "COUNTERS");
 
 extern sai_acl_api_t*    sai_acl_api;
