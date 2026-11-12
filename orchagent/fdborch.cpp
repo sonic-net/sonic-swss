@@ -19,6 +19,7 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
+#include "bpprotorch.h"
 #include "swssnet.h"
 
 #define VLAN_PREFIX         "Vlan"
@@ -32,6 +33,7 @@ extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
 extern L2NhgOrch*       gL2NhgOrch;
 extern FdbOrch*         gFdbOrch;
+extern BpProtOrch*      gBpProtOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -491,7 +493,10 @@ void FdbOrch::update(sai_fdb_event_t        type,
         /* Drop it if port is down */
         if (m_portsOrch->getPort(update.port.m_alias, learn_port))
         {
-            if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+            // Delayed LEARN notifications must obey the same intent-based
+            // retention policy as aggregate link-DOWN, including pending intent.
+            if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN &&
+                (!gBpProtOrch || gBpProtOrch->isProtectedBridgePort(learn_port.m_alias) == BpProtectionStatus::NONE))
             {
                 SWSS_LOG_NOTICE("update: Port %s is still down for the learnt mac. Flush to remove mac=%s bv_id=0x%" PRIx64,
 						update.port.m_alias.c_str(), update.entry.mac.to_string().c_str(), entry->bv_id);
@@ -1860,6 +1865,12 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
             return;
         }
 
+        if (gBpProtOrch && gBpProtOrch->isProtectedBridgePort(p.m_alias) != BpProtectionStatus::NONE)
+        {
+            SWSS_LOG_NOTICE("Ignoring fdb/ARP flush on protected or pending port:%s", p.m_alias.c_str());
+            return;
+        }
+
         if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
             flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
@@ -1883,6 +1894,17 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
 
     }
     return;
+}
+
+void FdbOrch::flushProtectedPortOnWithdraw(const std::string &ifname)
+{
+    PortOperStateUpdate update;
+    if (!m_portsOrch->getPort(ifname, update.port)) return;
+    if (update.port.m_oper_status != SAI_PORT_OPER_STATUS_DOWN) return;
+    // Use current oper/bridge identity and recheck MLAG/protection at dispatch.
+    // Preserve the existing normal-flush SAI and observer behavior.
+    update.operStatus = SAI_PORT_OPER_STATUS_DOWN;
+    updatePortOperState(update);
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)

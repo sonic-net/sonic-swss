@@ -10,6 +10,8 @@
 #include "orch.h"
 #include "vxlanorch.h"
 #include "portsorch.h"
+#include "vrforch.h"
+#include "stporch.h"
 
 #undef protected
 #undef private
@@ -683,10 +685,7 @@ namespace vxlanorch_test
                         Return(SAI_STATUS_FAILURE)
                         ));
         EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
-            .Times(4)
-            .WillRepeatedly(DoAll(
-                        Return(SAI_STATUS_FAILURE)
-                        ));
+            .Times(0); // Tunnel removal failed: retain its mapper dependencies.
 
         EXPECT_NO_THROW({
                 bool result1 = vxlan_orch->createVxlanTunnelMap("vxlan_tunnel_1", TUNNEL_MAP_T_VIRTUAL_ROUTER, 1000, 0x1001, 0x1002, 64);
@@ -694,6 +693,8 @@ namespace vxlanorch_test
                 bool result2 = vxlan_orch->removeVxlanTunnelMap("vxlan_tunnel_1", 1000);
                 EXPECT_TRUE(result2);
                 });
+        EXPECT_TRUE(tunnel->isActive());
+        EXPECT_EQ(tunnel->getTunnelId(), vxlan_tunnel_oid);
         vxlan_orch->delTunnel("vxlan_tunnel_1");
     }
 
@@ -1663,3 +1664,325 @@ namespace vxlanorch_test
     }
 
 } // namespace vxlanorch_test
+namespace vxlanorch_test
+{
+    namespace {
+    sai_status_t protectionSetStatus = SAI_STATUS_SUCCESS;
+    sai_status_t protectionGetStatus = SAI_STATUS_SUCCESS;
+    std::vector<swss::MacAddress> protectionWrites;
+    sai_status_t recordProtectionRmac(sai_object_id_t oid, const sai_attribute_t *attr)
+    {
+        EXPECT_EQ(oid, vxlan_tunnel_oid);
+        EXPECT_EQ(attr->id, SAI_TUNNEL_ATTR_VXLAN_TUNNEL_MAC);
+        protectionWrites.emplace_back(attr->value.mac);
+        return protectionSetStatus;
+    }
+    sai_status_t getProtectionDefault(sai_object_id_t, uint32_t count, sai_attribute_t *attr)
+    {
+        EXPECT_EQ(count, 1u);
+        EXPECT_EQ(attr->id, SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC);
+        swss::MacAddress mac("02:00:00:00:00:aa");
+        memcpy(attr->value.mac, mac.getMac(), sizeof(sai_mac_t));
+        return protectionGetStatus;
+    }
+    struct ProtectionRmacHooks {
+        decltype(sai_tunnel_api->set_tunnel_attribute) set = sai_tunnel_api->set_tunnel_attribute;
+        decltype(sai_switch_api->get_switch_attribute) get = sai_switch_api->get_switch_attribute;
+        ProtectionRmacHooks() {
+            protectionSetStatus = protectionGetStatus = SAI_STATUS_SUCCESS;
+            protectionWrites.clear();
+            sai_tunnel_api->set_tunnel_attribute = recordProtectionRmac;
+            sai_switch_api->get_switch_attribute = getProtectionDefault;
+        }
+        ~ProtectionRmacHooks() {
+            sai_tunnel_api->set_tunnel_attribute = set;
+            sai_switch_api->get_switch_attribute = get;
+        }
+    };
+    }
+
+    TEST_F(VxlanOrchTest, ProtectionRmacSharingConflictAndLastRelease)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel tunnel("protection", IpAddress("10.0.0.1"), IpAddress("10.0.0.2"), TNL_CREATION_SRC_CLI);
+        tunnel.active_ = true; tunnel.ids_.tunnel_id = vxlan_tunnel_oid;
+        tunnel.src_creation_ = TNL_CREATION_SRC_EVPN;
+        ProtectionRmacHooks hooks;
+        MacAddress mac("02:00:00:00:00:01"), changed("02:00:00:00:00:02");
+        ASSERT_TRUE(tunnel.setProtectionRmac(1, mac)); EXPECT_TRUE(tunnel.setProtectionRmac(1, mac));
+        EXPECT_TRUE(tunnel.setProtectionRmac(2, mac)); EXPECT_EQ(protectionWrites.size(), 1u);
+        EXPECT_FALSE(tunnel.setProtectionRmac(3, changed)); EXPECT_FALSE(tunnel.setProtectionRmac(1, changed));
+        EXPECT_FALSE(tunnel.deleteTunnelHw(0, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP));
+        EXPECT_TRUE(tunnel.releaseProtectionRmac(2)); EXPECT_EQ(protectionWrites.size(), 1u);
+        EXPECT_TRUE(tunnel.setProtectionRmac(1, changed)); EXPECT_EQ(protectionWrites.back(), changed);
+        EXPECT_TRUE(tunnel.releaseProtectionRmac(1));
+        EXPECT_EQ(protectionWrites.back(), MacAddress("02:00:00:00:00:aa"));
+        EXPECT_EQ(tunnel.ids_.tunnel_id, vxlan_tunnel_oid); EXPECT_TRUE(tunnel.protection_rmac_users_.empty());
+        EXPECT_TRUE(tunnel.releaseProtectionRmac(1));
+    }
+
+    TEST_F(VxlanOrchTest, ProtectionRmacFailureRetainsOwnershipForRetry)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel tunnel("protection", IpAddress("10.0.0.1"), IpAddress("10.0.0.2"), TNL_CREATION_SRC_CLI);
+        tunnel.active_ = true; tunnel.ids_.tunnel_id = vxlan_tunnel_oid;
+        tunnel.src_creation_ = TNL_CREATION_SRC_EVPN;
+        ProtectionRmacHooks hooks;
+        MacAddress mac("02:00:00:00:00:01"), changed("02:00:00:00:00:02");
+        protectionSetStatus = SAI_STATUS_FAILURE;
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, mac)); EXPECT_TRUE(tunnel.protection_rmac_users_.empty());
+        protectionSetStatus = SAI_STATUS_SUCCESS; ASSERT_TRUE(tunnel.setProtectionRmac(1, mac));
+        protectionSetStatus = SAI_STATUS_FAILURE; EXPECT_FALSE(tunnel.setProtectionRmac(1, changed));
+        EXPECT_EQ(tunnel.protection_rmac_users_.at(1), mac);
+        EXPECT_FALSE(tunnel.releaseProtectionRmac(1)); EXPECT_EQ(tunnel.protection_rmac_users_.size(), 1u);
+        protectionSetStatus = SAI_STATUS_SUCCESS; protectionGetStatus = SAI_STATUS_FAILURE;
+        EXPECT_FALSE(tunnel.releaseProtectionRmac(1)); EXPECT_EQ(tunnel.protection_rmac_users_.size(), 1u);
+        protectionGetStatus = SAI_STATUS_SUCCESS; EXPECT_TRUE(tunnel.releaseProtectionRmac(1));
+    }
+
+    TEST_F(VxlanOrchTest, ProtectionRmacRequiresLiveP2PTunnelAndValidUnicastMac)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel tunnel("protection", IpAddress("10.0.0.1"), IpAddress("10.0.0.2"), TNL_CREATION_SRC_CLI);
+        ProtectionRmacHooks hooks;
+        MacAddress mac("02:00:00:00:00:01");
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, mac));
+        tunnel.active_ = true; EXPECT_FALSE(tunnel.setProtectionRmac(1, mac));
+        tunnel.ids_.tunnel_id = vxlan_tunnel_oid; EXPECT_FALSE(tunnel.setProtectionRmac(0, mac));
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, mac)); // CLI/DIP alone is not P2P.
+        tunnel.src_creation_ = TNL_CREATION_SRC_EVPN;
+        tunnel.dst_ip_ = IpAddress("0.0.0.0"); EXPECT_FALSE(tunnel.setProtectionRmac(1, mac));
+        tunnel.dst_ip_ = IpAddress("10.0.0.2");
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, MacAddress("00:00:00:00:00:00")));
+        EXPECT_FALSE(tunnel.setProtectionRmac(1, MacAddress("01:00:00:00:00:01")));
+        EXPECT_TRUE(protectionWrites.empty()); EXPECT_TRUE(tunnel.protection_rmac_users_.empty());
+    }
+}
+
+namespace vxlanorch_test
+{
+    TEST_F(VxlanOrchTest, ProtectionRmacBlocksObjectDeletionAndPreservesRetryCount)
+    {
+        initSwitchOrch(); initVxlanOrch();
+        VxlanTunnel parent("parent", IpAddress("10.0.0.1"), IpAddress("0.0.0.0"), TNL_CREATION_SRC_CLI);
+        const std::string dip("10.0.0.2"); std::string name;
+        m_vxlan_tunnel_orch->getTunnelNameFromDIP(dip, name);
+        auto child = new VxlanTunnel(name, IpAddress("10.0.0.1"), IpAddress(dip), TNL_CREATION_SRC_EVPN);
+        child->active_ = true; child->ids_.tunnel_id = vxlan_tunnel_oid;
+        m_vxlan_tunnel_orch->addTunnel(name, child);
+        parent.tnl_users_[dip] = {0, 0, 1, 0, 0, 0};
+        ProtectionRmacHooks hooks;
+        ASSERT_TRUE(child->setProtectionRmac(1, MacAddress("02:00:00:00:00:01")));
+        EXPECT_FALSE(parent.deleteDynamicDIPTunnel(dip, TUNNEL_USER_IP));
+        EXPECT_EQ(parent.tnl_users_.at(dip).ip_refcnt, 1u);
+        EXPECT_EQ(m_vxlan_tunnel_orch->getVxlanTunnel(name), child);
+        VxlanTunnelRequest request;
+        KeyOpFieldsValuesTuple deletion{name, DEL_COMMAND, {}};
+        request.parse(deletion);
+        EXPECT_FALSE(m_vxlan_tunnel_orch->delOperation(request));
+        EXPECT_TRUE(child->releaseProtectionRmac(1));
+        EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(vxlan_tunnel_oid)).WillOnce(Return(SAI_STATUS_SUCCESS));
+        EXPECT_TRUE(parent.deleteDynamicDIPTunnel(dip, TUNNEL_USER_IP));
+        EXPECT_EQ(parent.tnl_users_.count(dip), 0u);
+        EXPECT_FALSE(m_vxlan_tunnel_orch->isTunnelExists(name));
+        EXPECT_TRUE(m_vxlan_tunnel_orch->delOperation(request)); // Already removed.
+        auto unowned = new VxlanTunnel(name, IpAddress("10.0.0.1"), IpAddress(dip), TNL_CREATION_SRC_EVPN);
+        m_vxlan_tunnel_orch->addTunnel(name, unowned);
+        unowned->del_tnl_hw_pending = true;
+        EXPECT_FALSE(m_vxlan_tunnel_orch->delOperation(request));
+        unowned->del_tnl_hw_pending = false;
+        EXPECT_TRUE(m_vxlan_tunnel_orch->delOperation(request));
+        EXPECT_FALSE(m_vxlan_tunnel_orch->isTunnelExists(name));
+    }
+}
+namespace vxlanorch_test
+{
+TEST_F(VxlanOrchTest, ProtectionRmacBatchRequiresExactOwnerSetAndCommitsTogether)
+{
+    initSwitchOrch(); initVxlanOrch();
+    VxlanTunnel tunnel("protection",IpAddress("10.0.0.1"),IpAddress("10.0.0.2"),TNL_CREATION_SRC_CLI);
+    tunnel.src_creation_=TNL_CREATION_SRC_EVPN; tunnel.active_=true; tunnel.ids_.tunnel_id=vxlan_tunnel_oid; ProtectionRmacHooks hooks;
+    const MacAddress old("02:00:00:00:00:01"), changed("02:00:00:00:00:22");
+    ASSERT_TRUE(tunnel.setProtectionRmac(1,old)); ASSERT_TRUE(tunnel.setProtectionRmac(2,old));
+    EXPECT_FALSE(tunnel.updateProtectionRmac({},changed)); EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed));
+    EXPECT_FALSE(tunnel.updateProtectionRmac({1,3},changed)); EXPECT_EQ(protectionWrites.size(),1u);
+    ASSERT_TRUE(tunnel.updateProtectionRmac({1,2},changed)); EXPECT_EQ(protectionWrites.size(),2u);
+    EXPECT_EQ(tunnel.protection_rmac_users_.at(1),changed); EXPECT_EQ(tunnel.protection_rmac_users_.at(2),changed);
+    ASSERT_TRUE(tunnel.updateProtectionRmac({1,2},changed)); EXPECT_EQ(protectionWrites.size(),2u);
+}
+TEST_F(VxlanOrchTest, ProtectionRmacBatchFailureRetainsEveryOwnerAndCanRetry)
+{
+    initSwitchOrch(); initVxlanOrch();
+    VxlanTunnel tunnel("protection",IpAddress("10.0.0.1"),IpAddress("10.0.0.2"),TNL_CREATION_SRC_CLI);
+    tunnel.src_creation_=TNL_CREATION_SRC_EVPN; tunnel.active_=true; tunnel.ids_.tunnel_id=vxlan_tunnel_oid; ProtectionRmacHooks hooks;
+    const MacAddress old("02:00:00:00:00:01"), changed("02:00:00:00:00:22");
+    ASSERT_TRUE(tunnel.setProtectionRmac(1,old)); ASSERT_TRUE(tunnel.setProtectionRmac(2,old));
+    const sai_status_t statuses[]={SAI_STATUS_FAILURE,SAI_STATUS_NOT_SUPPORTED,SAI_STATUS_NOT_IMPLEMENTED};
+    for (const auto status : statuses) {
+        protectionSetStatus=status; EXPECT_FALSE(tunnel.updateProtectionRmac({1,2},changed));
+        EXPECT_EQ(tunnel.protection_rmac_users_.at(1),old); EXPECT_EQ(tunnel.protection_rmac_users_.at(2),old);
+    }
+    protectionSetStatus=SAI_STATUS_SUCCESS; ASSERT_TRUE(tunnel.updateProtectionRmac({1,2},changed));
+    EXPECT_EQ(tunnel.protection_rmac_users_.at(1),changed); EXPECT_EQ(tunnel.protection_rmac_users_.at(2),changed);
+}
+TEST_F(VxlanOrchTest, ProtectionRmacBatchRequiresLiveEvpnTunnelAndUnicastMac)
+{
+    initSwitchOrch(); initVxlanOrch();
+    VxlanTunnel tunnel("protection",IpAddress("10.0.0.1"),IpAddress("10.0.0.2"),TNL_CREATION_SRC_CLI);
+    tunnel.src_creation_=TNL_CREATION_SRC_EVPN; tunnel.active_=true; tunnel.ids_.tunnel_id=vxlan_tunnel_oid; ProtectionRmacHooks hooks;
+    const MacAddress old("02:00:00:00:00:01"), changed("02:00:00:00:00:22"); ASSERT_TRUE(tunnel.setProtectionRmac(1,old));
+    tunnel.active_=false; EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.active_=true;
+    tunnel.ids_.tunnel_id=SAI_NULL_OBJECT_ID; EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.ids_.tunnel_id=vxlan_tunnel_oid;
+    tunnel.src_creation_=TNL_CREATION_SRC_CLI; EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.src_creation_=TNL_CREATION_SRC_EVPN;
+    tunnel.dst_ip_=IpAddress("0.0.0.0"); EXPECT_FALSE(tunnel.updateProtectionRmac({1},changed)); tunnel.dst_ip_=IpAddress("10.0.0.2");
+    EXPECT_FALSE(tunnel.updateProtectionRmac({1},MacAddress())); EXPECT_FALSE(tunnel.updateProtectionRmac({1},MacAddress("01:00:00:00:00:01")));
+    EXPECT_EQ(protectionWrites.size(),1u); EXPECT_EQ(tunnel.protection_rmac_users_.at(1),old);
+}
+}
+
+namespace vxlanorch_test
+{
+// Exercise the production map handlers and native SAI objects, not just counters.
+class VxlanSharedTunnelTest : public mock_orch_test::MockOrchTest,
+                             public ::testing::WithParamInterface<bool>
+{
+protected:
+    unique_ptr<VxlanTunnelMapOrch> vlanMaps;
+    unique_ptr<VxlanVrfMapOrch> vrfMaps;
+    VxlanTunnel *source = nullptr;
+    sai_object_id_t vlanOid = SAI_NULL_OBJECT_ID;
+    unique_ptr<StpOrch> stp;
+    StpOrch *previousStp = nullptr;
+    void PostSetUp() override
+    {
+        vlanMaps.reset(new VxlanTunnelMapOrch(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME));
+        vrfMaps.reset(new VxlanVrfMapOrch(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME));
+        gDirectory.set(vlanMaps.get()); gDirectory.set(vrfMaps.get());
+        m_VxlanTunnelOrch->is_dip_tunnel_supported = true;
+        previousStp = gStpOrch;
+        vector<string> tables;
+        stp.reset(new StpOrch(m_app_db.get(), m_state_db.get(), tables)); gStpOrch = stp.get();
+        source = new VxlanTunnel("SharedSip", IpAddress("10.40.0.1"), IpAddress("0.0.0.0"), TNL_CREATION_SRC_CLI);
+        m_VxlanTunnelOrch->addTunnel("SharedSip", source);
+        sai_attribute_t attr{}; attr.id = SAI_VLAN_ATTR_VLAN_ID; attr.value.u16 = 1000;
+        ASSERT_EQ(sai_vlan_api->create_vlan(&vlanOid, gSwitchId, 1, &attr), SAI_STATUS_SUCCESS);
+        Port vlan("Vlan1000", Port::VLAN); vlan.m_vlan_info.vlan_id = 1000; vlan.m_vlan_info.vlan_oid = vlanOid;
+        gPortsOrch->setPort(vlan.m_alias, vlan);
+        VRFRequest vrf; vrf.parse({"VrfShared", SET_COMMAND, {}});
+        ASSERT_TRUE(gVrfOrch->addOperation(vrf));
+        VxlanTunnelMapRequest l2; l2.parse({"SharedSip:L2", SET_COMMAND, {{"vni", "1000"}, {"vlan", "Vlan1000"}}});
+        ASSERT_TRUE(vlanMaps->addOperation(l2));
+        VxlanVrfRequest l3; l3.parse({"SharedSip:VrfShared", SET_COMMAND, {{"vni", "2000"}, {"vrf", "VrfShared"}}});
+        ASSERT_TRUE(vrfMaps->addOperation(l3));
+    }
+    void removeMap(bool vlan)
+    {
+        if (vlan)
+        {
+            VxlanTunnelMapRequest request; request.parse({"SharedSip:L2", DEL_COMMAND, {}});
+            ASSERT_TRUE(vlanMaps->delOperation(request));
+        }
+        else
+        {
+            VxlanVrfRequest request; request.parse({"SharedSip:VrfShared", DEL_COMMAND, {}});
+            ASSERT_TRUE(vrfMaps->delOperation(request));
+        }
+    }
+    void expectRemoved(sai_object_id_t tunnel)
+    {
+        EXPECT_FALSE(source->isActive()); EXPECT_EQ(source->getTunnelId(), SAI_NULL_OBJECT_ID);
+        sai_attribute_t attr{}; attr.id = SAI_TUNNEL_ATTR_TYPE;
+        EXPECT_EQ(sai_tunnel_api->get_tunnel_attribute(tunnel, 1, &attr), SAI_STATUS_ITEM_NOT_FOUND);
+    }
+    void PreTearDown() override
+    {
+        Port sourcePort;
+        auto name = m_VxlanTunnelOrch->getTunnelPortName(source->getSrcIP().to_string(), true);
+        if (gPortsOrch->getPort(name, sourcePort))
+        {
+            sourcePort.m_fdb_count = 0; gPortsOrch->setPort(name, sourcePort);
+        }
+        if (vlanMaps->isTunnelMapExists("SharedSip:L2")) removeMap(true);
+        if (vrfMaps->isVrfMapExists("SharedSip:VrfShared")) removeMap(false);
+        uint8_t maps = 0; TUNNELMAP_SET_VLAN(maps); TUNNELMAP_SET_VRF(maps);
+        source->deletePendingSIPTunnel();
+        if (source->isActive()) { EXPECT_TRUE(source->deleteTunnelHw(maps, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP)); }
+        VRFRequest vrf; vrf.parse({"VrfShared", DEL_COMMAND, {}}); EXPECT_TRUE(gVrfOrch->delOperation(vrf));
+        gPortsOrch->m_portList.erase("Vlan1000"); EXPECT_EQ(sai_vlan_api->remove_vlan(vlanOid), SAI_STATUS_SUCCESS);
+        gStpOrch = previousStp; stp.reset();
+    }
+};
+
+TEST_P(VxlanSharedTunnelTest, BothMapOrdersRetainLiveOwnerAndRemoveFinalTunnel)
+{
+    const auto tunnel = source->getTunnelId(); ASSERT_NE(tunnel, SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(source->vlan_vrf_vni_count, 2u);
+    removeMap(GetParam()); EXPECT_TRUE(source->isActive()); EXPECT_EQ(source->vlan_vrf_vni_count, 1u);
+    removeMap(!GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 0u); expectRemoved(tunnel);
+}
+
+TEST_P(VxlanSharedTunnelTest, SharedPeerOwnersDelayPhysicalRemovalUntilFinalRelease)
+{
+    const auto tunnel = source->getTunnelId();
+    const string peer = "10.40.0.2";
+    const vector<tunnel_user_t> users = {TUNNEL_USER_MAC, TUNNEL_USER_IP, TUNNEL_USER_IMR, TUNNEL_USER_PROTECTION};
+    for (auto user : users) ASSERT_TRUE(source->createDynamicDIPTunnel(peer, user));
+    // An unrelated peer sorts before the protected peer. A source DELETE
+    // must inspect all peers before deciding that no protection owner exists.
+    const string otherPeer = "10.40.0.10";
+    ASSERT_TRUE(source->createDynamicDIPTunnel(otherPeer, TUNNEL_USER_MAC));
+    VxlanTunnelRequest deletion; deletion.parse({"SharedSip", DEL_COMMAND, {}});
+    EXPECT_FALSE(m_VxlanTunnelOrch->delOperation(deletion));
+    EXPECT_EQ(m_VxlanTunnelOrch->getVxlanTunnel("SharedSip"), source);
+    removeMap(GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 1u); EXPECT_TRUE(source->isActive());
+    removeMap(!GetParam()); EXPECT_EQ(source->vlan_vrf_vni_count, 0u); EXPECT_TRUE(source->isActive());
+    for (size_t i = 0; i < users.size(); ++i)
+    {
+        ASSERT_TRUE(source->deleteDynamicDIPTunnel(peer, users[i])); source->deletePendingSIPTunnel();
+        EXPECT_TRUE(source->isActive()); // The other peer still owns its tunnel.
+    }
+    ASSERT_TRUE(source->deleteDynamicDIPTunnel(otherPeer, TUNNEL_USER_MAC));
+    source->deletePendingSIPTunnel();
+    EXPECT_TRUE(source->tnl_users_.empty()); expectRemoved(tunnel);
+}
+TEST_P(VxlanSharedTunnelTest, P2mpFdbOwnerDefersSourceBridgeAndTunnelRemoval)
+{
+    m_VxlanTunnelOrch->is_dip_tunnel_supported = false;
+    const auto tunnel = source->getTunnelId();
+    auto name = m_VxlanTunnelOrch->getTunnelPortName(source->getSrcIP().to_string(), true);
+    ASSERT_TRUE(gPortsOrch->addTunnel(name, tunnel, false));
+    Port port; ASSERT_TRUE(gPortsOrch->getPort(name, port));
+    ASSERT_TRUE(gPortsOrch->addBridgePort(port));
+    const auto bridge = port.m_bridge_port_id;
+    port.m_fdb_count = 1; gPortsOrch->setPort(name, port);
+    removeMap(GetParam()); removeMap(!GetParam());
+    EXPECT_TRUE(source->isActive()); EXPECT_TRUE(source->del_tnl_hw_pending);
+    ASSERT_TRUE(gPortsOrch->getPort(name, port)); EXPECT_EQ(port.m_bridge_port_id, bridge);
+    port.m_fdb_count = 0; gPortsOrch->setPort(name, port); source->deletePendingSIPTunnel();
+    EXPECT_FALSE(gPortsOrch->getPort(name, port)); expectRemoved(tunnel);
+    sai_attribute_t attr{}; attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+    EXPECT_EQ(sai_bridge_api->get_bridge_port_attribute(bridge, 1, &attr), SAI_STATUS_ITEM_NOT_FOUND);
+}
+
+TEST_P(VxlanSharedTunnelTest, DuplicateVrfDeleteCannotRemoveRecreatedSameKeyMap)
+{
+    removeMap(false);
+    auto consumer = dynamic_cast<Consumer *>(vrfMaps->getConsumerBase(APP_VXLAN_VRF_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    consumer->addToSync(KeyOpFieldsValuesTuple{"SharedSip:VrfShared", DEL_COMMAND, {}});
+    vrfMaps->doTask(*consumer);
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(source->vlan_vrf_vni_count, 1u);
+    consumer->addToSync(KeyOpFieldsValuesTuple{"SharedSip:VrfShared", SET_COMMAND,
+                        {{"vni", GetParam() ? "2000" : "3000"}, {"vrf", "VrfShared"}}});
+    vrfMaps->doTask(*consumer);
+    ASSERT_TRUE(vrfMaps->isVrfMapExists("SharedSip:VrfShared"));
+    vrfMaps->doTask(*consumer);
+    EXPECT_TRUE(vrfMaps->isVrfMapExists("SharedSip:VrfShared"));
+    EXPECT_EQ(source->vlan_vrf_vni_count, 2u);
+    EXPECT_EQ(gVrfOrch->getVrfRefCount("VrfShared"), 2);
+    EXPECT_TRUE(consumer->m_toSync.empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(MapDeletionOrders, VxlanSharedTunnelTest, ::testing::Bool());
+}
