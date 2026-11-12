@@ -49,6 +49,7 @@ public:
     unsigned long getL2NhVtepRefCount(const std::string &nhg_id);
     bool hasActiveL2Nhg(const std::string &nhg_id);
     bool isL2NextHop(const std::string &nhg_id);
+    bool isBridgePortNhgSupported();
 
     bool getNhgOid(uint32_t nhg_id, sai_object_id_t &oid) const;
     // Counted compatibility API for synchronous callers. Protection attachment
@@ -140,6 +141,15 @@ private:
         string source_vtep;
     };
     unordered_map<string, l2nhg_nh_info> m_nhg_nh;
+
+    /*
+     * Whether SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT can be used. Taken from the NHG TYPE
+     * enum capability on first use, and cleared if the SAI rejects the type anyway.
+     */
+    bool m_bridgePortNhgCapChecked = false;
+    bool m_bridgePortNhgSupported = true;
+    /* A refusal after a successful create is a real failure, not a missing feature. */
+    bool m_bridgePortNhgCreated = false;
 
     bool deleteL2NextHop(string nhg_id);
     bool deleteL2NextHopGroup(string nhg_id);
