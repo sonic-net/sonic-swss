@@ -402,6 +402,9 @@ private:
     void releaseProtNhgRef(const std::string &prot_nhg_key);
     void deferProtNhgCleanup(const std::string &prot_nhg_key);
     void removeUnusedProtNhgs();
+    bool isStandbyMuxNextHop(const NextHopGroupKey &nexthops);
+    void increaseRouteNextHopRefCount(const NextHopGroupKey &nexthops);
+    void decreaseRouteNextHopRefCount(const NextHopGroupKey &nexthops);
 };
 
 #endif /* SWSS_ROUTEORCH_H */
