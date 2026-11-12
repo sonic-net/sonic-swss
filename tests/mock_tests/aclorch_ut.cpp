@@ -1,6 +1,9 @@
 #include "ut_helper.h"
 #include "flowcounterrouteorch.h"
 #include "mock_sai_capability_wrap.h"
+#define private public
+#include "warm_restart.h"
+#undef private
 
 #include <cstring>
 
@@ -2061,6 +2064,64 @@ namespace aclorch_test
 
         tableIt = orch->getAclTables().find(tableOid);
         ASSERT_EQ(tableIt, orch->getAclTables().end());
+    }
+
+    TEST_F(AclOrchTest, AclRule_Counter_DeferredUntilWarmBootEnd)
+    {
+        string tableId = "acl_table_1";
+        WarmStart::getInstance().m_enabled = true;
+        auto orch = createAclOrch();
+        WarmStart::getInstance().m_enabled = false;
+        auto aclOrch = orch->m_aclOrch;
+        auto &installed = aclOrch->m_flex_counter_manager.installed_counters;
+        orch->doAclTableTask(deque<KeyOpFieldsValuesTuple>({{
+            tableId,
+            SET_COMMAND,
+            {
+                { ACL_TABLE_DESCRIPTION, "L3 table" },
+                { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                { ACL_TABLE_STAGE, STAGE_INGRESS },
+                { ACL_TABLE_PORTS, "1,2" }
+            }
+        }}));
+        auto tableOid = orch->getTableById(tableId);
+        ASSERT_NE(tableOid, SAI_NULL_OBJECT_ID);
+        auto &tableObj = orch->getAclTables().find(tableOid)->second;
+        for (const string ruleId : { "acl_rule_1", "acl_rule_2" })
+        {
+            orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
+                tableId + "|" + ruleId,
+                SET_COMMAND,
+                {
+                    { ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD },
+                    { MATCH_SRC_IP, "1.2.3.4" }
+                }
+            }}));
+            ASSERT_NE(tableObj.rules.find(ruleId), tableObj.rules.end());
+        }
+        auto keptCounterOid = tableObj.rules.at("acl_rule_1")->getCounterOid();
+        auto removedCounterOid = tableObj.rules.at("acl_rule_2")->getCounterOid();
+        // Rules created during warm restore must not reach syncd before APPLY_VIEW
+        ASSERT_EQ(installed.count(keptCounterOid), 0);
+        ASSERT_EQ(installed.count(removedCounterOid), 0);
+        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
+            tableId + "|acl_rule_2",
+            DEL_COMMAND,
+            {}
+        }}));
+        aclOrch->onWarmBootEnd();
+        ASSERT_EQ(installed.count(keptCounterOid), 1);
+        ASSERT_EQ(installed.count(removedCounterOid), 0);
+        // Rules created after warm restore are registered immediately
+        orch->doAclRuleTask(deque<KeyOpFieldsValuesTuple>({{
+            tableId + "|acl_rule_3",
+            SET_COMMAND,
+            {
+                { ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD },
+                { MATCH_SRC_IP, "1.2.3.5" }
+            }
+        }}));
+        ASSERT_EQ(installed.count(tableObj.rules.at("acl_rule_3")->getCounterOid()), 1);
     }
 
     TEST_F(AclOrchTest, AclTableType_Configuration)
