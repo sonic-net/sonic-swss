@@ -61,6 +61,13 @@ namespace swss
         }
     }
 
+    // Keep explicit writer calls inside the socket fake, like legacy calls.
+    DBConnector::DBConnector(const std::string &dbName, unsigned int timeout, bool isTcpConn,
+                             const std::string &netns, bool authenticate)
+        : DBConnector(dbName, timeout, isTcpConn)
+    {
+    }
+
     int DBConnector::getDbId() const
     {
         return m_dbId;
