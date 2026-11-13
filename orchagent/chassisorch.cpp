@@ -33,7 +33,13 @@ void ChassisOrch::addRouteToPassThroughRouteTable(const VNetNextHopUpdate& updat
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("redistribute", "true");
     fvVector.emplace_back("next_vrf_name", update.vnet);
-    fvVector.emplace_back("next_hop_ip", update.nexthop.ips.to_string());
+    std::string ips_csv;
+    for (const auto& ip : update.nexthop.ips)
+    {
+        if (!ips_csv.empty()) ips_csv += ",";
+        ips_csv += ip.to_string();
+    }
+    fvVector.emplace_back("next_hop_ip", ips_csv);
     fvVector.emplace_back("ifname", update.nexthop.ifname);
     fvVector.emplace_back("source", "CHASSIS_ORCH");
     const std::string everflow_route = IpPrefix(update.destination.to_string()).to_string();

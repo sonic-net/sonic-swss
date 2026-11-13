@@ -211,6 +211,16 @@ public:
         } rxpolarity; // Port serdes RX polarity
 
         struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } tx_precoding; // Port serdes tx_precoding (per-lane)
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } rx_precoding; // Port serdes rx_precoding (per-lane)
+
+        struct {
             std::string value;
             bool is_set = false;
         } custom_collection; // Port serdes custom_collection
@@ -218,7 +228,7 @@ public:
     } serdes, serdes_gb_line, serdes_gb_system; // Port serdes (ASIC port, gearbox line-side, gearbox system-side)
 
     struct {
-        swss::Port::Role value;
+        swss::Port::Role value = swss::Port::Role::Ext;
         bool is_set = false;
     } role; // Port role
 

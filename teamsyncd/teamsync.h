@@ -76,7 +76,6 @@ private:
     Table m_stateLagTable;
 
     bool m_warmstart;
-    std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;
     steady_clock::time_point m_start_time;
     uint32_t m_pending_timeout;
 

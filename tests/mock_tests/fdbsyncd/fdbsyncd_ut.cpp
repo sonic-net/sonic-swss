@@ -11,9 +11,22 @@
 #include "macaddress.h"
 #undef private
 
-#ifndef RTPROT_HW
-#define RTPROT_HW 193  /* Protocol ID for hardware learned routes */
-#endif
+/* Recorded by common/mock_shell_command.cpp; the only way to observe whether
+ * fdbsyncd programmed the kernel. */
+extern std::vector<std::string> mockCallArgs;
+
+static size_t countBridgeFdbCmds()
+{
+    size_t n = 0;
+    for (const auto &cmd : mockCallArgs)
+    {
+        if (cmd.find("bridge fdb") != std::string::npos)
+        {
+            ++n;
+        }
+    }
+    return n;
+}
 
 #define MAX_PAYLOAD 1024
 #define ETH_ALEN 6
@@ -31,6 +44,15 @@
 using namespace swss;
 
 using ::testing::_;
+
+extern int (*callback)(const std::string &cmd, std::string &stdout);
+extern std::vector<std::string> mockCallArgs;
+
+static int captureCommand(const std::string &cmd, std::string &)
+{
+    mockCallArgs.push_back(cmd);
+    return 0;
+}
 
 class MockFdbSync : public FdbSync
 {
@@ -690,10 +712,13 @@ public:
     {
         ::testing_db::reset();
         m_mockFdbSync.m_isEvpnNvoExist = true;
+        mockCallArgs.clear();
+        callback = captureCommand;
     }
 
     void TearDown() override
     {
+        callback = nullptr;
     }
 
     std::shared_ptr<swss::DBConnector> m_appDb = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -1234,6 +1259,35 @@ TEST_F(FdbSyncdEvpnMhTest, NhgRefcounting)
     free(nhg_del);
 }
 
+// Regression test for sonic-net/sonic-swss#4842. The fake ProducerStateTable
+// (mock_table.cpp) backs onto a plain std::map, so a DEL of an already-absent
+// key is indistinguishable from never calling DEL at all. To make an
+// unguarded DEL observable, pre-seed a sentinel row at the ignored nhid's
+// key: an unguarded del() would wipe it out, while the fix leaves it intact.
+TEST_F(FdbSyncdEvpnMhTest, IgnoredOifNextHopDelete)
+{
+    uint32_t nhid = 9000;
+
+    std::vector<FieldValueTuple> sentinel = { FieldValueTuple("remote_vtep", "192.0.2.1") };
+    getNhgTable().set(std::to_string(nhid), sentinel);
+
+    struct nlmsghdr *create = create_l2_nhg_member_msg(nhid, "10.0.0.50", 300);
+    m_mockFdbSync.onMsgRaw(create);
+    free(create);
+
+    EXPECT_EQ(m_mockFdbSync.m_l2NhgMap.count(nhid), 0u);
+
+    struct nlmsghdr *del = delete_nhg_msg(nhid);
+    m_mockFdbSync.onMsgRaw(del);
+    free(del);
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getNhgTable().get(std::to_string(nhid), values));
+    ASSERT_EQ(values.size(), 1u);
+    EXPECT_EQ(fvField(values[0]), "remote_vtep");
+    EXPECT_EQ(fvValue(values[0]), "192.0.2.1");
+}
+
 TEST_F(FdbSyncdEvpnMhTest, TestMclagRemoteFdb)
 {
     // Test MCLAG remote FDB processing
@@ -1322,10 +1376,9 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacRefreshStateDB)
     // Test MAC refresh in STATE_DB
     int vlan = 100;
     std::string kmac = "00:11:22:33:44:55";
-    uint8_t protocol = 0; // RTPROT_KERNEL
 
     // Call macRefreshStateDB
-    m_mockFdbSync.macRefreshStateDB(vlan, kmac, protocol);
+    m_mockFdbSync.macRefreshStateDB(vlan, kmac);
 
     // Verify STATE_DB was updated
     std::shared_ptr<swss::DBConnector> m_state_db;
@@ -1389,6 +1442,98 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlanEmptyKey)
     m_mockFdbSync.macDelVxlanDB(key);
 
     ASSERT_TRUE(true);
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestFdbStateKeyValidation)
+{
+    std::string vlan;
+    std::string mac;
+
+    EXPECT_TRUE(FdbSync::parseFdbStateKey("Vlan100:00:AA:BB:CC:DD:EE", vlan, mac));
+    EXPECT_EQ(vlan, "Vlan100");
+    EXPECT_EQ(mac, "00:aa:bb:cc:dd:ee");
+    EXPECT_TRUE(FdbSync::parseFdbStateKey("Vlan0001:00:11:22:33:44:55", vlan, mac));
+    EXPECT_EQ(vlan, "Vlan1");
+    EXPECT_TRUE(FdbSync::parseFdbStateKey("Vlan4094:00:11:22:33:44:55", vlan, mac));
+    EXPECT_EQ(vlan, "Vlan4094");
+
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("V:00:11:22:33:44:55", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan100", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan100:not-a-mac", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan0:00:11:22:33:44:55", vlan, mac));
+    EXPECT_FALSE(FdbSync::parseFdbStateKey("Vlan4095:00:11:22:33:44:55", vlan, mac));
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestInvalidFdbFieldsAreRejected)
+{
+    struct m_fdb_info info = {};
+    info.vid = "Vlan100";
+    info.mac = "00:11:22:33:44:55";
+    info.port_name = "Ethernet 0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    m_mockFdbSync.updateLocalMac(&info);
+    m_mockFdbSync.updateMclagRemoteMac(&info);
+
+    EXPECT_TRUE(m_mockFdbSync.m_fdb_mac.empty());
+    EXPECT_TRUE(m_mockFdbSync.m_mclag_remote_fdb_mac.empty());
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestStateFdbEntryCanonicalSetDelete)
+{
+    m_mockFdbSync.m_isEvpnNvoExist = false;
+    KeyOpFieldsValuesTuple addEntry = {
+        "Vlan0100:00:AA:BB:CC:DD:EE",
+        SET_COMMAND,
+        {
+            FieldValueTuple("port", "Ethernet0"),
+            FieldValueTuple("type", "dynamic"),
+        },
+    };
+    m_mockFdbSync.processStateFdbEntry(addEntry, false);
+
+    ASSERT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan100:00:aa:bb:cc:dd:ee"), 1u);
+
+    KeyOpFieldsValuesTuple delEntry = {
+        "Vlan100:00:AA:BB:CC:DD:EE",
+        DEL_COMMAND,
+        {},
+    };
+    m_mockFdbSync.processStateFdbEntry(delEntry, false);
+
+    EXPECT_TRUE(m_mockFdbSync.m_fdb_mac.empty());
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestRemoteFdbEntryUsesRemoteCache)
+{
+    struct m_fdb_info info = {};
+    info.vid = "Vlan100";
+    info.mac = "00:aa:bb:cc:dd:ee";
+    info.port_name = "PortChannel1";
+    info.type = FDB_TYPE_STATIC;
+
+    m_mockFdbSync.macUpdateMclagRemoteCache(&info);
+    ASSERT_FALSE(m_mockFdbSync.macCheckSrcDB(&info));
+
+    KeyOpFieldsValuesTuple delEntry = {
+        "Vlan0100:00:AA:BB:CC:DD:EE",
+        DEL_COMMAND,
+        {},
+    };
+    m_mockFdbSync.processStateFdbEntry(delEntry, true);
+
+    EXPECT_TRUE(m_mockFdbSync.m_mclag_remote_fdb_mac.empty());
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_EQ(
+        mockCallArgs[0],
+        " bridge fdb del 00:aa:bb:cc:dd:ee dev PortChannel1 master static vlan 100"
+    );
+}
+
+TEST_F(FdbSyncdEvpnMhTest, TestMalformedCachedFdbKeyIsRejected)
+{
+    EXPECT_NO_THROW(m_mockFdbSync.addLocalMac("V:00:11:22:33:44:55", "replace"));
 }
 
 TEST_F(FdbSyncdEvpnMhTest, TestProcessStateFdb)
@@ -1548,14 +1693,17 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlan)
     m_mockFdbSync.m_mac[key].type = "dynamic";
     m_mockFdbSync.m_mac[key].vni = 20200;
     m_mockFdbSync.m_mac[key].ifname = "Vxlan-200";
-    m_mockFdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
     m_mockFdbSync.m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
     m_mockFdbSync.m_mac[key].nexthop_value = "536870912";
 
     // Now call macDelVxlan which should find and process the entry
     m_mockFdbSync.macDelVxlan(key);
+    ASSERT_EQ(0u, m_mockFdbSync.m_mac.count(key));
 
-    ASSERT_TRUE(true);
+    // A later kernel delete for the same VXLAN FDB entry is expected after a local MAC wins.
+    m_mockFdbSync.macDelVxlan(key);
+    ASSERT_EQ(0u, m_mockFdbSync.m_mac.count(key));
+
 }
 
 TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlanEntryNHG)
@@ -1567,7 +1715,6 @@ TEST_F(FdbSyncdEvpnMhTest, TestMacDelVxlanEntryNHG)
     m_mockFdbSync.m_mac[key].type = "static";
     m_mockFdbSync.m_mac[key].vni = 30300;
     m_mockFdbSync.m_mac[key].ifname = "Vxlan-300";
-    m_mockFdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
     m_mockFdbSync.m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
     m_mockFdbSync.m_mac[key].nexthop_value = "536870913";
 
@@ -1834,7 +1981,6 @@ TEST_F(FdbSyncdEvpnMhTest, TestUpdateLocalMacWithVxlanEntry)
     m_mockFdbSync.m_mac[key].type = "dynamic";
     m_mockFdbSync.m_mac[key].vni = 20200;
     m_mockFdbSync.m_mac[key].ifname = "Vxlan-200";
-    m_mockFdbSync.m_mac[key].protocol = RTPROT_UNSPEC;
     m_mockFdbSync.m_mac[key].nhtype = FdbDest::NEXTHOPGROUP;
     m_mockFdbSync.m_mac[key].nexthop_value = "536870914";
 
@@ -1854,32 +2000,30 @@ TEST_F(FdbSyncdEvpnMhTest, TestUpdateMclagRemoteMacPort)
     int ifindex = 10;
     int vlan = 100;
     std::string mac = "aa:bb:cc:dd:ee:f5";
-    uint8_t protocol = RTPROT_ZEBRA;
 
     // Populate m_mclag_remote_fdb_mac to trigger the update path
     m_mockFdbSync.m_mclag_remote_fdb_mac[key].port_name = "PortChannel10";
     m_mockFdbSync.m_mclag_remote_fdb_mac[key].type = FDB_TYPE_STATIC;
 
     // Call updateMclagRemoteMacPort
-    m_mockFdbSync.updateMclagRemoteMacPort(ifindex, vlan, mac, protocol);
+    m_mockFdbSync.updateMclagRemoteMacPort(ifindex, vlan, mac);
 
     ASSERT_TRUE(true);
 }
 
 TEST_F(FdbSyncdEvpnMhTest, TestUpdateMclagRemoteMacPortHwProto)
 {
-    // Test updateMclagRemoteMacPort with RTPROT_HW protocol
+    // Second static MAC on a different key and port
     std::string key = "Vlan200:bb:cc:dd:ee:ff:f6";
     int ifindex = 20;
     int vlan = 200;
     std::string mac = "bb:cc:dd:ee:ff:f6";
-    uint8_t protocol = RTPROT_HW;
 
     // Populate m_mclag_remote_fdb_mac
     m_mockFdbSync.m_mclag_remote_fdb_mac[key].port_name = "PortChannel20";
     m_mockFdbSync.m_mclag_remote_fdb_mac[key].type = FDB_TYPE_STATIC;
 
-    m_mockFdbSync.updateMclagRemoteMacPort(ifindex, vlan, mac, protocol);
+    m_mockFdbSync.updateMclagRemoteMacPort(ifindex, vlan, mac);
 
     ASSERT_TRUE(true);
 }
@@ -1891,13 +2035,12 @@ TEST_F(FdbSyncdEvpnMhTest, TestUpdateMclagRemoteMacPortDynamic)
     int ifindex = 30;
     int vlan = 300;
     std::string mac = "cc:dd:ee:ff:00:f7";
-    uint8_t protocol = RTPROT_ZEBRA;
 
     // Populate with dynamic type - should skip bridge fdb command
     m_mockFdbSync.m_mclag_remote_fdb_mac[key].port_name = "PortChannel30";
     m_mockFdbSync.m_mclag_remote_fdb_mac[key].type = FDB_TYPE_DYNAMIC;
 
-    m_mockFdbSync.updateMclagRemoteMacPort(ifindex, vlan, mac, protocol);
+    m_mockFdbSync.updateMclagRemoteMacPort(ifindex, vlan, mac);
 
     ASSERT_TRUE(true);
 }
@@ -2251,4 +2394,426 @@ TEST_F(FdbSyncdEvpnMhTest, TestMixedNhgAndVtepMacs)
     free(nlmsg);
 
     ASSERT_TRUE(true);
+}
+
+/*
+ * The three cases below cover MAC sync ownership. When fpmsyncd carries local
+ * MACs to zebra over FPM, fdbsyncd must step back from both the kernel and
+ * APP_DB, otherwise the two write the same entries from different directions.
+ */
+
+TEST_F(FdbSyncdEvpnMhTest, MacSyncModeTogglesOwnership)
+{
+    m_mockFdbSync.setMacSyncMode("fpm");
+    EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    EXPECT_FALSE(m_mockFdbSync.isFpmMacSync());
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
+}
+
+TEST_F(FdbSyncdEvpnMhTest, L3EvpnMhKeepsFpmMacSyncWhateverFdbSyncSays)
+{
+    Table fdbSync(m_configDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    fdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "kernel"}});
+    Table deviceMetadata(m_configDb.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+    deviceMetadata.set("localhost", std::vector<FieldValueTuple>{{"subtype", "L3EvpnMH"}});
+
+    MockFdbSyncEvpnMh l3EvpnMh(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    EXPECT_TRUE(l3EvpnMh.isFpmMacSync());
+
+    l3EvpnMh.setMacSyncMode("kernel");
+    EXPECT_TRUE(l3EvpnMh.isFpmMacSync());
+    l3EvpnMh.setMacSyncMode("");
+    EXPECT_TRUE(l3EvpnMh.isFpmMacSync());
+
+    /* The next test's m_mockFdbSync reads CONFIG_DB before SetUp() resets it. */
+    deviceMetadata.del("localhost");
+    fdbSync.del("global");
+}
+
+/*
+ * fdbsyncd runs in the swss container, which a bgp restart leaves running, so it
+ * follows the mode fpmsyncd publishes in STATE_DB, the one zebra runs too, and
+ * switches when the bgp container restarts rather than when CONFIG_DB changes.
+ */
+TEST_F(FdbSyncdEvpnMhTest, MacSyncModeFollowsTheModeFpmsyncdRuns)
+{
+    Table cfgFdbSync(m_configDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    cfgFdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "fpm"}});
+    Table stateFdbSync(m_stateDb.get(), STATE_FDB_SYNC_TABLE_NAME);
+    stateFdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "kernel"}});
+
+    /* Configured, but bgp has not restarted yet. */
+    MockFdbSyncEvpnMh sync(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    EXPECT_FALSE(sync.isFpmMacSync());
+
+    sync.processStateFdbSyncEntry(KeyOpFieldsValuesTuple{"global", SET_COMMAND, {{"mac_sync_mode", "fpm"}}});
+    EXPECT_TRUE(sync.isFpmMacSync());
+
+    /* Without a published mode, the last one fpmsyncd ran still applies. */
+    sync.processStateFdbSyncEntry(KeyOpFieldsValuesTuple{"global", DEL_COMMAND, {}});
+    EXPECT_TRUE(sync.isFpmMacSync());
+
+    /* The next test's m_mockFdbSync reads both before SetUp() resets them. */
+    stateFdbSync.del("global");
+    cfgFdbSync.del("global");
+}
+
+/* Before fpmsyncd has published a mode, at boot, the configured one applies: it is
+ * the one fpmsyncd will run. */
+TEST_F(FdbSyncdEvpnMhTest, MacSyncModeIsTheConfiguredOneUntilFpmsyncdPublishesOne)
+{
+    Table cfgFdbSync(m_configDb.get(), CFG_FDB_SYNC_TABLE_NAME);
+    cfgFdbSync.set("global", std::vector<FieldValueTuple>{{"mac_sync_mode", "fpm"}});
+
+    MockFdbSyncEvpnMh sync(m_pipeline.get(), m_stateDb.get(), m_configDb.get());
+    EXPECT_TRUE(sync.isFpmMacSync());
+
+    cfgFdbSync.del("global");
+}
+
+TEST_F(FdbSyncdEvpnMhTest, LocalMacNotProgrammedIntoKernelInFpmMode)
+{
+    struct m_fdb_info info;
+    info.mac = "aa:bb:cc:dd:ee:20";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet4";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    m_mockFdbSync.macUpdateCache(&info);
+
+    /* Control: kernel ownership still programs the bridge. */
+    m_mockFdbSync.setMacSyncMode("kernel");
+    mockCallArgs.clear();
+    m_mockFdbSync.updateLocalMac(&info);
+    EXPECT_GT(countBridgeFdbCmds(), 0u);
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    mockCallArgs.clear();
+    m_mockFdbSync.updateLocalMac(&info);
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacNotWrittenToAppDbInFpmMode)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:44");
+    const std::string key = "Vlan100:dd:ee:ff:00:11:44";
+    std::vector<FieldValueTuple> values;
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    struct nlmsghdr *nlmsg = mac_route_msg(true, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    EXPECT_FALSE(getFdbTable().get(key, values));
+
+    /* Control: the same message is accepted under kernel ownership, so the
+     * absence above is the guard and not a malformed message. */
+    m_mockFdbSync.setMacSyncMode("kernel");
+    nlmsg = mac_route_msg(true, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    EXPECT_TRUE(getFdbTable().get(key, values));
+
+    nlmsg = mac_route_msg(false, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+}
+
+/*
+ * Rows fpmsyncd wrote to APP_VXLAN_FDB_TABLE in fpm mode stay withdrawable once the
+ * mode is back to kernel: fdbsyncd takes them over on the switch. A kernel delete for
+ * a MAC it had not cached used to be ignored, leaving the row in place.
+ */
+TEST_F(FdbSyncdEvpnMhTest, KernelModeTakesOverRemoteMacsInAppDb)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:55");
+    const std::string key = "Vlan100:dd:ee:ff:00:11:55";
+    std::vector<FieldValueTuple> values;
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    /* As fpmsyncd writes it. */
+    getFdbTable().set(key, std::vector<FieldValueTuple>{{"remote_vtep", "192.168.1.77"},
+                                                        {"type", "dynamic"},
+                                                        {"vni", "10100"}});
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    ASSERT_EQ(m_mockFdbSync.m_mac.count(key), 1u);
+    EXPECT_EQ(m_mockFdbSync.m_mac[key].nhtype, FdbDest::VTEP);
+    EXPECT_EQ(m_mockFdbSync.m_mac[key].ifname, "Vxlan-100");
+
+    struct nlmsghdr *nlmsg = mac_route_msg(false, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    EXPECT_FALSE(getFdbTable().get(key, values));
+}
+
+/*
+ * A MAC fpmsyncd programmed against a local Ethernet Segment port has no producer
+ * in kernel mode, so nothing would withdraw it: fdbsyncd removes it rather than
+ * taking it over. Every other row is taken over against its own VLAN's device.
+ */
+TEST_F(FdbSyncdEvpnMhTest, KernelModeRemovesMacsOnLocalEthernetSegmentPorts)
+{
+    const std::string esKey = "Vlan100:dd:ee:ff:00:11:88";
+    const std::string vtepKey = "Vlan200:dd:ee:ff:00:11:99";
+    std::vector<FieldValueTuple> values;
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    /* As fpmsyncd writes them. */
+    getFdbTable().set(esKey, std::vector<FieldValueTuple>{{"ifname", "PortChannel1"},
+                                                          {"type", "static"},
+                                                          {"vni", "10100"}});
+    getFdbTable().set(vtepKey, std::vector<FieldValueTuple>{{"remote_vtep", "192.168.1.78"},
+                                                            {"type", "dynamic"},
+                                                            {"vni", "10200"}});
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    EXPECT_FALSE(getFdbTable().get(esKey, values));
+    EXPECT_EQ(m_mockFdbSync.m_mac.count(esKey), 0u);
+    ASSERT_EQ(m_mockFdbSync.m_mac.count(vtepKey), 1u);
+    EXPECT_EQ(m_mockFdbSync.m_mac[vtepKey].nhtype, FdbDest::VTEP);
+    EXPECT_EQ(m_mockFdbSync.m_mac[vtepKey].ifname, "Vxlan-200");
+}
+
+/*
+ * Warm-restart reconciliation writes through the tables fdbsyncd registered at
+ * startup, which depend on mac_sync_mode: in fpm mode there is no
+ * APP_VXLAN_FDB_TABLE producer. A switch to kernel mode waits until
+ * reconciliation is done, so a remote MAC learnt meanwhile is never cached for
+ * a table without a producer, which reconcile() would dereference.
+ */
+TEST_F(FdbSyncdEvpnMhTest, KernelModeWaitsForWarmRestartReconciliation)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:66");
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    /* Registered as FdbSync's constructor does in fpm mode; ~FdbSync deletes it. */
+    m_mockFdbSync.m_AppRestartAssist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss");
+    AppRestartAssist &assist = *m_mockFdbSync.m_AppRestartAssist;
+    assist.m_warmStartInProgress = true;
+    assist.registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_mockFdbSync.m_imetTable);
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
+
+    struct nlmsghdr *nlmsg = mac_route_msg(true, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    for (const auto &table : assist.appTableCacheMap)
+    {
+        EXPECT_EQ(assist.m_psTables.count(table.first), 1u) << table.first << " has no producer";
+    }
+
+    assist.reconcile();
+    m_mockFdbSync.applyPendingMacSyncMode();
+    EXPECT_FALSE(m_mockFdbSync.isFpmMacSync());
+}
+
+/* The other way round, fdbsyncd keeps producing the rows it will reconcile
+ * until it has reconciled them, and only then leaves them to fpmsyncd. */
+TEST_F(FdbSyncdEvpnMhTest, FpmModeWaitsForWarmRestartReconciliation)
+{
+    swss::MacAddress mac("dd:ee:ff:00:11:77");
+    const std::string key = "Vlan100:dd:ee:ff:00:11:77";
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    /* Registered as FdbSync's constructor does in kernel mode; ~FdbSync deletes it. */
+    m_mockFdbSync.m_AppRestartAssist = new AppRestartAssist(m_pipeline.get(), "fdbsyncd", "swss");
+    AppRestartAssist &assist = *m_mockFdbSync.m_AppRestartAssist;
+    assist.m_warmStartInProgress = true;
+    assist.registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_mockFdbSync.m_fdbTable);
+    assist.registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_mockFdbSync.m_imetTable);
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    EXPECT_FALSE(m_mockFdbSync.isFpmMacSync());
+
+    struct nlmsghdr *nlmsg = mac_route_msg(true, 0, "192.168.1.77", 100, 100, mac);
+    m_mockFdbSync.onMsgRaw(nlmsg);
+    free(nlmsg);
+    EXPECT_EQ(assist.appTableCacheMap[APP_VXLAN_FDB_TABLE_NAME].count(key), 1u);
+
+    assist.reconcile();
+    m_mockFdbSync.applyPendingMacSyncMode();
+    EXPECT_TRUE(m_mockFdbSync.isFpmMacSync());
+}
+
+/* addLocalMac() is a separate entry point with its own guard, reached from the
+ * STATE_DB path rather than from netlink. */
+TEST_F(FdbSyncdEvpnMhTest, AddLocalMacNotProgrammedIntoKernelInFpmMode)
+{
+    const std::string key = "Vlan100:aa:bb:cc:dd:ee:21";
+    struct m_fdb_info info;
+    info.mac = "aa:bb:cc:dd:ee:21";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet8";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    m_mockFdbSync.macUpdateCache(&info);
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    mockCallArgs.clear();
+    m_mockFdbSync.addLocalMac(key, "replace");
+    EXPECT_GT(countBridgeFdbCmds(), 0u);
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    mockCallArgs.clear();
+    m_mockFdbSync.addLocalMac(key, "replace");
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+}
+
+/* onMsgNbr() reaches macRefreshStateDB() well before its own fpm check, so the
+ * guard has to sit in the refresh itself. Without it, fpm mode still spawns a
+ * bridge process per local MAC to refresh a kernel FDB it no longer uses. */
+TEST_F(FdbSyncdEvpnMhTest, MacRefreshIssuesNoBridgeCommandInFpmMode)
+{
+    struct m_fdb_info info;
+    info.mac = "aa:bb:cc:dd:ee:23";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet8";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    m_mockFdbSync.macUpdateCache(&info);
+
+    m_mockFdbSync.setMacSyncMode("kernel");
+    mockCallArgs.clear();
+    m_mockFdbSync.macRefreshStateDB(100, "aa:bb:cc:dd:ee:23");
+    EXPECT_GT(countBridgeFdbCmds(), 0u);
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    mockCallArgs.clear();
+    m_mockFdbSync.macRefreshStateDB(100, "aa:bb:cc:dd:ee:23");
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+}
+
+/* fpmsyncd carries ES-backed MACs as a nexthop group, so an Ethernet Segment
+ * does not stop fpm mode. fdbsyncd must therefore stand down in that case too,
+ * rather than both daemons driving the kernel. */
+TEST_F(FdbSyncdEvpnMhTest, FpmModeHonouredWhileEvpnMultihomingConfigured)
+{
+    const std::string key = "Vlan100:aa:bb:cc:dd:ee:22";
+    struct m_fdb_info info;
+    info.mac = "aa:bb:cc:dd:ee:22";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet8";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    m_mockFdbSync.macUpdateCache(&info);
+
+    swss::Table esTable(m_configDb.get(), "EVPN_ETHERNET_SEGMENT");
+    esTable.hset("PortChannel1", "esi", "00:11:22:33:44:55:66:77:88:99");
+
+    m_mockFdbSync.setMacSyncMode("fpm");
+    mockCallArgs.clear();
+    m_mockFdbSync.addLocalMac(key, "replace");
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+}
+
+static std::string g_bridgeDelOutput;
+
+/* Answers a "bridge fdb del" with exit status 255 and g_bridgeDelOutput; anything else succeeds */
+static int failBridgeDelete(const std::string &cmd, std::string &out)
+{
+    mockCallArgs.push_back(cmd);
+    if (cmd.find(" bridge fdb del ") == std::string::npos)
+    {
+        return 0;
+    }
+    out = g_bridgeDelOutput;
+    return 255;
+}
+
+/* Runs fn with swss ERROR logs sent to stdout and returns what it logged.
+   These tests log to syslog, so that is the output restored afterwards. */
+template <typename Fn>
+static std::string errorLogsOf(Fn fn)
+{
+    auto prio = swss::Logger::getMinPrio();
+    swss::Logger::swssOutputNotify("fdbsyncd", "STDOUT");
+    swss::Logger::setMinPrio(swss::Logger::SWSS_ERROR);
+    testing::internal::CaptureStdout();
+    fn();
+    std::string out = testing::internal::GetCapturedStdout();
+    swss::Logger::setMinPrio(prio);
+    swss::Logger::swssOutputNotify("fdbsyncd", "SYSLOG");
+    return out;
+}
+
+/* Adds a local MAC, then deletes it while "bridge fdb del" fails with the given output */
+static std::string deleteLocalMacWithBridgeOutput(MockFdbSyncEvpnMh &fdbSync, const std::string &output)
+{
+    struct m_fdb_info info;
+    info.mac = "00:aa:bb:cc:dd:ee";
+    info.vid = "Vlan100";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    fdbSync.updateLocalMac(&info);
+
+    g_bridgeDelOutput = output;
+    callback = failBridgeDelete;
+    info.op_type = FDB_OPER_DEL;
+    return errorLogsOf([&]() { fdbSync.updateLocalMac(&info); });
+}
+
+TEST_F(FdbSyncdEvpnMhTest, LocalMacDeleteOfAbsentKernelEntryIsNotAnError)
+{
+    auto errors = deleteLocalMacWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: No such file or directory\n");
+
+    EXPECT_EQ(errors, "");
+    EXPECT_TRUE(m_mockFdbSync.m_fdb_mac.empty());
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back().rfind("LC_ALL=C bridge fdb del 00:aa:bb:cc:dd:ee dev Ethernet0 master", 0), 0u);
+    EXPECT_NE(mockCallArgs.back().find(" 2>&1"), std::string::npos);
+}
+
+TEST_F(FdbSyncdEvpnMhTest, LocalMacDeleteFailureIsAnError)
+{
+    auto errors = deleteLocalMacWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd:"), std::string::npos);
+}
+
+/* Learns a MAC locally that is known as a remote VTEP MAC, while "bridge fdb del" of its VXLAN entry fails
+   with the given output */
+static std::string learnRemoteMacLocallyWithBridgeOutput(MockFdbSyncEvpnMh &fdbSync, const std::string &output)
+{
+    const std::string mac = "00:aa:bb:cc:dd:ef";
+    const std::string key = "Vlan200:" + mac;
+    fdbSync.m_mac[key].type = "dynamic";
+    fdbSync.m_mac[key].vni = 10200;
+    fdbSync.m_mac[key].ifname = "Vxlan-200";
+    fdbSync.m_mac[key].nhtype = FdbDest::VTEP;
+    fdbSync.m_mac[key].nexthop_value = "10.0.0.2";
+
+    struct m_fdb_info info;
+    info.mac = mac;
+    info.vid = "Vlan200";
+    info.port_name = "Ethernet0";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+
+    g_bridgeDelOutput = output;
+    callback = failBridgeDelete;
+    return errorLogsOf([&]() { fdbSync.updateLocalMac(&info); });
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteOfAbsentKernelEntryIsNotAnError)
+{
+    auto errors = learnRemoteMacLocallyWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: No such file or directory\n");
+
+    EXPECT_EQ(errors, "");
+    EXPECT_EQ(m_mockFdbSync.m_mac.count("Vlan200:00:aa:bb:cc:dd:ef"), 0u);
+    ASSERT_FALSE(mockCallArgs.empty());
+    EXPECT_EQ(mockCallArgs.back(), "LC_ALL=C bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self 2>&1");
+}
+
+TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteFailureIsAnError)
+{
+    auto errors = learnRemoteMacLocallyWithBridgeOutput(m_mockFdbSync, "RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self"),
+              std::string::npos);
 }

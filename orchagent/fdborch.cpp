@@ -19,6 +19,7 @@
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
+#include "swssnet.h"
 
 #define VLAN_PREFIX         "Vlan"
 
@@ -30,8 +31,33 @@ extern MlagOrch*        gMlagOrch;
 extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
 extern L2NhgOrch*       gL2NhgOrch;
+extern FdbOrch*         gFdbOrch;
 
 const int FdbOrch::fdborch_pri = 20;
+
+/* Adds the remote VTEP of a tunnel FDB entry to its SAI attributes */
+static void addEndpointIpAttr(const FdbData &fdbData, vector<sai_attribute_t> &attrs)
+{
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED || fdbData.dest_type != FdbDest::VTEP)
+    {
+        return;
+    }
+
+    IpAddress remote = IpAddress(fdbData.dest_value);
+    sai_attribute_t attr;
+    attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
+    copy(attr.value.ipaddr, remote);
+    attrs.push_back(attr);
+}
+
+/* Adds the forwarding action of an FDB entry to its SAI attributes */
+static void addPacketActionAttr(const FdbData &fdbData, vector<sai_attribute_t> &attrs)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = (fdbData.discard == "true") ? SAI_PACKET_ACTION_DROP : SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
+}
 
 FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
     TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port,
@@ -101,7 +127,16 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 
 FdbOrch::~FdbOrch()
 {
-    m_portsOrch->detach(this);
+    gFdbOrch = nullptr;
+}
+
+void FdbOrch::detachObservers()
+{
+    if (m_portsOrch)
+    {
+        m_portsOrch->detach(this);
+        m_portsOrch = nullptr;
+    }
 }
 
 bool FdbOrch::bake()
@@ -397,6 +432,41 @@ void FdbOrch::update(sai_fdb_event_t        type,
             */
             SWSS_LOG_INFO("Flush event: Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
+        } else if (type == SAI_FDB_EVENT_AGED) {
+            /* The SAI may also report each entry flushed before the bridge port
+               removal as aged, and that event can arrive after the bridge port is
+               gone. Clear a learned entry that still waits for that flush, as the
+               flush event would; there is nothing to do if it is already gone.
+            */
+            auto existing_entry = m_entries.find(update.entry);
+            if (existing_entry == m_entries.end())
+            {
+                SWSS_LOG_INFO("Age event: mac %s in bv_id 0x%" PRIx64 " already removed, bridge port ID 0x%" PRIx64 " is gone.",
+                              update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id);
+                return;
+            }
+            if (existing_entry->second.bridge_port_id == bridge_port_id &&
+                existing_entry->second.is_flush_pending &&
+                existing_entry->second.origin == FDB_ORIGIN_LEARN &&
+                existing_entry->second.type == "dynamic")
+            {
+                SWSS_LOG_NOTICE("Age event: clearing flushed mac %s in bv_id 0x%" PRIx64 " of removed bridge port ID 0x%" PRIx64 ".",
+                                update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id);
+                clearFdbEntry(existing_entry->first, existing_entry->second);
+                return;
+            }
+            Port stored_port;
+            if (existing_entry->second.bridge_port_id != bridge_port_id &&
+                m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, stored_port))
+            {
+                /* The entry is on another bridge port that still exists: the event is stale */
+                SWSS_LOG_INFO("Age event: stale event for mac %s in bv_id 0x%" PRIx64 " on removed bridge port ID 0x%" PRIx64 ", stored on bridge port ID 0x%" PRIx64 ".",
+                              update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
+                return;
+            }
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 " for age event of mac %s, stored on bridge port ID 0x%" PRIx64 ".",
+                        bridge_port_id, update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+            return;
         } else {
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
@@ -618,6 +688,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
              break;
         }
 
+        /* An entry whose own bridge port is gone can be neither added back nor saved */
+        bool stored_port_found = true;
         if (existing_entry->second.bridge_port_id != bridge_port_id)
         {
             SWSS_LOG_INFO("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%" PRIx64 " with bp=0x%" PRIx64 " existing bp=0x%" PRIx64,
@@ -626,6 +698,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, update.port))
             {
                 SWSS_LOG_INFO("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
+                stored_port_found = false;
             }
             // dont return, let it delete just to bring SONiC and SAI in sync
             // return;
@@ -633,6 +706,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         if (existing_entry->second.type == "static")
         {
+            if (!stored_port_found)
+            {
+                SWSS_LOG_NOTICE("FdbOrch AGE notification: not adding back static mac %s, its bridge port 0x%" PRIx64 " is gone",
+                                update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+                return;
+            }
+
             update.type = "static";
 
             if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
@@ -645,6 +725,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 fdbData.dest_value = existing_entry->second.dest_value;
                 fdbData.esi = existing_entry->second.esi;
                 fdbData.vni = existing_entry->second.vni;
+                fdbData.discard = existing_entry->second.discard;
                 saved_fdb_entries[update.port.m_alias].push_back(
                         {existing_entry->first.mac, vlan.m_vlan_info.vlan_id, fdbData});
             }
@@ -659,9 +740,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
                 attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
                 attrs.push_back(attr);
+                /* The entry goes back as stored: a stale event carries the bridge port of
+                   an entry replaced since, and sairedis forgets the key on any AGED event. */
                 attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-                attr.value.oid = bridge_port_id;
+                attr.value.oid = existing_entry->second.bridge_port_id;
                 attrs.push_back(attr);
+                addEndpointIpAttr(existing_entry->second, attrs);
+                addPacketActionAttr(existing_entry->second, attrs);
                 auto status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -680,6 +765,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
         if ((existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) ||
             (existing_entry->second.origin == FDB_ORIGIN_VXLAN_ADVERTIZED))
         {
+            if (!stored_port_found)
+            {
+                SWSS_LOG_NOTICE("FdbOrch AGE notification: not adding back remote mac %s, its bridge port 0x%" PRIx64 " is gone",
+                                update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+                return;
+            }
+
             sai_status_t status;
             sai_fdb_entry_t fdb_entry;
 
@@ -702,6 +794,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
             attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
             attr.value.oid = existing_entry->second.bridge_port_id;
             attrs.push_back(attr);
+            addEndpointIpAttr(existing_entry->second, attrs);
+            addPacketActionAttr(existing_entry->second, attrs);
 
             SWSS_LOG_NOTICE("fdbEvent: MAC age event received, MAC is %s, added back"
                 "to HW type %s FDB %s in %s on %s",
@@ -722,6 +816,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         if (existing_entry->second.origin == FDB_ORIGIN_LEARN && existing_entry->second.dest_type == FdbDest::IFNAME) {
             if (existing_entry->second.type == "dynamic_control_learn") {
+                if (!stored_port_found)
+                {
+                    SWSS_LOG_NOTICE("FdbOrch AGE notification: not adding back mac %s, its bridge port 0x%" PRIx64 " is gone",
+                                    update.entry.mac.to_string().c_str(), existing_entry->second.bridge_port_id);
+                    return;
+                }
                 SWSS_LOG_NOTICE("update: EVPN_MH_UC: ageout (C+D) -> C, type %s FDB %s in %s on %s",
                         existing_entry->second.type.c_str(), update.entry.mac.to_string().c_str(),
                         vlan.m_alias.c_str(), update.port.m_alias.c_str());
@@ -746,9 +846,14 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
                 attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
                 attrs.push_back(attr);
-                attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-                attr.value.oid = bridge_port_id;
+                attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+                attr.value.booldata = true;
                 attrs.push_back(attr);
+                m_entries[update.entry].allow_mac_move = true;
+                attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+                attr.value.oid = existing_entry->second.bridge_port_id;
+                attrs.push_back(attr);
+                addPacketActionAttr(existing_entry->second, attrs);
                 auto status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -1177,6 +1282,20 @@ void FdbOrch::doTask(Consumer& consumer)
                     /* get the port_name from l2nhgorch so that we can populate the port structure  */
                     if (!gL2NhgOrch->hasActiveL2Nhg(dest_value))
                     {
+                        if (!gL2NhgOrch->isBridgePortNhgSupported())
+                        {
+                            /* The group never becomes active: drop the MAC instead of keeping it
+                             * pending, which would also fail a warm restore. */
+                            auto existing = m_entries.find(entry);
+                            if (existing != m_entries.end() && existing->second.origin == origin)
+                            {
+                                removeFdbEntry(entry, origin);
+                            }
+                            SWSS_LOG_INFO("L2 Next Hop Group %s not supported, remote MAC %s not programmed",
+                                          dest_value.c_str(), entry.mac.to_string().c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
                         SWSS_LOG_INFO("L2 Next Hop Group %s is not known/active yet", dest_value.c_str());
                         it++;
                         continue;
@@ -1282,16 +1401,32 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+
+    if (&consumer == m_fdbNotificationConsumer && entries.size() > 1000)
+    {
+        SWSS_LOG_WARN("FDB notification batch: %zu entries drained", entries.size());
+    }
+
+    for (auto& entry : entries)
+    {
+        handleNotification(consumer, entry);
+    }
+}
+
+void FdbOrch::handleNotification(NotificationConsumer& consumer, const KeyOpFieldsValuesTuple& entry)
+{
+    SWSS_LOG_ENTER();
+
+    const auto& op = kfvOp(entry);
+    const auto& data = kfvKey(entry);
+
     sai_status_t status;
-    std::string op;
-    std::string data;
-    std::vector<swss::FieldValueTuple> values;
     string alias;
     string vlan;
     Port port;
     Port vlanPort;
-
-    consumer.pop(op, data, values);
 
     if (&consumer == m_flushNotificationsConsumer)
     {
@@ -1758,7 +1893,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     {
         swss::Port vlan = update.vlan;
         swss::Port port = update.member;
-        flushAllFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
+        flushFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
         notifyObserversFDBFlush(port, vlan.m_vlan_info.vlan_oid);
         return;
     }
@@ -2086,10 +2221,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        if (fdbData.dest_type == FdbDest::VTEP || fdbData.dest_type == FdbDest::NEXTHOPGROUP) {
-            /* Try to remvoe local neighbor entry if exists
-            * Since this mac is at the remote vxlan side now
-            */
+        /* A local MAC moved to a remote VTEP takes its neighbors out of the SAI. Behind a bridge
+         * port next hop group they stay: the SAI resolves them through the group's bridge port. */
+        if ((fdbData.dest_type == FdbDest::VTEP) &&
+            macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
+            (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
             gNeighOrch->processFDBDelete(entry);
         }
     }
@@ -2115,12 +2251,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         {
             attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
             attr.value.booldata = false;
-            attrs.push_back(attr);
+            /* Valid only on a static entry: on a set, it goes before the type turns dynamic */
+            attrs.insert((fdbData.sai_fdb_type == SAI_FDB_ENTRY_TYPE_DYNAMIC) ? attrs.begin() : attrs.end(), attr);
         }
     }
-    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = (fdbData.discard == "true") ? SAI_PACKET_ACTION_DROP: SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
+    addPacketActionAttr(fdbData, attrs);
     if (macUpdate && !macMoveLocalToRemote)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",

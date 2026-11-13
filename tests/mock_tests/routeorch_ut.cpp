@@ -6,12 +6,14 @@
 #undef protected
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
+#include "swssnet.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
 #include "mock_sai_api.h"
 #include "bulker.h"
 
 extern string gMySwitchType;
+extern bool gEnableFibSuppress;
 
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
@@ -411,6 +413,8 @@ namespace routeorch_test
 
         void TearDown() override
         {
+            gEnableFibSuppress = false;
+
             RestoreSaiApis();
             DEINIT_SAI_API_MOCK(route);
             DEINIT_SAI_API_MOCK(next_hop_group);
@@ -876,6 +880,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchTestSetDelResponse)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -912,6 +917,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchSetFullMaskSubnetPrefix)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -930,6 +936,7 @@ namespace routeorch_test
 
     TEST_F(RouteOrchTest, RouteOrchLoopbackRoute)
     {
+        gEnableFibSuppress = true;
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
 
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -998,6 +1005,65 @@ namespace routeorch_test
                                                         {"ifname", "Ethernet8"}}});
         routeConsumer->addToSync(entries);
         static_cast<Orch *>(gRouteOrch)->doTask();
+    }
+
+    /* A bulk that removes the last route of a VRF and adds another route to the
+     * same VRF must record the new route, so that a later DEL removes it. */
+    TEST_F(RouteOrchTest, RouteOrchVrfLastRouteDelAndSetSameBulk)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf2", "SET", { {"vni", "500200"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        entries.clear();
+        entries.push_back({"Ethernet8", "SET", { {"vrf_name", "Vrf2"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        sai_object_id_t vrf_id = gVrfOrch->getVRFid("Vrf2");
+        IpPrefix v4_prefix("20.0.0.0/24");
+        IpPrefix v6_prefix("fc00:1::/64");
+
+        auto routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        entries.clear();
+        entries.push_back({"Vrf2:20.0.0.0/24", "SET", { {"protocol", "kernel"},
+                                                        {"nexthop", "0.0.0.0"},
+                                                        {"ifname", "Ethernet8"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.count(vrf_id), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).size(), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).count(v4_prefix), 1u);
+        int vrf_ref_count = gVrfOrch->getVrfRefCount("Vrf2");
+
+        /* The DEL sorts before the SET, so its post processing runs first. */
+        auto create_count = create_route_count;
+        auto remove_count = remove_route_count;
+        entries.clear();
+        entries.push_back({"Vrf2:20.0.0.0/24", "DEL", {}});
+        entries.push_back({"Vrf2:fc00:1::/64", "SET", { {"protocol", "kernel"},
+                                                        {"nexthop", "::"},
+                                                        {"ifname", "Ethernet8"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(routeConsumer->m_toSync.empty());
+        ASSERT_EQ(create_route_count, create_count + 1);
+        ASSERT_EQ(remove_route_count, remove_count + 1);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.count(vrf_id), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).size(), 1u);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.at(vrf_id).count(v6_prefix), 1u);
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf2"), vrf_ref_count);
+
+        entries.clear();
+        entries.push_back({"Vrf2:fc00:1::/64", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(routeConsumer->m_toSync.empty());
+        ASSERT_EQ(remove_route_count, remove_count + 2);
+        ASSERT_EQ(gRouteOrch->m_syncdRoutes.count(vrf_id), 0u);
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf2"), vrf_ref_count - 1);
     }
 
     /* Tests SAI_STATUS_ITEM_NOT_FOUND error handling for setting route */
@@ -1717,5 +1783,203 @@ namespace routeorch_test
         
         // desired_nhg_key is empty: route now directly points to NHG (no longer a temp route)
         ASSERT_EQ(it->second.desired_nhg_key.getSize(), 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrch_RemoveRoutePrefixRunsAsyncPublisherFlush)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"7.7.7.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        (void)gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24"));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
+    }
+
+    TEST_F(RouteOrchTest, RemoveNhgAfterAllMembersInvalidatedWithoutReplacement)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        // Add ECMP route with 2 nexthops (both already resolved in SetUp)
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // Verify the NHG was created
+        NextHopGroupKey nhg_key("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        ASSERT_NE(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG not found after adding ECMP route";
+
+        // Invalidate both nexthops without calling validnexthop afterward.
+        // This is the exact sequence MuxPrefixBasedNbrHandler::disable() performs:
+        // it removes NHG members from SAI but does not add tunnel replacements.
+        NextHopKey nh1(IpAddress("10.0.0.2"), "Ethernet0");
+        NextHopKey nh2(IpAddress("10.0.0.3"), "Ethernet0");
+        uint32_t count = 0;
+
+        // Capture nexthop refcounts before invalidation
+        auto refcount1_before = gNeighOrch->getNextHopRefCount(nh1);
+        auto refcount2_before = gNeighOrch->getNextHopRefCount(nh2);
+        ASSERT_GT(refcount1_before, 0);
+        ASSERT_GT(refcount2_before, 0);
+
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh1, count));
+        ASSERT_EQ(count, 1u);
+        ASSERT_TRUE(gRouteOrch->invalidnexthopinNextHopGroup(nh2, count));
+        ASSERT_EQ(count, 1u);
+
+        // invalidnexthopinNextHopGroup only removes SAI members;
+        // NeighOrch refcounts must remain unchanged until the NHG is destroyed.
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before);
+
+        // Delete the route — triggers removeNextHopGroup which decrements refcounts
+        auto fail_before = sai_fail_count;
+
+        entries.clear();
+        entries.push_back({"9.9.9.0/24", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_EQ(sai_fail_count, fail_before)
+            << "Route deletion should not trigger any SAI failures";
+
+        ASSERT_EQ(gRouteOrch->m_syncdNextHopGroups.find(nhg_key),
+                  gRouteOrch->m_syncdNextHopGroups.end())
+            << "NHG should be removed after route deletion";
+
+        // After NHG destruction, refcounts must be decremented
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh1), refcount1_before - 1);
+        ASSERT_EQ(gNeighOrch->getNextHopRefCount(nh2), refcount2_before - 1);
+    }
+
+    /*
+     * A NEXTHOP_GROUP_TABLE SET that grows a single next hop into a group
+     * changes its SAI ID, and the route on its index follows. Later SETs that
+     * shrink the group to one next hop and grow it again keep the ID.
+     */
+    TEST_F(RouteOrchTest, NhgSetBetweenOneAndSeveralNextHopsMovesItsRoute)
+    {
+        const string index = "nhg_replace";
+        const IpPrefix prefix("2.2.3.0/24");
+
+        auto nhg_consumer = dynamic_cast<Consumer *>(gNhgOrch->getExecutor(APP_NEXTHOP_GROUP_TABLE_NAME));
+        auto route_consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(nhg_consumer, nullptr);
+        ASSERT_NE(route_consumer, nullptr);
+
+        auto feed = [](Consumer *consumer, Orch *orch, const KeyOpFieldsValuesTuple &entry) {
+            deque<KeyOpFieldsValuesTuple> entries{entry};
+            consumer->addToSync(entries);
+            orch->doTask();
+        };
+        auto routeNextHopId = [&prefix]() {
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = gVirtualRouterId;
+            route_entry.switch_id = gSwitchId;
+            swss::copy(route_entry.destination, prefix);
+            sai_attribute_t attr;
+            attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            attr.value.oid = SAI_NULL_OBJECT_ID;
+            EXPECT_EQ(sai_route_api->get_route_entry_attribute(&route_entry, 1, &attr), SAI_STATUS_SUCCESS);
+            return attr.value.oid;
+        };
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.2"}, {"ifname", "Ethernet0"}}});
+        ASSERT_TRUE(gNhgOrch->hasNhg(index));
+        const sai_object_id_t nh2_id = gNeighOrch->getNextHopId(NextHopKey("10.0.0.2@Ethernet0"));
+        ASSERT_EQ(gNhgOrch->getNhg(index).getId(), nh2_id);
+
+        feed(route_consumer, gRouteOrch, {prefix.to_string(), "SET", {{"nexthop_group", index}}});
+        ASSERT_EQ(routeNextHopId(), nh2_id);
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.2,10.0.0.3"}, {"ifname", "Ethernet0,Ethernet0"}}});
+        EXPECT_TRUE(nhg_consumer->m_toSync.empty());
+        const sai_object_id_t group_id = gNhgOrch->getNhg(index).getId();
+        EXPECT_NE(group_id, nh2_id);
+        EXPECT_EQ(routeNextHopId(), group_id);
+
+        /* Back to one next hop, and to two again: the SAI group stays, so the
+         * route is not touched. */
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.3"}, {"ifname", "Ethernet0"}}});
+        EXPECT_TRUE(nhg_consumer->m_toSync.empty());
+        EXPECT_EQ(gNhgOrch->getNhg(index).getId(), group_id);
+        EXPECT_EQ(routeNextHopId(), group_id);
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.2,10.0.0.3"}, {"ifname", "Ethernet0,Ethernet0"}}});
+        EXPECT_TRUE(nhg_consumer->m_toSync.empty());
+        EXPECT_EQ(gNhgOrch->getNhg(index).getId(), group_id);
+        EXPECT_EQ(routeNextHopId(), group_id);
+
+        feed(route_consumer, gRouteOrch, {prefix.to_string(), "DEL", {}});
+        feed(nhg_consumer, gNhgOrch, {index, "DEL", {}});
+        ASSERT_FALSE(gNhgOrch->hasNhg(index));
+    }
+
+    /*
+     * A router interface cannot be a group member, so a SAI group that shrinks
+     * to a router interface next hop is replaced: the route moves to the
+     * router interface and the SAI group is removed.
+     */
+    TEST_F(RouteOrchTest, NhgSetFromSeveralNextHopsToARouterInterfaceMovesItsRoute)
+    {
+        const string index = "nhg_to_rif";
+        const IpPrefix prefix("2.2.4.0/24");
+
+        auto nhg_consumer = dynamic_cast<Consumer *>(gNhgOrch->getExecutor(APP_NEXTHOP_GROUP_TABLE_NAME));
+        auto route_consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(nhg_consumer, nullptr);
+        ASSERT_NE(route_consumer, nullptr);
+
+        auto feed = [](Consumer *consumer, Orch *orch, const KeyOpFieldsValuesTuple &entry) {
+            deque<KeyOpFieldsValuesTuple> entries{entry};
+            consumer->addToSync(entries);
+            orch->doTask();
+        };
+        auto routeNextHopId = [&prefix]() {
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = gVirtualRouterId;
+            route_entry.switch_id = gSwitchId;
+            swss::copy(route_entry.destination, prefix);
+            sai_attribute_t attr;
+            attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            attr.value.oid = SAI_NULL_OBJECT_ID;
+            EXPECT_EQ(sai_route_api->get_route_entry_attribute(&route_entry, 1, &attr), SAI_STATUS_SUCCESS);
+            return attr.value.oid;
+        };
+        auto groupExists = [](sai_object_id_t group_id) {
+            sai_attribute_t attr;
+            attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+            return sai_next_hop_group_api->get_next_hop_group_attribute(group_id, 1, &attr) == SAI_STATUS_SUCCESS;
+        };
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "10.0.0.2,10.0.0.3"}, {"ifname", "Ethernet0,Ethernet0"}}});
+        ASSERT_TRUE(gNhgOrch->hasNhg(index));
+        const sai_object_id_t group_id = gNhgOrch->getNhg(index).getId();
+        ASSERT_TRUE(groupExists(group_id));
+
+        feed(route_consumer, gRouteOrch, {prefix.to_string(), "SET", {{"nexthop_group", index}}});
+        ASSERT_EQ(routeNextHopId(), group_id);
+
+        feed(nhg_consumer, gNhgOrch, {index, "SET", {{"nexthop", "0.0.0.0"}, {"ifname", "Ethernet0"}}});
+        EXPECT_TRUE(nhg_consumer->m_toSync.empty());
+        const sai_object_id_t rif_id = gIntfsOrch->getRouterIntfsId("Ethernet0");
+        ASSERT_NE(rif_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(gNhgOrch->getNhg(index).getId(), rif_id);
+        EXPECT_EQ(routeNextHopId(), rif_id);
+        EXPECT_FALSE(groupExists(group_id));
+
+        feed(route_consumer, gRouteOrch, {prefix.to_string(), "DEL", {}});
+        feed(nhg_consumer, gNhgOrch, {index, "DEL", {}});
+        ASSERT_FALSE(gNhgOrch->hasNhg(index));
     }
 }

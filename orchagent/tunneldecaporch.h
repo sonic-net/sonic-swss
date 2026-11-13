@@ -54,17 +54,13 @@ struct SubnetDecapConfig
     std::string     tunnel_v6;
 };
 
-struct NexthopTunnel
-{
-    sai_object_id_t nh_id;
-    int             ref_count;
-};
-
 /* TunnelTable: key string, tunnel object id */
 typedef std::map<std::string, TunnelEntry> TunnelTable;
 
-/* Nexthop IP to refcount map */
-typedef std::map<swss::IpAddress, NexthopTunnel> Nexthop;
+/* Tunnel NH cache by destination IP.
+ * Holds created SAI NH OIDs for lookup/dedup in this orch.
+ * Global liveness/teardown safety is determined by NeighOrch refcount. */
+typedef std::map<swss::IpAddress, sai_object_id_t> Nexthop;
 
 /* Tunnel to nexthop maps */
 typedef std::map<std::string, Nexthop> TunnelNhs;
@@ -82,6 +78,8 @@ public:
     bool removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     swss::IpAddresses getDstIpAddresses(std::string tunnelKey);
     std::string getDscpMode(const std::string &tunnelKey) const;
+    std::string getEcnMode(const std::string &tunnelKey) const;
+    std::string getEncapEcnMode(const std::string &tunnelKey) const;
     bool getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const;
     const SubnetDecapConfig &getSubnetDecapConfig() const
     {
@@ -135,9 +133,6 @@ private:
     bool setIpAttribute(std::string tunnel_name, std::string src_ip_str);
 
     sai_object_id_t getNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
-    int incNextHopRef(std::string tunnelKey, swss::IpAddress& ipAddr);
-    int decNextHopRef(std::string tunnelKey, swss::IpAddress& ipAddr);
-
     void doTask(Consumer& consumer);
     void doDecapTunnelTask(Consumer &consumer);
     void doDecapTunnelTermTask(Consumer &consumer);

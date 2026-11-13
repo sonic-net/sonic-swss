@@ -639,7 +639,7 @@ class DockerVirtualSwitch:
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
             if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_VOQ_FS):
                 self.get_state_db()
-                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
+                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS, polling_config=PollingConfig(polling_interval=0.01, timeout=40, strict=True))
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""

@@ -130,6 +130,7 @@ public:
                 DBConnector* configDb);
 
     ~FdbOrch();
+    void detachObservers() override;
 
     bool bake() override;
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t, const sai_fdb_entry_type_t &);
@@ -171,6 +172,7 @@ private:
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);
     void doTask(swss::SelectableTimer& timer) override;
+    void handleNotification(NotificationConsumer& consumer, const KeyOpFieldsValuesTuple& entry);
 
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);

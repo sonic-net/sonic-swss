@@ -296,7 +296,7 @@ private:
                     std::vector<FieldValueTuple>&tupEntry);
     void processStpMstInstPortAttr(const std::string op, uint16_t mst_id, const std::string intfName,
                                        std::vector<FieldValueTuple>&tupEntry);
-    std::vector<uint16_t> parseVlanList(const std::string &vlanStr);
+    bool parseVlanList(const std::string &vlanStr, std::vector<uint16_t> &vlanList);
     void updateVlanInstanceMap(int instance, const std::vector<uint16_t>&newVlanList, bool operation);
     bool isInstanceMapped(uint16_t instance);
     std::vector<std::string> getVlanAliasesForInstance(uint16_t instance);

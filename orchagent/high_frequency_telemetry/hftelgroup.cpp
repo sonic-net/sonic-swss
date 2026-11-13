@@ -10,16 +10,41 @@ HFTelGroup::HFTelGroup(const string &group_name) : m_group_name(group_name)
     SWSS_LOG_ENTER();
 }
 
-void HFTelGroup::updateObjects(const set<string> &object_names)
+void HFTelGroup::updateObjects(const set<string> &object_names, sai_uint16_t start_label)
 {
     SWSS_LOG_ENTER();
 
     m_objects.clear();
-    sai_uint16_t lable = 1;
     for (auto &name : object_names)
     {
-        m_objects[name] = lable++;
+        m_objects[name] = start_label++;
     }
+}
+
+size_t HFTelGroup::updateObjectsPreservingLabels(const set<string> &object_names, sai_uint16_t start_label)
+{
+    SWSS_LOG_ENTER();
+
+    unordered_map<string, sai_uint16_t> next_objects;
+    next_objects.reserve(object_names.size());
+    size_t allocated = 0;
+
+    for (const auto &name : object_names)
+    {
+        auto itr = m_objects.find(name);
+        if (itr != m_objects.end())
+        {
+            next_objects.emplace(name, itr->second);
+        }
+        else
+        {
+            next_objects.emplace(name, start_label++);
+            ++allocated;
+        }
+    }
+
+    m_objects = move(next_objects);
+    return allocated;
 }
 
 void HFTelGroup::updateStatsIDs(std::set<sai_stat_id_t> &&stats_ids)

@@ -205,8 +205,9 @@ std::vector<sai_attribute_t> NextHopManager::prepareSaiAttrs(
 
   if (!next_hop_entry.gre_tunnel_id.empty()) {
     // From centralized mapper and, get gre tunnel that next hop depends on. Get
-    // underlay router interface from gre tunnel manager,
-    sai_object_id_t tunnel_oid;
+    // underlay router interface from gre tunnel manager.
+    // getOID leaves the OID untouched when the key is unknown.
+    sai_object_id_t tunnel_oid = SAI_NULL_OBJECT_ID;
     m_p4OidMapper->getOID(
         SAI_OBJECT_TYPE_TUNNEL,
         KeyGenerator::generateTunnelKey(next_hop_entry.gre_tunnel_id),
@@ -220,9 +221,9 @@ std::vector<sai_attribute_t> NextHopManager::prepareSaiAttrs(
     next_hop_attr.value.oid = tunnel_oid;
     next_hop_attrs.push_back(next_hop_attr);
   } else {
-    // From centralized mapper, get OID of router interface that next hop
-    // depends on.
-    sai_object_id_t rif_oid;
+    // From centralized mapper, get OID of router interface that next hop depends on.
+    // getOID leaves the OID untouched when the key is unknown.
+    sai_object_id_t rif_oid = SAI_NULL_OBJECT_ID;
     m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                           KeyGenerator::generateRouterInterfaceKey(
                               next_hop_entry.router_interface_id),

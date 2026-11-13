@@ -15,6 +15,12 @@
 using namespace swss;
 using namespace testing;
 
+extern void resetMockWarmStartHelper();
+extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
+                                               const std::string &key,
+                                               swss::KeyOpFieldsValuesTuple &kfv);
+extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
+
 #define MY_SID_KEY_DELIMITER ':'
 
 /*
@@ -32,6 +38,7 @@ namespace ut_fpmsyncd
 
         virtual void SetUp() override
         {
+            resetMockWarmStartHelper();
             testing_db::reset();
 
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -51,6 +58,7 @@ namespace ut_fpmsyncd
 
         virtual void TearDown() override
         {
+            resetMockWarmStartHelper();
         }
     };
 }
@@ -1345,5 +1353,59 @@ namespace ut_fpmsyncd
 
         /* Destroy the Netlink object and free the memory */
         free_nlobj(nl_obj);
+    }
+
+    TEST_F(FpmSyncdSRv6MySIDsTest, WarmRestartDefersSetAndDeduplicatesReplay)
+    {
+        IpAddress mysid("fc00:0:1:1::");
+        const int8_t blockLen = 32;
+        const int8_t nodeLen = 16;
+        const int8_t funcLen = 16;
+        const int8_t argLen = 0;
+        const auto key = get_srv6_my_sid_table_key(&mysid, blockLen, nodeLen, funcLen, argLen);
+        auto *nlObj = create_srv6_mysid_nlmsg(
+            RTM_NEWSRV6LOCALSID, &mysid, blockLen, nodeLen, funcLen, argLen, SRV6_LOCALSID_ACTION_END);
+        ASSERT_NE(nlObj, nullptr);
+
+        m_routeSync->getWarmStartHelper().setState(WarmStart::INITIALIZED);
+        m_fpmLink->processRawMsg(&nlObj->n);
+        m_fpmLink->processRawMsg(&nlObj->n);
+
+        std::vector<FieldValueTuple> fields;
+        EXPECT_FALSE(m_srv6MySidTable->get(key, fields));
+        EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_SRV6_MY_SID_TABLE_NAME), 1u);
+
+        KeyOpFieldsValuesTuple replay;
+        ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_SRV6_MY_SID_TABLE_NAME, key, replay));
+        EXPECT_EQ(kfvOp(replay), SET_COMMAND);
+        EXPECT_EQ(kfvFieldsValues(replay), std::vector<FieldValueTuple>({{"action", "end"}}));
+
+        free_nlobj(nlObj);
+    }
+
+    TEST_F(FpmSyncdSRv6MySIDsTest, WarmRestartDefersDelete)
+    {
+        IpAddress mysid("fc00:0:1:1::");
+        const int8_t blockLen = 32;
+        const int8_t nodeLen = 16;
+        const int8_t funcLen = 16;
+        const int8_t argLen = 0;
+        const auto key = get_srv6_my_sid_table_key(&mysid, blockLen, nodeLen, funcLen, argLen);
+        m_srv6MySidTable->set(key, {{"action", "end"}});
+        auto *nlObj = create_srv6_mysid_nlmsg(
+            RTM_DELSRV6LOCALSID, &mysid, blockLen, nodeLen, funcLen, argLen, SRV6_LOCALSID_ACTION_END);
+        ASSERT_NE(nlObj, nullptr);
+
+        m_routeSync->getWarmStartHelper().setState(WarmStart::INITIALIZED);
+        m_fpmLink->processRawMsg(&nlObj->n);
+
+        std::vector<FieldValueTuple> fields;
+        EXPECT_TRUE(m_srv6MySidTable->get(key, fields));
+
+        KeyOpFieldsValuesTuple replay;
+        ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_SRV6_MY_SID_TABLE_NAME, key, replay));
+        EXPECT_EQ(kfvOp(replay), DEL_COMMAND);
+
+        free_nlobj(nlObj);
     }
 }

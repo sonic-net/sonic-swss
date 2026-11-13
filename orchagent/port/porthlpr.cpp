@@ -795,6 +795,8 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &se
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::txpolarity) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rxpolarity) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::tx_precoding) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rx_precoding) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
@@ -1277,6 +1279,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (serdes_field == PORT_TX_PRECODING)
+        {
+            if (!this->parsePortSerdes(serdes->tx_precoding, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_RX_PRECODING)
+        {
+            if (!this->parsePortSerdes(serdes->rx_precoding, field, value))
+            {
+                return false;
+            }
+        }
         else if (serdes_field == PORT_REGN_BFM1N)
         {
             if (!this->parsePortSerdes(serdes->regn_bfm1n, field, value))
@@ -1387,6 +1403,21 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
             {
                 return false;
             }
+        }
+        else if (field == PORT_MACSEC)
+        {
+            /* Placeholder to prevent warning. Parsed by macsecorch.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if (field == PORT_ASIC_PORT_NAME)
+        {
+            /* Placeholder to prevent warning. Not used by orchagent.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if ((field == PORT_CORE_ID) || (field == PORT_CORE_PORT_ID) || (field == PORT_NUM_VOQ))
+        {
+            /* Placeholder to prevent warning. These fields are taken from SYSTEM_PORT*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
         }
         else
         {

@@ -1,13 +1,11 @@
 #pragma once
 
-namespace hftel_is_supported_ut
+namespace copp_stats_ut
 {
     void setSaiHookNone();
-    void setSaiHookStatsStFail();
-    void setSaiHookAttributeCapabilityQueryFail();
-    void setSaiHookCollectorCreateNotImplemented();
-    void setSaiHookSwitchNotifySetNotImplemented();
-    void setSaiHookAllSupported();
+    void setSaiHookPolicerStatsAll();
+    void setSaiHookPolicerStatsPartial();   // only PACKETS + BYTES
+    void setSaiHookPolicerStatsNotSupported();
 
     /** RAII: restores hook to None on scope exit. */
     struct SaiHookGuard

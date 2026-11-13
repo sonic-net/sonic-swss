@@ -77,6 +77,8 @@ public:
     bool isLocalSystemPortIntf(string alias);
     void voqSyncIntfState(string &alias, bool);
 
+    bool isIntfChangeInProgress(const string &alias);
+
 private:
 
     SelectableTimer* m_updateMapsTimer = nullptr;
@@ -99,6 +101,7 @@ private:
     unique_ptr<Table> m_vidToRidTable;
 
     std::set<std::string> m_removingIntfses;
+    std::set<std::string> m_rifWaitingForVlanExit;
 
     std::string getRifFlexCounterTableKey(std::string s);
 

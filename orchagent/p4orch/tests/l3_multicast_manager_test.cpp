@@ -1712,7 +1712,7 @@ TEST_F(L3MulticastManagerTest, CreateRouterInterfaceMyMacFailure) {
       .WillOnce(Return(SAI_STATUS_FAILURE));
 
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN,
-            CreateRouterInterface(entry, &rif_oid));
+      CreateRouterInterface(entry, &rif_oid));
 }
 
 TEST_F(L3MulticastManagerTest, CreateRouterInterfaceAttributeFailures) {

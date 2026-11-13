@@ -39,7 +39,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern RouteOrch *gRouteOrch;
 extern bool gTraditionalFlexCounter;
-extern bool isChassisDbInUse();
+extern bool isVoqChassisDbInUse();
 
 const int IntfsOrch::intfsorch_pri = 35;
 
@@ -76,6 +76,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
         m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
     }
 
+
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
@@ -100,7 +101,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
                                  RIF_PLUGIN_FIELD,
                                  rifRateSha);
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         //Add subscriber to process VOQ system interface
         string tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
@@ -109,6 +110,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, vector<table_name_with_pri_t> tableNames, 
     }
 
 }
+
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
@@ -192,6 +194,11 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
     m_syncdIntfses[alias].ref_count--;
     SWSS_LOG_INFO("Router interface %s ref count is decreased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
+}
+
+bool IntfsOrch::isIntfChangeInProgress(const string &alias)
+{
+    return m_removingIntfses.find(alias) != m_removingIntfses.end();
 }
 
 bool IntfsOrch::setRouterIntfsMpls(const Port &port)
@@ -436,7 +443,7 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 
     if (!getSaiLoopbackAction(actionStr, action))
     {
-        return false;
+        return true;
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
@@ -903,7 +910,10 @@ void IntfsOrch::doTask(Consumer &consumer)
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to set interface '%s' to VRF ID '%d' because it has IP addresses associated with it.", alias.c_str(), vrf_id);
+                            SWSS_LOG_NOTICE("Interface '%s' still has %zu IP address(es); deferring VRF '%s' bind until pending IP removals are processed.",
+                                          alias.c_str(), m_syncdIntfses[alias].ip_addresses.size(), vrf_name.c_str());
+                            it++;
+                            continue;
                         }
                     }
                 }
@@ -1063,14 +1073,21 @@ void IntfsOrch::doTask(Consumer &consumer)
                     /* Set loopback action */
                     if (!loopbackAction.empty())
                     {
-                        setIntfLoopbackAction(port, loopbackAction);
+                        if (!setIntfLoopbackAction(port, loopbackAction))
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                 }
             }
 
             if (!mac)
             {
-                mac = gMacAddress;
+                // Prefer the port's own MAC (e.g. a VLAN SVI's gateway MAC populated
+                // from VLAN_TABLE) and only fall back to the switch MAC when the port
+                // has none.
+                mac = port.m_mac ? port.m_mac : gMacAddress;
             }
 
             // update mac if it is changed
@@ -1121,6 +1138,11 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (!ip_prefix_in_key)
+            {
+                m_rifWaitingForVlanExit.erase(alias);
+            }
+
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
@@ -1369,6 +1391,24 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         return true;
     }
 
+    /* A port is either bridged or routed: wait until portsorch has removed the port's VLAN memberships
+     * (vlanmgrd and intfmgrd write APPL_DB independently, so the INTF SET can arrive first). */
+    if (port.m_type == Port::PHY || port.m_type == Port::LAG)
+    {
+        vlan_members_t vlan_members;
+        gPortsOrch->getPortVlanMembers(port, vlan_members);
+        if (!vlan_members.empty())
+        {
+            if (m_rifWaitingForVlanExit.insert(port.m_alias).second)
+            {
+                SWSS_LOG_NOTICE("Port %s is still a member of %zu VLAN(s), delaying router interface creation",
+                                port.m_alias.c_str(), vlan_members.size());
+            }
+            return false;
+        }
+        m_rifWaitingForVlanExit.erase(port.m_alias);
+    }
+
     /* Create router interface if the router interface doesn't exist */
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -1504,7 +1544,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
 
     SWSS_LOG_NOTICE("Create router interface %s MTU %u", port.m_alias.c_str(), port.m_mtu);
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         // Sync the interface of local port/LAG to the SYSTEM_INTERFACE table of CHASSIS_APP_DB
         voqSyncAddIntf(port.m_alias);
@@ -1557,7 +1597,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
-    if(isChassisDbInUse())
+    if(isVoqChassisDbInUse())
     {
         // Sync the removal of interface of local port/LAG to the SYSTEM_INTERFACE table of CHASSIS_APP_DB
         voqSyncDelIntf(port.m_alias);
@@ -1972,4 +2012,3 @@ void IntfsOrch::voqSyncIntfState(string &alias, bool isUp)
     }
 
 }
-
