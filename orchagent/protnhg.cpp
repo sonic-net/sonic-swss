@@ -828,8 +828,11 @@ bool ProtNhg::syncMembers(const set<ProtNhgRole> &member_keys)
     map<ProtNhgRole, sai_object_id_t> syncing;
 
     /* Unresolved members are skipped but still fail this call, so the
-     * caller knows to retry them later via validateNextHop(). */
+     * caller knows to retry them later via validateNextHop(). A SAI
+     * member-create failure is tracked separately (m_memberSaiFailure)
+     * because it has no retry path and the caller must treat it differently. */
     bool success = true;
+    m_memberSaiFailure = false;
 
     for (const auto &role : member_keys)
     {
@@ -869,6 +872,7 @@ bool ProtNhg::syncMembers(const set<ProtNhgRole> &member_keys)
             SWSS_LOG_ERROR("Failed to create %s member of protection NHG %s",
                            roleToString(entry.first), m_key.c_str());
             success = false;
+            m_memberSaiFailure = true;
         }
         else
         {

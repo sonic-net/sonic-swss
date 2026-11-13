@@ -28,6 +28,16 @@ extern sai_switch_api_t*           sai_switch_api;
 NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
+
+    /*
+     * Probe once at construction so the protection-NHG capability lands in
+     * STATE_DB|SWITCH_CAPABILITY at startup, letting anything that polls for
+     * support see it even on a switch where no protection NHG is ever
+     * created. SwitchOrch (gSwitchOrch) and gSwitchId are both ready by the
+     * time NhgOrch is constructed. The call is a no-op if something later
+     * reaches it again (m_protCapChecked guards the probe).
+     */
+    probeProtectionCapabilities();
 }
 
 /*
@@ -1499,6 +1509,21 @@ bool NhgOrch::finalizeProtNhg(const string &key,
     if (!nhg->isSynced())
     {
         SWSS_LOG_ERROR("Failed to sync protection NHG %s", key.c_str());
+        return false;
+    }
+
+    /*
+     * A SAI member-create failure is different from an unresolved next hop:
+     * validateNextHop() only re-fires when a next hop resolves, so a member
+     * whose SAI create failed while its next hop was already resolved would
+     * never complete. Fail the create and tear the group down rather than
+     * register one that is permanently short a member.
+     */
+    if (nhg->hadMemberSaiFailure())
+    {
+        SWSS_LOG_ERROR("Failed to create member(s) of protection NHG %s in SAI; "
+                       "aborting create", key.c_str());
+        nhg->remove();
         return false;
     }
 

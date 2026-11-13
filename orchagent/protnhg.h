@@ -198,6 +198,16 @@ public:
      * over rather than dropping a member. */
     bool validateNextHop(const NextHopKey &nh_key);
 
+    /*
+     * True when the last syncMembers() left a member unsynced because its SAI
+     * create failed, as opposed to its next hop being unresolved. The two need
+     * different handling: an unresolved member self-heals through
+     * validateNextHop(), but a SAI failure has no retry, so the caller should
+     * fail the create rather than keep a group that is permanently short a
+     * member.
+     */
+    inline bool hadMemberSaiFailure() const { return m_memberSaiFailure; }
+
     inline bool isTemp() const override { return false; }
     inline NextHopGroupKey getNhgKey() const override { return {}; }
 
@@ -253,4 +263,8 @@ private:
 
     bool syncMembers(const set<ProtNhgRole> &member_keys) override;
     vector<sai_attribute_t> createNhgmAttrs(const ProtNhgMember &member) const override;
+
+    /* Set by syncMembers() when a member's SAI create failed (not merely
+     * unresolved). Read by NhgOrch::finalizeProtNhg() right after sync(). */
+    bool m_memberSaiFailure = false;
 };
