@@ -87,7 +87,9 @@ private:
     std::pair<bool, std::string> getVxlanRouterMacAddress();
 
     bool createVxlan(const VxlanInfo & info);
-    bool deleteVxlan(const VxlanInfo & info);
+    bool addVxlanToVxlanIf(const VxlanInfo & info);
+    bool createVxlans(const std::vector<VxlanInfo> & infos);
+    bool deleteVxlan(const std::vector<VxlanInfo> & infos);
 
     void clearAllVxlanDevices();
     void disableLearningForAllVxlanNetdevices();
@@ -110,9 +112,9 @@ private:
     /*
     * Vnet Cache
     * Key: Vnet name
-    * Value: Vxlan information of this vnet
+    * Value: Vxlan devices of this vnet, one per vxlan tunnel
     */
-    std::map<std::string, VxlanInfo> m_vnetCache;
+    std::map<std::string, std::vector<VxlanInfo>> m_vnetCache;
 
     DBConnector *m_app_db;
     bool m_in_reconcile;

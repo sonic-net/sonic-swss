@@ -1133,6 +1133,13 @@ namespace vnetorch_test
             static_cast<Orch *>(m_vnetOrch)->doTask();
         }
 
+        void setupDualStackVnet(const string &name)
+        {
+            setVxlanTunnel("tunnel_v4", "10.10.10.10");
+            setVxlanTunnel("tunnel_v6", "fc00::10");
+            setVnetMultiTunnel(name, "tunnel_v4,tunnel_v6", "2000");
+        }
+
         // Deletes must flow through the consumer as a DEL_COMMAND: replaying an
         // addExistingData() after removing the APP_DB key would silently no-op
         // the delete handler and lose delete/refcount coverage.
@@ -2919,6 +2926,126 @@ namespace vnetorch_test
                        ipv4NextHop->oid), m_rt.removedNexthops.end());
         EXPECT_NE(find(m_rt.removedNexthops.begin(), m_rt.removedNexthops.end(),
                        ipv6NextHop->oid), m_rt.removedNexthops.end());
+    }
+
+    // Looking up an existing tunnel next hop must use the tunnel matching the
+    // endpoint family, not the (empty) single-tunnel name of a multi-tunnel VNET.
+    TEST_F(VNetOrchTest, VnetDualStackExistingTunnelNextHopUsesFamilyTunnel)
+    {
+        setupDualStackVnet("Vnet_2000");
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+        setVnetRoute("Vnet_2000", "2001:db8:100::1/128", "fc00::1");
+
+        const sai_object_id_t ipv4NextHop = nhOidForEndpoint("10.10.10.1");
+        const sai_object_id_t ipv6NextHop = nhOidForEndpoint("fc00::1");
+        ASSERT_NE(ipv4NextHop, SAI_NULL_OBJECT_ID);
+        ASSERT_NE(ipv6NextHop, SAI_NULL_OBJECT_ID);
+
+        auto *vrfObj = m_vnetOrch->getTypePtr<VNetVrfObject>("Vnet_2000");
+        NextHopKey ipv4Key(IpAddress("10.10.10.1"), MacAddress(), 0, true);
+        NextHopKey ipv6Key(IpAddress("fc00::1"), MacAddress(), 0, true);
+        EXPECT_EQ(vrfObj->getExistingTunnelNextHopId(ipv4Key), ipv4NextHop);
+        EXPECT_EQ(vrfObj->getExistingTunnelNextHopId(ipv6Key), ipv6NextHop);
+    }
+
+    // The custom BFD session of an endpoint is sourced from the tunnel whose
+    // family matches that endpoint.
+    TEST_F(VNetOrchTest, VnetDualStackCustomBfdSessionUsesFamilyTunnelSource)
+    {
+        setupDualStackVnet("Vnet_2000");
+
+        setVnetRoutePriority("Vnet_2000", "100.100.1.1/32", "10.10.10.1", "10.10.10.2",
+                             "10.10.10.1", "custom_bfd", "", "", false, 100, 100);
+        setVnetRoutePriority("Vnet_2000", "2001:db8:100::1/128", "fc00::1", "fc00::2",
+                             "fc00::1", "custom_bfd", "", "", false, 100, 100);
+
+        auto localAddr = [this](const string &monitor) {
+            Table tbl(m_app_db.get(), APP_BFD_SESSION_TABLE_NAME);
+            vector<FieldValueTuple> fvs;
+            EXPECT_TRUE(tbl.get("default:default:" + monitor, fvs)) << monitor;
+            for (const auto &fv : fvs)
+            {
+                if (fvField(fv) == "local_addr") return fvValue(fv);
+            }
+            return string();
+        };
+        EXPECT_EQ(localAddr("10.10.10.2"), "10.10.10.10");
+        EXPECT_EQ(localAddr("fc00::2"), "fc00::10");
+
+        delVnetRouteMonitored("Vnet_2000", "100.100.1.1/32");
+        delVnetRouteMonitored("Vnet_2000", "2001:db8:100::1/128");
+    }
+
+    // A tunnel of the VNET that is missing from VxlanTunnelOrch (null entry or
+    // removed) is skipped instead of dereferenced; the other family still works.
+    TEST_F(VNetOrchTest, VnetDualStackMissingTunnelIsNotDereferenced)
+    {
+        setupDualStackVnet("Vnet_2000");
+        NextHopKey ipv4Key(IpAddress("10.10.10.1"), MacAddress(), 0, true);
+        NextHopKey ipv6Key(IpAddress("fc00::1"), MacAddress(), 0, true);
+
+        m_VxlanTunnelOrch->addTunnel("tunnel_v6", nullptr);
+        EXPECT_EQ(m_vnetOrch->getTunnelNameForNextHop("Vnet_2000", ipv4Key), "tunnel_v4");
+        EXPECT_THROW(m_vnetOrch->getTunnelNameForNextHop("Vnet_2000", ipv6Key),
+                     std::runtime_error);
+
+        m_VxlanTunnelOrch->delTunnel("tunnel_v6");
+        EXPECT_EQ(m_vnetOrch->getTunnelNameForNextHop("Vnet_2000", ipv4Key), "tunnel_v4");
+        EXPECT_THROW(m_vnetOrch->getTunnelNameForNextHop("Vnet_2000", ipv6Key),
+                     std::runtime_error);
+    }
+
+    // A route whose endpoint family has no tunnel in the VNET is dropped without
+    // programming anything and does not affect routes of the other family.
+    TEST_F(VNetOrchTest, VnetMultiTunnelRouteWithoutMatchingFamilyIsDropped)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVnetMultiTunnel("Vnet_2000", "tunnel_v4", "2000");
+        ASSERT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
+
+        setVnetRoute("Vnet_2000", "2001:db8:100::1/128", "fc00::1");
+        EXPECT_EQ(findRoute("2001:db8:100::1"), nullptr);
+        EXPECT_TRUE(m_rt.nexthops.empty());
+
+        setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
+        EXPECT_NE(findRoute("100.100.1.1"), nullptr);
+    }
+
+    // If a later tunnel map cannot be created, the maps already created for the
+    // VNET are removed so the earlier tunnel is not leaked, and a retry succeeds.
+    TEST_F(VNetOrchTest, VnetMultiTunnelMapFailureRollsBackCreatedMaps)
+    {
+        setVxlanTunnel("tunnel_v4", "10.10.10.10");
+        setVxlanTunnel("tunnel_v6", "fc00::10");
+
+        // Tunnels are mapped in name order, so the IPv6 one fails second.
+        ON_CALL(m_tunnelMock, create_tunnel(_, _, _, _))
+            .WillByDefault(Invoke([this](sai_object_id_t *id, sai_object_id_t sw,
+                                         uint32_t n, const sai_attribute_t *l) -> sai_status_t {
+                auto src = findRawAttr(l, n, SAI_TUNNEL_ATTR_ENCAP_SRC_IP);
+                if (src && ipAddrEquals(src->value.ipaddr, "fc00::10"))
+                {
+                    return SAI_STATUS_TABLE_FULL;
+                }
+                return m_savedCreateTunnel(id, sw, n, l);
+            }));
+
+        setVnetMultiTunnel("Vnet_2000", "tunnel_v4,tunnel_v6", "2000");
+
+        EXPECT_FALSE(m_vnetOrch->isVnetExists("Vnet_2000"));
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 2U);
+        EXPECT_EQ(m_tun.removedTunnels.size(), 1U);
+
+        ON_CALL(m_tunnelMock, create_tunnel(_, _, _, _))
+            .WillByDefault(Invoke([this](sai_object_id_t *id, sai_object_id_t sw,
+                                         uint32_t n, const sai_attribute_t *l) {
+                return m_savedCreateTunnel(id, sw, n, l);
+            }));
+
+        setVnetMultiTunnel("Vnet_2000", "tunnel_v4,tunnel_v6", "2000");
+        EXPECT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
+
+        delVnet("Vnet_2000");
     }
 
     // A route whose endpoint carries an inner MAC programs the tunnel next hop

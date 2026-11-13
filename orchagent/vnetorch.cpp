@@ -349,7 +349,7 @@ sai_object_id_t VNetVrfObject::getTunnelNextHop(NextHopKey& nh)
 
 sai_object_id_t VNetVrfObject::getExistingTunnelNextHopId(NextHopKey& nh)
 {
-    auto tun_name = getTunnelName();
+    auto tun_name = getTunnelNameForNextHop(nh);
 
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
@@ -391,9 +391,17 @@ string VNetVrfObject::getTunnelNameForNextHop(const NextHopKey& nh)
     auto tunnels = getTunnelNames();
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    for (string tunnel_name : tunnels)
+    for (const auto& tunnel_name : tunnels)
     {
-        auto tun_obj = vxlan_orch->getVxlanTunnel(tunnel_name);
+        VxlanTunnel* tun_obj = vxlan_orch->isTunnelExists(tunnel_name) ?
+                               vxlan_orch->getVxlanTunnel(tunnel_name) : nullptr;
+        if (tun_obj == nullptr)
+        {
+            SWSS_LOG_WARN("VNET '%s' references missing vxlan tunnel '%s'",
+                          vnet_name_.c_str(), tunnel_name.c_str());
+            continue;
+        }
+
         auto tun_ip_family = tun_obj->getSrcIP().isV4() ? AF_INET : AF_INET6;
 
         if (nh_ip_family == tun_ip_family)
@@ -635,6 +643,7 @@ bool VNetOrch::addOperation(const Request& request)
                 }
 
                 VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
+                vector<string> mapped_tunnels;
                 for (const auto& tun_name : tunnels)
                 {
                     if (!vxlan_orch->createVxlanTunnelMap(tun_name, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
@@ -642,8 +651,19 @@ bool VNetOrch::addOperation(const Request& request)
                     {
                         SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                     vnet_name.c_str(), tun_name.c_str());
+
+                        // Undo the maps already created so their tunnels are not leaked.
+                        for (auto it_mapped = mapped_tunnels.rbegin(); it_mapped != mapped_tunnels.rend(); ++it_mapped)
+                        {
+                            if (!vxlan_orch->removeVxlanTunnelMap(*it_mapped, vni))
+                            {
+                                SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map rollback failed",
+                                               vnet_name.c_str(), it_mapped->c_str());
+                            }
+                        }
                         return false;
                     }
+                    mapped_tunnels.push_back(tun_name);
                 }
                 create = true;
                 SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
@@ -2771,7 +2791,7 @@ void VNetRouteOrch::createCustomBFDMonitoringSession(const string& vnet, const N
         vector<FieldValueTuple>    data;
         string key = "default:default:" + monitor_addr.to_string();
 
-        auto tun_name = vnet_orch_->getTunnelName(vnet);
+        auto tun_name = vnet_orch_->getTunnelNameForNextHop(vnet, endpoint);
         VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
         auto tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
         /*
