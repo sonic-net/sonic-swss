@@ -16,6 +16,8 @@
 #include "recorder.h"
 #undef private
 
+#include "../recorder_test_helper.h"
+
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
@@ -504,13 +506,13 @@ namespace consumer_test
 
     TEST_F(ConsumerTest, AsyncSwssRecorderWritesBatchRecords)
     {
-        char dir_template[] = "/tmp/swss-consumer-ut-XXXXXX";
-        auto dir = mkdtemp(dir_template);
-        ASSERT_NE(dir, nullptr);
+        swss_test::ScopedRecorderWorkDir workDir("/tmp/swss-consumer-ut-XXXXXX");
+        ASSERT_TRUE(workDir.created());
 
-        const string dirname(dir);
+        const string dirname = workDir.dirname();
         const string filename = "swss-recorder-ut.rec";
         const string fullpath = dirname + "/" + filename;
+        workDir.trackFile(fullpath);
         const string key_prefix = "async-swss-recorder-key-";
 
         Recorder::Instance().swss.setRecord(true);
@@ -542,8 +544,6 @@ namespace consumer_test
 
         Recorder::Instance().swss.setAsync(false);
         Recorder::Instance().swss.record_ofs.close();
-        ASSERT_EQ(remove(fullpath.c_str()), 0);
-        ASSERT_EQ(rmdir(dirname.c_str()), 0);
     }
 
     /*
@@ -756,13 +756,13 @@ namespace consumer_test
 
     TEST_F(ConsumerTest, SetRecordableSkipsRecording)
     {
-        char dir_template[] = "/tmp/swss-consumer-ut-XXXXXX";
-        auto dir = mkdtemp(dir_template);
-        ASSERT_NE(dir, nullptr);
+        swss_test::ScopedRecorderWorkDir workDir("/tmp/swss-consumer-ut-XXXXXX");
+        ASSERT_TRUE(workDir.created());
 
-        const string dirname(dir);
+        const string dirname = workDir.dirname();
         const string filename = "swss-recordable-ut.rec";
         const string fullpath = dirname + "/" + filename;
+        workDir.trackFile(fullpath);
         const string recorded_key = "recorded-key";
         const string skipped_key = "skipped-key";
         const string resumed_key = "resumed-key";
@@ -802,7 +802,5 @@ namespace consumer_test
         EXPECT_NE(content.find(resumed_key), string::npos);
 
         Recorder::Instance().swss.record_ofs.close();
-        ASSERT_EQ(remove(fullpath.c_str()), 0);
-        ASSERT_EQ(rmdir(dirname.c_str()), 0);
     }
 }

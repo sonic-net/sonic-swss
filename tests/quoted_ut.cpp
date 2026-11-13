@@ -5,12 +5,16 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <fcntl.h>
+#include <future>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <unistd.h>
+#include "logger.h"
 #include "recorder.h"
+#include "recorder_test_helper.h"
 #include "swssnet.h"
 #include "cfgmgr/shellcmd.h"
 
@@ -75,6 +79,142 @@ AsyncSwssRecorderDebugStats waitForRecorderStats(
     return recorder.getAsyncDebugStats();
 }
 
+using swss_test::ScopedRecorderWorkDir;
+
+static constexpr char kPendingThresholdWarnMarker[] =
+        "AsyncSwssRecorder queue depth exceeded threshold";
+
+size_t countOccurrences(const string& haystack, const string& needle)
+{
+    if (needle.empty())
+    {
+        return 0;
+    }
+
+    size_t count = 0;
+    size_t pos = 0;
+    while ((pos = haystack.find(needle, pos)) != string::npos)
+    {
+        ++count;
+        pos += needle.size();
+    }
+    return count;
+}
+
+// Captures SWSS logs written to stderr for the duration of a gtest (restores on exit).
+class ScopedStderrLogCapture
+{
+public:
+    bool isActive() const
+    {
+        return m_active;
+    }
+
+    ScopedStderrLogCapture()
+    {
+        if (pipe(m_pipefd) != 0)
+        {
+            return;
+        }
+
+        // Non-blocking read end: the write ends stay open (including stderr itself),
+        // so a blocking read() would hang forever once the pipe is empty.
+        const int readFlags = fcntl(m_pipefd[0], F_GETFL, 0);
+        if (readFlags < 0 || fcntl(m_pipefd[0], F_SETFL, readFlags | O_NONBLOCK) != 0)
+        {
+            close(m_pipefd[0]);
+            close(m_pipefd[1]);
+            m_pipefd[0] = m_pipefd[1] = -1;
+            return;
+        }
+
+        m_savedStderr = dup(STDERR_FILENO);
+        if (m_savedStderr < 0)
+        {
+            close(m_pipefd[0]);
+            close(m_pipefd[1]);
+            m_pipefd[0] = m_pipefd[1] = -1;
+            return;
+        }
+
+        if (dup2(m_pipefd[1], STDERR_FILENO) != STDERR_FILENO)
+        {
+            close(m_savedStderr);
+            m_savedStderr = -1;
+            close(m_pipefd[0]);
+            close(m_pipefd[1]);
+            m_pipefd[0] = m_pipefd[1] = -1;
+            return;
+        }
+
+        setvbuf(stderr, nullptr, _IONBF, 0);
+
+        m_savedMinPrio = Logger::getMinPrio();
+        Logger::setMinPrio(Logger::SWSS_WARN);
+        Logger::swssOutputNotify("quoted_ut", "STDERR");
+        m_active = true;
+    }
+
+    string drainCapturedOutput()
+    {
+        if (!m_active)
+        {
+            return m_captured;
+        }
+
+        fflush(stderr);
+
+        char buffer[4096];
+        ssize_t bytesRead = 0;
+        while ((bytesRead = read(m_pipefd[0], buffer, sizeof(buffer))) > 0)
+        {
+            m_captured.append(buffer, static_cast<size_t>(bytesRead));
+        }
+
+        return m_captured;
+    }
+
+    ~ScopedStderrLogCapture()
+    {
+        if (!m_active)
+        {
+            return;
+        }
+
+        drainCapturedOutput();
+        fflush(stderr);
+        dup2(m_savedStderr, STDERR_FILENO);
+        close(m_savedStderr);
+        close(m_pipefd[1]);
+        close(m_pipefd[0]);
+        Logger::setMinPrio(m_savedMinPrio);
+        Logger::swssOutputNotify("quoted_ut", "SYSLOG");
+    }
+
+    ScopedStderrLogCapture(const ScopedStderrLogCapture&) = delete;
+    ScopedStderrLogCapture& operator=(const ScopedStderrLogCapture&) = delete;
+
+private:
+    bool m_active = false;
+    int m_pipefd[2] = {-1, -1};
+    int m_savedStderr = -1;
+    Logger::Priority m_savedMinPrio = Logger::SWSS_NOTICE;
+    string m_captured;
+};
+
+deque<KeyOpFieldsValuesTuple> makeThresholdTestEntries(size_t count, size_t keyOffset)
+{
+    deque<KeyOpFieldsValuesTuple> entries;
+    for (size_t i = 0; i < count; ++i)
+    {
+        entries.push_back(KeyOpFieldsValuesTuple(
+            { "threshold-key-" + to_string(keyOffset + i),
+              SET_COMMAND,
+              { { "field1", "value1" } } }));
+    }
+    return entries;
+}
+
 }
 
 TEST(quoted, copy1_v6)
@@ -107,13 +247,13 @@ TEST(quoted, copy1_v6)
 
 TEST(recorder, preservesProvidedTimestamp)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "recorder-ut.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string timestamp = "2026-03-25.17:13:05.185522";
     const string payload = "CFG_TEST_TABLE:key|SET|field:value";
 
@@ -139,13 +279,13 @@ TEST(recorder, preservesProvidedTimestamp)
 
 TEST(swssrec, asyncUpdatesStatsAndWritesRecord)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "swss-async-stats.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string prefix = "TEST_TABLE:";
     const string expectedPayload = "TEST_TABLE:async-key|SET|field1:value1|field2:value2";
 
@@ -176,13 +316,13 @@ TEST(swssrec, asyncUpdatesStatsAndWritesRecord)
 
 TEST(swssrec, syncFallbackWhenAsyncDisabled)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "swss-sync-fallback.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string prefix = "TEST_TABLE:";
     const string keyPrefix = "sync-key-";
 
@@ -240,13 +380,13 @@ TEST(swssrec, setAsyncDisableWithoutStartedWorkerKeepsStatsClear)
 
 TEST(swssrec, setAsyncDisableDrainsWorkerAndSingleTupleFallsBackToSync)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "swss-disable-drain.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string prefix = "TEST_TABLE:";
 
     {
@@ -289,19 +429,17 @@ TEST(swssrec, setAsyncDisableDrainsWorkerAndSingleTupleFallsBackToSync)
         EXPECT_GE(finalStats.high_watermark, 1u);
     }
 
-    ASSERT_EQ(remove(fullpath.c_str()), 0);
-    ASSERT_EQ(rmdir(dirname.c_str()), 0);
 }
 
 TEST(swssrec, recordTuplesAsyncBulkEnqueue)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "swss-bulk-enqueue.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string prefix = "TEST_TABLE:";
     const string keyPrefix = "batch-enqueue-key-";
     const size_t batchSize = 1024;
@@ -354,15 +492,19 @@ TEST(swssrec, recordTuplesAsyncBulkEnqueue)
 
 TEST(swssrec, pendingThresholdWarningTracksHighWatermark)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedStderrLogCapture logCapture;
+    ASSERT_TRUE(logCapture.isActive());
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "swss-pending-threshold.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string prefix = "TEST_TABLE:";
-    const size_t enqueueCount = 30;
+    const size_t batchSize =
+            static_cast<size_t>(ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD) + 5;
+    const size_t concurrentBatch = 256;
 
     SwSSRec recorder;
     recorder.setRecord(true);
@@ -371,33 +513,66 @@ TEST(swssrec, pendingThresholdWarningTracksHighWatermark)
     recorder.setAsync(true);
     recorder.startRec(true);
 
-    deque<KeyOpFieldsValuesTuple> entries;
-    for (size_t i = 0; i < enqueueCount; ++i)
-    {
-        entries.push_back(KeyOpFieldsValuesTuple(
-            { "threshold-key-" + to_string(i),
-              SET_COMMAND,
-              { { "field1", "value1" } } }));
-    }
+    size_t keyOffset = 0;
+    // One batch enqueue crossing the threshold must emit a single WARN (not per entry).
+    recorder.recordTuplesAsync(prefix, makeThresholdTestEntries(batchSize, keyOffset));
+    keyOffset += batchSize;
 
-    recorder.recordTuplesAsync(prefix, entries);
+    promise<void> ready0;
+    promise<void> ready1;
+    auto peerReady0 = ready0.get_future();
+    auto peerReady1 = ready1.get_future();
 
-    const auto stats = waitForRecorderStats(recorder, enqueueCount, enqueueCount);
-    EXPECT_EQ(stats.enqueued_total, enqueueCount);
-    EXPECT_EQ(stats.drained_total, enqueueCount);
+    thread concurrentRefill0([&]() {
+        ready0.set_value();
+        peerReady1.wait();
+        recorder.recordTuplesAsync(
+                prefix, makeThresholdTestEntries(concurrentBatch, keyOffset));
+    });
+    thread concurrentRefill1([&]() {
+        ready1.set_value();
+        peerReady0.wait();
+        recorder.recordTuplesAsync(
+                prefix,
+                makeThresholdTestEntries(concurrentBatch, keyOffset + concurrentBatch));
+    });
+    concurrentRefill0.join();
+    concurrentRefill1.join();
+
+    const size_t firstCycleTotal = batchSize + concurrentBatch * 2;
+    const auto stats = waitForRecorderStats(recorder, firstCycleTotal, firstCycleTotal, 500);
+    EXPECT_EQ(stats.enqueued_total, firstCycleTotal);
+    EXPECT_EQ(stats.drained_total, firstCycleTotal);
     EXPECT_EQ(stats.pending_count, 0u);
     EXPECT_GE(stats.high_watermark, static_cast<uint64_t>(ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD));
+
+    const string afterFirstCycle = logCapture.drainCapturedOutput();
+    const size_t firstCycleWarns =
+            countOccurrences(afterFirstCycle, kPendingThresholdWarnMarker);
+    EXPECT_GE(firstCycleWarns, 1u) << "crossing the threshold must log at least once";
+
+    keyOffset = firstCycleTotal;
+    recorder.recordTuplesAsync(prefix, makeThresholdTestEntries(batchSize, keyOffset));
+    const size_t secondCycleTotal = firstCycleTotal + batchSize;
+    const auto statsAfterRefill = waitForRecorderStats(
+            recorder, secondCycleTotal, secondCycleTotal, 200);
+    EXPECT_EQ(statsAfterRefill.pending_count, 0u);
+
+    const string afterSecondCycle = logCapture.drainCapturedOutput();
+    EXPECT_EQ(countOccurrences(afterSecondCycle, kPendingThresholdWarnMarker),
+              firstCycleWarns + 1u)
+            << "after hysteresis clear and drain, crossing threshold again should log exactly once more";
 }
 
 TEST(swssrec, signalSafeStatsDumpFormatsOutput)
 {
-    char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
-    auto dir = mkdtemp(dir_template);
-    ASSERT_NE(dir, nullptr);
+    ScopedRecorderWorkDir workDir;
+    ASSERT_TRUE(workDir.created());
 
-    const string dirname(dir);
+    const string dirname = workDir.dirname();
     const string filename = "swss-signal-stats.rec";
     const string fullpath = dirname + "/" + filename;
+    workDir.trackFile(fullpath);
     const string prefix = "TEST_TABLE:";
 
     SwSSRec recorder;

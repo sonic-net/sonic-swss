@@ -258,6 +258,7 @@ void SwSSRec::stopAsyncWorker()
         stats.high_watermark);
 }
 
+// Threshold warn hysteresis is synchronized via m_mutex (held by callers on enqueue).
 void SwSSRec::onEnqueue(size_t count)
 {
     auto depth = m_pendingCount.fetch_add(count, std::memory_order_relaxed) + count;
@@ -283,10 +284,13 @@ void SwSSRec::onEnqueue(size_t count)
     }
 }
 
+// Threshold warn hysteresis is synchronized via m_mutex (acquired here; on enqueue via callers).
 void SwSSRec::onDrain()
 {
-    auto depth = m_pendingCount.fetch_sub(1, std::memory_order_relaxed) - 1;
     m_drainedTotal.fetch_add(1, std::memory_order_relaxed);
+
+    std::lock_guard<std::mutex> lock(m_mutex);
+    auto depth = m_pendingCount.fetch_sub(1, std::memory_order_relaxed) - 1;
 
     if (m_pendingWarnActive.load(std::memory_order_relaxed) &&
         depth <= ASYNC_SWSS_RECORDER_PENDING_WARN_THRESHOLD / 2)
