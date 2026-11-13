@@ -40,6 +40,7 @@ private:
     Table m_statePortTable;
     Table m_stateLagTable;
     Table m_stateMACsecIngressSATable;
+    DBConnector *m_stateDb;
 
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appLagTable;
@@ -50,7 +51,8 @@ private:
      * Closed (false) while MACsec is attached and the member has no ingress SA.
      * m_macsecGatePushed is the last value teamd accepted. It is recorded as
      * open only after this process successfully adds the member. A missing
-     * entry on an already-enslaved member is unknown (warm start), not open.
+     * entry on an already-enslaved MACsec member is unknown (warm start), not
+     * open. A member with no MACsec and no pushed entry is left alone.
      * m_macsecGatePushAttempts counts failed pushes; the sweep stops at
      * MACSEC_GATE_MAX_PUSH_ATTEMPTS until a new MACsec event. */
     std::map<std::string, std::map<std::string, bool>> m_macsecMemberGate;

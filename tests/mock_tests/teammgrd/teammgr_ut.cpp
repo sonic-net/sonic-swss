@@ -22,6 +22,8 @@ static std::map<std::string, std::FILE*> pidFiles;
 static bool failMacsecGatePush = false;
 static bool failPortRemove = false;
 static bool failTeamdSigterm = false;
+// errno returned with a failed SIGTERM. 0 means EPERM, the "still running" case.
+static int teamdSigtermErrno = 0;
 // Ports isPortEnslaved() should report as enslaved (see the lstat override).
 static std::set<std::string> mockEnslavedPorts;
 
@@ -156,7 +158,7 @@ static int cb_kill(pid_t pid, int sig)
     mockKillCommands.push_back(std::make_pair(pid, sig));
     if (failTeamdSigterm && sig == SIGTERM)
     {
-        errno = EPERM;
+        errno = teamdSigtermErrno != 0 ? teamdSigtermErrno : EPERM;
         return -1;
     }
     if (!sig)
@@ -284,6 +286,14 @@ int cb(const std::string &cmd, std::string &stdout)
     return 0;
 }
 
+namespace swss
+{
+std::vector<std::string> DBConnector::keys(const std::string &pattern)
+{
+    return testing_db::matchingRedisKeys(getDbId(), pattern);
+}
+}
+
 namespace teammgr_ut
 {
     struct TeamMgrTest : public ::testing::Test
@@ -330,6 +340,7 @@ namespace teammgr_ut
             failMacsecGatePush = false;
             failPortRemove = false;
             failTeamdSigterm = false;
+            teamdSigtermErrno = 0;
             mockEnslavedPorts.clear();
             callback = cb;
             callback_kill = cb_kill;
@@ -1277,5 +1288,77 @@ namespace teammgr_ut
         static_cast<Orch *>(&teammgr)->doTask(*consumer.get());
         EXPECT_FALSE(findCommandWith({"PortChannel143", "port remove", "Ethernet1"}));
         EXPECT_FALSE(findCommandWith({"ip link set dev", "Ethernet1"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_StalePidCompletesLagDelete)
+    {
+        /* teamd crashed and left its pid file. kill() returns ESRCH, so the
+         * delete must finish and drop the name from m_lagList. A later create
+         * has to start teamd again. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel144", "Ethernet1", true, true);
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+        ASSERT_TRUE(findCommandWith({"PortChannel144", "ports.Ethernet1.runner.macsec_gate", "false"}));
+
+        mkdir("/var/run/teamd", 0755);
+        std::FILE *pidFile = std::tmpfile();
+        std::fputs("4321", pidFile);
+        std::rewind(pidFile);
+        pidFiles["/var/run/teamd/PortChannel144.pid"] = pidFile;
+        failTeamdSigterm = true;
+        teamdSigtermErrno = ESRCH;
+        mockKillCommands.clear();
+        mockCallArgs.clear();
+
+        pushRow(teammgr, m_config_db.get(), CFG_LAG_TABLE_NAME, "PortChannel144", DEL_COMMAND, {});
+        ASSERT_EQ(mockKillCommands.size(), 1);
+        EXPECT_EQ(mockKillCommands[0].second, SIGTERM);
+
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 1), SET_COMMAND, { { "state", "ok" } });
+        EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+
+        failTeamdSigterm = false;
+        swss::Table cfg_lag(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag.set("PortChannel144", { { "admin_status", "up" }, { "mtu", "9100" },
+                                        { "lacp_key", "auto" }, { "min_links", "1" } });
+        mockCallArgs.clear();
+        teammgr.addExistingData(&cfg_lag);
+        teammgr.doTask();
+        EXPECT_EQ(countTeamdStarts("PortChannel144"), 1);
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_WarmStartPlainMemberIsNotPushed)
+    {
+        /* Warm start leaves the pushed cache empty. A member with no MACsec
+         * is already at teamd's open default, so it must not get a
+         * macsec_gate write. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel145", "Ethernet1", false, false);
+
+        EXPECT_FALSE(findCommandWith({"ports.Ethernet1.runner.macsec_gate"}));
+    }
+
+    TEST_F(TeamMgrTest, testMacsecGate_IngressSaLookupDoesNotMatchPortPrefix)
+    {
+        /* Ethernet1's SA lookup must not treat Ethernet10's row as its own.
+         * After Ethernet1's only SA is deleted, its gate closes. */
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        setUpMacsecLag(m_config_db.get(), m_state_db.get(), teammgr, "PortChannel146", "Ethernet1", true, true);
+
+        swss::Table cfg_port(m_config_db.get(), CFG_PORT_TABLE_NAME);
+        cfg_port.set("Ethernet10", { { "admin_status", "up" }, { "mtu", "9100" },
+                                     { "macsec", "macsec-profile-1" } });
+        swss::Table cfg_lag_member(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
+        cfg_lag_member.set("PortChannel146|Ethernet10", { { "NULL", "NULL" } });
+        swss::Table sa(m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME);
+        sa.set(saKey("Ethernet10", 0), { { "state", "ok" } });
+        mockEnslavedPorts.insert("Ethernet10");
+        mockCallArgs.clear();
+
+        pushRow(teammgr, m_state_db.get(), STATE_MACSEC_INGRESS_SA_TABLE_NAME,
+                saKey("Ethernet1", 0), DEL_COMMAND, {});
+        EXPECT_TRUE(findCommandWith({"PortChannel146", "ports.Ethernet1.runner.macsec_gate", "false"}));
     }
 }

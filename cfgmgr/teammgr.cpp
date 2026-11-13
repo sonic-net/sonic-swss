@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/types.h>
+#include <cerrno>
 #include <signal.h>
 #include <netlink/route/link.h>
 
@@ -40,7 +41,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
-    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME)
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
+    m_stateDb(statDb)
 {
     SWSS_LOG_ENTER();
 
@@ -130,21 +132,13 @@ bool TeamMgr::isMACsecAttached(const std::string &port)
 /* True if STATE_DB holds at least one MACSEC_INGRESS_SA_TABLE|<port>|<sci>|<an>
  * row, i.e. an ingress SA is programmed for the port and it can decrypt what
  * the partner sends. A rekey installs the new AN before the old one is removed,
- * so this never drops to false during a healthy rekey. */
+ * so this never drops to false during a healthy rekey. The lookup is this
+ * port's keys only: Ethernet4 must not count an Ethernet40 SA. */
 bool TeamMgr::hasMACsecIngressSA(const std::string &port)
 {
-    vector<string> keys;
-    m_stateMACsecIngressSATable.getKeys(keys);
-
-    for (const auto &key : keys)
-    {
-        auto tokens = tokenize(key, state_db_key_delimiter);
-        if (!tokens.empty() && tokens[0] == port)
-        {
-            return true;
-        }
-    }
-    return false;
+    const string pattern = m_stateMACsecIngressSATable.getKeyName(
+        port + state_db_key_delimiter + "*");
+    return !m_stateDb->keys(pattern).empty();
 }
 
 bool TeamMgr::isMACsecIngressSAOk(const std::string &port)
@@ -383,8 +377,9 @@ void TeamMgr::doLagTask(Consumer &consumer)
             if (m_lagList.find(alias) != m_lagList.end())
             {
                 /* Keep the LAG, its gate maps, and this task when teamd is
-                 * still running. A missing pid file means teamd is already
-                 * gone; removeLag clears the maps and returns true. */
+                 * still running. A missing pid file, or a stale one (kill
+                 * returns ESRCH), means teamd is already gone; removeLag
+                 * clears the maps and returns true. */
                 if (!removeLag(alias))
                 {
                     it++;
@@ -874,8 +869,16 @@ bool TeamMgr::removeLag(const string &alias)
 
     if (kill(pid, SIGTERM))
     {
-        /* teamd is still running and still holds macsec_gate. Leave the
-         * maps and let the caller retain the delete. */
+        /* ESRCH: the pid file outlived teamd. Same as a missing pid file.
+         * Any other errno means the process is still there and still holds
+         * macsec_gate, so the caller keeps the delete. */
+        if (errno == ESRCH)
+        {
+            SWSS_LOG_NOTICE("Port channel %s pid %d is not running; treating it as stopped",
+                            alias.c_str(), pid);
+            forgetMacsecLagGates(alias);
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, strerror(errno));
         return false;
     }
@@ -1050,8 +1053,8 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
     stringstream cmd;
     string res;
 
-    // teamdctl <port_channel_name> port remove <member>;
-    cmd << TEAMDCTL_CMD << " " << lag << " port remove " << member;
+    // teamdctl <port_channel_name> port remove <member>
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port remove " << shellquote(member);
     if (exec(cmd.str(), res) != 0)
     {
         /* A failed remove is a real failure only while teamd is still
@@ -1233,11 +1236,27 @@ void TeamMgr::evaluateMacsecMemberGate(const string &port)
         return;
     }
 
+    /* No MACsec, and this process has never written a gate. teamd's default
+     * is open, including a member that survived warm start, so the write
+     * would only be an extra teamdctl (and five failures on a teamd without
+     * macsec_gate). A member we previously closed still has a pushed entry,
+     * and removing its profile falls through to open the gate. */
+    const bool attached = isMACsecAttached(port);
+    if (!attached)
+    {
+        auto pushedLag = m_macsecGatePushed.find(lag);
+        if (pushedLag == m_macsecGatePushed.end() ||
+            pushedLag->second.find(port) == pushedLag->second.end())
+        {
+            return;
+        }
+    }
+
     /* A real evaluation is new information. The sweep calls apply directly
      * and must not clear this, or a teamd without macsec_gate never stops. */
     resetMacsecGatePushAttempts(lag, port);
 
-    const bool gate = !isMACsecAttached(port) || hasMACsecIngressSA(port);
+    const bool gate = !attached || hasMACsecIngressSA(port);
     if (!gate)
     {
         SWSS_LOG_INFO("MACsec: %s member %s has MACsec attached but no ingress SA, closing macsec_gate",
