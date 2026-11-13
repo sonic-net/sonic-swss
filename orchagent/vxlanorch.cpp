@@ -982,21 +982,22 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 
 void VxlanTunnel::deletePendingSIPTunnel()
 {
-   VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
-   bool dip_tunnels_used  = tunnel_orch->isDipTunnelsSupported();
+    if (!del_tnl_hw_pending || vlan_vrf_vni_count != 0 || isTunnelReferenced())
+    {
+        return;
+    }
 
-   if ((!dip_tunnels_used || getDipTunnelCnt() == 0) && del_tnl_hw_pending)
-   {
-       uint8_t mapper_list=0;
+    uint8_t mapper_list = 0;
+    TUNNELMAP_SET_VLAN(mapper_list);
+    TUNNELMAP_SET_VRF(mapper_list);
+    if (!deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP))
+    {
+        SWSS_LOG_WARN("Failed to remove the pending SIP Tunnel HW; deletion remains pending");
+        return;
+    }
 
-       TUNNELMAP_SET_VLAN(mapper_list);
-       TUNNELMAP_SET_VRF(mapper_list);
-       deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-       del_tnl_hw_pending = false;
-       SWSS_LOG_INFO("Removing SIP Tunnel HW which is pending");
-   }
-
-   return;
+    del_tnl_hw_pending = false;
+    SWSS_LOG_INFO("Removed SIP Tunnel HW which was pending");
 }
 
 int VxlanTunnel::getDipTunnelCnt()
@@ -2416,10 +2417,35 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         }
     }
 
+    bool takeover_pending_delete = false;
+
     SWSS_LOG_NOTICE("VRF VNI mapping '%s' update vrf %s, vni %d",
             full_map_entry_name.c_str(), vrf_name.c_str(), vni_id);
     if (vrf_orch->isVRFexists(vrf_name))
     {
+        if (tunnel_obj->del_tnl_hw_pending)
+        {
+            if (tunnel_obj->isActive() && tunnel_obj->isTunnelReferenced())
+            {
+                /*
+                 * Hardware deletion is only postponed by remote users. Keep
+                 * the still-active tunnel and cancel deletion after the new
+                 * local map has been created successfully.
+                 */
+                takeover_pending_delete = true;
+            }
+            else
+            {
+                /*
+                 * Deletion is ready or already in progress. Its owning
+                 * cleanup path also removes any bridge-port state before it
+                 * clears the pending flag. Retain this SET until that work
+                 * completes, then retry against the clean inactive tunnel.
+                 */
+                return false;
+            }
+        }
+
         if (!tunnel_obj->isActive()) 
         {
             uint8_t mapper_list = 0;
@@ -2499,6 +2525,13 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
 
         vxlan_vrf_table_[full_map_entry_name] = entry;
         vxlan_vrf_tunnel_[vrf_name] = tunnel_obj->getTunnelId();
+
+        if (takeover_pending_delete)
+        {
+            tunnel_obj->del_tnl_hw_pending = false;
+            SWSS_LOG_NOTICE("Vxlan tunnel '%s' pending deletion cancelled by VRF VNI mapping '%s'",
+                            tunnel_name.c_str(), full_map_entry_name.c_str());
+        }
     }
     catch(const std::runtime_error& error)
     {
