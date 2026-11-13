@@ -86,3 +86,6 @@ for debug_counter_index = 1, debug_counter_to_port_stat_map_len, 2 do
         end
     end
 end
+
+-- A nil reply is logged as an error by the flex counter plugin runner
+return {}
