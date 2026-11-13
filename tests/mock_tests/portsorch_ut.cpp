@@ -432,6 +432,8 @@ namespace portsorch_test
     uint32_t _sai_switch_dlr_packet_action_count;
     uint32_t _sai_switch_dlr_packet_action;
 
+    // Drop monitor flex counter requests in order, as (key, counter ids); empty counter ids is a stop
+    vector<pair<string, string>> _sai_drop_monitor_counter_ops;
     sai_status_t _ut_stub_sai_set_switch_attribute(
         _In_ sai_object_id_t switch_id,
         _In_ const sai_attribute_t *attr)
@@ -455,6 +457,20 @@ namespace portsorch_test
             _sai_captured_deadlock_callback =
                 reinterpret_cast<sai_queue_pfc_deadlock_notification_fn>(attr[0].value.ptr);
             return SAI_STATUS_SUCCESS;
+        }
+        else if (attr[0].id == SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER)
+        {
+            auto *param = reinterpret_cast<sai_redis_flex_counter_parameter_t *>(attr[0].value.ptr);
+            string key((const char *)param->counter_key.list, param->counter_key.count);
+            if (key.rfind(string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":", 0) == 0)
+            {
+                string ids;
+                if (param->counter_ids.list != nullptr)
+                {
+                    ids.assign((const char *)param->counter_ids.list, param->counter_ids.count);
+                }
+                _sai_drop_monitor_counter_ops.emplace_back(key, ids);
+            }
         }
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
@@ -570,6 +586,14 @@ namespace portsorch_test
     {
         sai_switch_api = pold_sai_switch_api;
     }
+
+    // Unhooks when the test returns early on a failed assertion; a hook left in place makes the
+    // next hook save the stub as the original API, and the stub then calls itself
+    struct SaiSwitchApiHook
+    {
+        SaiSwitchApiHook() { _hook_sai_switch_api(); }
+        ~SaiSwitchApiHook() { _unhook_sai_switch_api(); }
+    };
 
     sai_queue_api_t ut_sai_queue_api;
     sai_queue_api_t *pold_sai_queue_api;
@@ -4705,6 +4729,278 @@ namespace portsorch_test
         static_cast<Orch*>(gDebugCounterOrch)->doTask();
         ASSERT_TRUE(!gDebugCounterOrch->getDebugMonitorStatus());
         entries.clear();
+    }
+
+    static void setUpPortsForDebugCounters(swss::DBConnector *app_db)
+    {
+        Table portTable = Table(app_db, APP_PORT_TABLE_NAME);
+        for (const auto &it : defaultPortList)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(defaultPortList.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+    }
+
+    static void doDebugCounterTask(const string &table, const string &key, const string &op,
+                                   const vector<FieldValueTuple> &values)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries = { { key, op, values } };
+        auto consumer = dynamic_cast<Consumer *>(gDebugCounterOrch->getExecutor(table));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gDebugCounterOrch)->doTask();
+    }
+
+    static void setDropMonitorStatus(const string &status)
+    {
+        doDebugCounterTask(CFG_DEBUG_DROP_MONITOR_TABLE_NAME, "CONFIG", SET_COMMAND, { { "status", status } });
+    }
+
+    // Returns the SAI stat of the new counter, or an empty string if it was not created
+    static string installPortDropCounter(swss::DBConnector *counters_db, const string &name,
+                                         const string &type, const string &reason)
+    {
+        doDebugCounterTask(CFG_DEBUG_COUNTER_TABLE_NAME, name, SET_COMMAND, { { "type", type } });
+        doDebugCounterTask(CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME, name + "|" + reason, SET_COMMAND, { { "NULL", "NULL" } });
+
+        string stat;
+        Table statMap(counters_db, COUNTERS_DEBUG_NAME_PORT_STAT_MAP);
+        statMap.hget("", name, stat);
+        return stat;
+    }
+
+    static set<sai_object_id_t> getPhyPortIds()
+    {
+        set<sai_object_id_t> ids;
+        for (const auto &it : gPortsOrch->getAllPorts())
+        {
+            if (it.second.m_type == Port::Type::PHY)
+            {
+                ids.insert(it.second.m_port_id);
+            }
+        }
+        return ids;
+    }
+
+    static string dropMonitorKey(sai_object_id_t port_id)
+    {
+        return string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(port_id);
+    }
+
+    static set<string> splitCounterIds(const string &ids)
+    {
+        set<string> result;
+        std::stringstream ss(ids);
+        string id;
+        while (std::getline(ss, id, ','))
+        {
+            result.insert(id);
+        }
+        return result;
+    }
+
+    // Recorded drop monitor requests grouped by key, in order; an empty entry is a stop
+    static map<string, vector<string>> dropMonitorOpsByKey()
+    {
+        map<string, vector<string>> ops;
+        for (const auto &op : _sai_drop_monitor_counter_ops)
+        {
+            ops[op.first].push_back(op.second);
+        }
+        return ops;
+    }
+
+    TEST_F(PortsOrchTest, DebugDropMonitorEnableDisablePolling)
+    {
+        ASSERT_NO_FATAL_FAILURE(setUpPortsForDebugCounters(m_app_db.get()));
+        SaiSwitchApiHook hook;
+        _sai_drop_monitor_counter_ops.clear();
+
+        auto monitorConsumer = dynamic_cast<Consumer *>(gDebugCounterOrch->getExecutor(CFG_DEBUG_DROP_MONITOR_TABLE_NAME));
+
+        // Without drop counters, toggling the monitor sends no start or stop
+        setDropMonitorStatus("enabled");
+        ASSERT_TRUE(gDebugCounterOrch->getDebugMonitorStatus());
+        ASSERT_TRUE(monitorConsumer->m_toSync.empty());
+        setDropMonitorStatus("disabled");
+        ASSERT_FALSE(gDebugCounterOrch->getDebugMonitorStatus());
+        ASSERT_TRUE(monitorConsumer->m_toSync.empty());
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+
+        // A counter installed while the monitor is disabled is not polled
+        string stat = installPortDropCounter(m_counters_db.get(), "DROP_0", PORT_INGRESS_DROPS, "L3_ANY");
+        ASSERT_FALSE(stat.empty());
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+
+        // Enabling starts each PHY port once with the counter's stat, and no other port
+        auto phyPortIds = getPhyPortIds();
+        ASSERT_FALSE(phyPortIds.empty());
+        setDropMonitorStatus("enabled");
+        auto ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            const auto &keyOps = ops[dropMonitorKey(port_id)];
+            ASSERT_EQ(keyOps.size(), 1u);
+            ASSERT_EQ(splitCounterIds(keyOps[0]), set<string>({ stat }));
+        }
+
+        // Disabling stops each polled port once
+        _sai_drop_monitor_counter_ops.clear();
+        setDropMonitorStatus("disabled");
+        ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            ASSERT_EQ(ops[dropMonitorKey(port_id)], vector<string>({ "" }));
+        }
+
+        // Nothing is polled any more, so a repeated disable sends no stop
+        _sai_drop_monitor_counter_ops.clear();
+        setDropMonitorStatus("disabled");
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+    }
+
+    TEST_F(PortsOrchTest, DebugDropMonitorFollowsCounterChanges)
+    {
+        ASSERT_NO_FATAL_FAILURE(setUpPortsForDebugCounters(m_app_db.get()));
+        SaiSwitchApiHook hook;
+        setDropMonitorStatus("enabled");
+        auto phyPortIds = getPhyPortIds();
+        ASSERT_FALSE(phyPortIds.empty());
+
+        // The first counter starts polling on each PHY port
+        _sai_drop_monitor_counter_ops.clear();
+        string stat0 = installPortDropCounter(m_counters_db.get(), "DROP_0", PORT_INGRESS_DROPS, "L3_ANY");
+        ASSERT_FALSE(stat0.empty());
+        auto ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            const auto &keyOps = ops[dropMonitorKey(port_id)];
+            ASSERT_EQ(keyOps.size(), 1u);
+            ASSERT_EQ(splitCounterIds(keyOps[0]), set<string>({ stat0 }));
+        }
+
+        // A second counter replaces each port's list: stop, then start with both stats
+        _sai_drop_monitor_counter_ops.clear();
+        string stat1 = installPortDropCounter(m_counters_db.get(), "DROP_1", PORT_EGRESS_DROPS, "L2_ANY");
+        ASSERT_FALSE(stat1.empty());
+        ASSERT_NE(stat0, stat1);
+        ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            const auto &keyOps = ops[dropMonitorKey(port_id)];
+            ASSERT_EQ(keyOps.size(), 2u);
+            ASSERT_EQ(keyOps[0], "");
+            ASSERT_EQ(splitCounterIds(keyOps[1]), set<string>({ stat0, stat1 }));
+        }
+
+        // A switch counter is not polled on ports, so it does not change any port's list
+        _sai_drop_monitor_counter_ops.clear();
+        doDebugCounterTask(CFG_DEBUG_COUNTER_TABLE_NAME, "SWITCH_DROP", SET_COMMAND, { { "type", SWITCH_INGRESS_DROPS } });
+        doDebugCounterTask(CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME, "SWITCH_DROP|L3_ANY", SET_COMMAND, { { "NULL", "NULL" } });
+        string switchStat;
+        Table switchStatMap(m_counters_db.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP);
+        ASSERT_TRUE(switchStatMap.hget("", "SWITCH_DROP", switchStat));
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+
+        doDebugCounterTask(CFG_DEBUG_COUNTER_TABLE_NAME, "SWITCH_DROP", DEL_COMMAND, {});
+        ASSERT_FALSE(switchStatMap.hget("", "SWITCH_DROP", switchStat));
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+
+        // Removing one counter restarts each port with the remaining stat
+        _sai_drop_monitor_counter_ops.clear();
+        doDebugCounterTask(CFG_DEBUG_COUNTER_TABLE_NAME, "DROP_1", DEL_COMMAND, {});
+        ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            const auto &keyOps = ops[dropMonitorKey(port_id)];
+            ASSERT_EQ(keyOps.size(), 2u);
+            ASSERT_EQ(keyOps[0], "");
+            ASSERT_EQ(splitCounterIds(keyOps[1]), set<string>({ stat0 }));
+        }
+
+        // Removing the last counter only stops polling; no start with an empty list
+        _sai_drop_monitor_counter_ops.clear();
+        doDebugCounterTask(CFG_DEBUG_COUNTER_TABLE_NAME, "DROP_0", DEL_COMMAND, {});
+        ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            ASSERT_EQ(ops[dropMonitorKey(port_id)], vector<string>({ "" }));
+        }
+    }
+
+    TEST_F(PortsOrchTest, DebugDropMonitorPortRemoval)
+    {
+        ASSERT_NO_FATAL_FAILURE(setUpPortsForDebugCounters(m_app_db.get()));
+        SaiSwitchApiHook hook;
+        string stat = installPortDropCounter(m_counters_db.get(), "DROP_0", PORT_INGRESS_DROPS, "L3_ANY");
+        ASSERT_FALSE(stat.empty());
+        setDropMonitorStatus("enabled");
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+
+        // PortsOrch notifies the removal while the port is still in its list, before the SAI remove,
+        // which the virtual switch may refuse, so drive the notifications directly
+        _sai_drop_monitor_counter_ops.clear();
+        PortUpdate removeUpdate = { port, false };
+        gDebugCounterOrch->update(SUBJECT_TYPE_PORT_CHANGE, &removeUpdate);
+        ASSERT_EQ(_sai_drop_monitor_counter_ops,
+                  (vector<pair<string, string>>({ { dropMonitorKey(port.m_port_id), "" } })));
+
+        // The stat is still tracked, so an added port starts polling with it
+        _sai_drop_monitor_counter_ops.clear();
+        PortUpdate addUpdate = { port, true };
+        gDebugCounterOrch->update(SUBJECT_TYPE_PORT_CHANGE, &addUpdate);
+        ASSERT_EQ(_sai_drop_monitor_counter_ops.size(), 1u);
+        ASSERT_EQ(_sai_drop_monitor_counter_ops[0].first, dropMonitorKey(port.m_port_id));
+        ASSERT_EQ(splitCounterIds(_sai_drop_monitor_counter_ops[0].second), set<string>({ stat }));
+    }
+
+    TEST_F(PortsOrchTest, DebugDropMonitorIgnoresLagCreateRemove)
+    {
+        ASSERT_NO_FATAL_FAILURE(setUpPortsForDebugCounters(m_app_db.get()));
+        SaiSwitchApiHook hook;
+        string stat = installPortDropCounter(m_counters_db.get(), "DROP_0", PORT_INGRESS_DROPS, "L3_ANY");
+        ASSERT_FALSE(stat.empty());
+        setDropMonitorStatus("enabled");
+        auto phyPortIds = getPhyPortIds();
+        ASSERT_FALSE(phyPortIds.empty());
+
+        // A LAG has a null port id, which must not restart or stop polling on every port
+        const string lagName = "PortChannel0001";
+        Port lag;
+        _sai_drop_monitor_counter_ops.clear();
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        lagTable.set(lagName, { { "admin_status", "up" }, { "mtu", "9100" } });
+        gPortsOrch->addExistingData(&lagTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(gPortsOrch->getPort(lagName, lag));
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+
+        // Same notification as PortsOrch::removeLag()
+        PortUpdate removeUpdate = { lag, false };
+        gDebugCounterOrch->update(SUBJECT_TYPE_PORT_CHANGE, &removeUpdate);
+        ASSERT_TRUE(_sai_drop_monitor_counter_ops.empty());
+
+        // Every PHY port is still polled
+        setDropMonitorStatus("disabled");
+        auto ops = dropMonitorOpsByKey();
+        ASSERT_EQ(ops.size(), phyPortIds.size());
+        for (auto port_id : phyPortIds)
+        {
+            ASSERT_EQ(ops[dropMonitorKey(port_id)], vector<string>({ "" }));
+        }
     }
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
