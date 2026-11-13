@@ -225,6 +225,9 @@ void FpmLink::accept()
     if (m_connection_socket < 0)
         throw system_error(errno, system_category());
 
+    /* ~FpmLink() closes m_connection_socket only when m_connected is set. */
+    m_connected = true;
+
     SWSS_LOG_INFO("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
 }
 
