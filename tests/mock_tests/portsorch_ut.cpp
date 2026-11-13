@@ -6135,11 +6135,17 @@ struct PfcWdHwOrchTest : public PortsOrchTest
         _sai_port_dlr_intervals.clear();
         _sai_queue_dldr_enabled.clear();
 
+        beforeOrchCreated();
+
         vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
         gPfcWdHwOrch = new PfcWdHwOrch(
             m_config_db.get(), pfc_wd_tables,
             s_portStatIds, s_queueStatIds, s_queueAttrIds);
     }
+
+    // Runs after the databases are reset and before the orch is built, so a
+    // test can leave state from a previous orchagent run for the orch to find.
+    virtual void beforeOrchCreated() {}
 
     void TearDown() override
     {
@@ -6698,21 +6704,23 @@ TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
 
 // STATE_DB survives an orchagent restart, so a row from the previous run
 // would keep reporting a watchdog that this run has not programmed.
-TEST_F(PfcWdHwOrchTest, ConstructionDropsStaleHwState)
+struct PfcWdHwOrchStaleStateTest : public PfcWdHwOrchTest
+{
+    void beforeOrchCreated() override
+    {
+        Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+        hwStateTable.set("Ethernet0", {
+            { "recovery_type", "hardware" },
+            { "status", "configured" },
+            { "hw_detection_time", "400" },
+            { "hw_restoration_time", "400" }
+        });
+    }
+};
+
+TEST_F(PfcWdHwOrchStaleStateTest, ConstructionDropsStaleHwState)
 {
     Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
-    hwStateTable.set("Ethernet0", {
-        { "recovery_type", "hardware" },
-        { "status", "configured" },
-        { "hw_detection_time", "400" },
-        { "hw_restoration_time", "400" }
-    });
-
-    delete gPfcWdHwOrch;
-    vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
-    gPfcWdHwOrch = new PfcWdHwOrch(m_config_db.get(), pfc_wd_tables,
-                                    s_portStatIds, s_queueStatIds, s_queueAttrIds);
-
     vector<FieldValueTuple> hwState;
     ASSERT_FALSE(hwStateTable.get("Ethernet0", hwState));
 }
