@@ -1315,7 +1315,34 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
     SWSS_LOG_ENTER();
 
     initTableHandlers();
+
+    if (gPortsOrch)
+    {
+        gPortsOrch->attach(this);
+    }
 };
+
+void QosOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    if (type != SUBJECT_TYPE_PORT_CHANGE || !cntx)
+    {
+        return;
+    }
+
+    auto update = static_cast<PortUpdate *>(cntx);
+    if (update->add)
+    {
+        return;
+    }
+
+    // the removed port's queues are gone, so forget the WRED profiles bound to them
+    for (const auto &queue_id : update->port.m_queue_ids)
+    {
+        m_queue_wred_profile.erase(queue_id);
+    }
+}
 
 type_map& QosOrch::getTypeMap()
 {
@@ -1732,6 +1759,16 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
         queue_id = port.m_queue_ids[queue_ind];
     }
 
+    // Every QUEUE update carries both fields, so a scheduler change also gets here
+    // with the queue's current profile. Some SAIs reprogram every WRED/ECN threshold
+    // on each bind, which drops packets on a congested queue.
+    auto bound = m_queue_wred_profile.find(queue_id);
+    if (bound != m_queue_wred_profile.end() && bound->second == sai_wred_profile)
+    {
+        SWSS_LOG_INFO("WRED profile 0x%" PRIx64 " already bound to port:%s queue:%zd", sai_wred_profile, port.m_alias.c_str(), queue_ind);
+        return true;
+    }
+
     attr.id = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
     attr.value.oid = sai_wred_profile;
     sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
@@ -1743,7 +1780,9 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
+        return true;
     }
+    m_queue_wred_profile[queue_id] = sai_wred_profile;
     return true;
 }
 
