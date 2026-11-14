@@ -456,8 +456,7 @@ class DockerVirtualSwitch:
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
         self.p4orch_zmq_sock = os.path.join(self.zmq_mount, "p4orch_zmq_swss_ep")
-        ensure_system(f"rm -rf /var/run/redis/redis.sock")
-        ensure_system(f"ln -sf {self.redis_sock} /var/run/redis/redis.sock")
+        self.configure_db()
 
         self.reset_dbs()
 
@@ -472,6 +471,27 @@ class DockerVirtualSwitch:
         for i in range(NUM_PORTS):
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
+
+    def configure_db(self):
+        with open(
+            swsscommon.SonicDBConfig.DEFAULT_SONIC_DB_CONFIG_FILE,
+            encoding="utf-8",
+        ) as config_file:
+            database_config = json.load(config_file)
+
+        for instance in database_config["INSTANCES"].values():
+            socket_path = instance.get("unix_socket_path")
+            if socket_path:
+                instance["unix_socket_path"] = os.path.join(
+                    self.mount, os.path.basename(socket_path)
+                )
+
+        self.database_config_file = os.path.join(self.mount, "database_config.json")
+        with open(self.database_config_file, "w", encoding="utf-8") as config_file:
+            json.dump(database_config, config_file, indent=4)
+
+        swsscommon.SonicDBConfig.reset()
+        swsscommon.SonicDBConfig.initialize(self.database_config_file)
 
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
