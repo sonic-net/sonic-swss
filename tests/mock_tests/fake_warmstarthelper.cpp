@@ -1,5 +1,8 @@
 #include "warmRestartHelper.h"
 
+#include <gtest/gtest.h>
+#include <unordered_set>
+
 static swss::DBConnector gDb("APPL_DB", 0);
 
 // Mock-specific static variables for testing warm restart state
@@ -7,6 +10,8 @@ using MockRefreshMap = std::unordered_map<std::string, swss::KeyOpFieldsValuesTu
 static std::unordered_map<std::string, MockRefreshMap> g_mockRefreshMaps;
 static swss::WarmStart::WarmStartState g_mockState = swss::WarmStart::RECONCILED;
 static bool g_mockEnabled = true;
+// Tables registered on each live helper; like the real helper, registrations last as long as it does
+static std::unordered_map<const swss::WarmStartHelper *, std::unordered_set<std::string>> g_mockRegisteredTables;
 
 namespace swss {
 
@@ -18,10 +23,12 @@ WarmStartHelper::WarmStartHelper(RedisPipeline *pipeline,
     m_syncTableName(syncTableName)
 {
     g_mockRefreshMaps.emplace(syncTableName, MockRefreshMap{});
+    g_mockRegisteredTables[this] = {syncTableName};
 }
 
 WarmStartHelper::~WarmStartHelper()
 {
+    g_mockRegisteredTables.erase(this);
 }
 
 void WarmStartHelper::setState(WarmStart::WarmStartState state)
@@ -60,6 +67,11 @@ void WarmStartHelper::registerTable(RedisPipeline *pipeline,
                                     const std::string &syncTableName)
 {
     g_mockRefreshMaps.emplace(syncTableName, MockRefreshMap{});
+    // The real helper throws on a table it already has
+    if (!g_mockRegisteredTables[this].insert(syncTableName).second)
+    {
+        ADD_FAILURE() << "registerTable() on already registered table " << syncTableName;
+    }
 }
 
 bool WarmStartHelper::runRestoration()
@@ -75,6 +87,13 @@ void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
 void WarmStartHelper::insertRefreshMap(const std::string &syncTableName,
                                        const KeyOpFieldsValuesTuple &kfv)
 {
+    // The real helper asserts on a table that was never registered
+    if (g_mockRegisteredTables[this].count(syncTableName) == 0)
+    {
+        ADD_FAILURE() << "insertRefreshMap() on unregistered table " << syncTableName;
+        return;
+    }
+
     const std::string key = kfvKey(kfv);
     g_mockRefreshMaps[syncTableName][key] = kfv;
 }
@@ -132,5 +151,6 @@ bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
 
 size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName)
 {
-    return g_mockRefreshMaps[tableName].size();
+    auto table = g_mockRefreshMaps.find(tableName);
+    return table == g_mockRefreshMaps.end() ? 0 : table->second.size();
 }
