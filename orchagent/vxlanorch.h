@@ -318,6 +318,8 @@ public:
 
     bool removeTunnelMapReference(const std::string& tunnelName);
 
+    bool cleanupPendingTunnel(const std::string& tunnelName);
+
     sai_object_id_t
     createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni=0);
 
