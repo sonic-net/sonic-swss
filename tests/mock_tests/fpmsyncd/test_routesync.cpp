@@ -30,6 +30,11 @@ using namespace ut_fpmsyncd;
 using ::testing::_;
 
 extern void resetMockWarmStartHelper();
+extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
+                                               const std::string &key,
+                                               swss::KeyOpFieldsValuesTuple &kfv);
+extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
+extern bool hasMockWarmStartHelperTable(const std::string &tableName);
 
 int rt_build_ret = 0;
 bool nlmsg_alloc_ret = true;
@@ -1761,6 +1766,44 @@ TEST_F(WarmRestartRouteSyncTest, TestRouteDeleteHandlingWarmRestartInProgress)
     EXPECT_TRUE(routeTable.get("192.168.12.0/24", result));
 
 
+}
+
+TEST_F(WarmRestartRouteSyncTest, TestLabelRouteWarmRestartUsesLabelRouteTable)
+{
+    // Built after the reset, so the tables its constructor registers are still visible
+    resetMockWarmStartHelper();
+    RouteSync routeSync(m_pipeline.get());
+    EXPECT_TRUE(hasMockWarmStartHelperTable(APP_LABEL_ROUTE_TABLE_NAME));
+
+    routeSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    ASSERT_TRUE(routeSync.getWarmStartHelper().inProgress());
+
+    nl_addr *label = nullptr;
+    ASSERT_EQ(nl_addr_parse("100", AF_MPLS, &label), 0);
+    rtnl_route *route = rtnl_route_alloc();
+    rtnl_route_set_dst(route, label);
+    nl_addr_put(label);
+    rtnl_route_set_family(route, AF_MPLS);
+    rtnl_route_set_type(route, RTN_BLACKHOLE);
+    rtnl_route_set_protocol(route, RTPROT_BGP);
+    rtnl_route_set_table(route, RT_TABLE_UNSPEC);  // label routes are in the default table
+    auto routePtr = unique_ptr<rtnl_route, decltype(rtnl_route_put)*>(route, rtnl_route_put);
+
+    routeSync.onLabelRouteMsg(RTM_NEWROUTE, (nl_object *)routePtr.get());
+
+    KeyOpFieldsValuesTuple kfv;
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_LABEL_ROUTE_TABLE_NAME, "100", kfv));
+    EXPECT_EQ(kfvOp(kfv), SET_COMMAND);
+    EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_ROUTE_TABLE_NAME), 0u);
+    Table labelRouteTable(m_db.get(), APP_LABEL_ROUTE_TABLE_NAME);
+    vector<FieldValueTuple> result;
+    EXPECT_FALSE(labelRouteTable.get("100", result));
+
+    routeSync.onLabelRouteMsg(RTM_DELROUTE, (nl_object *)routePtr.get());
+
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_LABEL_ROUTE_TABLE_NAME, "100", kfv));
+    EXPECT_EQ(kfvOp(kfv), DEL_COMMAND);
+    EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_ROUTE_TABLE_NAME), 0u);
 }
 
 
