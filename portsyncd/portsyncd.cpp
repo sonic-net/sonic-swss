@@ -24,8 +24,8 @@ using namespace swss;
 
 /*
  * This g_portSet contains all the front panel ports that the corresponding
- * host interfaces needed to be created. When this LinkSync class is
- * initialized, we check the database to see if some of the ports' host
+ * host interfaces needed to be created. After publishing port configuration,
+ * LinkSync::updatePortSet checks the database to see if some of the ports' host
  * interfaces are already created and remove them from this set. We will
  * remove the rest of the ports in the set when receiving the first netlink
  * message indicating that the host interfaces are created. After the set
@@ -88,11 +88,14 @@ int main(int argc, char **argv)
         netlink.dumpRequest(RTM_GETLINK);
         cout << "Listen to link messages..." << endl;
 
-        handlePortConfigFromConfigDB(p, cfgDb, warm);
-
+        // Cache and bring down old interfaces before publishing configuration
+        // can cause orchagent/syncd to create new interfaces with the same names.
         LinkSync sync(&appl_db, &state_db);
         NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
         NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
+
+        handlePortConfigFromConfigDB(p, cfgDb, warm);
+        sync.updatePortSet();
 
         s.addSelectable(&netlink);
 
