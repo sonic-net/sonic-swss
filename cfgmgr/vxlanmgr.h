@@ -44,7 +44,7 @@ public:
         std::string vni_id;
     } MapCache;
 
-    void waitTillReadyToReconcile();
+    void waitTillReadyToReconcile(const bool &stop);
     void beginReconcile(bool warm);
     void endReconcile(bool warm);
     void restoreVxlanNetDevices();
