@@ -4,6 +4,7 @@
 #include <map>
 #include <string>
 #include <memory>
+#include <utility>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "selectable.h"
@@ -22,6 +23,8 @@ namespace swss {
 class TeamSync : public NetMsg
 {
 public:
+    using LagId = std::pair<std::string, int>;
+
     TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
 
     void periodic();
@@ -34,8 +37,7 @@ public:
     {
     public:
         enum { MAX_IFNAME = 64 };
-        TeamPortSync(const std::string &lagName, int ifindex,
-                     ProducerStateTable *lagMemberTable);
+        TeamPortSync(const LagId &lagId, ProducerStateTable *lagMemberTable);
         ~TeamPortSync();
 
         int getFd() override;
@@ -52,16 +54,15 @@ public:
                                 team_change_type_mask_t type_mask);
         static const struct team_change_handler gPortChangeHandler;
     private:
+        friend class TeamSync;
         ProducerStateTable *m_lagMemberTable;
         struct team_handle *m_team;
-        std::string m_lagName;
-        int m_ifindex;
+        LagId m_lagId;
     };
 
 protected:
-    void addLag(const std::string &lagName, int ifindex, bool admin_state,
-                bool oper_state, unsigned int mtu);
-    void removeLag(const std::string &lagName);
+    void addLag(const LagId &lagId, bool admin_state, bool oper_state, unsigned int mtu);
+    void removeLag(LagId lagId);
 
     /* valid only in WR mode */
     void applyState();
@@ -70,6 +71,12 @@ protected:
     void doSelectableTask();
 
 private:
+    /* Compare by name so one current LagId owns each LAG. */
+    struct LagNameCompare
+    {
+        bool operator()(const LagId &lhs, const LagId &rhs) const { return lhs.first < rhs.first; }
+    };
+
     Select *m_select;
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
@@ -80,9 +87,10 @@ private:
     uint32_t m_pending_timeout;
 
     /* Store selectables needed to be updated in doSelectableTask function */
-    std::set<std::string> m_selectablesToAdd;
-    std::set<std::string> m_selectablesToRemove;
-    std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamSelectables;
+    std::set<std::shared_ptr<TeamPortSync>> m_selectablesToAdd;
+    std::set<std::shared_ptr<TeamPortSync>> m_selectablesToRemove;
+    /* A null value retains the latest LagId until handler initialization completes. */
+    std::map<LagId, std::shared_ptr<TeamPortSync>, LagNameCompare> m_teamSelectables;
 };
 
 }
