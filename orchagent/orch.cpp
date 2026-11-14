@@ -1222,17 +1222,19 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 
 void Orch::addExecutor(Executor* executor)
 {
+    const auto name = executor->getName();
+
     auto inserted = m_consumerMap.emplace(std::piecewise_construct,
-            std::forward_as_tuple(executor->getName()),
+            std::forward_as_tuple(name),
             std::forward_as_tuple(executor));
 
     // If there is duplication of executorName in m_consumerMap, logic error
     if (!inserted.second)
     {
-        SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", executor->getName().c_str());
+        SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", name.c_str());
     }
 
-    if (gRingBuffer && executor->getName() == APP_ROUTE_TABLE_NAME) {
+    if (gRingBuffer && name == APP_ROUTE_TABLE_NAME) {
         gRingBuffer->addExecutor(executor);
     }
 }
