@@ -728,8 +728,7 @@ bool OrchDaemon::init()
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
 	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
              || (platform == CLX_PLATFORM_SUBSTRING)
-             || (platform == BFN_PLATFORM_SUBSTRING)
-             || (platform == NPS_PLATFORM_SUBSTRING))
+             || (platform == BFN_PLATFORM_SUBSTRING))
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -762,8 +761,7 @@ bool OrchDaemon::init()
 
         if ((platform == MRVL_PRST_PLATFORM_SUBSTRING) ||
 	    (platform == MRVL_TL_PLATFORM_SUBSTRING) ||
-	    (platform == CLX_PLATFORM_SUBSTRING) ||
-	    (platform == NPS_PLATFORM_SUBSTRING))
+	    (platform == CLX_PLATFORM_SUBSTRING)) // LCOV_EXCL_LINE: not exercised by the VS test environment
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
