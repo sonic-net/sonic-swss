@@ -220,6 +220,18 @@ bool GearboxParser::parse()
                 attr = std::make_pair("name", std::string(val.get<std::string>()));
                 attrs.push_back(attr);
 
+                // 'alias' is the preferred map key (supports breakout where
+                // multiple SONiC ports share an 'index'). For backward
+                // compatibility with older HWSKUs whose gearbox_config.json
+                // doesn't carry 'alias', defer setting it until after we've
+                // parsed 'index' below and synthesise it from the index.
+                std::string alias;
+                if (interface.find("alias") != interface.end())
+                {
+                    val = interface["alias"];
+                    alias = val.get<std::string>();
+                }
+
                 if (interface.find("index") == interface.end()) 
                 {
                     SWSS_LOG_ERROR("missing 'index' field in 'interfaces' item %d in gearbox configuration", iter);
@@ -228,6 +240,13 @@ bool GearboxParser::parse()
                 val = interface["index"];
                 int index = val.get<int>();
                 attr = std::make_pair("index", std::to_string(index));
+                attrs.push_back(attr);
+
+                if (alias.empty())
+                {
+                    alias = std::to_string(index);
+                }
+                attr = std::make_pair("alias", alias);
                 attrs.push_back(attr);
 
                 if (interface.find("phy_id") == interface.end()) 
@@ -314,7 +333,7 @@ bool GearboxParser::parse()
                 }
 
                 std::string key;
-                key = "interface:" + std::to_string(index);
+                key = "interface:" + alias;
                 if (getWriteToDb() == true) 
                 {
                     writeToDb(key, attrs);

@@ -69,6 +69,7 @@ typedef struct
 
 typedef struct
 {
+    std::string alias;
     int index;
     int phy_id;
     std::set<int> line_lanes;
@@ -90,6 +91,7 @@ typedef struct
 
 typedef struct
 {
+    std::string alias;
     int index;
     std::string mdio_addr;
     int system_speed;
@@ -115,9 +117,9 @@ class GearboxUtils
 {
     private:
         std::map<int, gearbox_phy_t> gearboxPhyMap;
-        std::map<int, gearbox_interface_t> gearboxInterfaceMap;
+        std::map<std::string, gearbox_interface_t> gearboxInterfaceMap;
         std::map<int, gearbox_lane_t> gearboxLaneMap;
-        std::map<int, gearbox_port_t> gearboxPortMap;
+        std::map<std::string, gearbox_port_t> gearboxPortMap;
         std::tuple <std::string, std::string, std::string> parseGearboxKey(std::string key_str);
     public:
         bool platformHasGearbox();
@@ -125,9 +127,9 @@ class GearboxUtils
         bool isGearboxConfigDone(Table *gearboxTable);
         bool isGearboxEnabled(Table *gearboxTable);
         std::map<int, gearbox_phy_t> loadPhyMap(Table *gearboxTable);
-        std::map<int, gearbox_interface_t> loadInterfaceMap(Table *gearboxTable);
+        std::map<std::string, gearbox_interface_t> loadInterfaceMap(Table *gearboxTable);
         std::map<int, gearbox_lane_t> loadLaneMap(Table *gearboxTable);
-        std::map<int, gearbox_port_t> loadPortMap(Table *gearboxTable);
+        std::map<std::string, gearbox_port_t> loadPortMap(Table *gearboxTable);
 };
 
 }

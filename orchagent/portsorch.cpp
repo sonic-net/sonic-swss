@@ -3519,7 +3519,7 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
             {
                 if (id == SAI_PORT_ATTR_SPEED)
                 {
-                    string key = "phy:"+to_string(m_gearboxInterfaceMap[port.m_index].phy_id)+":ports:"+to_string(port.m_index);
+                    string key = "phy:"+to_string(m_gearboxInterfaceMap[gearboxInterfaceKey(port)].phy_id)+":ports:"+gearboxPortKey(port);
                     m_gearboxTable->hset(key, speed_attr, to_string(speed));
                     SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
                 }
@@ -10810,11 +10810,14 @@ bool PortsOrch::initGearboxPort(Port &port)
 
     if (m_gearboxEnabled)
     {
-        if (m_gearboxInterfaceMap.find(port.m_index) != m_gearboxInterfaceMap.end())
+        string gb_intf_key = gearboxInterfaceKey(port);
+        if (m_gearboxInterfaceMap.find(gb_intf_key) != m_gearboxInterfaceMap.end())
         {
-            SWSS_LOG_NOTICE("BOX: port_id:0x%" PRIx64 " index:%d alias:%s", port.m_port_id, port.m_index, port.m_alias.c_str());
+            string gb_port_key = gearboxPortKey(port);
+            SWSS_LOG_NOTICE("BOX: port_id:0x%" PRIx64 " index:%d alias:%s gb_intf_key:%s gb_port_key:%s", port.m_port_id, port.m_index, port.m_alias.c_str(),
+                    gb_intf_key.c_str(), gb_port_key.c_str());
 
-            phy_id = m_gearboxInterfaceMap[port.m_index].phy_id;
+            phy_id = m_gearboxInterfaceMap[gb_intf_key].phy_id;
             phyOidStr = m_gearboxPhyMap[phy_id].phy_oid;
 
             if (phyOidStr.size() == 0)
@@ -10836,7 +10839,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
+            lanes.assign(m_gearboxInterfaceMap[gb_intf_key].system_lanes.begin(), m_gearboxInterfaceMap[gb_intf_key].system_lanes.end());
             attr.value.u32list.list = lanes.data();
             attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
             attrs.push_back(attr);
@@ -10847,20 +10850,20 @@ bool PortsOrch::initGearboxPort(Port &port)
             }
 
             attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed * (uint32_t) lanes.size();
+            attr.value.u32 = (uint32_t) m_gearboxPortMap[gb_port_key].system_speed * (uint32_t) lanes.size();
             if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
             {
                 attrs.push_back(attr);
             }
 
             attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].system_auto_neg;
+            attr.value.booldata = m_gearboxPortMap[gb_port_key].system_auto_neg;
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_FEC_MODE;
-            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].system_fec, sai_fec))
+            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[gb_port_key].system_fec, sai_fec))
             {
-                SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
+                SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[gb_port_key].system_fec.c_str());
                 return false;
             }
             attr.value.s32 = sai_fec;
@@ -10870,16 +10873,16 @@ bool PortsOrch::initGearboxPort(Port &port)
             {
                 attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
 
-                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].system_fec);
+                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[gb_port_key].system_fec);
                 attrs.push_back(attr);
             }
 
             attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
-            attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].system_loopback];
+            attr.value.u32 = loopback_mode_map[m_gearboxPortMap[gb_port_key].system_loopback];
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
+            attr.value.booldata = m_gearboxPortMap[gb_port_key].system_training;
             attrs.push_back(attr);
 
             if (m_cmisModuleAsicSyncSupported)
@@ -10912,7 +10915,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
+            lanes.assign(m_gearboxInterfaceMap[gb_intf_key].line_lanes.begin(), m_gearboxInterfaceMap[gb_intf_key].line_lanes.end());
             attr.value.u32list.list = lanes.data();
             attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
             attrs.push_back(attr);
@@ -10923,20 +10926,20 @@ bool PortsOrch::initGearboxPort(Port &port)
             }
 
             attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed * (uint32_t) lanes.size();
+            attr.value.u32 = (uint32_t) m_gearboxPortMap[gb_port_key].line_speed * (uint32_t) lanes.size();
             if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
             {
                 attrs.push_back(attr);
             }
 
             attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_auto_neg;
+            attr.value.booldata = m_gearboxPortMap[gb_port_key].line_auto_neg;
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_FEC_MODE;
-            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].line_fec, sai_fec))
+            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[gb_port_key].line_fec, sai_fec))
             {
-                SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
+                SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[gb_port_key].line_fec.c_str());
                 return false;
             }
             attr.value.s32 = sai_fec;
@@ -10946,48 +10949,48 @@ bool PortsOrch::initGearboxPort(Port &port)
             if (fec_override_sup)
             {
                 attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
-                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].line_fec);
+                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[gb_port_key].line_fec);
                 attrs.push_back(attr);
             }
 
             attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
-            attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_media_type];
+            attr.value.u32 = media_type_map[m_gearboxPortMap[gb_port_key].line_media_type];
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
-            attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].line_loopback];
+            attr.value.u32 = loopback_mode_map[m_gearboxPortMap[gb_port_key].line_loopback];
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_training;
+            attr.value.booldata = m_gearboxPortMap[gb_port_key].line_training;
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_INTERFACE_TYPE;
-            attr.value.u32 = interface_type_map[m_gearboxPortMap[port.m_index].line_intf_type];
+            attr.value.u32 = interface_type_map[m_gearboxPortMap[gb_port_key].line_intf_type];
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
-            vals.assign(m_gearboxPortMap[port.m_index].line_adver_speed.begin(), m_gearboxPortMap[port.m_index].line_adver_speed.end());
+            vals.assign(m_gearboxPortMap[gb_port_key].line_adver_speed.begin(), m_gearboxPortMap[gb_port_key].line_adver_speed.end());
             attr.value.u32list.list = vals.data();
             attr.value.u32list.count = static_cast<uint32_t>(vals.size());
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_ADVERTISED_FEC_MODE;
-            vals.assign(m_gearboxPortMap[port.m_index].line_adver_fec.begin(), m_gearboxPortMap[port.m_index].line_adver_fec.end());
+            vals.assign(m_gearboxPortMap[gb_port_key].line_adver_fec.begin(), m_gearboxPortMap[gb_port_key].line_adver_fec.end());
             attr.value.u32list.list = vals.data();
             attr.value.u32list.count = static_cast<uint32_t>(vals.size());
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_ADVERTISED_AUTO_NEG_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_auto_neg;
+            attr.value.booldata = m_gearboxPortMap[gb_port_key].line_adver_auto_neg;
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_ADVERTISED_ASYMMETRIC_PAUSE_MODE;
-            attr.value.booldata = m_gearboxPortMap[port.m_index].line_adver_asym_pause;
+            attr.value.booldata = m_gearboxPortMap[gb_port_key].line_adver_asym_pause;
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_ADVERTISED_MEDIA_TYPE;
-            attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_adver_media_type];
+            attr.value.u32 = media_type_map[m_gearboxPortMap[gb_port_key].line_adver_media_type];
             attrs.push_back(attr);
 
             if (m_cmisModuleAsicSyncSupported)
@@ -11052,9 +11055,9 @@ bool PortsOrch::initGearboxPort(Port &port)
             typedef pair<sai_port_serdes_attr_t, SerdesValue> serdes_attr_pair;
             vector<uint32_t> attr_val;
             for (auto pair: tx_fir_strings_system_side) {
-                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
+                if (m_gearboxInterfaceMap[gb_intf_key].tx_firs.find(pair.first) != m_gearboxInterfaceMap[gb_intf_key].tx_firs.end() ) {
                     attr_val.clear();
-                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
+                    getPortSerdesVal(m_gearboxInterfaceMap[gb_intf_key].tx_firs[pair.first], attr_val, 10);
                     serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
                 }
             }
@@ -11072,9 +11075,9 @@ bool PortsOrch::initGearboxPort(Port &port)
             }
             serdes_attr.clear();
             for (auto pair: tx_fir_strings_line_side) {
-                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
+                if (m_gearboxInterfaceMap[gb_intf_key].tx_firs.find(pair.first) != m_gearboxInterfaceMap[gb_intf_key].tx_firs.end() ) {
                     attr_val.clear();
-                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
+                    getPortSerdesVal(m_gearboxInterfaceMap[gb_intf_key].tx_firs[pair.first], attr_val, 10);
                     serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
                 }
             }
@@ -11098,7 +11101,7 @@ bool PortsOrch::initGearboxPort(Port &port)
 
 const gearbox_phy_t* PortsOrch::getGearboxPhy(const Port &port)
 {
-    auto gearbox_interface = m_gearboxInterfaceMap.find(port.m_index);
+    auto gearbox_interface = m_gearboxInterfaceMap.find(gearboxInterfaceKey(port));
     if (gearbox_interface == m_gearboxInterfaceMap.end())
     {
         return nullptr;
@@ -11112,6 +11115,33 @@ const gearbox_phy_t* PortsOrch::getGearboxPhy(const Port &port)
     }
 
     return &phy->second;
+}
+
+std::string PortsOrch::gearboxInterfaceKey(const Port &port) const
+{
+    // Returns the m_gearboxInterfaceMap key for the given port. Prefers
+    // the SONiC port alias (new gearbox_config.json schema with 'alias');
+    // falls back to std::to_string(port.m_index) for backward compatibility
+    // with HWSKUs whose gearbox_config.json doesn't have an 'alias' field.
+    if (m_gearboxInterfaceMap.find(port.m_alias) != m_gearboxInterfaceMap.end())
+    {
+        return port.m_alias;
+    }
+    return std::to_string(port.m_index);
+}
+
+std::string PortsOrch::gearboxPortKey(const Port &port) const
+{
+    // Returns the m_gearboxPortMap key for the given port. Same fallback
+    // scheme as gearboxInterfaceKey(): prefers port.m_alias (new
+    // phy*_config.json schema with 'alias'); falls back to
+    // std::to_string(port.m_index) for HWSKUs whose phy*_config.json
+    // doesn't have an 'alias' field.
+    if (m_gearboxPortMap.find(port.m_alias) != m_gearboxPortMap.end())
+    {
+        return port.m_alias;
+    }
+    return std::to_string(port.m_index);
 }
 
 bool PortsOrch::getPortIPG(sai_object_id_t port_id, uint32_t &ipg)
@@ -11614,7 +11644,7 @@ void PortsOrch::updateGearboxPortOperStatus(const Port& port)
     if (!isGearboxEnabled())
         return;
 
-    SWSS_LOG_NOTICE("BOX: port %s, system_side_id:0x%" PRIx64 "line_side_id:0x%" PRIx64,
+    SWSS_LOG_NOTICE("BOX: port %s, system_side_id:0x%" PRIx64 ", line_side_id:0x%" PRIx64,
             port.m_alias.c_str(), port.m_system_side_id, port.m_line_side_id);
 
     if (!port.m_system_side_id || !port.m_line_side_id)
