@@ -940,6 +940,8 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     std::string res;
     // stderr too, in the C locale: it tells an entry that is already gone apart from a real failure
     int ret = swss::exec("LC_ALL=C" + cmds + " 2>&1", res);
+    bool leftVlan = false;
+    std::vector<FieldValueTuple> member;
     if (ret == 0)
     {
         SWSS_LOG_INFO("Success cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
@@ -950,12 +952,27 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         // an FDB flush can remove the kernel entry first where the kernel bridge is the data plane (virtual switch)
         SWSS_LOG_INFO("Already removed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
+    else if (info->op_type == FDB_OPER_ADD &&
+             (res.find("RTNETLINK answers: Operation not supported") != std::string::npos ||
+              res.find("RTNETLINK answers: Invalid argument") != std::string::npos) &&
+             !m_stateVlanMemberTable.get(info->vid + "|" + port_name, member))
+    {
+        /*
+         * vlanmgrd takes the port out of the kernel VLAN before orchagent removes the ASIC member,
+         * and the ASIC can learn on the port in between. The kernel refuses the entry: EOPNOTSUPP
+         * once the port has left the bridge, EINVAL while it is a bridge port without the VLAN.
+         */
+        leftVlan = true;
+        SWSS_LOG_INFO("%s has left %s, not installed cmd:%s, res=%s, ret=%d", port_name.c_str(),
+                      info->vid.c_str(), cmds.c_str(), res.c_str(), ret);
+    }
     else if ((info->op_type != FDB_OPER_DEL) || !flushLeftVlanMacs(port_name, info->vid.substr(4), fdb_type))
     {
         SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
 
-    if (info->op_type == FDB_OPER_ADD)
+    /* A learn on a port that has left the VLAN does not replace the MAC's VXLAN entry */
+    if (info->op_type == FDB_OPER_ADD && !leftVlan)
     {
         /* Check if this vlan+key is also learned by vxlan neighbor then delete the dest entry */
         if (m_mac.find(key) != m_mac.end())
