@@ -301,7 +301,7 @@ int main(int argc, char *argv[])
 
     std::vector<TableConnector> acl_tables;
     AclOrch aclOrch(acl_tables, gStateDb, gSwitchOrch, gPortsOrch, NULL, NULL,
-                    NULL, NULL);
+                    NULL);
     gAclOrch = &aclOrch;
 
     // Setup ports for all tests.

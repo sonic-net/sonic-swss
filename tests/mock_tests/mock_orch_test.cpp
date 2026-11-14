@@ -316,7 +316,7 @@ void MockOrchTest::SetUp()
         appDbAclTableType,
     };
     gAclOrch = new AclOrch(acl_table_connectors, m_state_db.get(),
-                            gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
+                            gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
     gDirectory.set(gAclOrch);
     ut_orch_list.push_back((Orch **)&gAclOrch);
     global_orch_list.insert((Orch **)&gAclOrch);
