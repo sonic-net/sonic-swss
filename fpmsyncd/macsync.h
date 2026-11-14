@@ -96,8 +96,9 @@ public:
      * no longer does; dfKey is that EVPN_DF_TABLE key, "Vlan<id>:<port>". */
     void onEsPortVlan(const std::string& dfKey, bool present);
 
-    /* The warm restart window is over: the EVPN_DF_TABLE keys read at start
-     * that zebra has not sent again are taken as gone. */
+    /* The warm restart window is over, or STALE_SWEEP_HOLD after a cold start's
+     * connect: the EVPN_DF_TABLE keys read at start that zebra has not sent
+     * again are taken as gone. */
     void onWarmStartEnd();
 
     /* Sends the local MACs whose re-add onEsPortVlan() delayed. */

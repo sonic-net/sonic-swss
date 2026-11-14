@@ -254,6 +254,12 @@ int main(int argc, char **argv)
             {
                 sync.startRouteCoalescer();
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
+
+                /* zebra sends the EVPN_DF_TABLE keys it holds right after the connect;
+                 * those read at start that it has not sent by then are gone. */
+                esDfWarmTimer.setInterval(timespec{MacSync::STALE_SWEEP_HOLD, 0});
+                esDfWarmTimer.start();
+                s.addSelectable(&esDfWarmTimer);
             }
 
             /* In a warm start MacSync's stale rows go at the warm restart timer,
