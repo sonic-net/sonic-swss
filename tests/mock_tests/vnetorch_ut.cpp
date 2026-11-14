@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <set>
 #include <unistd.h>
 
@@ -60,11 +61,12 @@ namespace vnetorch_test
     // create/set/remove with no bulk ops, so the WITH_SET generic mock variant
     // fits (same shape as sai_policer_api).
     DEFINE_SAI_GENERIC_API_MOCK_WITH_SET(virtual_router, virtual_router);
-    // VNetRouteOrch programs tunnel routes with non-bulk single-object SAI
-    // calls, so the plain generic mocks fit (next hop, next hop group + members,
-    // and the route entry). All default to call-through to real libsaivs so the
-    // route -> next hop -> tunnel object references resolve to valid OIDs.
-    DEFINE_SAI_GENERIC_API_MOCK(next_hop, next_hop);
+    // VNetRouteOrch programs tunnel next hops through ObjectBulker
+    // (create_next_hops / remove_next_hops). Next hop groups stay single-object
+    // create; group members and tunnel routes also have bulk paths. Defaults
+    // call through to libsaivs so route -> next hop -> tunnel references resolve
+    // to valid OIDs.
+    DEFINE_SAI_GENERIC_API_OBJECT_BULK_MOCK(next_hop, next_hop);
     DEFINE_SAI_GENERIC_APIS_MOCK(next_hop_group, next_hop_group, next_hop_group_member);
     DEFINE_SAI_API_MOCK_MATCH_ENTRY(route);
     // gBfdOrch programs a SAI BFD session per endpoint monitor for a monitored
@@ -343,6 +345,14 @@ namespace vnetorch_test
     // mock. So, like captureSetRouteEntryAttr above, these bulk entries are
     // captured with a plain function-pointer trampoline installed early in
     // ApplySaiMock() (before gRouteOrch is constructed) rather than via gmock.
+    using RouteBulkCreateFn = std::function<sai_status_t(
+        uint32_t, const sai_route_entry_t *, const uint32_t *,
+        const sai_attribute_t **, sai_bulk_op_error_mode_t, sai_status_t *)>;
+    using RouteBulkSetFn = std::function<sai_status_t(
+        uint32_t, const sai_route_entry_t *, const sai_attribute_t *,
+        sai_bulk_op_error_mode_t, sai_status_t *)>;
+    static RouteBulkCreateFn g_routeBulkCreateHook;
+    static RouteBulkSetFn g_routeBulkSetHook;
     static sai_status_t (*g_savedCreateRouteEntries)(
         uint32_t, const sai_route_entry_t *, const uint32_t *,
         const sai_attribute_t **, sai_bulk_op_error_mode_t, sai_status_t *) = nullptr;
@@ -356,7 +366,11 @@ namespace vnetorch_test
         sai_status_t *statuses)
     {
         sai_status_t st = SAI_STATUS_SUCCESS;
-        if (g_activeRouteCaptures && g_activeRouteCaptures->splitBulkCreates)
+        if (g_routeBulkCreateHook)
+        {
+            st = g_routeBulkCreateHook(count, entries, attr_count, attr_list, mode, statuses);
+        }
+        else if (g_activeRouteCaptures && g_activeRouteCaptures->splitBulkCreates)
         {
             // libsaivs prevalidation rejects the entire bulk on a duplicate.
             // Separate calls exercise mixed results in one RouteOrch bulk while
@@ -421,11 +435,20 @@ namespace vnetorch_test
         const sai_attribute_t *attr_list, sai_bulk_op_error_mode_t mode,
         sai_status_t *statuses)
     {
-        sai_status_t st = g_savedSetRouteEntries(count, entries, attr_list, mode, statuses);
+        sai_status_t st = SAI_STATUS_SUCCESS;
+        if (g_routeBulkSetHook)
+        {
+            st = g_routeBulkSetHook(count, entries, attr_list, mode, statuses);
+        }
+        else
+        {
+            st = g_savedSetRouteEntries(count, entries, attr_list, mode, statuses);
+        }
         if (g_activeRouteCaptures)
         {
             for (uint32_t i = 0; i < count; ++i)
             {
+                if (statuses[i] != SAI_STATUS_SUCCESS) continue;
                 if (attr_list[i].id != SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID) continue;
                 for (auto &r : g_activeRouteCaptures->routes)
                     if (r.vr == entries[i].vr_id &&
@@ -439,9 +462,9 @@ namespace vnetorch_test
     // gRouteOrch programs an ECMP local route's group members through its
     // next-hop-group-member *object* bulker (gNextHopGroupMemberBulker), which --
     // like the route bulker -- binds create/remove_next_hop_group_members at
-    // construction. Tunnel-route members go through VNetRouteOrch's single-object
-    // creates (captured by installRouteMock), but local ECMP members need the
-    // same early-trampoline treatment, installed in ApplySaiMock().
+    // construction. VNetRouteOrch's own NHG-member bulker is constructed later
+    // (PostSetUp) and binds the mocked bulk APIs; local ECMP members still need
+    // this early trampoline, installed in ApplySaiMock().
     static sai_status_t (*g_savedCreateNhgMembers)(
         sai_object_id_t, uint32_t, const uint32_t *, const sai_attribute_t **,
         sai_bulk_op_error_mode_t, sai_object_id_t *, sai_status_t *) = nullptr;
@@ -764,6 +787,8 @@ namespace vnetorch_test
                 sai_route_api->set_route_entry_attribute = g_savedSetRouteAttr;
                 g_savedSetRouteAttr = nullptr;
             }
+            g_routeBulkCreateHook = nullptr;
+            g_routeBulkSetHook = nullptr;
             g_activeRouteCaptures = nullptr;
             m_vrMock.reset();
             RestoreSaiApis();
@@ -921,38 +946,94 @@ namespace vnetorch_test
         // Capture the SAI next-hop / next-hop-group / route objects
         // VNetRouteOrch programs, calling through to real libsaivs so downstream
         // references (route -> next hop -> tunnel) resolve to valid OIDs.
-        // VNetRouteOrch programs tunnel routes via the non-bulk single-object
-        // create calls captured here; VNET *local* routes go through gRouteOrch's
-        // route bulker, whose bulk *_route_entries APIs are captured separately by
-        // the ApplySaiMock() trampolines (the bulker binds them before this runs).
-        void installRouteMock()
+        // Tunnel next hops and tunnel routes now go through ObjectBulker /
+        // EntityBulker (create_next_hops / create_route_entries). Local routes
+        // still go through gRouteOrch's route bulker, whose bulk *_route_entries
+        // APIs are captured separately by the ApplySaiMock() trampolines.
+        void recordCapturedNextHop(sai_object_id_t id, uint32_t n, const sai_attribute_t *l)
+        {
+            RouteCaptures::NextHop nh;
+            nh.oid = id;
+            if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TYPE)) nh.type = a->value.s32;
+            if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_IP)) nh.ip = a->value.ipaddr;
+            if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TUNNEL_ID)) nh.tunnel_id = a->value.oid;
+            if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID)) nh.rif = a->value.oid;
+            if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TUNNEL_VNI)) { nh.has_vni = true; nh.vni = a->value.u32; }
+            if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TUNNEL_MAC))
+            {
+                nh.has_mac = true;
+                memcpy(nh.mac, a->value.mac, sizeof(sai_mac_t));
+            }
+            m_rt.nexthops.push_back(nh);
+        }
+
+        // Apply the same create hook to single-object and bulk next-hop APIs.
+        // VNetRouteOrch queues new tunnel next hops onto ObjectBulker; existing
+        // next hops still increment refs through createNextHopTunnel().
+        using NextHopCreateFn = std::function<sai_status_t(sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *)>;
+        void setRouteBulkCreateHook(RouteBulkCreateFn fn)
+        {
+            g_routeBulkCreateHook = std::move(fn);
+        }
+
+        void setRouteBulkSetHook(RouteBulkSetFn fn)
+        {
+            g_routeBulkSetHook = std::move(fn);
+        }
+
+        void setNextHopCreateHook(NextHopCreateFn fn)
         {
             ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-                .WillByDefault(Invoke([this](sai_object_id_t *id, sai_object_id_t sw,
-                                             uint32_t n, const sai_attribute_t *l) {
-                    sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-                    if (st == SAI_STATUS_SUCCESS)
-                    {
-                        RouteCaptures::NextHop nh;
-                        nh.oid = *id;
-                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TYPE)) nh.type = a->value.s32;
-                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_IP)) nh.ip = a->value.ipaddr;
-                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TUNNEL_ID)) nh.tunnel_id = a->value.oid;
-                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID)) nh.rif = a->value.oid;
-                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TUNNEL_VNI)) { nh.has_vni = true; nh.vni = a->value.u32; }
-                        if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_TUNNEL_MAC))
-                        {
-                            nh.has_mac = true;
-                            memcpy(nh.mac, a->value.mac, sizeof(sai_mac_t));
-                        }
-                        m_rt.nexthops.push_back(nh);
-                    }
-                    return st;
+                .WillByDefault(Invoke([fn](sai_object_id_t *id, sai_object_id_t sw,
+                                           uint32_t n, const sai_attribute_t *l) {
+                    return fn(id, sw, n, l);
                 }));
+            ON_CALL(*mock_sai_next_hop_api, create_next_hops(_, _, _, _, _, _, _))
+                .WillByDefault(Invoke([fn](sai_object_id_t sw, uint32_t count, const uint32_t *attr_count,
+                                           const sai_attribute_t **attr_list, sai_bulk_op_error_mode_t,
+                                           sai_object_id_t *object_id, sai_status_t *object_statuses) {
+                    sai_status_t overall = SAI_STATUS_SUCCESS;
+                    for (uint32_t i = 0; i < count; ++i)
+                    {
+                        object_statuses[i] = fn(&object_id[i], sw, attr_count[i], attr_list[i]);
+                        if (object_statuses[i] != SAI_STATUS_SUCCESS)
+                        {
+                            overall = object_statuses[i];
+                        }
+                    }
+                    return overall;
+                }));
+        }
+
+        void installRouteMock()
+        {
+            setNextHopCreateHook([this](sai_object_id_t *id, sai_object_id_t sw,
+                                        uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    recordCapturedNextHop(*id, n, l);
+                }
+                return st;
+            });
             ON_CALL(*mock_sai_next_hop_api, remove_next_hop(_))
                 .WillByDefault(Invoke([this](sai_object_id_t id) {
                     m_rt.removedNexthops.push_back(id);
                     return old_sai_next_hop_api->remove_next_hop(id);
+                }));
+            ON_CALL(*mock_sai_next_hop_api, remove_next_hops(_, _, _, _))
+                .WillByDefault(Invoke([this](uint32_t count, const sai_object_id_t *object_id,
+                                             sai_bulk_op_error_mode_t mode, sai_status_t *object_statuses) {
+                    sai_status_t st = old_sai_next_hop_api->remove_next_hops(
+                        count, object_id, mode, object_statuses);
+                    for (uint32_t i = 0; i < count; ++i)
+                    {
+                        if (object_statuses[i] == SAI_STATUS_SUCCESS)
+                        {
+                            m_rt.removedNexthops.push_back(object_id[i]);
+                        }
+                    }
+                    return st;
                 }));
 
             ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
@@ -1222,6 +1303,118 @@ namespace vnetorch_test
             // deleted route as a SET and resurrect it.
             Table tbl(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
             tbl.del(vnet + ":" + prefix);
+        }
+
+        static string appTunnelKey(const string &vnet, const string &prefix)
+        {
+            return vnet + ":" + prefix;
+        }
+
+        static string prefixHost(const string &cidr)
+        {
+            auto pos = cidr.find('/');
+            return pos == string::npos ? cidr : cidr.substr(0, pos);
+        }
+
+        static vector<FieldValueTuple> tunnelRouteFvs(
+            const string &endpoints, const string &mac = "",
+            uint32_t buckets = 0, const string &ep_monitor = "",
+            const string &primary = "", const string &monitoring = "")
+        {
+            vector<FieldValueTuple> fvs = {{"endpoint", endpoints}};
+            if (!mac.empty()) fvs.push_back({"mac_address", mac});
+            if (buckets > 0)
+                fvs.push_back({"consistent_hashing_buckets", to_string(buckets)});
+            if (!ep_monitor.empty()) fvs.push_back({"endpoint_monitor", ep_monitor});
+            if (!primary.empty()) fvs.push_back({"primary", primary});
+            if (!monitoring.empty()) fvs.push_back({"monitoring", monitoring});
+            return fvs;
+        }
+
+        // Push a consumer batch of APP_DB VNET_ROUTE_TUNNEL_TABLE SET/DEL ops
+        // and drive one VNetRouteOrch::doTask() -- the mock equivalent of
+        // ProducerStateTable.setBuffered/flush used by the VS bulk tests.
+        void applyVnetTunnelOps(deque<KeyOpFieldsValuesTuple> entries)
+        {
+            auto consumer = dynamic_cast<Consumer *>(
+                m_vnetRouteOrch->getExecutor(APP_VNET_RT_TUNNEL_TABLE_NAME));
+            Table app(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+            for (const auto &e : entries)
+            {
+                if (kfvOp(e) == SET_COMMAND)
+                {
+                    app.set(kfvKey(e), kfvFieldsValues(e));
+                }
+            }
+            consumer->addToSync(entries);
+            static_cast<Orch *>(m_vnetRouteOrch.get())->doTask(*consumer);
+            for (const auto &e : entries)
+            {
+                if (kfvOp(e) != SET_COMMAND)
+                {
+                    app.del(kfvKey(e));
+                }
+            }
+        }
+
+        void runVnetRouteOrch()
+        {
+            auto consumer = dynamic_cast<Consumer *>(
+                m_vnetRouteOrch->getExecutor(APP_VNET_RT_TUNNEL_TABLE_NAME));
+            static_cast<Orch *>(m_vnetRouteOrch.get())->doTask(*consumer);
+        }
+
+        size_t vnetTunnelSyncCount(const string &key) const
+        {
+            auto consumer = dynamic_cast<Consumer *>(
+                m_vnetRouteOrch->getExecutor(APP_VNET_RT_TUNNEL_TABLE_NAME));
+            return consumer->m_toSync.count(key);
+        }
+
+        size_t liveTunnelEncapNextHops() const
+        {
+            set<sai_object_id_t> live;
+            for (const auto &nh : m_rt.nexthops)
+            {
+                if (nh.type != SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP) continue;
+                if (nextHopRemoved(nh.oid)) continue;
+                live.insert(nh.oid);
+            }
+            return live.size();
+        }
+
+        size_t liveGroups() const
+        {
+            set<sai_object_id_t> live;
+            for (const auto &g : m_rt.groups)
+            {
+                if (groupRemoved(g.oid)) continue;
+                live.insert(g.oid);
+            }
+            return live.size();
+        }
+
+        size_t liveMembers() const
+        {
+            set<sai_object_id_t> live;
+            for (const auto &m : m_rt.members)
+            {
+                if (find(m_rt.removedMembers.begin(), m_rt.removedMembers.end(), m.oid) !=
+                    m_rt.removedMembers.end())
+                    continue;
+                live.insert(m.oid);
+            }
+            return live.size();
+        }
+
+        size_t liveRouteCount(const vector<string> &prefixes) const
+        {
+            size_t n = 0;
+            for (const auto &p : prefixes)
+            {
+                if (findRoute(prefixHost(p))) n++;
+            }
+            return n;
         }
 
         // A BFD-monitored VNET route: the VS test writes VNET_ROUTE_TUNNEL with
@@ -2208,6 +2401,26 @@ namespace vnetorch_test
             return creates > removes ? last : nullptr;
         }
 
+        size_t routeCreateCount(const string &ip) const
+        {
+            size_t n = 0;
+            for (const auto &r : m_rt.routes)
+            {
+                if (prefixAddrEquals(r.dest, ip)) n++;
+            }
+            return n;
+        }
+
+        size_t routeRemoveCount(const string &ip) const
+        {
+            size_t n = 0;
+            for (const auto &d : m_rt.removedRoutes)
+            {
+                if (prefixAddrEquals(d, ip)) n++;
+            }
+            return n;
+        }
+
         uint32_t ipv4RouteCrmUsed() const
         {
             const auto &resources = Portal::CrmOrchInternal::getResourceMap(gCrmOrch);
@@ -2910,12 +3123,11 @@ namespace vnetorch_test
 
         IpAddress endpoint("10.10.10.1");
         const sai_object_id_t releasedOid = 0x5000000000abcULL;
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([releasedOid](sai_object_id_t *id, sai_object_id_t,
-                                                uint32_t, const sai_attribute_t *) {
-                *id = releasedOid;
-                return SAI_STATUS_ITEM_NOT_FOUND;
-            }));
+        setNextHopCreateHook([releasedOid](sai_object_id_t *id, sai_object_id_t,
+                                           uint32_t, const sai_attribute_t *) {
+            *id = releasedOid;
+            return SAI_STATUS_ITEM_NOT_FOUND;
+        });
 
         EXPECT_EQ(m_VxlanTunnelOrch->createNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0),
                   SAI_NULL_OBJECT_ID);
@@ -2923,11 +3135,10 @@ namespace vnetorch_test
         EXPECT_EQ(tunnel->getNextHop(endpoint, MacAddress(), 0), SAI_NULL_OBJECT_ID);
 
         // Once the SAI accepts the next hop, the next request creates and caches it.
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([](sai_object_id_t *id, sai_object_id_t sw,
-                                     uint32_t n, const sai_attribute_t *l) {
-                return old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-            }));
+        setNextHopCreateHook([](sai_object_id_t *id, sai_object_id_t sw,
+                                uint32_t n, const sai_attribute_t *l) {
+            return old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+        });
 
         const sai_object_id_t nhOid =
             m_VxlanTunnelOrch->createNextHopTunnel("tunnel_v4", endpoint, MacAddress(), 0);
@@ -3003,21 +3214,20 @@ namespace vnetorch_test
         setVnet("Vnet1", "tunnel_v4", "10007", "");
 
         vector<sai_object_id_t> created;
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([&created](sai_object_id_t *id, sai_object_id_t sw,
-                                             uint32_t n, const sai_attribute_t *l) -> sai_status_t {
-                auto ip = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_IP);
-                if (ip && ipAddrEquals(ip->value.ipaddr, "7.0.0.2"))
-                {
-                    return SAI_STATUS_TABLE_FULL;
-                }
-                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-                if (st == SAI_STATUS_SUCCESS)
-                {
-                    created.push_back(*id);
-                }
-                return st;
-            }));
+        setNextHopCreateHook([&created](sai_object_id_t *id, sai_object_id_t sw,
+                                        uint32_t n, const sai_attribute_t *l) -> sai_status_t {
+            auto ip = findRawAttr(l, n, SAI_NEXT_HOP_ATTR_IP);
+            if (ip && ipAddrEquals(ip->value.ipaddr, "7.0.0.2"))
+            {
+                return SAI_STATUS_TABLE_FULL;
+            }
+            sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                created.push_back(*id);
+            }
+            return st;
+        });
 
         setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
 
@@ -3037,11 +3247,15 @@ namespace vnetorch_test
             EXPECT_EQ(tunnel->getNextHop(ip, MacAddress(), 0), SAI_NULL_OBJECT_ID) << ep;
         }
 
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([](sai_object_id_t *id, sai_object_id_t sw,
-                                     uint32_t n, const sai_attribute_t *l) {
-                return old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-            }));
+        setNextHopCreateHook([this](sai_object_id_t *id, sai_object_id_t sw,
+                                    uint32_t n, const sai_attribute_t *l) {
+            sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                recordCapturedNextHop(*id, n, l);
+            }
+            return st;
+        });
 
         setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
 
@@ -3066,6 +3280,7 @@ namespace vnetorch_test
 
         EXPECT_TRUE(m_rt.members.empty());
         EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 1U);
         ASSERT_EQ(m_rt.nexthops.size(), 3U);
         for (const auto &nh : m_rt.nexthops)
         {
@@ -3086,13 +3301,231 @@ namespace vnetorch_test
                 return st;
             }));
 
-        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        runVnetRouteOrch();
 
         ASSERT_EQ(m_rt.groups.size(), 1U);
         EXPECT_EQ(m_rt.members.size(), 3U);
         const RouteCaptures::Route *r = findRoute("100.100.1.1");
         ASSERT_NE(r, nullptr);
         EXPECT_EQ(r->next_hop_id, m_rt.groups[0].oid);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
+    }
+
+    // Replacing an existing overlay's next-hop group must not rewrite the ASIC
+    // route or STATE_DB when the replacement group cannot be created.
+    TEST_F(VNetOrchTest, VnetEcmpRouteGroupCreateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        const sai_object_id_t oldNhg = r->next_hop_id;
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(oldNhg, m_rt.groups[0].oid);
+        const size_t creates = routeCreateCount("100.100.1.1");
+        vector<sai_object_id_t> oldNhs;
+        for (const char *ip : {"7.0.0.1", "7.0.0.2", "7.0.0.3"})
+            oldNhs.push_back(nhOidForEndpoint(ip));
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillByDefault(Return(SAI_STATUS_TABLE_FULL));
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        const RouteCaptures::Route *kept = findRoute("100.100.1.1");
+        ASSERT_NE(kept, nullptr);
+        EXPECT_EQ(kept->next_hop_id, oldNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
+        EXPECT_EQ(m_rt.groups.size(), 1U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 1U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        for (sai_object_id_t nh : oldNhs)
+            EXPECT_FALSE(nextHopRemoved(nh)) << "existing tunnel next hop " << nh << " removed";
+
+        ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillByDefault(Invoke([this](sai_object_id_t *id, sai_object_id_t sw,
+                                         uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_group_api->create_next_hop_group(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    RouteCaptures::Group g;
+                    g.oid = *id;
+                    if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_GROUP_ATTR_TYPE)) g.type = a->value.s32;
+                    m_rt.groups.push_back(g);
+                }
+                return st;
+            }));
+
+        runVnetRouteOrch();
+
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const RouteCaptures::Route *updated = findRoute("100.100.1.1");
+        ASSERT_NE(updated, nullptr);
+        EXPECT_EQ(updated->next_hop_id, m_rt.groups[1].oid);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+    }
+
+    // Overlay UPDATE fail after the replacement group is created must keep
+    // syncd_tunnel_routes_ so retry UPDATEs in place (not ADD of a prefix still
+    // in hardware).
+    TEST_F(VNetOrchTest, VnetEcmpRouteUpdateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        const RouteCaptures::Route *r = findRoute("100.100.1.1");
+        ASSERT_NE(r, nullptr);
+        const sai_object_id_t oldNhg = r->next_hop_id;
+        const size_t creates = routeCreateCount("100.100.1.1");
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        setRouteBulkSetHook([](uint32_t count, const sai_route_entry_t *,
+                               const sai_attribute_t *, sai_bulk_op_error_mode_t,
+                               sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        const RouteCaptures::Route *kept = findRoute("100.100.1.1");
+        ASSERT_NE(kept, nullptr);
+        EXPECT_EQ(kept->next_hop_id, oldNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 1U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+
+        setRouteBulkSetHook(nullptr);
+        runVnetRouteOrch();
+
+        const RouteCaptures::Route *updated = findRoute("100.100.1.1");
+        ASSERT_NE(updated, nullptr);
+        EXPECT_NE(updated->next_hop_id, oldNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+    }
+
+    // Overlay UPDATE onto an already-installed group (not deferred) must keep the
+    // live route on failure and retry UPDATE, not ADD.
+    TEST_F(VNetOrchTest, VnetEcmpSharedGroupUpdateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_v4", "7.7.7.7");
+        setVnet("Vnet1", "tunnel_v4", "10007", "");
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        setVnetRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        const RouteCaptures::Route *ra = findRoute("100.100.1.1");
+        const RouteCaptures::Route *rb = findRoute("100.100.1.2");
+        ASSERT_NE(ra, nullptr);
+        ASSERT_NE(rb, nullptr);
+        const sai_object_id_t oldNhg = ra->next_hop_id;
+        const sai_object_id_t sharedNhg = rb->next_hop_id;
+        ASSERT_NE(oldNhg, sharedNhg);
+        const size_t creates_a = routeCreateCount("100.100.1.1");
+        const size_t creates_b = routeCreateCount("100.100.1.2");
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        checkStateDbRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        setRouteBulkSetHook([](uint32_t count, const sai_route_entry_t *,
+                               const sai_attribute_t *, sai_bulk_op_error_mode_t,
+                               sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        ASSERT_NE(findRoute("100.100.1.1"), nullptr);
+        EXPECT_EQ(findRoute("100.100.1.1")->next_hop_id, oldNhg);
+        EXPECT_EQ(findRoute("100.100.1.2")->next_hop_id, sharedNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates_a);
+        EXPECT_EQ(routeCreateCount("100.100.1.2"), creates_b);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_FALSE(groupRemoved(oldNhg));
+        EXPECT_FALSE(groupRemoved(sharedNhg));
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 1U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.2/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "7.0.0.1,7.0.0.2,7.0.0.3");
+        checkStateDbRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+
+        setRouteBulkSetHook(nullptr);
+        runVnetRouteOrch();
+
+        ASSERT_NE(findRoute("100.100.1.1"), nullptr);
+        EXPECT_EQ(findRoute("100.100.1.1")->next_hop_id, sharedNhg);
+        EXPECT_EQ(findRoute("100.100.1.2")->next_hop_id, sharedNhg);
+        EXPECT_EQ(routeCreateCount("100.100.1.1"), creates_a);
+        EXPECT_EQ(routeRemoveCount("100.100.1.1"), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet1", "100.100.1.1/32")), 0U);
+        checkStateDbRoute("Vnet1", "100.100.1.1/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+        checkStateDbRoute("Vnet1", "100.100.1.2/32", "8.0.0.1,8.0.0.2,8.0.0.3");
+    }
+
+    // Regular→FG overlay UPDATE fail must keep the regular ASIC route and retry
+    // UPDATE onto the FG group (not ADD).
+    TEST_F(VNetOrchTest, VnetFgEcmpRegularToFgUpdateFailureKeepsExistingOverlay)
+    {
+        setVxlanTunnel("tunnel_37", "10.10.10.10");
+        setVnet("Vnet37", "tunnel_37", "10037", "");
+
+        const string prefix = "100.100.37.1/32";
+        const string endpointsCsv = "37.0.0.1,37.0.0.2,37.0.0.3";
+
+        setVnetRoute("Vnet37", prefix, endpointsCsv);
+        ASSERT_EQ(m_rt.groups.size(), 1U);
+        const sai_object_id_t regularNhg = m_rt.groups[0].oid;
+        const size_t creates = routeCreateCount("100.100.37.1");
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+
+        setRouteBulkSetHook([](uint32_t count, const sai_route_entry_t *,
+                               const sai_attribute_t *, sai_bulk_op_error_mode_t,
+                               sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetFgEcmpRoute("Vnet37", prefix, endpointsCsv, 60);
+
+        const RouteCaptures::Route *kept = findRoute("100.100.37.1");
+        ASSERT_NE(kept, nullptr);
+        EXPECT_EQ(kept->next_hop_id, regularNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
+        EXPECT_FALSE(groupRemoved(regularNhg));
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet37", prefix)), 1U);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        checkFgRouteStateDbRowRemoved("Vnet37", prefix);
+
+        setRouteBulkSetHook(nullptr);
+        runVnetRouteOrch();
+
+        ASSERT_GE(m_rt.groups.size(), 2U);
+        const sai_object_id_t fgNhg = m_rt.groups.back().oid;
+        EXPECT_EQ(m_rt.groups.back().type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        const RouteCaptures::Route *updated = findRoute("100.100.37.1");
+        ASSERT_NE(updated, nullptr);
+        EXPECT_EQ(updated->next_hop_id, fgNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), creates);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
+        EXPECT_TRUE(groupRemoved(regularNhg));
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("Vnet37", prefix)), 0U);
+        checkStateDbRoute("Vnet37", prefix, endpointsCsv);
+        EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
     }
 
     // A single-endpoint route whose tunnel next hop cannot be created is not
@@ -3102,24 +3535,24 @@ namespace vnetorch_test
         setVxlanTunnel("tunnel_v4", "10.10.10.10");
         setVnet("Vnet_2000", "tunnel_v4", "2000", "");
 
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Return(SAI_STATUS_TABLE_FULL));
+        setNextHopCreateHook([](sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *) {
+            return SAI_STATUS_TABLE_FULL;
+        });
 
         setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
 
         EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
 
         sai_object_id_t nhOid = SAI_NULL_OBJECT_ID;
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
-                                           uint32_t n, const sai_attribute_t *l) {
-                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-                if (st == SAI_STATUS_SUCCESS)
-                {
-                    nhOid = *id;
-                }
-                return st;
-            }));
+        setNextHopCreateHook([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
+                                      uint32_t n, const sai_attribute_t *l) {
+            sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                nhOid = *id;
+            }
+            return st;
+        });
 
         setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
 
@@ -3138,12 +3571,11 @@ namespace vnetorch_test
         setVnet("Vnet_2000", "tunnel_v4", "2000", "");
 
         int createAttempts = 0;
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([&createAttempts](sai_object_id_t *, sai_object_id_t,
-                                                    uint32_t, const sai_attribute_t *) {
-                createAttempts++;
-                return SAI_STATUS_INVALID_PARAMETER;
-            }));
+        setNextHopCreateHook([&createAttempts](sai_object_id_t *, sai_object_id_t,
+                                               uint32_t, const sai_attribute_t *) {
+            createAttempts++;
+            return SAI_STATUS_INVALID_PARAMETER;
+        });
 
         setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
 
@@ -3151,16 +3583,15 @@ namespace vnetorch_test
         EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
 
         sai_object_id_t nhOid = SAI_NULL_OBJECT_ID;
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
-                                           uint32_t n, const sai_attribute_t *l) {
-                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-                if (st == SAI_STATUS_SUCCESS)
-                {
-                    nhOid = *id;
-                }
-                return st;
-            }));
+        setNextHopCreateHook([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
+                                      uint32_t n, const sai_attribute_t *l) {
+            sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                nhOid = *id;
+            }
+            return st;
+        });
 
         setVnetRoute("Vnet_2000", "100.100.2.1/32", "10.10.10.1");
 
@@ -3186,8 +3617,9 @@ namespace vnetorch_test
         setVxlanTunnel("tunnel_v4", "10.10.10.10");
         setVnet("Vnet_2000", "tunnel_v4", "2000", "");
 
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Return(SAI_STATUS_INVALID_PARAMETER));
+        setNextHopCreateHook([](sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *) {
+            return SAI_STATUS_INVALID_PARAMETER;
+        });
 
         setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
         EXPECT_EQ(findRoute("100.100.1.1"), nullptr);
@@ -3201,16 +3633,15 @@ namespace vnetorch_test
         }
 
         sai_object_id_t nhOid = SAI_NULL_OBJECT_ID;
-        ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))
-            .WillByDefault(Invoke([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
-                                           uint32_t n, const sai_attribute_t *l) {
-                sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
-                if (st == SAI_STATUS_SUCCESS)
-                {
-                    nhOid = *id;
-                }
-                return st;
-            }));
+        setNextHopCreateHook([&nhOid](sai_object_id_t *id, sai_object_id_t sw,
+                                      uint32_t n, const sai_attribute_t *l) {
+            sai_status_t st = old_sai_next_hop_api->create_next_hop(id, sw, n, l);
+            if (st == SAI_STATUS_SUCCESS)
+            {
+                nhOid = *id;
+            }
+            return st;
+        });
 
         setVnetRoute("Vnet_2000", "100.100.1.1/32", "10.10.10.1");
 
@@ -3675,6 +4106,8 @@ namespace vnetorch_test
         const RouteCaptures::Route *r = findRoute("100.100.37.1");
         ASSERT_NE(r, nullptr);
         EXPECT_EQ(r->next_hop_id, fgNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), 1U);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
         checkStateDbRoute("Vnet37", prefix, endpointsCsv);
         EXPECT_TRUE(fgRouteStateDbRowExists("Vnet37", prefix));
     }
@@ -3715,6 +4148,8 @@ namespace vnetorch_test
         const RouteCaptures::Route *r = findRoute("100.100.37.1");
         ASSERT_NE(r, nullptr);
         EXPECT_EQ(r->next_hop_id, regularNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), 1U);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
         checkStateDbRoute("Vnet37", prefix, endpointsCsv);
         checkFgRouteStateDbRowRemoved("Vnet37", prefix);
     }
@@ -3768,6 +4203,8 @@ namespace vnetorch_test
         const RouteCaptures::Route *r = findRoute("100.100.37.1");
         ASSERT_NE(r, nullptr);
         EXPECT_EQ(r->next_hop_id, regularNhg2);
+        EXPECT_EQ(routeCreateCount("100.100.37.1"), 1U);
+        EXPECT_EQ(routeRemoveCount("100.100.37.1"), 0U);
         checkStateDbRoute("Vnet37", prefix, "37.0.0.7,37.0.0.8");
         checkFgRouteStateDbRowRemoved("Vnet37", prefix);
     }
@@ -3809,6 +4246,10 @@ namespace vnetorch_test
         EXPECT_EQ(currentFgMemberAssignments(sharedNhg).size(), 3U);
         EXPECT_EQ(findRoute("100.100.37.30")->next_hop_id, fgNhg);
         EXPECT_EQ(findRoute("100.100.37.31")->next_hop_id, sharedNhg);
+        EXPECT_EQ(routeCreateCount("100.100.37.30"), 1U);
+        EXPECT_EQ(routeRemoveCount("100.100.37.30"), 0U);
+        EXPECT_EQ(routeCreateCount("100.100.37.31"), 1U);
+        EXPECT_EQ(routeRemoveCount("100.100.37.31"), 0U);
         for (const sai_object_id_t nh : nhOids)
         {
             EXPECT_FALSE(nextHopRemoved(nh)) << "tunnel next hop " << nh << " removed";
@@ -6557,6 +6998,931 @@ namespace vnetorch_test
         EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
         delVnetLocalRoute("Vnet_owner_first", "10.11.0.0/24");
         EXPECT_EQ(ipv4RouteCrmUsed(), baseline);
+    }
+
+    // Fine-grained prefixes on one VNet share tunnel next hops. Updating one
+    // prefix to add endpoints must keep the other prefix's group and the shared
+    // next hops; deleting the updated prefix must drop only the extra next hops.
+    TEST_F(VNetOrchTest, VnetFgSharedTunnelNextHopUpdate)
+    {
+        setVxlanTunnel("tunnel_fg_share_upd", "10.10.10.12");
+        setVnet("VnetFgShareUpd", "tunnel_fg_share_upd", "100038", "");
+
+        const string prefix_a = "102.100.1.0/24";
+        const string prefix_b = "102.100.2.0/24";
+        const uint32_t bucket_size = 30;
+        const string shared_eps = "138.0.0.1,138.0.0.2,138.0.0.3";
+        const string shared_macs = "00:12:34:56:78:bA,00:12:34:56:78:bB,00:12:34:56:78:bC";
+        const string updated_eps = "138.0.0.1,138.0.0.2,138.0.0.3,138.0.0.4,138.0.0.5";
+        const string updated_macs =
+            "00:12:34:56:78:bA,00:12:34:56:78:bB,00:12:34:56:78:bC,00:12:34:56:78:bD,00:12:34:56:78:bE";
+        const size_t nh_before = liveTunnelEncapNextHops();
+
+        setVnetRoute("VnetFgShareUpd", prefix_a, shared_eps, shared_macs, "", "", bucket_size);
+        setVnetRoute("VnetFgShareUpd", prefix_b, shared_eps, shared_macs, "", "", bucket_size);
+
+        ASSERT_EQ(m_rt.groups.size(), 2U);
+        const sai_object_id_t nhg_a = m_rt.groups[0].oid;
+        const sai_object_id_t nhg_b = m_rt.groups[1].oid;
+        EXPECT_NE(nhg_a, nhg_b);
+        EXPECT_EQ(m_rt.groups[0].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_EQ(m_rt.groups[1].type, SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_a).size(), bucket_size);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_b).size(), bucket_size);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 3);
+
+        checkStateDbRoute("VnetFgShareUpd", prefix_a, shared_eps);
+        checkStateDbRoute("VnetFgShareUpd", prefix_b, shared_eps);
+
+        setVnetRoute("VnetFgShareUpd", prefix_a, updated_eps, updated_macs, "", "", bucket_size);
+
+        EXPECT_EQ(liveGroups(), 2U);
+        ASSERT_NE(findRoute(prefixHost(prefix_a)), nullptr);
+        ASSERT_NE(findRoute(prefixHost(prefix_b)), nullptr);
+        EXPECT_EQ(findRoute(prefixHost(prefix_a))->next_hop_id, nhg_a);
+        EXPECT_EQ(findRoute(prefixHost(prefix_b))->next_hop_id, nhg_b);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_a).size(), bucket_size);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_b).size(), bucket_size);
+        checkStateDbRoute("VnetFgShareUpd", prefix_a, updated_eps);
+        checkStateDbRoute("VnetFgShareUpd", prefix_b, shared_eps);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 5);
+
+        delVnetRoute("VnetFgShareUpd", prefix_a);
+        EXPECT_EQ(findRoute(prefixHost(prefix_a)), nullptr);
+        checkStateDbRouteRemoved("VnetFgShareUpd", prefix_a);
+        ASSERT_NE(findRoute(prefixHost(prefix_b)), nullptr);
+        EXPECT_EQ(findRoute(prefixHost(prefix_b))->next_hop_id, nhg_b);
+        checkStateDbRoute("VnetFgShareUpd", prefix_b, shared_eps);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_b).size(), bucket_size);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 3);
+
+        delVnetRoute("VnetFgShareUpd", prefix_b);
+        EXPECT_EQ(findRoute(prefixHost(prefix_b)), nullptr);
+        checkStateDbRouteRemoved("VnetFgShareUpd", prefix_b);
+        EXPECT_EQ(liveGroups(), 0U);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+        EXPECT_FALSE(fgRouteStateDbRowExists("VnetFgShareUpd", prefix_a));
+        EXPECT_FALSE(fgRouteStateDbRowExists("VnetFgShareUpd", prefix_b));
+    }
+
+    // Test 37 - Bulk route scale: 50 prefixes share one ECMP NHG, then bulk delete.
+    TEST_F(VNetOrchTest, VnetBulkRouteScaleSharesNhg)
+    {
+        setVxlanTunnel("tunnel_bulk_scale", "10.10.10.10");
+        setVnet("Vnet_bulk_scale", "tunnel_bulk_scale", "7000", "");
+
+        const string endpoints = "10.1.0.1,10.1.0.2,10.1.0.3";
+        vector<string> prefixes;
+        for (int i = 0; i < 50; ++i)
+            prefixes.push_back("192.168." + to_string(i) + ".0/24");
+
+        const size_t groups_before = liveGroups();
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_bulk_scale", p), SET_COMMAND, tunnelRouteFvs(endpoints)});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 50U);
+        EXPECT_EQ(liveGroups(), groups_before + 1);
+        for (const auto &p : prefixes)
+            checkStateDbRoute("Vnet_bulk_scale", p, endpoints);
+
+        ops.clear();
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_bulk_scale", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 0U);
+        EXPECT_EQ(liveGroups(), groups_before);
+        for (const auto &p : prefixes)
+            checkStateDbRouteRemoved("Vnet_bulk_scale", p);
+    }
+
+    // Test 38 - Bulk mixed add / update / delete in one consumer batch sequence.
+    TEST_F(VNetOrchTest, VnetBulkMixedAddUpdateDelete)
+    {
+        setVxlanTunnel("tunnel_mixed", "10.10.10.10");
+        setVnet("Vnet_mixed", "tunnel_mixed", "8000", "");
+
+        vector<string> initial;
+        for (int i = 0; i < 10; ++i)
+            initial.push_back("10.0." + to_string(i) + ".0/24");
+
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : initial)
+            ops.push_back({appTunnelKey("Vnet_mixed", p), SET_COMMAND, tunnelRouteFvs("10.1.0.1")});
+        applyVnetTunnelOps(std::move(ops));
+        for (const auto &p : initial)
+            checkStateDbRoute("Vnet_mixed", p, "10.1.0.1");
+
+        vector<string> added;
+        for (int i = 0; i < 10; ++i)
+            added.push_back("20.0." + to_string(i) + ".0/24");
+        vector<string> updated(initial.begin(), initial.begin() + 5);
+        vector<string> deleted(initial.begin() + 5, initial.end());
+
+        ops.clear();
+        for (const auto &p : added)
+            ops.push_back({appTunnelKey("Vnet_mixed", p), SET_COMMAND, tunnelRouteFvs("10.1.0.2")});
+        for (const auto &p : updated)
+            ops.push_back({appTunnelKey("Vnet_mixed", p), SET_COMMAND, tunnelRouteFvs("10.1.0.3")});
+        applyVnetTunnelOps(std::move(ops));
+
+        ops.clear();
+        for (const auto &p : deleted)
+            ops.push_back({appTunnelKey("Vnet_mixed", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+
+        for (const auto &p : added)
+            checkStateDbRoute("Vnet_mixed", p, "10.1.0.2");
+        for (const auto &p : updated)
+            checkStateDbRoute("Vnet_mixed", p, "10.1.0.3");
+        for (const auto &p : deleted)
+        {
+            EXPECT_EQ(findRoute(prefixHost(p)), nullptr);
+            checkStateDbRouteRemoved("Vnet_mixed", p);
+        }
+        EXPECT_EQ(liveRouteCount(added) + liveRouteCount(updated), 15U);
+
+        ops.clear();
+        for (const auto &p : added)
+            ops.push_back({appTunnelKey("Vnet_mixed", p), DEL_COMMAND, {}});
+        for (const auto &p : updated)
+            ops.push_back({appTunnelKey("Vnet_mixed", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveRouteCount(added) + liveRouteCount(updated), 0U);
+    }
+
+    // Test 39 - SET returns false and stays in m_toSync until the VNet exists.
+    TEST_F(VNetOrchTest, VnetBulkRouteWaitsForVnet)
+    {
+        vector<string> prefixes;
+        for (int i = 1; i <= 20; ++i)
+            prefixes.push_back("192.168.100." + to_string(i) + "/32");
+
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_dep", p), SET_COMMAND, tunnelRouteFvs("10.100.100.1")});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 0U);
+        for (const auto &p : prefixes)
+            EXPECT_EQ(findRoute(prefixHost(p)), nullptr);
+
+        setVxlanTunnel("tunnel_dep", "10.100.100.100");
+        setVnet("Vnet_dep", "tunnel_dep", "10001", "");
+        runVnetRouteOrch();
+
+        EXPECT_EQ(liveRouteCount(prefixes), 20U);
+        for (const auto &p : prefixes)
+            checkStateDbRoute("Vnet_dep", p, "10.100.100.1");
+
+        ops.clear();
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_dep", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveRouteCount(prefixes), 0U);
+    }
+
+    // Test 40 - Bulk delete of custom-monitor routes must drop APP_VNET_MONITOR_TABLE keys.
+    TEST_F(VNetOrchTest, VnetBulkDeleteCleansCustomMonitors)
+    {
+        setVxlanTunnel("tunnel_mbulk", "10.10.10.10");
+        setVnet("Vnet_mbulk", "tunnel_mbulk", "5000", "");
+
+        vector<string> prefixes;
+        for (int i = 0; i < 20; ++i)
+            prefixes.push_back("100." + to_string(i) + ".1.1/32");
+
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (int i = 0; i < 20; ++i)
+        {
+            const string primary = "9." + to_string(i) + ".0.1,9." + to_string(i) + ".0.2";
+            const string secondary = "9." + to_string(i) + ".0.3,9." + to_string(i) + ".0.4";
+            const string monitors = "9." + to_string(i) + ".1.1,9." + to_string(i) +
+                                    ".1.2,9." + to_string(i) + ".1.3,9." + to_string(i) + ".1.4";
+            ops.push_back({appTunnelKey("Vnet_mbulk", prefixes[i]), SET_COMMAND,
+                           tunnelRouteFvs(primary + "," + secondary, "", 0, monitors, primary, "custom")});
+        }
+        applyVnetTunnelOps(std::move(ops));
+
+        for (int i = 0; i < 20; ++i)
+            for (int j = 1; j <= 4; ++j)
+                updateMonitorSessionState(prefixes[i], "9." + to_string(i) + ".1." + to_string(j), "up");
+
+        EXPECT_EQ(liveRouteCount(prefixes), 20U);
+        for (int i = 0; i < 20; ++i)
+            checkStateDbRoute("Vnet_mbulk", prefixes[i],
+                              "9." + to_string(i) + ".0.1,9." + to_string(i) + ".0.2");
+
+        ops.clear();
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_mbulk", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 0U);
+        for (int i = 0; i < 20; ++i)
+        {
+            checkStateDbRouteRemoved("Vnet_mbulk", prefixes[i]);
+            for (int j = 1; j <= 4; ++j)
+                checkCustomMonitorDeleted(prefixes[i], "9." + to_string(i) + ".1." + to_string(j));
+        }
+    }
+
+    // Test 41 - Bulk NHG reference counting: update A->B then drop remaining A.
+    TEST_F(VNetOrchTest, VnetBulkNhgRefcount)
+    {
+        setVxlanTunnel("tunnel_nhg_bulk", "10.10.10.10");
+        setVnet("Vnet_nhg_bulk", "tunnel_nhg_bulk", "6000", "");
+
+        const string endpoints_a = "10.1.0.1,10.1.0.2";
+        const string endpoints_b = "10.2.0.1,10.2.0.2";
+        vector<string> routes_a, routes_b;
+        for (int i = 0; i < 50; ++i)
+        {
+            routes_a.push_back("100.0." + to_string(i) + ".0/24");
+            routes_b.push_back("200.0." + to_string(i) + ".0/24");
+        }
+        const size_t groups_before = liveGroups();
+
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : routes_a)
+            ops.push_back({appTunnelKey("Vnet_nhg_bulk", p), SET_COMMAND, tunnelRouteFvs(endpoints_a)});
+        applyVnetTunnelOps(std::move(ops));
+
+        ops.clear();
+        for (const auto &p : routes_b)
+            ops.push_back({appTunnelKey("Vnet_nhg_bulk", p), SET_COMMAND, tunnelRouteFvs(endpoints_b)});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveGroups(), groups_before + 2);
+
+        ops.clear();
+        for (int i = 0; i < 25; ++i)
+            ops.push_back({appTunnelKey("Vnet_nhg_bulk", routes_a[i]), SET_COMMAND,
+                           tunnelRouteFvs(endpoints_b)});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveGroups(), groups_before + 2);
+
+        ops.clear();
+        for (int i = 25; i < 50; ++i)
+            ops.push_back({appTunnelKey("Vnet_nhg_bulk", routes_a[i]), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveGroups(), groups_before + 1);
+
+        ops.clear();
+        for (int i = 0; i < 25; ++i)
+            ops.push_back({appTunnelKey("Vnet_nhg_bulk", routes_a[i]), DEL_COMMAND, {}});
+        for (const auto &p : routes_b)
+            ops.push_back({appTunnelKey("Vnet_nhg_bulk", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveGroups(), groups_before);
+    }
+
+    // Test 43 - Bulk fine-grained routes share 3 tunnel next hops.
+    TEST_F(VNetOrchTest, VnetBulkFgRoutesShareTunnelNextHops)
+    {
+        setVxlanTunnel("tunnel_fg_bulk", "10.10.10.10");
+        setVnet("Vnet_fg_bulk", "tunnel_fg_bulk", "4300", "");
+
+        const uint32_t bucket_size = 20;
+        const string endpoints = "10.43.0.1,10.43.0.2,10.43.0.3";
+        const string macs = "00:12:34:56:78:9A,00:12:34:56:78:9B,00:12:34:56:78:9C";
+        vector<string> prefixes;
+        for (int i = 0; i < 10; ++i)
+            prefixes.push_back("100.43." + to_string(i) + ".0/24");
+
+        const size_t nh_before = liveTunnelEncapNextHops();
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_fg_bulk", p), SET_COMMAND,
+                           tunnelRouteFvs(endpoints, macs, bucket_size)});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 10U);
+        EXPECT_EQ(liveGroups(), 10U);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 3);
+        EXPECT_EQ(liveMembers(), static_cast<size_t>(bucket_size * 10));
+        for (const auto &p : prefixes)
+            checkStateDbRoute("Vnet_fg_bulk", p, endpoints);
+
+        ops.clear();
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_fg_bulk", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 0U);
+        EXPECT_EQ(liveGroups(), 0U);
+        EXPECT_EQ(liveMembers(), 0U);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+    }
+
+    // Test 44 - Bulk ECMP tunnel NH dedup: 30 prefixes, 3 NHs, 1 NHG, 3 members.
+    TEST_F(VNetOrchTest, VnetBulkEcmpTunnelNhDedup)
+    {
+        setVxlanTunnel("tunnel_ecmp44", "10.10.10.10");
+        setVnet("Vnet_ecmp44", "tunnel_ecmp44", "4400", "");
+
+        const string endpoints = "10.44.0.1,10.44.0.2,10.44.0.3";
+        vector<string> prefixes;
+        for (int i = 0; i < 30; ++i)
+            prefixes.push_back("100.44." + to_string(i) + ".0/24");
+
+        const size_t nh_before = liveTunnelEncapNextHops();
+        const size_t groups_before = liveGroups();
+        const size_t members_before = liveMembers();
+
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_ecmp44", p), SET_COMMAND, tunnelRouteFvs(endpoints)});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 30U);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 3);
+        EXPECT_EQ(liveMembers(), members_before + 3);
+        EXPECT_EQ(liveGroups(), groups_before + 1);
+        for (const auto &p : prefixes)
+            checkStateDbRoute("Vnet_ecmp44", p, endpoints);
+
+        ops.clear();
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_ecmp44", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(liveRouteCount(prefixes), 0U);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+        EXPECT_EQ(liveMembers(), members_before);
+        EXPECT_EQ(liveGroups(), groups_before);
+    }
+
+    // Test 45 - Shared tunnel NH dedup across two VNets in one bulk batch.
+    TEST_F(VNetOrchTest, VnetBulkSharedTunnelNhAcrossVnets)
+    {
+        setVxlanTunnel("tunnel_sh45", "10.10.10.10");
+        setVnet("Vnet_sh45a", "tunnel_sh45", "4501", "");
+        setVnet("Vnet_sh45b", "tunnel_sh45", "4502", "");
+
+        const string endpoints = "10.45.0.1,10.45.0.2,10.45.0.3";
+        vector<string> prefixes;
+        for (int i = 0; i < 10; ++i)
+            prefixes.push_back("100.45." + to_string(i) + ".0/24");
+
+        const size_t nh_before = liveTunnelEncapNextHops();
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : prefixes)
+        {
+            ops.push_back({appTunnelKey("Vnet_sh45a", p), SET_COMMAND, tunnelRouteFvs(endpoints)});
+            ops.push_back({appTunnelKey("Vnet_sh45b", p), SET_COMMAND, tunnelRouteFvs(endpoints)});
+        }
+        applyVnetTunnelOps(std::move(ops));
+
+        for (const auto &p : prefixes)
+        {
+            checkStateDbRoute("Vnet_sh45a", p, endpoints);
+            checkStateDbRoute("Vnet_sh45b", p, endpoints);
+        }
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 3);
+
+        ops.clear();
+        for (const auto &p : prefixes)
+        {
+            ops.push_back({appTunnelKey("Vnet_sh45a", p), DEL_COMMAND, {}});
+            ops.push_back({appTunnelKey("Vnet_sh45b", p), DEL_COMMAND, {}});
+        }
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+        for (const auto &p : prefixes)
+        {
+            checkStateDbRouteRemoved("Vnet_sh45a", p);
+            checkStateDbRouteRemoved("Vnet_sh45b", p);
+        }
+    }
+
+    // Test 42 - SET to a new BFD group that is all-down keeps STATE_DB inactive.
+    TEST_F(VNetOrchTest, VnetBulkSetAllDownKeepsStateDb)
+    {
+        setVxlanTunnel("tunnel_42", "10.10.10.10");
+        setVnet("Vnet42", "tunnel_42", "6200", "");
+
+        const string prefix = "172.31.42.0/24";
+        setVnetRouteMonitored("Vnet42", prefix, "30.0.0.1,30.0.0.2", "30.1.0.1,30.1.0.2");
+        updateBfdSessionState("30.1.0.1", SAI_BFD_SESSION_STATE_UP);
+        updateBfdSessionState("30.1.0.2", SAI_BFD_SESSION_STATE_UP);
+
+        ASSERT_NE(findRoute(prefixHost(prefix)), nullptr);
+        checkStateDbRoute("Vnet42", prefix, "30.0.0.1,30.0.0.2");
+
+        setVnetRouteMonitored("Vnet42", prefix, "31.0.0.1,31.0.0.2", "31.1.0.1,31.1.0.2");
+        EXPECT_EQ(findRoute(prefixHost(prefix)), nullptr);
+        checkStateDbRoute("Vnet42", prefix, "");
+
+        delVnetRouteMonitored("Vnet42", prefix);
+        checkStateDbRouteRemoved("Vnet42", prefix);
+    }
+
+    // Size-0 dummy custom next-hop group is bookkeeping. A later SAI failure on
+    // another prefix in the same consumer cycle must not strand it: bringing the
+    // dummy prefix's monitors back up must still program the overlay.
+    // custom_bfd all-down removes the STATE_DB row (removeRouteState), unlike a
+    // first SET that was never active. Re-SET of A must keep a primary/secondary
+    // split so orchagent reuses the dummy instead of creating a 2-member NHG.
+    TEST_F(VNetOrchTest, VnetDummyEmptyCustomNhgSurvivesSiblingCreateFailure)
+    {
+        setVxlanTunnel("tunnel_dummy", "10.10.10.10");
+        setVnet("VnetDummy", "tunnel_dummy", "6300", "");
+
+        const string prefix_a = "172.31.50.0/24";
+        const string prefix_b = "172.31.51.0/24";
+        setVnetRoutePriority("VnetDummy", prefix_a, "50.0.0.1,50.0.0.2",
+                             "50.1.0.1,50.1.0.2", "50.0.0.1", "custom_bfd");
+        updateBfdSessionState("50.1.0.1", SAI_BFD_SESSION_STATE_UP);
+        updateBfdSessionState("50.1.0.2", SAI_BFD_SESSION_STATE_UP);
+        ASSERT_NE(findRoute(prefixHost(prefix_a)), nullptr);
+
+        updateBfdSessionState("50.1.0.1", SAI_BFD_SESSION_STATE_DOWN);
+        updateBfdSessionState("50.1.0.2", SAI_BFD_SESSION_STATE_DOWN);
+        EXPECT_EQ(findRoute(prefixHost(prefix_a)), nullptr);
+        checkStateDbRouteRemoved("VnetDummy", prefix_a);
+
+        ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillByDefault(Return(SAI_STATUS_TABLE_FULL));
+
+        applyVnetTunnelOps({
+            {appTunnelKey("VnetDummy", prefix_a), SET_COMMAND,
+             tunnelRouteFvs("50.0.0.1,50.0.0.2", "", 0, "50.1.0.1,50.1.0.2",
+                            "50.0.0.1", "custom_bfd")},
+            {appTunnelKey("VnetDummy", prefix_b), SET_COMMAND,
+             tunnelRouteFvs("51.0.0.1,51.0.0.2")},
+        });
+
+        EXPECT_EQ(findRoute(prefixHost(prefix_b)), nullptr);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("VnetDummy", prefix_a)), 0U);
+        EXPECT_EQ(vnetTunnelSyncCount(appTunnelKey("VnetDummy", prefix_b)), 1U);
+        checkStateDbRoute("VnetDummy", prefix_a, "");
+
+        ON_CALL(*mock_sai_next_hop_group_api, create_next_hop_group(_, _, _, _))
+            .WillByDefault(Invoke([this](sai_object_id_t *id, sai_object_id_t sw,
+                                         uint32_t n, const sai_attribute_t *l) {
+                sai_status_t st = old_sai_next_hop_group_api->create_next_hop_group(id, sw, n, l);
+                if (st == SAI_STATUS_SUCCESS)
+                {
+                    RouteCaptures::Group g;
+                    g.oid = *id;
+                    if (auto a = findRawAttr(l, n, SAI_NEXT_HOP_GROUP_ATTR_TYPE)) g.type = a->value.s32;
+                    m_rt.groups.push_back(g);
+                }
+                return st;
+            }));
+
+        updateBfdSessionState("50.1.0.1", SAI_BFD_SESSION_STATE_UP);
+        updateBfdSessionState("50.1.0.2", SAI_BFD_SESSION_STATE_UP);
+        ASSERT_NE(findRoute(prefixHost(prefix_a)), nullptr);
+        checkStateDbRoute("VnetDummy", prefix_a, "50.0.0.1");
+    }
+
+    // Same-batch DEL of the last prefix on DIP X and SET of a new prefix to X.
+    TEST_F(VNetOrchTest, VnetBulkDelLastUserSetSameDip)
+    {
+        setVxlanTunnel("tunnel_reuse_dip", "10.10.10.10");
+        setVnet("Vnet_reuse_dip", "tunnel_reuse_dip", "9100", "");
+
+        const string prefix_a = "100.91.1.1/32";
+        const string prefix_b = "100.91.2.1/32";
+        const string dip = "91.0.0.1";
+        const size_t nh_before = liveTunnelEncapNextHops();
+
+        setVnetRoute("Vnet_reuse_dip", prefix_a, dip);
+        ASSERT_NE(findRoute(prefixHost(prefix_a)), nullptr);
+        const sai_object_id_t dipNh = nhOidForEndpoint(dip);
+        ASSERT_NE(dipNh, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+
+        applyVnetTunnelOps({
+            {appTunnelKey("Vnet_reuse_dip", prefix_a), DEL_COMMAND, {}},
+            {appTunnelKey("Vnet_reuse_dip", prefix_b), SET_COMMAND, tunnelRouteFvs(dip)},
+        });
+
+        EXPECT_EQ(findRoute(prefixHost(prefix_a)), nullptr);
+        checkStateDbRouteRemoved("Vnet_reuse_dip", prefix_a);
+        const RouteCaptures::Route *rb = findRoute(prefixHost(prefix_b));
+        ASSERT_NE(rb, nullptr);
+        checkStateDbRoute("Vnet_reuse_dip", prefix_b, dip);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+        EXPECT_FALSE(nextHopRemoved(rb->next_hop_id))
+            << "same-batch DEL removed the tunnel next hop still used by SET";
+        EXPECT_EQ(nhOidForEndpoint(dip), rb->next_hop_id);
+
+        delVnetRoute("Vnet_reuse_dip", prefix_b);
+        EXPECT_EQ(findRoute(prefixHost(prefix_b)), nullptr);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+    }
+
+    // Local ECMP SET whose route-entry bulk create fails must not leak the
+    // RouteOrch NHG addRoute created; retry after SAI recovers must program it.
+    TEST_F(VNetOrchTest, VnetLocalEcmpRouteCreateFailureReleasesNhg)
+    {
+        setVxlanTunnel("tunnel_local_fail", "31.31.31.31");
+        setVnet("VnetLocalFail", "tunnel_local_fail", "5101", "");
+        createVnetL3Interface("Ethernet20", "VnetLocalFail", "10.10.0.8/31");
+        createVnetL3Interface("Ethernet16", "VnetLocalFail", "10.10.0.10/31");
+        addNeighbor("Ethernet20", "10.10.0.9", "00:01:02:03:04:05");
+        addNeighbor("Ethernet16", "10.10.0.11", "00:01:02:03:04:06");
+
+        const auto nhgCount = gRouteOrch->getNhgCount();
+        setRouteBulkCreateHook([](uint32_t count, const sai_route_entry_t *,
+                                  const uint32_t *, const sai_attribute_t **,
+                                  sai_bulk_op_error_mode_t, sai_status_t *statuses) {
+            for (uint32_t i = 0; i < count; ++i)
+                statuses[i] = SAI_STATUS_TABLE_FULL;
+            return SAI_STATUS_TABLE_FULL;
+        });
+
+        setVnetLocalRoute("VnetLocalFail", "10.10.0.0/24", "Ethernet20,Ethernet16",
+                          "10.10.0.9,10.10.0.11");
+        EXPECT_EQ(findRoute("10.10.0.0"), nullptr);
+        EXPECT_EQ(gRouteOrch->getNhgCount(), nhgCount);
+
+        setRouteBulkCreateHook(nullptr);
+        auto *consumer = dynamic_cast<Consumer *>(
+            m_vnetRouteOrch->getExecutor(APP_VNET_RT_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        static_cast<Orch *>(m_vnetRouteOrch.get())->doTask(*consumer);
+
+        checkVnetLocalRoute("10.10.0.0/24", {"10.10.0.9", "10.10.0.11"});
+        EXPECT_EQ(gRouteOrch->getNhgCount(), nhgCount + 1);
+
+        delVnetLocalRoute("VnetLocalFail", "10.10.0.0/24");
+        checkVnetLocalRouteRemoved("10.10.0.0/24");
+        EXPECT_EQ(gRouteOrch->getNhgCount(), nhgCount);
+    }
+
+    // BGP owns a default-VR prefix first; a default-scope VNet overlay SET
+    // must not let a later BGP withdraw delete the VNet tunnel route.
+    TEST_F(VNetOrchTest, VnetOverlaySetAfterBgpSurvivesWithdraw)
+    {
+        EXPECT_CALL(*mock_sai_virtual_router_api, create_virtual_router).Times(0);
+
+        setVxlanTunnel("tunnel_overlay_steal", "10.10.10.10");
+        setVnet("Vnet_overlay_steal", "tunnel_overlay_steal", "2000", "", false, "", "default");
+        createL3Interface("Ethernet0", "10.10.10.1/24");
+        setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+        addNeighbor("Ethernet0", "10.10.10.3", "00:00:00:00:00:03");
+
+        const string prefix = "100.100.1.0/24";
+        const IpPrefix ipPrefix(prefix);
+        setRoute(prefix, "10.10.10.3", "Ethernet0");
+        const RouteCaptures::Route *bgpRoute = findRoute("100.100.1.0");
+        ASSERT_NE(bgpRoute, nullptr);
+        EXPECT_EQ(bgpRoute->vr, gVirtualRouterId);
+        const auto bgpNh = bgpRoute->next_hop_id;
+
+        setVnetRoute("Vnet_overlay_steal", prefix, "10.10.10.9");
+        const RouteCaptures::Route *after = findRoute("100.100.1.0");
+        ASSERT_NE(after, nullptr);
+        EXPECT_NE(after->next_hop_id, bgpNh);
+
+        sai_route_entry_t entry{};
+        entry.switch_id = gSwitchId;
+        entry.vr_id = gVirtualRouterId;
+        copy(entry.destination, ipPrefix);
+        sai_attribute_t attr{};
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        ASSERT_EQ(old_sai_route_api->get_route_entry_attribute(&entry, 1, &attr),
+                  SAI_STATUS_SUCCESS);
+        EXPECT_EQ(attr.value.oid, after->next_hop_id);
+
+        delRoute(prefix);
+        EXPECT_NE(findRoute("100.100.1.0"), nullptr);
+        ASSERT_EQ(old_sai_route_api->get_route_entry_attribute(&entry, 1, &attr),
+                  SAI_STATUS_SUCCESS);
+        EXPECT_EQ(attr.value.oid, after->next_hop_id);
+
+        delVnetRoute("Vnet_overlay_steal", prefix);
+        EXPECT_EQ(findRoute("100.100.1.0"), nullptr);
+        delVnet("Vnet_overlay_steal");
+        delVxlanTunnel("tunnel_overlay_steal");
+    }
+
+    // Same-batch DEL of the last prefix on DIP X and SET of {X,Y}.
+    TEST_F(VNetOrchTest, VnetBulkDelLastUserSetEcmpSharingDip)
+    {
+        setVxlanTunnel("tunnel_share_ecmp", "10.10.10.10");
+        setVnet("Vnet_share_ecmp", "tunnel_share_ecmp", "9101", "");
+
+        const string prefix_a = "100.91.3.1/32";
+        const string prefix_b = "100.91.4.1/32";
+        const string dip_x = "91.0.0.2";
+        const string dip_y = "91.0.0.3";
+        const size_t nh_before = liveTunnelEncapNextHops();
+        const size_t groups_before = liveGroups();
+
+        setVnetRoute("Vnet_share_ecmp", prefix_a, dip_x);
+        ASSERT_NE(findRoute(prefixHost(prefix_a)), nullptr);
+        const sai_object_id_t xNh = nhOidForEndpoint(dip_x);
+        ASSERT_NE(xNh, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+
+        applyVnetTunnelOps({
+            {appTunnelKey("Vnet_share_ecmp", prefix_a), DEL_COMMAND, {}},
+            {appTunnelKey("Vnet_share_ecmp", prefix_b), SET_COMMAND,
+             tunnelRouteFvs(dip_x + "," + dip_y)},
+        });
+
+        EXPECT_EQ(findRoute(prefixHost(prefix_a)), nullptr);
+        checkStateDbRouteRemoved("Vnet_share_ecmp", prefix_a);
+        const RouteCaptures::Route *rb = findRoute(prefixHost(prefix_b));
+        ASSERT_NE(rb, nullptr);
+        checkStateDbRoute("Vnet_share_ecmp", prefix_b, dip_x + "," + dip_y);
+        EXPECT_EQ(liveGroups(), groups_before + 1);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 2);
+        EXPECT_EQ(activeMembers(rb->next_hop_id), 2U);
+        checkGroupMember(rb->next_hop_id, dip_x, false, 1);
+        checkGroupMember(rb->next_hop_id, dip_y, false, 2);
+        EXPECT_FALSE(nextHopRemoved(nhOidForEndpoint(dip_x)))
+            << "same-batch DEL removed DIP X still used by SET {X,Y}";
+        EXPECT_FALSE(nextHopRemoved(nhOidForEndpoint(dip_y)));
+
+        delVnetRoute("Vnet_share_ecmp", prefix_b);
+        EXPECT_EQ(findRoute(prefixHost(prefix_b)), nullptr);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+        EXPECT_EQ(liveGroups(), groups_before);
+    }
+
+    // Live VNet DEL plus SETs for a VNet that does not exist yet, in one flush.
+    TEST_F(VNetOrchTest, VnetBulkMixedPendingAndLiveVnet)
+    {
+        setVxlanTunnel("tunnel_mixed_pend", "10.10.10.10");
+        setVnet("Vnet_live", "tunnel_mixed_pend", "9200", "");
+
+        const string live_prefix = "100.92.1.1/32";
+        vector<string> pending;
+        for (int i = 1; i <= 3; ++i)
+            pending.push_back("192.168.92." + to_string(i) + "/32");
+
+        setVnetRoute("Vnet_live", live_prefix, "92.0.0.1");
+        ASSERT_NE(findRoute(prefixHost(live_prefix)), nullptr);
+
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : pending)
+            ops.push_back({appTunnelKey("Vnet_pending", p), SET_COMMAND, tunnelRouteFvs("92.0.0.2")});
+        ops.push_back({appTunnelKey("Vnet_live", live_prefix), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+
+        EXPECT_EQ(findRoute(prefixHost(live_prefix)), nullptr);
+        checkStateDbRouteRemoved("Vnet_live", live_prefix);
+        EXPECT_EQ(liveRouteCount(pending), 0U);
+
+        auto *consumer = dynamic_cast<Consumer *>(
+            m_vnetRouteOrch->getExecutor(APP_VNET_RT_TUNNEL_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        for (const auto &p : pending)
+        {
+            EXPECT_EQ(consumer->m_toSync.count(appTunnelKey("Vnet_pending", p)), 1U)
+                << "pending SET for " << p << " dropped from mixed batch";
+        }
+
+        setVnet("Vnet_pending", "tunnel_mixed_pend", "9201", "");
+        runVnetRouteOrch();
+
+        EXPECT_EQ(liveRouteCount(pending), pending.size());
+        for (const auto &p : pending)
+            checkStateDbRoute("Vnet_pending", p, "92.0.0.2");
+        EXPECT_TRUE(consumer->m_toSync.empty());
+
+        ops.clear();
+        for (const auto &p : pending)
+            ops.push_back({appTunnelKey("Vnet_pending", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+        EXPECT_EQ(liveRouteCount(pending), 0U);
+    }
+
+    // Bulk FG create, then expand endpoints on one prefix in a later flush.
+    TEST_F(VNetOrchTest, VnetBulkFgInPlaceEndpointExpand)
+    {
+        setVxlanTunnel("tunnel_fg_expand", "10.10.10.12");
+        setVnet("VnetFgExpand", "tunnel_fg_expand", "9300", "");
+
+        const string prefix_a = "103.100.1.0/24";
+        const string prefix_b = "103.100.2.0/24";
+        const uint32_t bucket_size = 30;
+        const string shared_eps = "139.0.0.1,139.0.0.2,139.0.0.3";
+        const string shared_macs = "00:12:34:56:78:cA,00:12:34:56:78:cB,00:12:34:56:78:cC";
+        const string updated_eps = "139.0.0.1,139.0.0.2,139.0.0.3,139.0.0.4,139.0.0.5";
+        const string updated_macs =
+            "00:12:34:56:78:cA,00:12:34:56:78:cB,00:12:34:56:78:cC,00:12:34:56:78:cD,00:12:34:56:78:cE";
+        const size_t nh_before = liveTunnelEncapNextHops();
+
+        applyVnetTunnelOps({
+            {appTunnelKey("VnetFgExpand", prefix_a), SET_COMMAND,
+             tunnelRouteFvs(shared_eps, shared_macs, bucket_size)},
+            {appTunnelKey("VnetFgExpand", prefix_b), SET_COMMAND,
+             tunnelRouteFvs(shared_eps, shared_macs, bucket_size)},
+        });
+
+        ASSERT_EQ(liveGroups(), 2U);
+        const sai_object_id_t nhg_a = findRoute(prefixHost(prefix_a))->next_hop_id;
+        const sai_object_id_t nhg_b = findRoute(prefixHost(prefix_b))->next_hop_id;
+        EXPECT_NE(nhg_a, nhg_b);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_a).size(), bucket_size);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_b).size(), bucket_size);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 3);
+
+        applyVnetTunnelOps({
+            {appTunnelKey("VnetFgExpand", prefix_a), SET_COMMAND,
+             tunnelRouteFvs(updated_eps, updated_macs, bucket_size)},
+        });
+
+        EXPECT_EQ(liveGroups(), 2U);
+        ASSERT_NE(findRoute(prefixHost(prefix_a)), nullptr);
+        ASSERT_NE(findRoute(prefixHost(prefix_b)), nullptr);
+        EXPECT_EQ(findRoute(prefixHost(prefix_a))->next_hop_id, nhg_a);
+        EXPECT_EQ(findRoute(prefixHost(prefix_b))->next_hop_id, nhg_b);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_a).size(), bucket_size);
+        EXPECT_EQ(currentFgMemberAssignments(nhg_b).size(), bucket_size);
+        checkStateDbRoute("VnetFgExpand", prefix_a, updated_eps);
+        checkStateDbRoute("VnetFgExpand", prefix_b, shared_eps);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 5);
+
+        applyVnetTunnelOps({
+            {appTunnelKey("VnetFgExpand", prefix_a), DEL_COMMAND, {}},
+            {appTunnelKey("VnetFgExpand", prefix_b), DEL_COMMAND, {}},
+        });
+        EXPECT_EQ(liveRouteCount({prefix_a, prefix_b}), 0U);
+        EXPECT_EQ(liveGroups(), 0U);
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+    }
+
+    // Peered VNets: a bulk SET on A must program each prefix in A's VR and B's VR.
+    TEST_F(VNetOrchTest, VnetBulkPeerSetReplicatesIntoPeerVr)
+    {
+        setVxlanTunnel("tunnel_peer_bulk", "10.10.10.10");
+        setVnet("Vnet_peerBulkA", "tunnel_peer_bulk", "9401", "Vnet_peerBulkB");
+        const sai_object_id_t vrA = m_vrMock->created_oid;
+        setVnet("Vnet_peerBulkB", "tunnel_peer_bulk", "9402", "Vnet_peerBulkA");
+        const sai_object_id_t vrB = m_vrMock->created_oid;
+        ASSERT_NE(vrA, vrB);
+
+        const vector<string> prefixes = {"5.5.94.1/32", "5.5.94.2/32", "5.5.94.3/32"};
+        deque<KeyOpFieldsValuesTuple> ops;
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_peerBulkA", p), SET_COMMAND, tunnelRouteFvs("fd:2::94")});
+        applyVnetTunnelOps(std::move(ops));
+
+        for (const auto &p : prefixes)
+        {
+            set<sai_object_id_t> vrs;
+            for (const auto &r : m_rt.routes)
+            {
+                if (prefixAddrEquals(r.dest, prefixHost(p))) vrs.insert(r.vr);
+            }
+            EXPECT_TRUE(vrs.count(vrA)) << p << " missing from owner VR";
+            EXPECT_TRUE(vrs.count(vrB)) << p << " not replicated into peer VR";
+            EXPECT_EQ(vrs.size(), 2U) << p;
+            checkStateDbRoute("Vnet_peerBulkA", p, "fd:2::94");
+        }
+        checkEndpointType("fd:2::94", SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP);
+
+        ops.clear();
+        for (const auto &p : prefixes)
+            ops.push_back({appTunnelKey("Vnet_peerBulkA", p), DEL_COMMAND, {}});
+        applyVnetTunnelOps(std::move(ops));
+        for (const auto &p : prefixes)
+            EXPECT_EQ(findRoute(prefixHost(p)), nullptr);
+
+        delVnet("Vnet_peerBulkA");
+        delVnet("Vnet_peerBulkB");
+        delVxlanTunnel("tunnel_peer_bulk");
+    }
+
+    // Remove VNet A (tunnel route, then VNET) while VNet B stays up, program a
+    // new size-1 tunnel route on B, then recreate A. Covers leftover empty
+    // syncd_nexthop_groups_ keys plus deferred size-1 NH resolve after a deleted VNet.
+    TEST_F(VNetOrchTest, VnetDeleteThenOtherVnetRoute)
+    {
+        setVxlanTunnel("tunnel_nh_del", "10.10.10.1");
+        setVnet("VnetNhDelA", "tunnel_nh_del", "11001", "");
+        setVnet("VnetNhDelB", "tunnel_nh_del", "11002", "");
+
+        setVnetRoute("VnetNhDelA", "110.100.1.1/32", "10.0.0.1");
+        ASSERT_NE(findRoute("110.100.1.1"), nullptr);
+        checkStateDbRoute("VnetNhDelA", "110.100.1.1/32", "10.0.0.1");
+        checkRouteNotAdvertised("110.100.1.1/32");
+
+        setVnetRoute("VnetNhDelB", "110.100.2.1/32", "10.0.0.2");
+        ASSERT_NE(findRoute("110.100.2.1"), nullptr);
+        checkStateDbRoute("VnetNhDelB", "110.100.2.1/32", "10.0.0.2");
+        checkRouteNotAdvertised("110.100.2.1/32");
+
+        delVnetRoute("VnetNhDelA", "110.100.1.1/32");
+        EXPECT_EQ(findRoute("110.100.1.1"), nullptr);
+        checkStateDbRouteRemoved("VnetNhDelA", "110.100.1.1/32");
+        delVnet("VnetNhDelA");
+
+        setVnetRoute("VnetNhDelB", "110.100.2.2/32", "10.0.0.3");
+        ASSERT_NE(findRoute("110.100.2.2"), nullptr);
+        checkStateDbRoute("VnetNhDelB", "110.100.2.2/32", "10.0.0.3");
+        checkRouteNotAdvertised("110.100.2.2/32");
+
+        setVnet("VnetNhDelA", "tunnel_nh_del", "11001", "");
+        setVnetRoute("VnetNhDelA", "110.100.1.1/32", "10.0.0.4");
+        ASSERT_NE(findRoute("110.100.1.1"), nullptr);
+        checkStateDbRoute("VnetNhDelA", "110.100.1.1/32", "10.0.0.4");
+        checkRouteNotAdvertised("110.100.1.1/32");
+
+        delVnetRoute("VnetNhDelA", "110.100.1.1/32");
+        delVnetRoute("VnetNhDelB", "110.100.2.1/32");
+        delVnetRoute("VnetNhDelB", "110.100.2.2/32");
+        EXPECT_EQ(findRoute("110.100.1.1"), nullptr);
+        EXPECT_EQ(findRoute("110.100.2.1"), nullptr);
+        EXPECT_EQ(findRoute("110.100.2.2"), nullptr);
+        checkStateDbRouteRemoved("VnetNhDelA", "110.100.1.1/32");
+        checkStateDbRouteRemoved("VnetNhDelB", "110.100.2.1/32");
+        checkStateDbRouteRemoved("VnetNhDelB", "110.100.2.2/32");
+    }
+
+    // Two prefixes on one VNet with the same overlay DIP share one SAI tunnel NH.
+    TEST_F(VNetOrchTest, VnetTunnelNhSharedEndpoint)
+    {
+        setVxlanTunnel("tunnel_nh_share", "10.10.10.2");
+        setVnet("VnetNhShare", "tunnel_nh_share", "11011", "");
+        const size_t nh_before = liveTunnelEncapNextHops();
+
+        setVnetRoute("VnetNhShare", "111.100.1.1/32", "11.0.0.1");
+        ASSERT_NE(findRoute("111.100.1.1"), nullptr);
+        checkStateDbRoute("VnetNhShare", "111.100.1.1/32", "11.0.0.1");
+        checkRouteNotAdvertised("111.100.1.1/32");
+
+        setVnetRoute("VnetNhShare", "111.100.2.1/32", "11.0.0.1");
+        ASSERT_NE(findRoute("111.100.2.1"), nullptr);
+        checkStateDbRoute("VnetNhShare", "111.100.2.1/32", "11.0.0.1");
+        checkRouteNotAdvertised("111.100.2.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+
+        delVnetRoute("VnetNhShare", "111.100.1.1/32");
+        EXPECT_EQ(findRoute("111.100.1.1"), nullptr);
+        checkStateDbRouteRemoved("VnetNhShare", "111.100.1.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+
+        delVnetRoute("VnetNhShare", "111.100.2.1/32");
+        EXPECT_EQ(findRoute("111.100.2.1"), nullptr);
+        checkStateDbRouteRemoved("VnetNhShare", "111.100.2.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+    }
+
+    // Two VNets on the same tunnel share one SAI tunnel NH for the same overlay DIP.
+    TEST_F(VNetOrchTest, VnetTunnelNhSharedAcrossVnets)
+    {
+        setVxlanTunnel("tunnel_nh_xshare", "10.10.10.3");
+        setVnet("VnetNhXShareA", "tunnel_nh_xshare", "11021", "");
+        setVnet("VnetNhXShareB", "tunnel_nh_xshare", "11022", "");
+        const size_t nh_before = liveTunnelEncapNextHops();
+
+        setVnetRoute("VnetNhXShareA", "112.100.1.1/32", "12.0.0.1");
+        ASSERT_NE(findRoute("112.100.1.1"), nullptr);
+        checkStateDbRoute("VnetNhXShareA", "112.100.1.1/32", "12.0.0.1");
+        checkRouteNotAdvertised("112.100.1.1/32");
+
+        setVnetRoute("VnetNhXShareB", "112.100.2.1/32", "12.0.0.1");
+        ASSERT_NE(findRoute("112.100.2.1"), nullptr);
+        checkStateDbRoute("VnetNhXShareB", "112.100.2.1/32", "12.0.0.1");
+        checkRouteNotAdvertised("112.100.2.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+
+        delVnetRoute("VnetNhXShareA", "112.100.1.1/32");
+        EXPECT_EQ(findRoute("112.100.1.1"), nullptr);
+        checkStateDbRouteRemoved("VnetNhXShareA", "112.100.1.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 1);
+
+        delVnetRoute("VnetNhXShareB", "112.100.2.1/32");
+        EXPECT_EQ(findRoute("112.100.2.1"), nullptr);
+        checkStateDbRouteRemoved("VnetNhXShareB", "112.100.2.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
+    }
+
+    // Two size-1 tunnel routes with unique overlay DIPs create two SAI tunnel NHs.
+    TEST_F(VNetOrchTest, VnetTunnelNhUniqueEndpoints)
+    {
+        setVxlanTunnel("tunnel_nh_uniq", "10.10.10.4");
+        setVnet("VnetNhUniq", "tunnel_nh_uniq", "11031", "");
+        const size_t nh_before = liveTunnelEncapNextHops();
+
+        setVnetRoute("VnetNhUniq", "113.100.1.1/32", "13.0.0.1");
+        ASSERT_NE(findRoute("113.100.1.1"), nullptr);
+        checkStateDbRoute("VnetNhUniq", "113.100.1.1/32", "13.0.0.1");
+        checkRouteNotAdvertised("113.100.1.1/32");
+
+        setVnetRoute("VnetNhUniq", "113.100.2.1/32", "13.0.0.2");
+        ASSERT_NE(findRoute("113.100.2.1"), nullptr);
+        checkStateDbRoute("VnetNhUniq", "113.100.2.1/32", "13.0.0.2");
+        checkRouteNotAdvertised("113.100.2.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before + 2);
+
+        delVnetRoute("VnetNhUniq", "113.100.1.1/32");
+        delVnetRoute("VnetNhUniq", "113.100.2.1/32");
+        EXPECT_EQ(findRoute("113.100.1.1"), nullptr);
+        EXPECT_EQ(findRoute("113.100.2.1"), nullptr);
+        checkStateDbRouteRemoved("VnetNhUniq", "113.100.1.1/32");
+        checkStateDbRouteRemoved("VnetNhUniq", "113.100.2.1/32");
+        EXPECT_EQ(liveTunnelEncapNextHops(), nh_before);
     }
 
     // VNetRouteOrch::delRoute() walks next_hop_observers_ and advances the
