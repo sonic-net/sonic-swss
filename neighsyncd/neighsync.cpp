@@ -190,15 +190,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         int ifindex = rtnl_neigh_get_ifindex(neigh);
         if (ifindex > 0)
         {
-            struct rtnl_link *link = rtnl_link_get(m_link_cache, ifindex);
-            if (!link)
-            {
-                /* Trying to refill cache */
-                nl_cache_refill(m_nl_sock, m_link_cache);
-                link = rtnl_link_get(m_link_cache, ifindex);
-            }
-
-            if (link)
+            /* m_link_cache is refilled only on a miss, so its master can predate
+             * a later VRF bind; query this one link from the kernel instead. */
+            struct rtnl_link *link = NULL;
+            if (rtnl_link_get_kernel(m_nl_sock, ifindex, NULL, &link) == 0 && link)
             {
                 int master_index = rtnl_link_get_master(link);
                 if (master_index)
