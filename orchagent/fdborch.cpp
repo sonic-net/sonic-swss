@@ -16,6 +16,7 @@
 #include "mlagorch.h"
 #include "vxlanorch.h"
 #include "l2nhgorch.h"
+#include "evpnmhorch.h"
 #include "directory.h"
 #include "timer.h"
 #include "neighorch.h"
@@ -32,6 +33,7 @@ extern Directory<Orch*> gDirectory;
 extern NeighOrch*       gNeighOrch;
 extern L2NhgOrch*       gL2NhgOrch;
 extern FdbOrch*         gFdbOrch;
+extern EvpnMhOrch*      gEvpnMhOrch;
 
 const int FdbOrch::fdborch_pri = 20;
 
@@ -491,7 +493,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
         /* Drop it if port is down */
         if (m_portsOrch->getPort(update.port.m_alias, learn_port))
         {
-            if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+            /* A down ES port switched over to its backup group keeps its MACs, and a MAC heard on it
+             * forwards through the group too. Not switched over, it is flushed as any down port. */
+            if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN && gEvpnMhOrch &&
+                gEvpnMhOrch->isEsSwitchedOver(learn_port.m_alias))
+            {
+                SWSS_LOG_INFO("update: ES port %s is down and switched over, its fdb entries kept: "
+                              "learnt mac=%s bv_id=0x%" PRIx64,
+                              update.port.m_alias.c_str(), update.entry.mac.to_string().c_str(), entry->bv_id);
+            }
+            else if (learn_port.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
             {
                 SWSS_LOG_NOTICE("update: Port %s is still down for the learnt mac. Flush to remove mac=%s bv_id=0x%" PRIx64,
 						update.port.m_alias.c_str(), update.entry.mac.to_string().c_str(), entry->bv_id);
@@ -1859,30 +1870,43 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
             SWSS_LOG_NOTICE("Ignoring fdb flush on MCLAG port:%s", p.m_alias.c_str());
             return;
         }
-
-        if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+        /* The ES backup group carries the port's MACs while it is down (switchover). */
+        if (gEvpnMhOrch && gEvpnMhOrch->isEsBackupAttached(p.m_alias))
         {
-            flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+            SWSS_LOG_NOTICE("Keeping fdb entries of ES port %s on its backup next hop group",
+                            p.m_alias.c_str());
+            return;
         }
 
-        // Get BVID of each VLAN that this port is a member of
-        // and call notifyObserversFDBFlush
-        vlan_members_t vlan_members;
-        m_portsOrch->getPortVlanMembers(p, vlan_members);
-        for (const auto& vlan_member: vlan_members)
-        {
-            swss::Port vlan;
-            string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);
-            if (!m_portsOrch->getPort(vlan_alias, vlan))
-            {
-                SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
-                continue;
-            }
-            notifyObserversFDBFlush(p, vlan.m_vlan_info.vlan_oid);
-        }
-
+        flushPortFdbEntries(p);
     }
     return;
+}
+
+void FdbOrch::flushPortFdbEntries(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    }
+
+    // Get BVID of each VLAN that this port is a member of
+    // and call notifyObserversFDBFlush
+    vlan_members_t vlan_members;
+    m_portsOrch->getPortVlanMembers(port, vlan_members);
+    for (const auto& vlan_member: vlan_members)
+    {
+        swss::Port vlan;
+        string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);
+        if (!m_portsOrch->getPort(vlan_alias, vlan))
+        {
+            SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
+            continue;
+        }
+        notifyObserversFDBFlush(port, vlan.m_vlan_info.vlan_oid);
+    }
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
