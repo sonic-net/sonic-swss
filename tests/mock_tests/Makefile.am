@@ -31,6 +31,7 @@ tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$
 tests_SOURCES = aclorch_ut.cpp \
                 pfcwdorch_ut.cpp \
                 aclorch_rule_ut.cpp \
+                swssstats_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
                 nhgorch_replace_ut.cpp \
@@ -123,6 +124,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/lib/orch_zmq_config.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
+                $(top_srcdir)/orchagent/swssstats.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
                 $(top_srcdir)/orchagent/routeorch.cpp \
                 $(top_srcdir)/orchagent/mplsrouteorch.cpp \
@@ -284,6 +286,7 @@ tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/swssstats.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
                          mock_dbconnector.cpp \
@@ -306,6 +309,7 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/swssstats.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
                          mock_dbconnector.cpp \
@@ -439,6 +443,7 @@ tests_nbrmgrd_SOURCES = nbrmgrd/nbrmgr_ut.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
+                         $(top_srcdir)/orchagent/swssstats.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
                          mock_dbconnector.cpp \
