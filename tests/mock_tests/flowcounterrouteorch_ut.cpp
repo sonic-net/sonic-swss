@@ -307,6 +307,16 @@ namespace flowcounterrouteorch_test
 
         void TearDown() override
         {
+            auto *mux_orch = gDirectory.get<MuxOrch*>();
+            if (mux_orch)
+            {
+                mux_orch->detachObservers();
+            }
+            delete mux_orch;
+            delete gDirectory.get<VNetRouteOrch*>();
+            delete gDirectory.get<VNetCfgRouteOrch*>();
+            delete gDirectory.get<VNetOrch*>();
+            delete gDirectory.get<FlexCounterOrch*>();
             gDirectory.m_values.clear();
 
             delete gCrmOrch;
