@@ -6150,6 +6150,13 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->processPendingIpFields() && newRule->validate())
             {
+                if (m_mirrorAclRulesDeferred && dynamic_cast<AclRuleMirror *>(newRule.get()))
+                {
+                    // MirrorOrch is deliberately delayed until the final warm restore pass.
+                    setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
+                    continue;
+                }
+
                 if (addAclRule(newRule, table_id))
                 {
                     setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);

@@ -27,6 +27,27 @@ A VS test remains the right tool only when the test depends on behavior the mock
 
 If your change only verifies SWSS→SAI programming (config in, SAI objects/attributes out), it should be a mock test. When in doubt, default to a mock test and reserve VS tests for the kernel/daemon/dataplane cases above.
 
+### Mirror ACL warm restore regression
+
+During warm restore, `OrchDaemon` defers mirror ACL rule SETs during the three
+early replay passes, while allowing ACL tables, non-mirror rules, and deletes.
+It releases the gate after the final `MirrorOrch` processing and before the
+final `AclOrch` drain. Session dependency checks and SAI error handling still
+apply after release.
+
+After building the mock test binary with the SONiC dependencies described in the
+root README, run:
+
+```bash
+cd tests/mock_tests
+./tests --gtest_filter='MirrorActions/AclMirrorWarmRestoreTest.*'
+```
+
+These tests cover ingress, egress, and legacy mirror actions, pending-task
+retention and release, missing/inactive sessions, SAI failures, and operations
+that must remain available while gated. They do not replace whole-system
+warm-reboot or traffic validation in a SONiC DVS/device environment.
+
 ## Contents
 - [Prefer C++ mock tests over new VS tests](#prefer-c-mock-tests-over-new-vs-tests)
 - [Setting up your test environment](#setting-up-your-test-environment)
