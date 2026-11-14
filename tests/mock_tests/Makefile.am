@@ -9,9 +9,9 @@ CXXFLAGS = -g -O0
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+TESTS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_macsecmgrd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd
+noinst_PROGRAMS = tests tests_intfmgrd tests_teammgrd tests_portsyncd tests_fpmsyncd tests_fdbsyncd tests_neighsyncd tests_response_publisher tests_nbrmgrd tests_teamsyncd tests_macsecmgrd
 
 LDADD_SAI = -lsaivs -lsairedis -lsaimeta -lsaimetadata
 
@@ -29,9 +29,11 @@ LDADD_GTEST = -L/usr/src/gtest
 tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(DASH_ORCH_DIR) -I$(top_srcdir)/warmrestart
 
 tests_SOURCES = aclorch_ut.cpp \
+                pfcwdorch_ut.cpp \
                 aclorch_rule_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
+                nhgorch_replace_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
                 buffermgrdyn_ut.cpp \
@@ -105,6 +107,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mirrororch_sample_port_sai_wrap.cpp \
                 hftelorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
+                coppstats_sai_wrap.cpp \
                 shlorch_ut.cpp \
                 mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
@@ -159,6 +162,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdsworch.cpp \
+                $(top_srcdir)/orchagent/pfcwdhworch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
                 $(top_srcdir)/orchagent/policerorch.cpp \
                 $(top_srcdir)/orchagent/crmorch.cpp \
@@ -250,7 +254,8 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
-                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata
+                -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata \
+                -Wl,--wrap=sai_query_stats_capability
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
@@ -320,6 +325,27 @@ tests_teammgrd_CXXFLAGS = -Wl,-wrap,nl_socket_alloc -Wl,-wrap,nl_socket_free -Wl
 tests_teammgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
         -lswsscommon -lgtest -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
 
+## macsecmgrd unit tests
+
+tests_macsecmgrd_SOURCES = macsecmgrd/macsecmgr_ut.cpp \
+                           $(top_srcdir)/cfgmgr/macsecmgr.cpp \
+                           $(top_srcdir)/lib/recorder.cpp \
+                           $(top_srcdir)/orchagent/orch.cpp \
+                           $(top_srcdir)/orchagent/request_parser.cpp \
+                           mock_orchagent_main.cpp \
+                           mock_dbconnector.cpp \
+                           mock_table.cpp \
+                           mock_hiredis.cpp \
+                           fake_response_publisher.cpp \
+                           mock_redisreply.cpp \
+                           common/mock_shell_command.cpp
+
+tests_macsecmgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
+tests_macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_macsecmgrd_INCLUDES)
+tests_macsecmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -ldl -lhiredis \
+        -lswsscommon -lgtest -lgtest_main -lzmq -lpthread -lgmock -lgmock_main
+
 ## fpmsyncd unit tests
 
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
@@ -329,6 +355,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          fpmsyncd/receive_srv6_mysids_ut.cpp \
                          fpmsyncd/ut_helpers_fpmsyncd.cpp \
                          fpmsyncd/fpmsyncd_evpn_mh_ut.cpp \
+                         fpmsyncd/macsync_ut.cpp \
+                         fdbsyncd/fake_subscriberstatetable.cpp \
                          fake_netlink.cpp \
                          fake_warmstarthelper.cpp \
                          fake_producerstatetable.cpp \
@@ -339,7 +367,8 @@ tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
                          $(top_srcdir)/warmrestart/ \
                          $(top_srcdir)/fpmsyncd/fpmlink.cpp \
                          $(top_srcdir)/fpmsyncd/routesync.cpp \
-                         $(top_srcdir)/fpmsyncd/routesendcoalescer.cpp
+                         $(top_srcdir)/fpmsyncd/routesendcoalescer.cpp \
+                         $(top_srcdir)/fpmsyncd/macsync.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart -I$(top_srcdir)/fpmsyncd
 tests_fpmsyncd_CXXFLAGS = -Wl,-wrap,rtnl_link_i2name

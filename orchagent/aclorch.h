@@ -591,6 +591,7 @@ public:
             DTelOrch                *m_dTelOrch = NULL);
     ~AclOrch();
     void update(SubjectType, void *);
+    void onWarmBootEnd() override;
 
     sai_object_id_t getTableById(string table_id);
     const AclTable* getTableByOid(sai_object_id_t oid) const;
@@ -737,6 +738,7 @@ private:
     acl_capabilities_t m_aclCapabilities;
     acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;
     FlexCounterManager m_flex_counter_manager;
+    bool m_isWarmRestoreStage = false;
 };
 
 #endif /* SWSS_ACLORCH_H */

@@ -489,6 +489,13 @@ static bool isValidPortTypeForLagMember(const Port& port)
     return (port.m_type == Port::Type::PHY || port.m_type == Port::Type::SYSTEM);
 }
 
+/* The DF role attributes are optional: a platform may implement neither. */
+static bool isDfAttrUnsupported(sai_status_t status)
+{
+    return status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+           SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status);
+}
+
 // Generic helper function to extract serdes attributes from any serdes instance
 static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const decltype(PortConfig::serdes) &serdes)
 {
@@ -4240,7 +4247,8 @@ void PortsOrch::registerPort(Port &p)
 
     /* Get Port Serdes Id of this port*/
     sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
-    if (p.m_type == Port::Type::PHY) {
+    if (p.m_type == Port::Type::PHY &&
+        p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb) {
         port_serdes_id = getPortSerdesIdFromPortId(p.m_port_id);
     }
 
@@ -7374,15 +7382,15 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
-    {
-        return true;
-    }
-
     if (port.m_rif_id != 0)
     {
         SWSS_LOG_NOTICE("Cannot create bridge port, interface %s is a router port", port.m_alias.c_str());
         return false;
+    }
+
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        return true;
     }
 
     sai_attribute_t attr;
@@ -7453,14 +7461,6 @@ bool PortsOrch::addBridgePort(Port &port)
     attr.value.s32 = port.m_learn_mode;
     attrs.push_back(attr);
 
-    /* If the interface is associated with an ethernet segment, set the DF role */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
-        /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
-        attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
-        attrs.push_back(attr);
-    }
-
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -7472,6 +7472,40 @@ bool PortsOrch::addBridgePort(Port &port)
             return parseHandleSaiStatusFailure(handle_status);
         }
         return false;
+    }
+
+    /* Set after create: the DF role is optional, and a platform that does not
+     * implement it must not lose the bridge port along with it. */
+    if (gEvpnMhOrch && gEvpnMhOrch->isPortInterfaceAssociatedToEs(port.m_alias)) {
+        /* TODO FIXME: sridsant : Use proper attribute once its available in SAI */
+        sai_attribute_t df_attr;
+        df_attr.id = SAI_BRIDGE_PORT_ATTR_EGRESS_FILTERING;
+        df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, DEFAULT_PORT_VLAN_ID);
+
+        sai_status_t df_status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &df_attr);
+        if (isDfAttrUnsupported(df_status))
+        {
+            SWSS_LOG_WARN("Bridge port %s: DF role attribute unavailable on this platform, "
+                          "non-DF BUM suppression not applied", port.m_alias.c_str());
+        }
+        else if (df_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Bridge port %s: failed to set DF role, rv:%d",
+                           port.m_alias.c_str(), df_status);
+            /* On a retryable status, remove the bridge port so the retry creates it and sets
+             * the role again; otherwise keep it, as a port without its DF role still forwards. */
+            if (handleSaiSetStatus(SAI_API_BRIDGE, df_status) == task_need_retry)
+            {
+                sai_status_t rm_status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
+                if (rm_status == SAI_STATUS_SUCCESS)
+                {
+                    port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+                    return false;
+                }
+                SWSS_LOG_ERROR("Bridge port %s: failed to remove it for a retry, keeping it, rv:%d",
+                               port.m_alias.c_str(), rm_status);
+            }
+        }
     }
 
     if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
@@ -7732,6 +7766,13 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         return addVlanFloodGroups(vlan, port, end_point_ip);
     }
 
+    // The PHY and LAG callers' addBridgePort() refuses a router port first; this covers any other caller.
+    if (port.m_rif_id != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Cannot add %s to VLAN %s, it is a router port", port.m_alias.c_str(), vlan.m_alias.c_str());
+        return false;
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -7756,15 +7797,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
 
-    /* If the interface is associated with an ethernet segment, send the SAI vlan DF attribute */
-    if (gEvpnMhOrch && gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
-        /* TODO: Use proper attribute once its available in SAI */
-        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
-        attrs.push_back(attr);
-    }
-
-    sai_object_id_t vlan_member_id;
+    sai_object_id_t vlan_member_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -7774,6 +7807,40 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    /* Set after create, for the same reason as the bridge port DF role above, and only on a
+     * member this call created. */
+    if (status == SAI_STATUS_SUCCESS && gEvpnMhOrch &&
+        gEvpnMhOrch->isPortAndVlanAssociatedToEs(port.m_alias, vlan.m_vlan_info.vlan_id)) {
+        /* TODO: Use proper attribute once its available in SAI */
+        sai_attribute_t df_attr;
+        df_attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
+        df_attr.value.booldata = gEvpnMhOrch->isTunnelTermBumDropped(port.m_alias, vlan.m_vlan_info.vlan_id);
+
+        sai_status_t df_status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &df_attr);
+        if (isDfAttrUnsupported(df_status))
+        {
+            SWSS_LOG_WARN("VLAN member %s on %s: DF role attribute unavailable on this platform, "
+                          "non-DF BUM suppression not applied", port.m_alias.c_str(), vlan.m_alias.c_str());
+        }
+        else if (df_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("VLAN member %s on %s: failed to set DF role, rv:%d",
+                           port.m_alias.c_str(), vlan.m_alias.c_str(), df_status);
+            /* As for the bridge port: remove the member on a retryable status so the retry
+             * creates it again, and keep it otherwise. */
+            if (handleSaiSetStatus(SAI_API_VLAN, df_status) == task_need_retry)
+            {
+                sai_status_t rm_status = sai_vlan_api->remove_vlan_member(vlan_member_id);
+                if (rm_status == SAI_STATUS_SUCCESS)
+                {
+                    return false;
+                }
+                SWSS_LOG_ERROR("VLAN member %s on %s: failed to remove it for a retry, keeping it, rv:%d",
+                               port.m_alias.c_str(), vlan.m_alias.c_str(), rm_status);
+            }
         }
     }
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
@@ -8092,8 +8159,38 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     sai_vlan_tagging_mode_t sai_tagging_mode;
     auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
 
-    /* Assert the port belongs to this VLAN */
-    assert (vlan_member != m_portVlanMember[port.m_alias].end());
+    if (vlan_member == m_portVlanMember[port.m_alias].end())
+    {
+        /* The SAI member is already gone (an earlier attempt removed it, then failed before
+         * updating vlan.m_members): finish the bookkeeping instead of removing a stale id. */
+        if (m_portVlanMember[port.m_alias].empty())
+        {
+            m_portVlanMember.erase(port.m_alias);
+        }
+        SWSS_LOG_WARN("No VLAN member id for %s in VLAN %s, completing the removal",
+                port.m_alias.c_str(), vlan.m_alias.c_str());
+
+        /* The earlier attempt may have failed on the PVID restore itself */
+        if (port.m_type != Port::TUNNEL && !port.m_rif_id &&
+            port.m_port_vlan_id == vlan.m_vlan_info.vlan_id &&
+            !setPortPvid(port, DEFAULT_PORT_VLAN_ID))
+        {
+            return false;
+        }
+
+        m_portList[port.m_alias] = port;
+        vlan.m_members.erase(port.m_alias);
+        m_portList[vlan.m_alias] = vlan;
+        if (m_bridge_port_ref_count[port.m_alias] > 0)
+        {
+            decreaseBridgePortRefCount(port);
+        }
+
+        VlanMemberUpdate update = { vlan, port, false };
+        notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
+        return true;
+    }
     sai_tagging_mode = vlan_member->second.vlan_mode;
     vlan_member_id = vlan_member->second.vlan_member_id;
 
@@ -9513,7 +9610,9 @@ void PortsOrch::clearPortPhyAttrCounterMap()
     for (const auto& it: m_portList)
     {
         // Clear counter stats only for PHY ports that were previously configured
-        if (it.second.m_type != Port::Type::PHY)
+        if (it.second.m_type != Port::Type::PHY ||
+            it.second.m_role == Port::Role::Rec ||
+            it.second.m_role == Port::Role::Inb)
         {
             continue;
         }
@@ -9639,7 +9738,9 @@ void PortsOrch::generatePortPhySerdesAttrCounterMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::Type::PHY)
+        if (it.second.m_type == Port::Type::PHY &&
+            it.second.m_role != Port::Role::Rec &&
+            it.second.m_role != Port::Role::Inb)
         {
             const char *port_name = it.second.m_alias.c_str();
             sai_object_id_t port_id = it.second.m_port_id;
