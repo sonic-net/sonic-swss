@@ -18,6 +18,7 @@ extern sai_tam_api_t *sai_tam_api;
 HFTelProfile::HFTelProfile(
     const string &profile_name,
     sai_object_id_t sai_tam_obj,
+    vector<sai_object_id_t> &sai_tam_telemetry_list,
     sai_object_id_t sai_tam_collector_obj,
     const CounterNameCache &cache,
     sai_tam_tel_type_mode_t tel_type_mode,
@@ -29,6 +30,7 @@ HFTelProfile::HFTelProfile(
       m_tel_type_mode(tel_type_mode),
       m_tel_type_supported_categories(std::move(tel_type_supported_categories)),
       m_sai_tam_obj(sai_tam_obj),
+      m_sai_tam_telemetry_list(sai_tam_telemetry_list),
       m_sai_tam_collector_obj(sai_tam_collector_obj)
 {
     SWSS_LOG_ENTER();
@@ -950,10 +952,16 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
             new sai_object_id_t(sai_object),
             [this](sai_object_id_t *p)
             {
-                HFTELUTILS_DEL_SAI_OBJECT_LIST(
+                m_sai_tam_tel_type_list.erase(
+                    remove(
+                        m_sai_tam_tel_type_list.begin(),
+                        m_sai_tam_tel_type_list.end(),
+                        *p),
+                    m_sai_tam_tel_type_list.end());
+                HFTELUTILS_SET_SAI_OBJECT_LIST(
                     *this->m_sai_tam_telemetry_obj,
                     SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST,
-                    *p,
+                    m_sai_tam_tel_type_list,
                     SAI_API_TAM,
                     tam,
                     tam_telemetry);
@@ -965,10 +973,11 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
             }));
     m_sai_tam_tel_type_states[m_sai_tam_tel_type_objs[key]] = SAI_TAM_TEL_TYPE_STATE_STOP_STREAM;
 
-    HFTELUTILS_ADD_SAI_OBJECT_LIST(
+    m_sai_tam_tel_type_list.push_back(sai_object);
+    HFTELUTILS_SET_SAI_OBJECT_LIST(
         *m_sai_tam_telemetry_obj,
         SAI_TAM_TELEMETRY_ATTR_TAM_TYPE_LIST,
-        sai_object,
+        m_sai_tam_tel_type_list,
         SAI_API_TAM,
         tam,
         tam_telemetry);
@@ -998,10 +1007,11 @@ void HFTelProfile::initTelemetry()
             gSwitchId, static_cast<uint32_t>(attrs.size()),
             attrs.data()));
 
-    HFTELUTILS_ADD_SAI_OBJECT_LIST(
+    m_sai_tam_telemetry_list.push_back(sai_object);
+    HFTELUTILS_SET_SAI_OBJECT_LIST(
         m_sai_tam_obj,
         SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST,
-        sai_object,
+        m_sai_tam_telemetry_list,
         SAI_API_TAM,
         tam,
         tam);
@@ -1011,10 +1021,16 @@ void HFTelProfile::initTelemetry()
             new sai_object_id_t(sai_object),
             [=](sai_object_id_t *p)
             {
-                HFTELUTILS_DEL_SAI_OBJECT_LIST(
+                m_sai_tam_telemetry_list.erase(
+                    remove(
+                        m_sai_tam_telemetry_list.begin(),
+                        m_sai_tam_telemetry_list.end(),
+                        *p),
+                    m_sai_tam_telemetry_list.end());
+                HFTELUTILS_SET_SAI_OBJECT_LIST(
                     m_sai_tam_obj,
                     SAI_TAM_ATTR_TELEMETRY_OBJECTS_LIST,
-                    *p,
+                    m_sai_tam_telemetry_list,
                     SAI_API_TAM,
                     tam,
                     tam);
