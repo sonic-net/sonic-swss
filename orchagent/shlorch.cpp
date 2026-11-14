@@ -53,6 +53,109 @@ long unsigned int ShlOrch::getVtepsListCount()
     return m_vtep_list.size();
 }
 
+/*
+ * Adds the port to the isolation group of each vtep in vteps, for one vlan. Membership is
+ * per port and vtep, but the table is keyed per vlan and port, so several vlans on the
+ * port can ask for the same vtep. m_vtep_refs counts those vlans: the port is added when
+ * the first vlan asks, and the count is taken only once the add succeeds. The vteps whose
+ * add fails are returned in failed.
+ */
+shl_isolation_group_status_t
+ShlOrch::acquireVtepRefs(const string &ifname, const vector<string> &vteps, Port &port,
+                         vector<string> &failed)
+{
+    SWSS_LOG_ENTER();
+
+    shl_isolation_group_status_t status = SHL_ISO_GRP_STATUS_SUCCESS;
+    auto &refs = m_vtep_refs[ifname];
+
+    for (const auto &vtep : vteps)
+    {
+        auto ref = refs.find(vtep);
+
+        if (ref != refs.end())
+        {
+            ref->second++;
+            continue;
+        }
+
+        vector<string> add_vtep = {vtep};
+        shl_isolation_group_status_t vtep_status = addMemberToIsolationGroupPerVtep(add_vtep, port);
+
+        if (vtep_status != SHL_ISO_GRP_STATUS_SUCCESS)
+        {
+            failed.push_back(vtep);
+            status = vtep_status;
+            continue;
+        }
+
+        refs[vtep] = 1;
+    }
+
+    if (refs.empty())
+    {
+        m_vtep_refs.erase(ifname);
+    }
+
+    return status;
+}
+
+/*
+ * Releases one vlan's vtep references on the port. The port is removed from a vtep's
+ * isolation group only when the last vlan that needs the vtep releases it, and that
+ * reference is dropped only once the removal succeeds. The vteps whose removal fails
+ * keep their reference and are returned in failed.
+ */
+shl_isolation_group_status_t
+ShlOrch::releaseVtepRefs(const string &ifname, const vector<string> &vteps, Port &port,
+                         vector<string> &failed)
+{
+    SWSS_LOG_ENTER();
+
+    shl_isolation_group_status_t status = SHL_ISO_GRP_STATUS_SUCCESS;
+    auto grp = m_vtep_refs.find(ifname);
+
+    if (grp == m_vtep_refs.end())
+    {
+        return status;
+    }
+
+    for (const auto &vtep : vteps)
+    {
+        auto ref = grp->second.find(vtep);
+
+        if (ref == grp->second.end())
+        {
+            continue;
+        }
+
+        if (ref->second > 1)
+        {
+            ref->second--;
+            continue;
+        }
+
+        vector<string> del_vtep = {vtep};
+        shl_isolation_group_status_t vtep_status = delMemberFromIsolationGroupPerVtep(del_vtep, port);
+
+        if (vtep_status != SHL_ISO_GRP_STATUS_SUCCESS)
+        {
+            failed.push_back(vtep);
+            status = vtep_status;
+            continue;
+        }
+
+        grp->second.erase(ref);
+    }
+
+    if (grp->second.empty())
+    {
+        m_vtep_refs.erase(grp);
+    }
+
+    return status;
+}
+
 void
 ShlOrch::doTask(Consumer &consumer)
 {
@@ -108,6 +211,8 @@ ShlOrch::doShlTblTask(Consumer &consumer)
         }
 
         string ifname(keys[1]);
+        /* The whole key, <VLAN_name>:<Ifname>, so each vlan on the port has its own entry. */
+        string shl_key(kfvKey(t));
 
         if (op == SET_COMMAND)
         {
@@ -122,12 +227,12 @@ ShlOrch::doShlTblTask(Consumer &consumer)
                 {
                     vteps_list = attr_value;
 
-                    auto old_list = m_vtep_list.find(ifname);
+                    auto old_list = m_vtep_list.find(shl_key);
                     auto new_list = tokenize(vteps_list, ',');
                     vector<string> del_list, add_list;
 
                     if (old_list != m_vtep_list.end()) {
-                        del_list = m_vtep_list[ifname];
+                        del_list = old_list->second;
 
                         for (auto mem: new_list) {
                             auto iter = find(del_list.begin(), del_list.end(), mem);
@@ -140,11 +245,24 @@ ShlOrch::doShlTblTask(Consumer &consumer)
                     } else {
                         add_list = new_list;
                     }
-                    m_vtep_list[ifname] = new_list;
+                    vector<string> add_failed, del_failed;
                     shl_isolation_group_status_t add_status =
-                        addMemberToIsolationGroupPerVtep(add_list, port);
+                        acquireVtepRefs(ifname, add_list, port, add_failed);
                     shl_isolation_group_status_t del_status =
-                        delMemberFromIsolationGroupPerVtep(del_list, port);
+                        releaseVtepRefs(ifname, del_list, port, del_failed);
+
+                    /*
+                     * The cached list holds the vteps this key holds a reference on, so a
+                     * later SET of the same list retries the vteps that failed.
+                     */
+                    vector<string> cached = new_list;
+                    for (const auto &vtep : add_failed)
+                    {
+                        cached.erase(find(cached.begin(), cached.end(), vtep));
+                    }
+                    cached.insert(cached.end(), del_failed.begin(), del_failed.end());
+                    m_vtep_list[shl_key] = cached;
+
                     if (add_status != SHL_ISO_GRP_STATUS_SUCCESS)
                     {
                         status = add_status;
@@ -160,15 +278,20 @@ ShlOrch::doShlTblTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            auto iter = m_vtep_list.find(ifname);
+            auto iter = m_vtep_list.find(shl_key);
             if (iter != m_vtep_list.end()) {
-                status = delMemberFromIsolationGroupPerVtep(iter->second, port);
+                vector<string> del_failed;
+                status = releaseVtepRefs(ifname, iter->second, port, del_failed);
                 if (status == SHL_ISO_GRP_STATUS_SUCCESS)
                 {
                     m_vtep_list.erase(iter);
                 }
+                else
+                {
+                    iter->second = del_failed;
+                }
             } else {
-                SWSS_LOG_ERROR("entry for ifname:%s does not exist", ifname.c_str());
+                SWSS_LOG_ERROR("entry for key:%s does not exist", shl_key.c_str());
             }
         }
         else
@@ -210,6 +333,7 @@ ShlOrch::addMemberToIsolationGroupPerVtep(vector<string> &addVtepList, Port &por
             status = grp->addMember(port);
             if (SHL_ISO_GRP_STATUS_SUCCESS != status)
             {
+                grp->destroy();
                 return status;
             }
             grp->bind(vtep);
@@ -217,7 +341,11 @@ ShlOrch::addMemberToIsolationGroupPerVtep(vector<string> &addVtepList, Port &por
             grp->attach(this);
         } else {
             auto grp = this->m_isolationGrps[vtep];
-            grp->addMember(port);
+            status = grp->addMember(port);
+            if (SHL_ISO_GRP_STATUS_SUCCESS != status)
+            {
+                return status;
+            }
         }
     }
     return SHL_ISO_GRP_STATUS_SUCCESS;
