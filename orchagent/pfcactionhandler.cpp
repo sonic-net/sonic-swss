@@ -1,27 +1,11 @@
 #include <unordered_map>
 #include "pfcactionhandler.h"
+#include "pfcwdorch.h"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
 #include <vector>
 #include <inttypes.h>
-
-#define PFC_WD_QUEUE_STATUS             "PFC_WD_STATUS"
-#define PFC_WD_QUEUE_STATUS_OPERATIONAL "operational"
-#define PFC_WD_QUEUE_STATUS_STORMED     "stormed"
-
-#define PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED "PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED"
-#define PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED "PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED"
-
-#define PFC_WD_QUEUE_STATS_TX_PACKETS "PFC_WD_QUEUE_STATS_TX_PACKETS"
-#define PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS "PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS"
-#define PFC_WD_QUEUE_STATS_RX_PACKETS "PFC_WD_QUEUE_STATS_RX_PACKETS"
-#define PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS"
-
-#define PFC_WD_QUEUE_STATS_TX_PACKETS_LAST "PFC_WD_QUEUE_STATS_TX_PACKETS_LAST"
-#define PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST "PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST"
-#define PFC_WD_QUEUE_STATS_RX_PACKETS_LAST "PFC_WD_QUEUE_STATS_RX_PACKETS_LAST"
-#define PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST"
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
@@ -56,25 +40,10 @@ void PfcWdActionHandler::initCounters(void)
         return;
     }
 
-    auto wdQueueStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
-    // initCounters() is called when the event channel receives
-    // a storm signal. This can happen when there is a true new storm or
-    // when there is an existing storm ongoing before warm-reboot. In the latter case,
-    // we treat the storm as an old storm. In particular,
-    // we do not increment the detectCount so as to clamp the
-    // gap between detectCount and restoreCount by 1 at maximum
-    if (!(wdQueueStats.detectCount > wdQueueStats.restoreCount))
-    {
-        wdQueueStats.detectCount++;
-
-        wdQueueStats.txPktLast = 0;
-        wdQueueStats.txDropPktLast = 0;
-        wdQueueStats.rxPktLast = 0;
-        wdQueueStats.rxDropPktLast = 0;
-    }
-    wdQueueStats.operational = false;
-
-    updateWdCounters(sai_serialize_object_id(m_queue), wdQueueStats);
+    PfcWdBaseOrch::beginStormCounters(m_countersTable,
+                                      sai_serialize_object_id(m_queue),
+                                      m_hwStats,
+                                      m_hwStats);
 }
 
 void PfcWdActionHandler::commitCounters(bool periodic /* = false */)
@@ -88,95 +57,11 @@ void PfcWdActionHandler::commitCounters(bool periodic /* = false */)
         return;
     }
 
-    auto finalStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
-
-    if (!periodic)
-    {
-        finalStats.restoreCount++;
-    }
-    finalStats.operational = !periodic;
-
-    finalStats.txPktLast += hwStats.txPkt - m_hwStats.txPkt;
-    finalStats.txDropPktLast += hwStats.txDropPkt - m_hwStats.txDropPkt;
-    finalStats.rxPktLast += hwStats.rxPkt - m_hwStats.rxPkt;
-    finalStats.rxDropPktLast += hwStats.rxDropPkt - m_hwStats.rxDropPkt;
-
-    finalStats.txPkt += hwStats.txPkt - m_hwStats.txPkt;
-    finalStats.txDropPkt += hwStats.txDropPkt - m_hwStats.txDropPkt;
-    finalStats.rxPkt += hwStats.rxPkt - m_hwStats.rxPkt;
-    finalStats.rxDropPkt += hwStats.rxDropPkt - m_hwStats.rxDropPkt;
-
-    m_hwStats = hwStats;
-
-    updateWdCounters(sai_serialize_object_id(m_queue), finalStats);
-}
-
-PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr<Table> countersTable, const string &queueIdStr)
-{
-    SWSS_LOG_ENTER();
-
-    PfcWdQueueStats stats;
-    memset(&stats, 0, sizeof(PfcWdQueueStats));
-    stats.operational = true;
-    vector<FieldValueTuple> fieldValues;
-
-    if (!countersTable->get(queueIdStr, fieldValues))
-    {
-        return stats;
-    }
-
-    for (const auto& fv : fieldValues)
-    {
-        const auto field = fvField(fv);
-        const auto value = fvValue(fv);
-
-        if (field == PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED)
-        {
-            stats.detectCount = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED)
-        {
-            stats.restoreCount = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATUS)
-        {
-            stats.operational = value == PFC_WD_QUEUE_STATUS_OPERATIONAL ? true : false;
-        }
-        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS)
-        {
-            stats.txPkt = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS)
-        {
-            stats.txDropPkt = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS)
-        {
-            stats.rxPkt = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS)
-        {
-            stats.rxDropPkt = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS_LAST)
-        {
-            stats.txPktLast = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST)
-        {
-            stats.txDropPktLast = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS_LAST)
-        {
-            stats.rxPktLast = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST)
-        {
-            stats.rxDropPktLast = stoul(value);
-        }
-    }
-
-    return stats;
+    PfcWdBaseOrch::accumulateStormCounters(m_countersTable,
+                                           sai_serialize_object_id(m_queue),
+                                           hwStats,
+                                           m_hwStats,
+                                           periodic);
 }
 
 void PfcWdActionHandler::initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr)
@@ -185,39 +70,13 @@ void PfcWdActionHandler::initWdCounters(shared_ptr<Table> countersTable, const s
 
     vector<FieldValueTuple> resultFvValues;
 
-    auto stats = getQueueStats(countersTable, queueIdStr);
+    auto stats = PfcWdBaseOrch::getQueueStats(countersTable, queueIdStr);
 
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(stats.detectCount));
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(stats.restoreCount));
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_OPERATIONAL);
 
     countersTable->set(queueIdStr, resultFvValues);
-}
-
-void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQueueStats& stats)
-{
-    SWSS_LOG_ENTER();
-
-    vector<FieldValueTuple> resultFvValues;
-
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(stats.detectCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(stats.restoreCount));
-
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS, to_string(stats.txPkt));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS, to_string(stats.txDropPkt));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS, to_string(stats.rxPkt));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS, to_string(stats.rxDropPkt));
-
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS_LAST, to_string(stats.txPktLast));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST, to_string(stats.txDropPktLast));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS_LAST, to_string(stats.rxPktLast));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST, to_string(stats.rxDropPktLast));
-
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, stats.operational ?
-                                                     PFC_WD_QUEUE_STATUS_OPERATIONAL :
-                                                     PFC_WD_QUEUE_STATUS_STORMED);
-
-    m_countersTable->set(queueIdStr, resultFvValues);
 }
 
 PfcWdDlrHandler::PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
@@ -635,32 +494,16 @@ bool PfcWdActionHandler::getHwCounters(PfcWdHwStats& counters)
 {
     SWSS_LOG_ENTER();
 
-    static const vector<sai_stat_id_t> queueStatIds =
+    if (!PfcWdBaseOrch::readQueueSaiStats(getQueue(), counters))
     {
-        SAI_QUEUE_STAT_PACKETS,
-        SAI_QUEUE_STAT_DROPPED_PACKETS,
-    };
+        return false;
+    }
 
     static const vector<sai_stat_id_t> pgStatIds =
     {
         SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS,
         SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS,
     };
-
-    vector<uint64_t> queueStats;
-    queueStats.resize(queueStatIds.size());
-
-    sai_status_t status = sai_queue_api->get_queue_stats(
-            getQueue(),
-            static_cast<uint32_t>(queueStatIds.size()),
-            queueStatIds.data(),
-            queueStats.data());
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", getQueue(), status);
-        return false;
-    }
 
     // PG counters not yet supported in Mellanox platform
     Port portInstance;
@@ -674,7 +517,7 @@ bool PfcWdActionHandler::getHwCounters(PfcWdHwStats& counters)
     vector<uint64_t> pgStats;
     pgStats.resize(pgStatIds.size());
 
-    status = sai_buffer_api->get_ingress_priority_group_stats(
+    sai_status_t status = sai_buffer_api->get_ingress_priority_group_stats(
             pg,
             static_cast<uint32_t>(pgStatIds.size()),
             pgStatIds.data(),
@@ -686,8 +529,6 @@ bool PfcWdActionHandler::getHwCounters(PfcWdHwStats& counters)
         return false;
     }
 
-    counters.txPkt = queueStats[0];
-    counters.txDropPkt = queueStats[1];
     counters.rxPkt = pgStats[0];
     counters.rxDropPkt = pgStats[1];
 
