@@ -1,5 +1,6 @@
 #pragma once
 
+#include <map>
 #include <set>
 #include <string>
 
@@ -9,6 +10,16 @@
 #include "producerstatetable.h"
 #include <sys/types.h>
 
+/* Failed macsec_gate teamdctl calls retried from the one-second sweep.
+ * Change this to widen or narrow the budget. A teamd without the state
+ * item stops here instead of being forked forever. */
+#define MACSEC_GATE_MAX_PUSH_ATTEMPTS 5
+
+/* Failed "teamdctl port remove" calls while the member is still enslaved.
+ * The delete is reprocessed on each pass; past this many the delete is
+ * dropped instead of retrying for as long as teamd keeps rejecting it. */
+#define MACSEC_MEMBER_REMOVE_MAX_ATTEMPTS 5
+
 namespace swss {
 
 class TeamMgr : public Orch
@@ -17,7 +28,7 @@ public:
     TeamMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *staDb,
             const std::vector<TableConnector> &tables);
 
-    using Orch::doTask;
+    void doTask() override;
     void cleanTeamProcesses();
     bool setLagSysmac(const std::string &alias, std::string &sys_mac);
 
@@ -29,18 +40,52 @@ private:
     Table m_statePortTable;
     Table m_stateLagTable;
     Table m_stateMACsecIngressSATable;
+    DBConnector *m_stateDb;
 
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appLagTable;
 
     std::set<std::string> m_lagList;
 
+    /* Desired per-member macsec_gate, derived from CONFIG_DB + STATE_DB.
+     * Closed (false) while MACsec is attached and the member has no ingress SA.
+     * m_macsecGatePushed is the last value teamd accepted. It is recorded as
+     * open only after this process successfully adds the member. A missing
+     * entry on an already-enslaved MACsec member is unknown (warm start), not
+     * open. A member with no MACsec and no pushed entry is left alone.
+     * m_macsecGatePushAttempts counts failed pushes; the sweep stops at
+     * MACSEC_GATE_MAX_PUSH_ATTEMPTS until a new MACsec event. */
+    std::map<std::string, std::map<std::string, bool>> m_macsecMemberGate;
+    std::map<std::string, std::map<std::string, bool>> m_macsecGatePushed;
+    std::map<std::string, std::map<std::string, int>> m_macsecGatePushAttempts;
+    /* Failed port-remove attempts per member. Cleared once the member has
+     * actually left teamd. */
+    std::map<std::string, std::map<std::string, int>> m_macsecMemberRemoveAttempts;
+
     MacAddress m_mac;
 
-    void doTask(Consumer &consumer);
+    void doTask(Consumer &consumer) override;
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
     void doPortUpdateTask(Consumer &consumer);
+    void doMacsecIngressSaTask(Consumer &consumer);
+    void doMacsecPortTask(Consumer &consumer);
+
+    /* MACsec member pull: drive teamd's per-member runner.macsec_gate from
+     * STATE_DB MACsec SA presence, so a member whose MACsec session is down is
+     * taken out of the LACP distributor by teamd itself, on both ends, without
+     * touching the link. */
+    bool hasMACsecIngressSA(const std::string &port);
+    bool setLagMemberMacsecGate(const std::string &lag, const std::string &member, bool gate);
+    void applyMacsecMemberGate(const std::string &lag, const std::string &member, bool gate);
+    void evaluateMacsecMemberGate(const std::string &port);
+    void evaluateMacsecMembersOfLag(const std::string &lag);
+    void retryMacsecMemberGates();
+    void forgetMacsecMemberGate(const std::string &lag, const std::string &member);
+    void forgetMacsecPortGates(const std::string &port);
+    void forgetMacsecLagGates(const std::string &lag);
+    void resetMacsecGatePushAttempts(const std::string &lag, const std::string &member);
+    void resetMacsecMemberRemoveAttempts(const std::string &lag, const std::string &member);
 
     task_process_status addLag(const std::string &alias, int min_links, bool fall_back, bool fast_rate);
     bool removeLag(const std::string &alias);

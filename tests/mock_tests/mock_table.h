@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 #include "table.h"
 
@@ -14,4 +15,6 @@ namespace testing_db
     void resetOperationCounters();
     std::size_t getProducerSetCount(const std::string &tableName);
     std::size_t getProducerDelCount(const std::string &tableName);
+    /* Redis KEYS against the mock DB. Keys are table + separator + row. */
+    std::vector<std::string> matchingRedisKeys(int dbId, const std::string &pattern);
 }
