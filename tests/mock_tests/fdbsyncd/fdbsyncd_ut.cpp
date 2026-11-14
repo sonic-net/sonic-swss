@@ -2817,3 +2817,132 @@ TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteFailureIsAnError)
     EXPECT_NE(errors.find("Failed cmd: bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self"),
               std::string::npos);
 }
+
+/*
+ * A learn on a port that vlanmgrd has already taken out of the kernel VLAN, before orchagent
+ * removed the ASIC member: the kernel refuses the entry (EOPNOTSUPP once the port has left the
+ * bridge, EINVAL while it is still a bridge port in other VLANs).
+ */
+static std::string g_bridgeReplaceOutput;
+
+static int refuseBridgeReplace(const std::string &cmd, std::string &out)
+{
+    mockCallArgs.push_back(cmd);
+    out = "";
+    if (cmd.find("bridge fdb replace") != std::string::npos)
+    {
+        out = g_bridgeReplaceOutput;
+        return 255;
+    }
+    return 0;
+}
+
+class FdbSyncdLeftVlanLearnTest : public FdbSyncdEvpnMhTest
+{
+public:
+    void TearDown() override
+    {
+        FdbSyncdEvpnMhTest::TearDown();
+        callback = nullptr;
+    }
+
+    std::string learnRefused(const std::string &output)
+    {
+        struct m_fdb_info info;
+        info.mac = "02:4c:45:00:00:61";
+        info.vid = "Vlan2100";
+        info.port_name = "Ethernet160";
+        info.type = FDB_TYPE_DYNAMIC;
+        info.op_type = FDB_OPER_ADD;
+        g_bridgeReplaceOutput = output;
+        callback = refuseBridgeReplace;
+        mockCallArgs.clear();
+        return errorLogsOf([&]() { m_mockFdbSync.updateLocalMac(&info); });
+    }
+
+    void addRemoteMac()
+    {
+        const std::string key = "Vlan2100:02:4c:45:00:00:61";
+        m_mockFdbSync.m_mac[key].type = "dynamic";
+        m_mockFdbSync.m_mac[key].vni = 2100;
+        m_mockFdbSync.m_mac[key].ifname = "Vxlan-2100";
+        m_mockFdbSync.m_mac[key].nhtype = FdbDest::VTEP;
+        m_mockFdbSync.m_mac[key].nexthop_value = "10.0.0.2";
+    }
+
+    bool vxlanEntryDeleted()
+    {
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("dev Vxlan-2100") != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+};
+
+TEST_F(FdbSyncdLeftVlanLearnTest, LearnAfterPortLeftBridgeIsNotAnError)
+{
+    auto errors = learnRefused("RTNETLINK answers: Operation not supported\n");
+
+    EXPECT_EQ(errors, "");
+    ASSERT_EQ(mockCallArgs.size(), 1u);
+    EXPECT_NE(mockCallArgs[0].find("bridge fdb replace 02:4c:45:00:00:61 dev Ethernet160 master dynamic extern_learn vlan 2100"),
+              std::string::npos);
+    // STATE_DB still has the MAC until orchagent's flush deletes it
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count("Vlan2100:02:4c:45:00:00:61"), 1u);
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, LearnAfterPortLeftVlanIsNotAnError)
+{
+    // The port left VLAN 2100 but is still a member of VLAN 2200
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2200|Ethernet160", { FieldValueTuple("state", "ok") });
+    auto errors = learnRefused("RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_EQ(errors, "");
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, RefusedLearnOnMemberIsAnError)
+{
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    auto errors = learnRefused("RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb replace 02:4c:45:00:00:61 dev Ethernet160"), std::string::npos);
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, OtherFailureAfterPortLeftIsAnError)
+{
+    auto errors = learnRefused("Cannot find device \"Ethernet160\"\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb replace 02:4c:45:00:00:61 dev Ethernet160"), std::string::npos);
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, LearnAfterPortLeftKeepsRemoteMac)
+{
+    addRemoteMac();
+    auto errors = learnRefused("RTNETLINK answers: Operation not supported\n");
+
+    EXPECT_EQ(errors, "");
+    EXPECT_FALSE(vxlanEntryDeleted());
+    EXPECT_EQ(m_mockFdbSync.m_mac.count("Vlan2100:02:4c:45:00:00:61"), 1u);
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, LearnOnMemberReplacesRemoteMac)
+{
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    addRemoteMac();
+    struct m_fdb_info info;
+    info.mac = "02:4c:45:00:00:61";
+    info.vid = "Vlan2100";
+    info.port_name = "Ethernet160";
+    info.type = FDB_TYPE_DYNAMIC;
+    info.op_type = FDB_OPER_ADD;
+    callback = captureCommand;
+    mockCallArgs.clear();
+    m_mockFdbSync.updateLocalMac(&info);
+
+    EXPECT_TRUE(vxlanEntryDeleted());
+    EXPECT_EQ(m_mockFdbSync.m_mac.count("Vlan2100:02:4c:45:00:00:61"), 0u);
+}
