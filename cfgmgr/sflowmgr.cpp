@@ -45,6 +45,11 @@ bool SflowMgr::isPortEnabled(const std::string& alias)
     }
     bool local_admin = it->second.local_admin_cfg;
     bool status = it->second.admin == "up" ? true : false;
+    /* Internal backplane ports are off by default; require an explicit local enable */
+    if (it->second.role == "Int" && !(local_admin && status))
+    {
+        return false;
+    }
     return m_gEnable && (m_intfAllConf || (local_admin && status));
 }
 
@@ -105,6 +110,7 @@ void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
                 port_info.rate = "";
                 port_info.admin = "";
                 port_info.dir = "";
+                port_info.role = "";
                 m_sflowPortConfMap[key] = port_info;
             }
 
@@ -115,6 +121,12 @@ void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
                 if (fvField(i) == "speed")
                 {
                     new_speed = fvValue(i);
+                }
+                if (fvField(i) == "role")
+                {
+                    /* role=Int identifies internal backplane (Ethernet-BP*) ports, which
+                     * are excluded from the default 'all' sample set on chassis-packet LCs */
+                    m_sflowPortConfMap[key].role = fvValue(i);
                 }
             }
             if (m_sflowPortConfMap[key].speed != new_speed)
@@ -221,6 +233,12 @@ void SflowMgr::sflowHandleSessionAll(bool enable, string direction)
 {
     for (auto it: m_sflowPortConfMap)
     {
+        bool local_override = it.second.local_admin_cfg && it.second.admin == "up";
+        /* Exclude internal backplane (role=Int) ports from 'all' unless explicitly enabled locally */
+        if (it.second.role == "Int" && !local_override)
+        {
+            continue;
+        }
         if (enable)
         {
             vector<FieldValueTuple> fvs;
