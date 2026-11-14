@@ -339,9 +339,10 @@ class DockerVirtualSwitch:
 
         # Use the provided persistent DVS testbed
         if name:
-            # get virtual switch container
-            for ctn in self.client.containers.list():
-                if ctn.name == name:
+            # get virtual switch container without inspecting containers owned by parallel workers
+            try:
+                ctn = self.client.containers.get(name)
+                if ctn.name == name and ctn.status == "running":
                     self.ctn = ctn
                     _, output = subprocess.getstatusoutput(f"docker inspect --format '{{{{.HostConfig.NetworkMode}}}}' {name}")
                     ctn_sw_id = output.split(':')[1]
@@ -349,6 +350,8 @@ class DockerVirtualSwitch:
                     # Persistent DVS is available.
                     self.cleanup = False
                     self.persistent = True
+            except docker.errors.NotFound:
+                pass
 
             if not self.ctn:
                 raise NameError(f"cannot find container {name}")
@@ -362,9 +365,13 @@ class DockerVirtualSwitch:
                 raise ValueError(f"persistent dvs does not have {NUM_PORTS} ports needed by testbed")
 
             # get base container
-            for ctn in self.client.containers.list():
-                if ctn.id == ctn_sw_id or ctn.name == ctn_sw_id:
-                    ctn_sw_name = ctn.name
+            if ctn_sw_id not in (-1, None, ""):
+                try:
+                    ctn_sw = self.client.containers.get(ctn_sw_id)
+                    if ctn_sw.status == "running":
+                        ctn_sw_name = ctn_sw.name
+                except docker.errors.NotFound:
+                    pass
 
             if ctn_sw_name:
                 _, output = subprocess.getstatusoutput(f"docker inspect --format '{{{{.State.Pid}}}}' {ctn_sw_name}")
@@ -1618,10 +1625,16 @@ class DockerVirtualChassisTopology:
 
     def find_all_ctns(self):
         suffix = f".{self.ns}"
-        for ctn in docker.from_env().containers.list():
-            if ctn.name.endswith(suffix):
-                self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
-                                                          self.env, log_path=ctn.name,
+        # Use low-level api.containers(filters=...) so concurrent DVS teardown in
+        # parallel workers never triggers 404 NotFound inside containers.list().
+        for ctn in docker.from_env().api.containers(filters={"name": f"{re.escape(suffix)}$"}):
+            ctn_name = next(
+                (n[1:] for n in (ctn.get("Names") or []) if n.startswith("/") and "/" not in n[1:] and n[1:].endswith(suffix)),
+                None,
+            )
+            if ctn_name:
+                self.dvss[ctn_name] = DockerVirtualSwitch(ctn_name, self.imgname, self.keeptb,
+                                                          self.env, log_path=ctn_name,
                                                           max_cpu=self.max_cpu, forcedvs=self.forcedvs,
                                                           vct=self, enable_coverage=self.enable_coverage)
         if self.chassbr is None and len(self.dvss) > 0:
