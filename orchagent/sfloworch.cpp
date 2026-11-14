@@ -488,11 +488,13 @@ bool SflowDropMonitor::createPolicer(int32_t limit_rate)
     attr.id = SAI_POLICER_ATTR_CBS;
     attr.value.u64 = (sai_uint64_t)limit_rate;
     attributes.push_back(attr);
+    // green/yellow stay FORWARD (SAI default) so create_policer works on vendors that support
+    // only FORWARD for them; RED=DROP enforces the limit (no PBS => meter never colors yellow).
     attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attributes.push_back(attr);
     attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attributes.push_back(attr);
     attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_DROP;
