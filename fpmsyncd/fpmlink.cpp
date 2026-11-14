@@ -328,6 +328,11 @@ void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
             /* rtnl api dont support RTM_NEWPICCONTEXT/RTM_DELPICCONTEXT yet. Processing as raw message*/
             processRawMsg(nl_hdr);
         }
+        else if(nl_hdr->nlmsg_type == RTM_NEWRESOLVEDEVENT)
+        {
+            /* rtnl api dont support RTM_NEWRESOLVEDEVENT yet. Processing as raw message*/
+            processRawMsg(nl_hdr);
+        }
         else
         {
             NetDispatcher::getInstance().onNetlinkMessage(msg);
