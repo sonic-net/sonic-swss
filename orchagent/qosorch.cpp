@@ -868,7 +868,7 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     sai_status = sai_wred_api->remove_wred(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove scheduler profile, status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to remove wred profile, status:%d", sai_status);
         return false;
     }
     return true;
@@ -974,7 +974,7 @@ sai_object_id_t PfcPrioToPgHandler::addQosItem(const vector<sai_attribute_t> &at
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create pfc_priority_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create pfc_priority_to_priority_group map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
@@ -1391,7 +1391,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
                     attr.value.s32 = SAI_SCHEDULING_TYPE_STRICT;
                 }
                 else {
-                    SWSS_LOG_ERROR("Unknown scheduler type value:%s", fvField(*i).c_str());
+                    SWSS_LOG_ERROR("Unknown scheduler type value:%s", fvValue(*i).c_str());
                     return task_process_status::task_invalid_entry;
                 }
                 sai_attr_list.push_back(attr);
