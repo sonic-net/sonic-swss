@@ -75,7 +75,7 @@ int main(int argc, char **argv)
     }
 
     DBConnector cfgDb("CONFIG_DB", 0);
-    DBConnector applDb("APPL_DB", 0);
+    DBConnector applDb("APPL_DB", 0, false, "", true);
     ProducerStateTable producerStateTable(&applDb, APP_GEARBOX_TABLE_NAME);
 
     WarmStart::initialize("gearsyncd", "swss");

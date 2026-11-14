@@ -51,6 +51,13 @@ DBConnector::DBConnector(int dbId, const std::string &unixPath, unsigned int tim
 {
 }
 
+// Keep explicit writer calls inside the in-memory fixture, like legacy calls.
+DBConnector::DBConnector(const std::string &dbName, unsigned int timeout, bool isTcpConn,
+                         const std::string &netns, bool authenticate)
+    : DBConnector(dbName, timeout, isTcpConn)
+{
+}
+
 int DBConnector::getDbId() const
 {
     return m_dbId;

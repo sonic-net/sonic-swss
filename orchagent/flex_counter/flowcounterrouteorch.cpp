@@ -27,8 +27,8 @@ extern sai_object_id_t   gSwitchId;
 
 FlowCounterRouteOrch::FlowCounterRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames):
 Orch(db, tableNames),
-mAsicDb(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
-mCounterDb(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
+mAsicDb(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0, false, "", true))),
+mCounterDb(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0, false, "", true))),
 mVidToRidTable(std::unique_ptr<Table>(new Table(mAsicDb.get(), "VIDTORID"))),
 mPrefixToCounterTable(std::unique_ptr<Table>(new Table(mCounterDb.get(), COUNTERS_ROUTE_NAME_MAP))),
 mPrefixToPatternTable(std::unique_ptr<Table>(new Table(mCounterDb.get(), COUNTERS_ROUTE_TO_PATTERN_MAP))),
@@ -171,7 +171,7 @@ void FlowCounterRouteOrch::initRouteFlowCounterCapability()
     {
         SWSS_LOG_NOTICE("Route flow counter is not supported on this platform");
     }
-    swss::DBConnector state_db("STATE_DB", 0);
+    swss::DBConnector state_db("STATE_DB", 0, false, "", true);
     swss::Table capability_table(&state_db, STATE_FLOW_COUNTER_CAPABILITY_TABLE_NAME);
     std::vector<FieldValueTuple> fvs;
     fvs.emplace_back(FLOW_COUNTER_SUPPORT_FIELD, mRouteFlowCounterSupported ? "true" : "false");

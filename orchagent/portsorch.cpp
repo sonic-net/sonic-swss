@@ -795,7 +795,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0, false, "", true));
     m_counterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP));
     m_counterSysPortTable = unique_ptr<Table>(
                     new Table(m_counter_db.get(), COUNTERS_SYSTEM_PORT_NAME_MAP));
@@ -826,7 +826,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_pgPortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_PORT_MAP));
     m_pgIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_INDEX_MAP));
 
-    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0, false, "", true));
     m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
 
     /* Initialize counter capability table*/
@@ -10781,7 +10781,7 @@ void PortsOrch::initGearbox()
         SWSS_LOG_NOTICE("BOX: m_gearboxLaneMap size      = %d.", (int) m_gearboxLaneMap.size());
         SWSS_LOG_NOTICE("BOX: m_gearboxPortMap size      = %d.", (int) m_gearboxPortMap.size());
 
-        m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0));
+        m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0, false, "", true));
         m_gbcounterTable = unique_ptr<Table>(new Table(m_gb_counter_db.get(), COUNTERS_PORT_NAME_MAP));
     }
 }
@@ -11258,7 +11258,7 @@ bool PortsOrch::addSystemPorts()
     vector<string> keys;
     vector<FieldValueTuple> spFv;
 
-    DBConnector appDb("APPL_DB", 0);
+    DBConnector appDb("APPL_DB", 0, false, "", true);
     Table appSystemPortTable(&appDb, APP_SYSTEM_PORT_TABLE_NAME);
 
     //Retrieve system port configurations from APP DB

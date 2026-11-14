@@ -33,7 +33,7 @@ class AclRuleManager : public ObjectManagerInterface
     explicit AclRuleManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch,
                             ResponsePublisherInterface *publisher)
         : m_p4OidMapper(p4oidMapper), m_vrfOrch(vrfOrch), m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE"), m_publisher(publisher),
-          m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0)),
+          m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0, false, "", true)),
           m_countersTable(std::make_unique<swss::Table>(
               m_countersDb.get(), std::string(COUNTERS_TABLE) + DEFAULT_KEY_SEPARATOR + APP_P4RT_TABLE_NAME))
     {

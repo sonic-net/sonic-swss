@@ -121,8 +121,8 @@ int main(int argc, char **argv)
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
+        DBConnector stateDb("STATE_DB", 0, false, "", true);
 
         cleanupNotifier = std::make_shared<swss::NotificationProducer>(&appDb, "NAT_DB_CLEANUP_NOTIFICATION");
 

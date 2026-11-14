@@ -418,9 +418,9 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     c_queueStatIds(queueStatIds),
     c_queueAttrIds(queueAttrIds),
     m_pollInterval(pollInterval),
-    m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
+    m_applDb(make_shared<DBConnector>("APPL_DB", 0, false, "", true)),
     m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
-    m_stateDb(make_shared<DBConnector>("STATE_DB", 0)),
+    m_stateDb(make_shared<DBConnector>("STATE_DB", 0, false, "", true)),
     m_pfcWdSwStateTable(make_shared<Table>(m_stateDb.get(), PFC_WD_SW_STATE_TABLE))
 {
     SWSS_LOG_ENTER();

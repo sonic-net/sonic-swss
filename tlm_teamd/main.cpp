@@ -88,7 +88,7 @@ int main()
     {
         swss::Logger::linkToDbNative("tlm_teamd");
         SWSS_LOG_NOTICE("Starting");
-        swss::DBConnector db("STATE_DB", 0);
+        swss::DBConnector db("STATE_DB", 0, false, "", true);
 
         ValuesStore values_store(&db);
         TeamdCtlMgr teamdctl_mgr;

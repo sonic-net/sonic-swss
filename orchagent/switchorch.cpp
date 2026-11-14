@@ -214,7 +214,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
         m_db(db),
-        m_stateDb(new DBConnector("STATE_DB", 0)),
+        m_stateDb(new DBConnector("STATE_DB", 0, false, "", true)),
         m_asicSensorsTable(new Table(m_stateDb.get(), ASIC_TEMPERATURE_INFO_TABLE_NAME)),
         m_sensorsPollerTimer (new SelectableTimer((timespec { .tv_sec = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL, .tv_nsec = 0 }))),
         m_stateDbForNotification(new DBConnector("STATE_DB", 0)),
@@ -247,7 +247,7 @@ void SwitchOrch::generateSwitchCounterNameMap() const
 {
     SWSS_LOG_ENTER();
 
-    DBConnector db("COUNTERS_DB", 0);
+    DBConnector db("COUNTERS_DB", 0, false, "", true);
     Table table(&db, COUNTERS_SWITCH_NAME_MAP);
 
     FieldValueTuple tuple("ASIC", sai_serialize_object_id(gSwitchId));

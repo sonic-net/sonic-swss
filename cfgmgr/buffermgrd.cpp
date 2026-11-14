@@ -46,7 +46,7 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 
 void write_to_state_db(shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr)
 {
-    DBConnector db("STATE_DB", 0);
+    DBConnector db("STATE_DB", 0, false, "", true);
     auto &db_items = *db_items_ptr;
     for (auto &db_item : db_items)
     {
@@ -134,9 +134,9 @@ int main(int argc, char **argv)
         shared_ptr<vector<KeyOpFieldsValuesTuple>> peripherial_table_ptr = nullptr;
         shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profiles_ptr = nullptr;
 
-        DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
-        DBConnector applDb("APPL_DB", 0);
+        DBConnector cfgDb("CONFIG_DB", 0, false, "", true);
+        DBConnector stateDb("STATE_DB", 0, false, "", true);
+        DBConnector applDb("APPL_DB", 0, false, "", true);
 
         if (!asic_table_file.empty())
         {
@@ -169,7 +169,7 @@ int main(int argc, char **argv)
             WarmStart::initialize("buffermgrd", "swss");
             WarmStart::checkWarmStart("buffermgrd", "swss");
 
-            DBConnector applStateDb("APPL_STATE_DB", 0);
+            DBConnector applStateDb("APPL_STATE_DB", 0, false, "", true);
 
             vector<TableConnector> buffer_table_connectors = {
                 TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),

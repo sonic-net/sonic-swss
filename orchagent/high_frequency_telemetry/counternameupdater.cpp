@@ -9,7 +9,7 @@ extern HFTelOrch *gHFTOrch;
 CounterNameMapUpdater::CounterNameMapUpdater(const std::string &db_name, const std::string &table_name)
     : m_db_name(db_name),
       m_table_name(table_name),
-      m_connector(m_db_name, 0),
+      m_connector(m_db_name, 0, false, "", true),
       m_counters_table(&m_connector, m_table_name)
 {
     SWSS_LOG_ENTER();

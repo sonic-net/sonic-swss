@@ -75,7 +75,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items, set<string>  &zmq_t
     string db_name = use_custom_endpoint ? "DPU_APPL_DB" : "APPL_DB";
     // DPU_APPL_DB is reached through the configured TCP endpoint. APPL_DB is
     // provided by the Redis instance local to this namespace.
-    DBConnector db(db_name, 0, use_custom_endpoint);
+    DBConnector db(db_name, 0, use_custom_endpoint, "", !use_custom_endpoint);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
     unordered_map<string, shared_ptr<ProducerStateTable>> table_map;
 

@@ -71,7 +71,7 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
         gNotifConsumerStatsOrch->registerConsumer("BfdOrch:bfd_session_state_change", m_bfdStateNotificationConsumer);
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
 
-    m_stateDbConnector = std::make_unique<swss::DBConnector>("STATE_DB", 0);
+    m_stateDbConnector = std::make_unique<swss::DBConnector>("STATE_DB", 0, false, "", true);
     m_stateSoftBfdSessionTable = std::make_unique<swss::Table>(m_stateDbConnector.get(), STATE_BFD_SOFTWARE_SESSION_TABLE_NAME);
 
     SWSS_LOG_NOTICE("Switch type is: %s", gMySwitchType.c_str());
