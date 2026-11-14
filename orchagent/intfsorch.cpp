@@ -17,6 +17,7 @@
 #include "bufferorch.h"
 #include "directory.h"
 #include "vnetorch.h"
+#include "vxlanorch.h"
 #include "subscriberstatetable.h"
 
 extern sai_object_id_t gVirtualRouterId;
@@ -617,6 +618,12 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     }
 
     m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
+
+    VxlanTunnelOrch *vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    if (vxlan_orch && port.m_vr_id == gVirtualRouterId)
+    {
+        vxlan_orch->updateRemoteVtepSubnet(*ip_prefix);
+    }
     return true;
 }
 

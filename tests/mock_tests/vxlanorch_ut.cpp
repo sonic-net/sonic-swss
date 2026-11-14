@@ -10,6 +10,9 @@
 #include "orch.h"
 #include "vxlanorch.h"
 #include "portsorch.h"
+#include "intfsorch.h"
+#include "neighorch.h"
+#include "routeorch.h"
 
 #undef protected
 #undef private
@@ -1218,8 +1221,13 @@ namespace vxlanorch_test
 
         bool dipTunnelExists()
         {
+            return dipTunnelExists(m_remoteVtep);
+        }
+
+        bool dipTunnelExists(const string &vtep)
+        {
             string name;
-            m_VxlanTunnelOrch->getTunnelNameFromDIP(m_remoteVtep, name);
+            m_VxlanTunnelOrch->getTunnelNameFromDIP(vtep, name);
             return m_VxlanTunnelOrch->isTunnelExists(name);
         }
     };
@@ -1660,6 +1668,619 @@ namespace vxlanorch_test
             { "Vlan100:10.1.1.2", DEL_COMMAND, {} }
         };
         EXPECT_EQ(spuriousRemoteVniDels(p2mp_orch.get(), entries, "10.1.1.2", "Port_SRC_VTEP_10.1.1.1"), 1u);
+    }
+
+
+    // A remote VTEP whose best route is a connected subnet gets its neighbor
+    // resolved through NeighOrch while it has none.
+    class RemoteVtepNeighborTest : public EvpnRemoteVniTest
+    {
+    protected:
+        // RouteOrch reads the global, which MockOrchTest leaves unset.
+        void PostSetUp() override
+        {
+            EvpnRemoteVniTest::PostSetUp();
+            gTunneldecapOrch = m_TunnelDecapOrch;
+        }
+
+        void PreTearDown() override
+        {
+            gTunneldecapOrch = nullptr;
+            EvpnRemoteVniTest::PreTearDown();
+        }
+
+        void addInterface(const string &alias, const string &prefix)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            consumer->addToSync({{alias, SET_COMMAND, {{"mtu", "9100"}}},
+                                 {alias + ":" + prefix, SET_COMMAND, {{"scope", "global"}, {"family", "IPv4"}}}});
+            static_cast<Orch *>(gIntfsOrch)->doTask(*consumer);
+            ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().count(alias));
+            ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at(alias).ip_addresses.count(IpPrefix(prefix)));
+        }
+
+        void routeOp(const string &prefix, const string &op, const string &nexthop = "0.0.0.0",
+                     const string &ifname = "Ethernet0")
+        {
+            auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            vector<FieldValueTuple> fvs;
+            if (op == SET_COMMAND)
+            {
+                fvs = {{"nexthop", nexthop}, {"ifname", ifname}};
+            }
+            consumer->addToSync({{prefix, op, fvs}});
+            static_cast<Orch *>(gRouteOrch)->doTask(*consumer);
+        }
+
+        void neighborOp(const string &alias, const string &ip, const string &op)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gNeighOrch->getExecutor(APP_NEIGH_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            vector<FieldValueTuple> fvs;
+            if (op == SET_COMMAND)
+            {
+                fvs = {{"neigh", "00:00:0a:01:02:05"}, {"family", "IPv4"}};
+            }
+            consumer->addToSync({{alias + ":" + ip, op, fvs}});
+            // doTask() also flushes the bulked neighbor operations.
+            static_cast<Orch *>(gNeighOrch)->doTask();
+            ASSERT_EQ(gNeighOrch->hasNextHop(NextHopKey(IpAddress(ip), alias)), op == SET_COMMAND);
+        }
+
+        void remoteVniOp(const string &vtep, const string &op)
+        {
+            vector<FieldValueTuple> fvs;
+            if (op == SET_COMMAND)
+            {
+                fvs = {{"vni", "1000"}};
+            }
+            remoteVniConsumer()->addToSync({{"Vlan100:" + vtep, op, fvs}});
+            static_cast<Orch *>(m_remoteVniOrch)->doTask();
+            ASSERT_TRUE(remoteVniConsumer()->m_toSync.empty());
+        }
+
+        bool resolveRequested(const string &alias, const string &ip)
+        {
+            Table resolve(m_app_db.get(), APP_NEIGH_RESOLVE_TABLE_NAME);
+            vector<FieldValueTuple> fvs;
+            return resolve.get(alias + resolve.getTableNameSeparator() + ip, fvs);
+        }
+
+        bool observesRoute(const string &ip)
+        {
+            return gRouteOrch->m_nextHopObservers.count(make_pair(gVirtualRouterId, IpAddress(ip))) != 0;
+        }
+
+        // Ethernet0 10.1.2.1/24 with its connected route; the VTEP 10.1.2.5 is on it.
+        void addSubnet()
+        {
+            addInterface("Ethernet0", "10.1.2.1/24");
+            routeOp("10.1.2.0/24", SET_COMMAND);
+        }
+
+        void addRouteUser()
+        {
+            ASSERT_TRUE(m_VxlanTunnelOrch->addTunnelUser(m_vtep, 1000, 0, TUNNEL_USER_IP));
+        }
+
+        void delRouteUser()
+        {
+            ASSERT_TRUE(m_VxlanTunnelOrch->delTunnelUser(m_vtep, 1000, 0, TUNNEL_USER_IP));
+        }
+
+        // L2NhgOrch references a VTEP only once its P2P tunnel port exists, so only P2P tests use these two.
+        void addL2NhgRef()
+        {
+            m_nvoOrch->getEVPNVtep()->updateRemoteEndPointIpRef(m_vtep, true);
+        }
+
+        // L2NhgOrch releases a reference and then cleans up the P2P tunnel that the release may have left unused.
+        void delL2NhgRef()
+        {
+            auto vtep = m_nvoOrch->getEVPNVtep();
+            vtep->updateRemoteEndPointIpRef(m_vtep, false);
+            vtep->cleanupDynamicDIPTunnel(m_vtep);
+        }
+
+        // The tunnel to the VTEP, its resolve request, its route observer and its tracking entry are all gone.
+        void expectVtepReleased()
+        {
+            EXPECT_FALSE(dipTunnelExists(m_vtep));
+            Port tunnelPort;
+            EXPECT_FALSE(m_VxlanTunnelOrch->getTunnelPort(m_vtep, tunnelPort));
+            EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+            EXPECT_FALSE(observesRoute(m_vtep));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+        }
+
+        // P2P: an IMET holds the VTEP while a RouteOrch IP user and an L2 NHG reference come and go in every order.
+        // The request stays until the IMET goes, and then nothing of the VTEP's tracking is left.
+        void imetWithRouteAndL2NhgUsers()
+        {
+            ASSERT_NO_FATAL_FAILURE(addSubnet());
+            auto vtep = m_nvoOrch->getEVPNVtep();
+            for (bool route_first : {true, false})
+            {
+                for (bool route_released_first : {true, false})
+                {
+                    SCOPED_TRACE(string("route user added ") + (route_first ? "first" : "second") + ", released " +
+                                 (route_released_first ? "first" : "second"));
+                    ASSERT_NO_FATAL_FAILURE(remoteVniOp(m_vtep, SET_COMMAND));
+                    EXPECT_TRUE(dipTunnelExists(m_vtep));
+                    EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+                    if (route_first)
+                    {
+                        ASSERT_NO_FATAL_FAILURE(addRouteUser());
+                        addL2NhgRef();
+                    }
+                    else
+                    {
+                        addL2NhgRef();
+                        ASSERT_NO_FATAL_FAILURE(addRouteUser());
+                    }
+                    EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 2);
+                    if (route_released_first)
+                    {
+                        ASSERT_NO_FATAL_FAILURE(delRouteUser());
+                    }
+                    else
+                    {
+                        delL2NhgRef();
+                    }
+                    EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 1);
+                    EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+                    if (route_released_first)
+                    {
+                        delL2NhgRef();
+                    }
+                    else
+                    {
+                        ASSERT_NO_FATAL_FAILURE(delRouteUser());
+                    }
+                    // The IMET keeps the entry, and the tunnel, with no IP reference left.
+                    EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 0);
+                    EXPECT_TRUE(dipTunnelExists(m_vtep));
+                    EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+                    EXPECT_TRUE(observesRoute(m_vtep));
+
+                    ASSERT_NO_FATAL_FAILURE(remoteVniOp(m_vtep, DEL_COMMAND));
+                    EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), -1);
+                    expectVtepReleased();
+                    if (HasFailure())
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+
+        const string m_vtep = "10.1.2.5";
+    };
+
+    TEST_F(RemoteVtepNeighborTest, RouteAndL2NhgUsersOnImetVtep)
+    {
+        imetWithRouteAndL2NhgUsers();
+    }
+
+    // No IMET: a RouteOrch IP user and an L2 NHG reference hold the VTEP, and the last of them to go releases its P2P
+    // tunnel, through delTunnelUser() for the route user and cleanupDynamicDIPTunnel() for the L2 NHG.
+    TEST_F(RemoteVtepNeighborTest, LastRouteOrL2NhgUserReleasesTunnel)
+    {
+        ASSERT_NO_FATAL_FAILURE(addSubnet());
+        auto vtep = m_nvoOrch->getEVPNVtep();
+        for (bool route_released_first : {true, false})
+        {
+            SCOPED_TRACE(string("route user released ") + (route_released_first ? "first" : "second"));
+            ASSERT_NO_FATAL_FAILURE(addRouteUser());
+            addL2NhgRef();
+            EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 2);
+            EXPECT_EQ(vtep->getRemoteEndPointRefCnt(m_vtep), 2);
+            EXPECT_TRUE(dipTunnelExists(m_vtep));
+            EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+            EXPECT_TRUE(observesRoute(m_vtep));
+
+            if (route_released_first)
+            {
+                ASSERT_NO_FATAL_FAILURE(delRouteUser());
+            }
+            else
+            {
+                delL2NhgRef();
+            }
+            EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 1);
+            EXPECT_TRUE(dipTunnelExists(m_vtep));
+            Port tunnelPort;
+            EXPECT_TRUE(m_VxlanTunnelOrch->getTunnelPort(m_vtep, tunnelPort));
+            EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+            if (route_released_first)
+            {
+                delL2NhgRef();
+            }
+            else
+            {
+                ASSERT_NO_FATAL_FAILURE(delRouteUser());
+            }
+            EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), -1);
+            expectVtepReleased();
+            if (HasFailure())
+            {
+                return;
+            }
+        }
+    }
+
+    // Releasing an IP reference the VTEP does not hold changes nothing: the IMET keeps the VTEP and its request.
+    TEST_F(RemoteVtepNeighborTest, IpReleaseWithoutIpReferenceIsIgnored)
+    {
+        addSubnet();
+        auto vtep = m_nvoOrch->getEVPNVtep();
+        vtep->updateRemoteEndPointIpRef(m_vtep, false);
+        EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), -1);
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+
+        remoteVniOp(m_vtep, SET_COMMAND);
+        vtep->updateRemoteEndPointIpRef(m_vtep, false);
+        EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 0);
+        EXPECT_EQ(vtep->getRemoteEndPointIMRRefCnt(m_vtep), 1);
+        EXPECT_TRUE(dipTunnelExists(m_vtep));
+        EXPECT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.size(), 1u);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        expectVtepReleased();
+    }
+
+    // A source VTEP deleted while it still tracks a remote VTEP releases its own use, and the EVPN VTEP's IMET keeps
+    // the remote VTEP tracked.
+    TEST_F(RemoteVtepNeighborTest, DeletedVtepReleasesTrackedVteps)
+    {
+        addSubnet();
+        Table tunnel(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+        tunnel.set("vtep2", {{"src_ip", "10.1.1.9"}});
+        m_VxlanTunnelOrch->addExistingData(&tunnel);
+        static_cast<Orch *>(m_VxlanTunnelOrch)->doTask();
+        ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep2"));
+
+        remoteVniOp(m_vtep, SET_COMMAND);
+        m_VxlanTunnelOrch->getVxlanTunnel("vtep2")->updateRemoteEndPointIpRef(m_vtep, true);
+        ASSERT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.size(), 1u);
+        EXPECT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.begin()->second.users, 2u);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_TRUE(observesRoute(m_vtep));
+
+        auto consumer = dynamic_cast<Consumer *>(m_VxlanTunnelOrch->getExecutor(APP_VXLAN_TUNNEL_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync({{"vtep2", DEL_COMMAND, {}}});
+        static_cast<Orch *>(m_VxlanTunnelOrch)->doTask(*consumer);
+        ASSERT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep2"));
+        ASSERT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.size(), 1u);
+        EXPECT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.begin()->second.users, 1u);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_TRUE(observesRoute(m_vtep));
+
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        expectVtepReleased();
+    }
+
+    // Added, resolved, lost and re-resolved, then removed with its request outstanding.
+    TEST_F(RemoteVtepNeighborTest, ResolvesVtepOnConnectedSubnet)
+    {
+        addSubnet();
+        remoteVniOp(m_vtep, SET_COMMAND);
+        EXPECT_TRUE(observesRoute(m_vtep));
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        neighborOp("Ethernet0", m_vtep, SET_COMMAND);
+        EXPECT_TRUE(gNeighOrch->hasNextHop(NextHopKey(IpAddress(m_vtep), "Ethernet0")));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+
+        neighborOp("Ethernet0", m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(gNeighOrch->hasNextHop(NextHopKey(IpAddress(m_vtep), "Ethernet0")));
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(dipTunnelExists(m_vtep));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_FALSE(observesRoute(m_vtep));
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+    }
+
+    // A neighbor that already exists needs no request; losing it brings one.
+    TEST_F(RemoteVtepNeighborTest, ExistingNeighborNeedsNoRequest)
+    {
+        addSubnet();
+        neighborOp("Ethernet0", m_vtep, SET_COMMAND);
+        remoteVniOp(m_vtep, SET_COMMAND);
+        EXPECT_TRUE(observesRoute(m_vtep));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+
+        neighborOp("Ethernet0", m_vtep, DEL_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // A loopback VTEP outside every connected subnet neither observes its route nor asks for a neighbor.
+    TEST_F(RemoteVtepNeighborTest, VtepOutsideConnectedSubnetsIsLeftAlone)
+    {
+        addSubnet();
+        remoteVniOp("10.9.9.9", SET_COMMAND);
+        EXPECT_FALSE(observesRoute("10.9.9.9"));
+        EXPECT_FALSE(resolveRequested("Ethernet0", "10.9.9.9"));
+        remoteVniOp("10.9.9.9", DEL_COMMAND);
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+    }
+
+    // A more specific route through another router withdraws the request, and its removal
+    // brings the request back; a neighbor lost meanwhile is not asked for.
+    TEST_F(RemoteVtepNeighborTest, MoreSpecificRouteWithdrawsRequest)
+    {
+        addSubnet();
+        addInterface("Ethernet4", "10.1.3.1/24");
+        // RouteOrch skips a route whose next hop is on a port that is down.
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+        gPortsOrch->setPort("Ethernet4", port);
+        neighborOp("Ethernet4", "10.1.3.2", SET_COMMAND);
+
+        remoteVniOp(m_vtep, SET_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        routeOp(m_vtep + "/32", SET_COMMAND, "10.1.3.2", "Ethernet4");
+        EXPECT_TRUE(gRouteOrch->m_syncdRoutes.at(gVirtualRouterId).count(IpPrefix(m_vtep + "/32")));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+
+        neighborOp("Ethernet0", m_vtep, SET_COMMAND);
+        neighborOp("Ethernet0", m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+
+        routeOp(m_vtep + "/32", DEL_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // A subnet configured after the VTEP, and one removed and added back, are both picked up.
+    TEST_F(RemoteVtepNeighborTest, SubnetAddedAfterVtep)
+    {
+        remoteVniOp(m_vtep, SET_COMMAND);
+        EXPECT_FALSE(observesRoute(m_vtep));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+
+        addInterface("Ethernet0", "10.1.2.1/24");
+        EXPECT_TRUE(observesRoute(m_vtep));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        routeOp("10.1.2.0/24", SET_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        routeOp("10.1.2.0/24", DEL_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        routeOp("10.1.2.0/24", SET_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // P2MP: the remote endpoint has no tunnel of its own, and is tracked all the same.
+    class RemoteVtepNeighborP2mpTest : public RemoteVtepNeighborTest
+    {
+    protected:
+        bool useDipTunnels() const override
+        {
+            return false;
+        }
+    };
+
+    // P2MP has route users only (no L2 NHG references, no IMET count in tnl_users_): the IMET keeps the VTEP tracked
+    // after the route user goes, whose release erases the entry.
+    TEST_F(RemoteVtepNeighborP2mpTest, RouteUserOnImetVtep)
+    {
+        ASSERT_NO_FATAL_FAILURE(addSubnet());
+        auto vtep = m_nvoOrch->getEVPNVtep();
+        ASSERT_NO_FATAL_FAILURE(remoteVniOp(m_vtep, SET_COMMAND));
+        ASSERT_NO_FATAL_FAILURE(addRouteUser());
+        EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 1);
+        ASSERT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.size(), 1u);
+        EXPECT_EQ(m_VxlanTunnelOrch->m_remoteVtepNeighbors.begin()->second.users, 2u);
+
+        ASSERT_NO_FATAL_FAILURE(delRouteUser());
+        EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), -1);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_TRUE(observesRoute(m_vtep));
+
+        ASSERT_NO_FATAL_FAILURE(remoteVniOp(m_vtep, DEL_COMMAND));
+        expectVtepReleased();
+    }
+
+    // A route user alone holds the VTEP; its release ends the tracking.
+    TEST_F(RemoteVtepNeighborP2mpTest, LastRouteUserReleasesTracking)
+    {
+        ASSERT_NO_FATAL_FAILURE(addSubnet());
+        auto vtep = m_nvoOrch->getEVPNVtep();
+        ASSERT_NO_FATAL_FAILURE(addRouteUser());
+        EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), 1);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_TRUE(observesRoute(m_vtep));
+
+        ASSERT_NO_FATAL_FAILURE(delRouteUser());
+        EXPECT_EQ(vtep->getRemoteEndPointIPRefCnt(m_vtep), -1);
+        expectVtepReleased();
+    }
+
+    TEST_F(RemoteVtepNeighborP2mpTest, ResolvesVtepOnConnectedSubnet)
+    {
+        addSubnet();
+        remoteVniOp(m_vtep, SET_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        neighborOp("Ethernet0", m_vtep, SET_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        neighborOp("Ethernet0", m_vtep, DEL_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+    }
+
+    // A remote VNI DEL that no longer finds the source VTEP (the NVO went first) still ends the VTEP's tracking.
+    TEST_F(RemoteVtepNeighborP2mpTest, RemoteVniDelAfterNvoDelReleasesTracking)
+    {
+        ASSERT_NO_FATAL_FAILURE(addSubnet());
+        ASSERT_NO_FATAL_FAILURE(remoteVniOp(m_vtep, SET_COMMAND));
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        Table(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME).del("nvo1");
+        auto nvoConsumer = dynamic_cast<Consumer *>(m_nvoOrch->getExecutor(APP_VXLAN_EVPN_NVO_TABLE_NAME));
+        nvoConsumer->addToSync(deque<KeyOpFieldsValuesTuple>{{"nvo1", DEL_COMMAND, {}}});
+        static_cast<Orch *>(m_nvoOrch)->doTask();
+
+        ASSERT_NO_FATAL_FAILURE(remoteVniOp(m_vtep, DEL_COMMAND));
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_FALSE(observesRoute(m_vtep));
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+    }
+
+    // A cancellable request can be withdrawn and made again; one that any caller made without cancellable cannot.
+    TEST_F(RemoteVtepNeighborTest, CancelOnlyWithdrawsCancellableRequests)
+    {
+        NeighborEntry entry(IpAddress(m_vtep), "Ethernet0");
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        gNeighOrch->cancelResolveNeighbor(entry);
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        gNeighOrch->resolveNeighbor(entry);
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        NeighborEntry other(IpAddress("10.1.2.6"), "Ethernet0");
+        gNeighOrch->resolveNeighbor(other);
+        gNeighOrch->resolveNeighbor(other, true);
+        gNeighOrch->cancelResolveNeighbor(other);
+        EXPECT_TRUE(resolveRequested("Ethernet0", "10.1.2.6"));
+    }
+
+    // Two cancellable requesters: the request stays until both have cancelled, and extra cancels do nothing.
+    TEST_F(RemoteVtepNeighborTest, CancellableRequestersAreCounted)
+    {
+        NeighborEntry entry(IpAddress(m_vtep), "Ethernet0");
+        gNeighOrch->resolveNeighbor(entry, true);
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.at(entry), 2u);
+
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_EQ(gNeighOrch->m_neighborToResolve.count(entry), 1u);
+
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_EQ(gNeighOrch->m_neighborToResolve.count(entry), 0u);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.count(entry), 0u);
+
+        gNeighOrch->cancelResolveNeighbor(entry);
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.at(entry), 1u);
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // Adding the neighbor ends every request: a cancel afterwards neither underflows nor withdraws
+    // a request made after the neighbor is lost.
+    TEST_F(RemoteVtepNeighborTest, ResolvedNeighborEndsCancellableRequests)
+    {
+        addSubnet();
+        NeighborEntry entry(IpAddress(m_vtep), "Ethernet0");
+        gNeighOrch->resolveNeighbor(entry, true);
+        gNeighOrch->resolveNeighbor(entry, true);
+
+        neighborOp("Ethernet0", m_vtep, SET_COMMAND);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_EQ(gNeighOrch->m_neighborToResolve.count(entry), 0u);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.count(entry), 0u);
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.count(entry), 0u);
+
+        neighborOp("Ethernet0", m_vtep, DEL_COMMAND);
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.at(entry), 1u);
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // The VTEP's request is one of two: removing the VTEP leaves the other caller's, also when
+    // the neighbor was resolved and lost before the other caller asked.
+    TEST_F(RemoteVtepNeighborTest, VtepCancelLeavesOtherCancellableRequest)
+    {
+        addSubnet();
+        NeighborEntry entry(IpAddress(m_vtep), "Ethernet0");
+        remoteVniOp(m_vtep, SET_COMMAND);
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.at(entry), 2u);
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.at(entry), 1u);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+
+        remoteVniOp(m_vtep, SET_COMMAND);
+        neighborOp("Ethernet0", m_vtep, SET_COMMAND);
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.at(IpAddress(m_vtep)).requested_alias.empty());
+        neighborOp("Ethernet0", m_vtep, DEL_COMMAND);
+        gNeighOrch->resolveNeighbor(entry, true);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.at(entry), 2u);
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // Withdrawing the last request leaves a neighbor refresh on the same key in place.
+    TEST_F(RemoteVtepNeighborTest, CancelKeepsPendingRefresh)
+    {
+        NeighborEntry entry(IpAddress(m_vtep), "Ethernet0");
+        gNeighOrch->resolveNeighbor(entry, true);
+        gNeighOrch->m_neighborToRefresh.insert(entry);
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_EQ(gNeighOrch->m_neighborToResolve.count(entry), 0u);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+
+        gNeighOrch->clearNeighborRefresh(entry);
+        EXPECT_FALSE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // Another orch's request for the VTEP's neighbor outlives the VTEP.
+    TEST_F(RemoteVtepNeighborTest, OtherRequesterKeepsItsRequest)
+    {
+        addSubnet();
+        gNeighOrch->resolveNeighbor(NeighborEntry(IpAddress(m_vtep), "Ethernet0"));
+        remoteVniOp(m_vtep, SET_COMMAND);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        remoteVniOp(m_vtep, DEL_COMMAND);
+        EXPECT_TRUE(m_VxlanTunnelOrch->m_remoteVtepNeighbors.empty());
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+    }
+
+    // A request without the cancellable flag after a cancellable one outlives the cancel.
+    TEST_F(RemoteVtepNeighborTest, LaterPlainRequestOutlivesCancel)
+    {
+        NeighborEntry entry(IpAddress(m_vtep), "Ethernet0");
+        gNeighOrch->resolveNeighbor(entry, true);
+        gNeighOrch->resolveNeighbor(entry);
+        EXPECT_EQ(gNeighOrch->m_cancellableResolves.count(entry), 0u);
+        gNeighOrch->cancelResolveNeighbor(entry);
+        EXPECT_TRUE(resolveRequested("Ethernet0", m_vtep));
+        EXPECT_EQ(gNeighOrch->m_neighborToResolve.count(entry), 1u);
     }
 
 } // namespace vxlanorch_test
