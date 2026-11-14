@@ -20,6 +20,180 @@
 using namespace std;
 using namespace swss;
 
+// stpd reads every message below as raw bytes in the layout of sonic-stp's
+// stp_ipc.h. Pin that layout here too, so building against an stp_ipc.h
+// whose layout differs fails instead of sending messages stpd misreads.
+// sonic-stp asserts the same numbers in stp_ipc.h.
+#define STPMGR_IPC_ASSERT_SIZE(type, bytes) \
+    static_assert(sizeof(type) == (bytes), #type " changed size; stpd expects " #bytes)
+
+#define STPMGR_IPC_ASSERT_FIELD(type, field, off, bytes) \
+    static_assert(offsetof(type, field) == (off) && sizeof(((type *)0)->field) == (bytes), \
+        #type "." #field " moved or changed width; stpd reads it at offset " #off)
+/* STP_IPC_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_IPC_MSG, 12);
+STPMGR_IPC_ASSERT_FIELD(STP_IPC_MSG, msg_type, 0, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_IPC_MSG, msg_len, 4, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_IPC_MSG, proto_mode, 8, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_IPC_MSG, data, 12, 0);
+
+/* STP_INIT_READY_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_INIT_READY_MSG, 3);
+STPMGR_IPC_ASSERT_FIELD(STP_INIT_READY_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_INIT_READY_MSG, max_stp_instances, 1, 2);
+
+/* STP_BRIDGE_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_BRIDGE_CONFIG_MSG, 12);
+STPMGR_IPC_ASSERT_FIELD(STP_BRIDGE_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_BRIDGE_CONFIG_MSG, stp_mode, 1, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_BRIDGE_CONFIG_MSG, rootguard_timeout, 2, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_BRIDGE_CONFIG_MSG, base_mac_addr, 6, 6);
+
+/* PORT_ATTR */
+STPMGR_IPC_ASSERT_SIZE(PORT_ATTR, 20);
+STPMGR_IPC_ASSERT_FIELD(PORT_ATTR, intf_name, 0, 16);
+STPMGR_IPC_ASSERT_FIELD(PORT_ATTR, mode, 16, 1);
+STPMGR_IPC_ASSERT_FIELD(PORT_ATTR, enabled, 17, 1);
+
+/* STP_VLAN_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_VLAN_CONFIG_MSG, 30);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, newInstance, 1, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, vlan_id, 2, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, inst_id, 6, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, forward_delay, 10, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, hello_time, 14, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, max_age, 18, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, priority, 22, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, count, 26, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_CONFIG_MSG, port_list, 30, 0);
+
+/* STP_VLAN_PORT_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_VLAN_PORT_CONFIG_MSG, 33);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_PORT_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_PORT_CONFIG_MSG, vlan_id, 1, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_PORT_CONFIG_MSG, intf_name, 5, 16);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_PORT_CONFIG_MSG, inst_id, 21, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_PORT_CONFIG_MSG, path_cost, 25, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_PORT_CONFIG_MSG, priority, 29, 4);
+
+/* VLAN_ATTR */
+STPMGR_IPC_ASSERT_SIZE(VLAN_ATTR, 12);
+STPMGR_IPC_ASSERT_FIELD(VLAN_ATTR, inst_id, 0, 4);
+STPMGR_IPC_ASSERT_FIELD(VLAN_ATTR, vlan_id, 4, 4);
+STPMGR_IPC_ASSERT_FIELD(VLAN_ATTR, mode, 8, 1);
+
+/* STP_PORT_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_PORT_CONFIG_MSG, 41);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, intf_name, 1, 16);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, enabled, 17, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, root_guard, 18, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, loop_guard, 19, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, bpdu_guard, 20, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, bpdu_guard_do_disable, 21, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, portfast, 22, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, uplink_fast, 23, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, edge_port, 24, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, link_type, 25, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, path_cost, 29, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, priority, 33, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, count, 37, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_PORT_CONFIG_MSG, vlan_list, 41, 0);
+
+/* STP_VLAN_MEM_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_VLAN_MEM_CONFIG_MSG, 36);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, enabled, 1, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, mode, 2, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, vlan_id, 4, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, inst_id, 8, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, intf_name, 12, 16);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, path_cost, 28, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_VLAN_MEM_CONFIG_MSG, priority, 32, 4);
+
+/* STP_MST_GLOBAL_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_MST_GLOBAL_CONFIG_MSG, 41);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, revision_number, 1, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, name, 5, 32);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, forward_delay, 37, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, hello_time, 38, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, max_age, 39, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_GLOBAL_CONFIG_MSG, max_hops, 40, 1);
+
+/* VLAN_LIST */
+STPMGR_IPC_ASSERT_SIZE(VLAN_LIST, 2);
+STPMGR_IPC_ASSERT_FIELD(VLAN_LIST, vlan_id, 0, 2);
+
+/* STP_MST_INST_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_MST_INST_CONFIG_MSG, 9);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_CONFIG_MSG, mst_id, 1, 2);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_CONFIG_MSG, priority, 3, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_CONFIG_MSG, vlan_count, 7, 2);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_CONFIG_MSG, vlan_list, 9, 0);
+
+/* STP_MST_INST_PORT_CONFIG_MSG */
+STPMGR_IPC_ASSERT_SIZE(STP_MST_INST_PORT_CONFIG_MSG, 27);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_PORT_CONFIG_MSG, opcode, 0, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_PORT_CONFIG_MSG, intf_name, 1, 16);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_PORT_CONFIG_MSG, mst_id, 17, 2);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_PORT_CONFIG_MSG, path_cost, 19, 4);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_INST_PORT_CONFIG_MSG, priority, 23, 4);
+
+/* PORT_LIST */
+STPMGR_IPC_ASSERT_SIZE(PORT_LIST, 17);
+STPMGR_IPC_ASSERT_FIELD(PORT_LIST, intf_name, 0, 16);
+STPMGR_IPC_ASSERT_FIELD(PORT_LIST, tagging_mode, 16, 1);
+
+/* STP_MST_VLAN_PORT_MAP */
+STPMGR_IPC_ASSERT_SIZE(STP_MST_VLAN_PORT_MAP, 6);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_VLAN_PORT_MAP, vlan_id, 0, 2);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_VLAN_PORT_MAP, port_count, 2, 2);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_VLAN_PORT_MAP, stp_mode, 4, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_VLAN_PORT_MAP, add, 5, 1);
+STPMGR_IPC_ASSERT_FIELD(STP_MST_VLAN_PORT_MAP, port_list, 6, 0);
+
+#undef STPMGR_IPC_ASSERT_SIZE
+#undef STPMGR_IPC_ASSERT_FIELD
+
+namespace {
+
+// Dedicated bridge nft table: drop PVST+ PDUs (dst 01:00:0c:cc:cc:cd) on forward.
+// Table is removed on restore so add path stays idempotent.
+constexpr char pvstNftBridgeTable[] = "sonic_stp_pvst";
+
+void preventPvstPduFlooding()
+{
+    std::string res;
+    const std::string tableName(pvstNftBridgeTable);
+    const std::string cmd =
+          "nft delete table bridge " + tableName + " ; "
+          "nft add table bridge " + tableName + " && "
+          "nft 'add chain bridge " + tableName +
+          " forward { type filter hook forward priority 0; policy accept; }' && "
+          "nft add rule bridge " + tableName + " forward ether daddr 01:00:0c:cc:cc:cd drop";
+
+    int ret = swss::exec(cmd, res);
+    if ( ret != 0 ) {
+        SWSS_LOG_ERROR( "Failed to install nft rule to prevent PVST PDU flooding - %d", ret );
+    }
+}
+
+void restorePvstPduFlooding()
+{
+    std::string res;
+    const std::string cmd =
+          std::string("nft delete table bridge ") + pvstNftBridgeTable;
+    int ret = swss::exec(cmd, res);
+    if ( ret != 0 ) {
+        SWSS_LOG_ERROR( "Failed to remove nft rule which prevented PVST PDU flooding - %d", ret );
+    }
+}
+
+} // namespace
+
 static bool parseInteger(const std::string &value, int &result, const char *field)
 {
     if (value.empty() ||
@@ -73,8 +247,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-    int ret = system("ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP");
-    SWSS_LOG_DEBUG("ebtables ret %d", ret);
+    restorePvstPduFlooding();
 }
 
 void StpMgr::doTask(Consumer &consumer)
@@ -101,8 +274,6 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -157,14 +328,9 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     {
                         if (l2ProtoEnabled == L2_NONE)
                         {
-                            const std::string cmd = std::string("") +
-                                " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                            std::string res;
-                            int ret = swss::exec(cmd, res);
-                            if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed for PVST %d", ret);
-
+                            preventPvstPduFlooding();
                             l2ProtoEnabled = L2_PVSTP;
+                            SWSS_LOG_DEBUG( "Enabling PVST" );
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
@@ -175,6 +341,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                             l2ProtoEnabled = L2_MSTP;
                         }
                         msg.stp_mode = L2_MSTP;
+                        SWSS_LOG_DEBUG( "Enabling MSTP" );
 
                         // Assign all VLANs to zero instance for MSTP
                         fill_n(m_vlanInstMap, MAX_VLANS, 0);
@@ -202,15 +369,9 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-            // Remove ebtables rule based on protocol mode
             if (l2ProtoEnabled == L2_PVSTP)
             {
-                const std::string pvst_cmd =
-                    "ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                std::string res_pvst;
-                int ret_pvst = swss::exec(pvst_cmd, res_pvst);
-                if (ret_pvst != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
+                restorePvstPduFlooding();
             }
             l2ProtoEnabled = L2_NONE;
         }
@@ -702,21 +863,25 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "path_cost")
             {
-                if (!parseInteger(value, msg->path_cost, "path_cost"))
+                int parsed = 0;
+                if (!parseInteger(value, parsed, "path_cost"))
                 {
                     SWSS_LOG_ERROR("Invalid STP port configuration for %s, ignoring", intfName.c_str());
                     free(msg);
                     return;
                 }
+                msg->path_cost = parsed;
             }
             else if (field == "priority")
             {
-                if (!parseInteger(value, msg->priority, "priority"))
+                int parsed = 0;
+                if (!parseInteger(value, parsed, "priority"))
                 {
                     SWSS_LOG_ERROR("Invalid STP port configuration for %s, ignoring", intfName.c_str());
                     free(msg);
                     return;
                 }
+                msg->priority = parsed;
             }
             else if (field == "portfast" && l2ProtoEnabled == L2_PVSTP)
             {
@@ -814,6 +979,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     {
         STP_VLAN_MEM_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
+        msg.priority  = -1;
 
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -847,8 +1013,6 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
         if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
         {
             int8_t tagging_mode = TAGGED_MODE;
-            msg.priority = -1;
-            msg.path_cost = 0;
 
             if (op == SET_COMMAND)
             {
@@ -872,23 +1036,27 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
                     {
                         if (entry.first == "priority")
                         {
-                            if (!parseInteger(entry.second, msg.priority, "priority"))
+                            int parsed = 0;
+                            if (!parseInteger(entry.second, parsed, "priority"))
                             {
                                 SWSS_LOG_ERROR("Invalid STP VLAN port configuration for %s, "
                                                "skipping VLAN member update", key.c_str());
                                 configValid = false;
                                 break;
                             }
+                            msg.priority = parsed;
                         }
                         else if (entry.first == "path_cost")
                         {
-                            if (!parseInteger(entry.second, msg.path_cost, "path_cost"))
+                            int parsed = 0;
+                            if (!parseInteger(entry.second, parsed, "path_cost"))
                             {
                                 SWSS_LOG_ERROR("Invalid STP VLAN port configuration for %s, "
                                                "skipping VLAN member update", key.c_str());
                                 configValid = false;
                                 break;
                             }
+                            msg.path_cost = parsed;
                         }
                     }
                 }
@@ -1283,7 +1451,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
-                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
+                SWSS_LOG_ERROR("Memory allocation failed for STP_MST_INST_CONFIG_MSG");
                 return;
             }
 
@@ -1437,7 +1605,8 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     int rc;
 
     len = msgLen + (offsetof(struct STP_IPC_MSG, data));
-    SWSS_LOG_INFO("tx_msg len %d msglen %d", (int)len, msgLen);
+    SWSS_LOG_INFO( "tx_msg len %d msglen %u for proto_mode %d",
+                   (int)len, msgLen, l2ProtoEnabled );
 
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
     if (tx_msg == NULL)
@@ -1448,6 +1617,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 
     tx_msg->msg_type = msgType;
     tx_msg->msg_len  = msgLen;
+    tx_msg->proto_mode  = l2ProtoEnabled;
     memcpy(tx_msg->data, data, msgLen);
 
     bzero(&addr, sizeof(addr));
