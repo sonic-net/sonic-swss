@@ -743,6 +743,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
         string vrf_name = "", vnet_name = "", nat_zone = "";
+        bool vrf_name_set = false;
         MacAddress mac;
 
         uint32_t mtu = 0;
@@ -777,6 +778,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (field == "vrf_name")
             {
                 vrf_name = value;
+                vrf_name_set = true;
             }
             else if (field == "vnet_name")
             {
@@ -1013,6 +1015,42 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
+                /*
+                 * A VRF bind is a DEL + SET of the interface key, but
+                 * ConsumerStateTable coalesces a pending DEL + SET into a
+                 * single SET. The router interface VRF is create-only, so
+                 * recreate the router interface in the new VRF here. Only a
+                 * SET naming the VRF can rebind: partial SETs (e.g. a MAC
+                 * update from mclagsyncd) carry no vrf_name.
+                 */
+                if (!ip_prefix_in_key && vrf_name_set &&
+                    m_syncdIntfses.find(alias) != m_syncdIntfses.end() &&
+                    m_syncdIntfses[alias].vrf_id != vrf_id)
+                {
+                    SWSS_LOG_NOTICE("Interface %s VRF changed from %s to %s, recreating router interface",
+                                    alias.c_str(),
+                                    m_vrfOrch->getVRFname(m_syncdIntfses[alias].vrf_id).c_str(),
+                                    vrf_name.c_str());
+
+                    if (m_syncdIntfses[alias].proxy_arp)
+                    {
+                        setIntfProxyArp(alias, "disabled");
+                    }
+
+                    if (!removeIntf(alias, port.m_vr_id, nullptr))
+                    {
+                        it++;
+                        continue;
+                    }
+
+                    /* A sub port is removed along with its router interface */
+                    if (!gPortsOrch->getPort(alias, port))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
+
                 if (!adminStateChanged)
                 {
                     adminUp = port.m_admin_state_up;
