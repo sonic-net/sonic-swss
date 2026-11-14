@@ -4,12 +4,18 @@
 #include <linux/rtnetlink.h>
 #include <linux/neighbour.h>
 
+#include <chrono>
+#include <cstdint>
+#include <ctime>
 #include <functional>
 #include <map>
+#include <set>
 #include <string>
+#include <vector>
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "selectabletimer.h"
 #include "subscriberstatetable.h"
 #include "table.h"
 #include "fpmsyncd/fpminterface.h"
@@ -54,7 +60,92 @@ public:
     void onFpmConnected(FpmInterface& fpm);
     void onFpmDisconnected();
 
+    /* A VxLAN netdev was deleted: withdraw the remote MACs that came from it. */
+    void onVxlanLinkDel(const std::string& ifname);
+
+    /* Reads the link messages already queued. A netdev's delete is queued
+     * before zebra can see a new netdev under its name, so reading them before
+     * each FPM MAC message withdraws the old netdev's rows before the new one's
+     * are written. */
+    void setLinkReader(std::function<void()> reader) { m_readLinks = std::move(reader); }
+
+    /*
+     * On every FPM connect the remote MACs in APPL_DB are stale until zebra
+     * sends them again: zebra replays what it holds, and a MAC it withdrew
+     * while fpmsyncd or the connection was down is never withdrawn otherwise.
+     * warmRestartTimer is the bgp warm restart timer when warm restart is
+     * enabled, 0 otherwise. In fpmsyncd's warm start onStaleSweepTimer()
+     * withdraws the rest at that timer, otherwise once zebra's replay and
+     * BGP's convergence are over. markRemoteMacsStale() returns the seconds
+     * to the first onStaleSweepTimer(), 0 when nothing is stale.
+     */
+    static constexpr time_t STALE_SWEEP_HOLD = 120;
+    static constexpr time_t STALE_SWEEP_QUIET = 10;
+    static constexpr time_t STALE_SWEEP_MAX = 600;
+    time_t markRemoteMacsStale(time_t warmRestartTimer,
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    time_t onStaleSweepTimer(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    void noteFpmMessage(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now())
+    {
+        m_lastFpmMessage = now;
+    }
+
+    /* zebra now holds a port as a local Ethernet Segment port in a VLAN, or
+     * no longer does; dfKey is that EVPN_DF_TABLE key, "Vlan<id>:<port>". */
+    void onEsPortVlan(const std::string& dfKey, bool present);
+
+    /* The warm restart window is over, or STALE_SWEEP_HOLD after a cold start's
+     * connect: the EVPN_DF_TABLE keys read at start that zebra has not sent
+     * again are taken as gone. */
+    void onWarmStartEnd();
+
+    /* Sends the local MACs whose re-add onEsPortVlan() delayed. */
+    SelectableTimer *getEsReAddTimer() { return &m_esReAddTimer; }
+    void processEsReAdd(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    static constexpr long ES_READD_DELAY_MS = 1000;
+
+    /*
+     * A kernel nexthop message. zebra programs an Ethernet Segment's L2 nexthop
+     * group into the kernel, not over FPM, and deleting a group flushes the
+     * kernel FDB entries that use it; zebra can free a MAC on the group without
+     * a delete of its own. So NHG_FLUSH_DELAY_MS after a group's delete, the
+     * rows the delete took are withdrawn: all the rows on it once the kernel
+     * confirms the group is gone, or the ones sent before a group under the
+     * same id was created.
+     */
+    void onKernelNexthop(struct nlmsghdr *h);
+    SelectableTimer *getNhgFlushTimer() { return &m_nhgFlushTimer; }
+    void processNhgFlush(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    static constexpr long NHG_FLUSH_DELAY_MS = 1000;
+    /* Deletes due this much later are flushed together. */
+    static constexpr long NHG_FLUSH_BATCH_MS = 100;
+    /* Kernel lookups with no clear answer before the rows are kept. */
+    static constexpr int NHG_FLUSH_TRIES = 3;
+    /* How long the kernel's answer that a deleted group is gone stands for the
+     * MACs zebra sent on it, which arrive in a burst. */
+    static constexpr long NHG_ABSENT_CACHE_MS = 100;
+
+    /* Reads the kernel nexthop messages already queued. zebra creates a group
+     * in the kernel before it sends MACs on it, so reading them before each
+     * FPM MAC message puts a group's delete and creation in order with them. */
+    void setKernelNexthopReader(std::function<void()> reader) { m_readKernelNexthops = std::move(reader); }
+
+    /* What the kernel holds on a nexthop id: an FDB nexthop, none (no such id,
+     * or a routing nexthop), or no clear answer. */
+    enum class NexthopState { Fdb, Absent, Unknown };
+    /* Parses an RTM_GETNEXTHOP answer; false when buf holds none for seq. */
+    static bool parseNexthopReply(char *buf, size_t len, uint32_t seq, NexthopState& state);
+
     bool isFpmMode() const { return m_fpmMode; }
+
+    /* Sends the VXLAN_FDB_TABLE writes queued. MacSync has a pipeline of its
+     * own: fpmsyncd holds the shared one until the reconcile of a warm
+     * restart, and these rows must not wait for it. */
+    void flush() { m_pipeline.flush(); }
 
 private:
     /* Local MACs already advertised to zebra, keyed "Vlan<id>:<mac>". */
@@ -70,10 +161,25 @@ private:
     void readCfgFdbSyncMode();
     bool isEthernetSegmentInterface(const std::string& ifname);
     void processStateFdbEntry(const KeyOpFieldsValuesTuple& entry);
-    void sendLocalMac(const std::string& vlanName, const std::string& mac,
+    /* False when nothing was sent. */
+    bool sendLocalMac(const std::string& vlanName, const std::string& mac,
                       LocalMac& local, bool add);
+    void writeRemoteMac(const std::string& key, const std::vector<FieldValueTuple>& row, uint64_t seq);
+    void removeRemoteMac(const std::string& key);
+    /* m_remoteRows and m_rowsByGroup together. */
+    void setRemoteRow(const std::string& key, const std::vector<FieldValueTuple>& row, uint64_t seq);
+    void eraseRemoteRow(const std::string& key);
+    void withdrawStaleRemoteMacs();
+    bool isRemoteRow(const std::string& key, const std::vector<FieldValueTuple>& staleRow);
+    struct HeldRow;
+    void releaseEsReAddDeferred(const std::string& key);
+    void armEsReAddTimer(std::chrono::steady_clock::time_point now);
+    void armNhgFlushTimer(std::chrono::steady_clock::time_point now);
 
+    DBConnector m_appDb;
+    RedisPipeline m_pipeline;
     ProducerStateTable m_vxlanFdbTable;
+    Table m_vxlanFdbTableRead;
     SubscriberStateTable m_stateFdbTable;
     Table m_stateFdbSyncTable;
     Table m_cfgFdbSyncTableRead;
@@ -88,7 +194,93 @@ private:
     /* if_nametoindex(), replaceable so a test can take a port away. */
     std::function<unsigned int(const std::string&)> m_ifNameToIndex;
 
+    /* if_indextoname(), empty when the index does not resolve; replaceable so a
+     * test can name a VxLAN netdev. */
+    std::function<std::string(unsigned int)> m_ifIndexToName;
+
+    std::function<void()> m_readLinks;
+
     std::map<std::string, LocalMac> m_localMacs;
+
+    /* The remote MAC rows MacSync has queued, keyed like VXLAN_FDB_TABLE, as
+     * zebra sent them. APPL_DB shows a row once orchagent has read it, so the
+     * rows are looked up here before APPL_DB. */
+    struct RemoteRow
+    {
+        std::vector<FieldValueTuple> row;
+        /* m_remoteMacSeq when zebra sent it, which orders it against a nexthop
+         * group's delete. */
+        uint64_t seq {0};
+        /* The nexthop group it names, 0 for none. */
+        uint32_t group {0};
+    };
+    std::map<std::string, RemoteRow> m_remoteRows;
+    /* The keys of m_remoteRows by the nexthop group each names. */
+    std::map<uint32_t, std::set<std::string>> m_rowsByGroup;
+    /* The remote rows at the last connect, in APPL_DB or queued, that zebra
+     * has not sent or withdrawn since. With m_remoteRows it holds every row
+     * in VXLAN_FDB_TABLE, so APPL_DB is not searched. A queued row keeps only
+     * its key here, and is compared with m_remoteRows. zebra's replay
+     * rewrites a row that differs; one not queued and kept empty always. */
+    std::map<std::string, std::vector<FieldValueTuple>> m_staleRemoteMacs;
+    std::chrono::steady_clock::time_point m_staleSince;
+    std::chrono::steady_clock::time_point m_lastFpmMessage;
+    /* zebra has sent a remote MAC since the rows were marked stale. */
+    bool m_remoteMacSinceStale {false};
+    bool m_markedBefore {false};
+    /* The stale rows go at this many seconds after the connect, whatever the
+     * channel does; 0 when the settle rule applies. */
+    time_t m_staleWarmTimer {0};
+    /* fpmsyncd's warm start has not withdrawn its stale rows yet, so a
+     * reconnect before then is part of the warm start. */
+    bool m_warmSweepPending {false};
+
+    /* EVPN_DF_TABLE keys zebra holds: the VLANs of each local ES port. */
+    std::set<std::string> m_esDfKeys;
+    /* The keys found in APPL_DB at start that zebra has not sent since. */
+    std::set<std::string> m_esDfUnconfirmed;
+
+    /* Local MACs withdrawn from zebra by onEsPortVlan(), and when to add them back. */
+    std::map<std::string, std::chrono::steady_clock::time_point> m_esReAddPending;
+    SelectableTimer m_esReAddTimer;
+
+    /* A remote MAC zebra sent for a MAC with a re-add pending, written only if
+     * the hardware loses the MAC first. */
+    struct HeldRow
+    {
+        /* The netdev zebra sent it on. */
+        unsigned int ifindex;
+        std::vector<FieldValueTuple> row;
+        /* m_remoteMacSeq when zebra sent it. */
+        uint64_t seq {0};
+    };
+    std::map<std::string, HeldRow> m_esReAddDeferred;
+    /* Re-added MACs, and until when zebra's earlier answer is dropped. */
+    std::map<std::string, std::chrono::steady_clock::time_point> m_esReAddGrace;
+
+    /* Asks the kernel about a nexthop id; replaceable so a test can answer. */
+    std::function<NexthopState(uint32_t)> m_kernelNexthopState;
+    std::function<void()> m_readKernelNexthops;
+    /* Remote MACs zebra has sent, counted so rows can be told from a group's delete. */
+    uint64_t m_remoteMacSeq {0};
+
+    /* FDB nexthop groups the kernel has deleted and not created again, and
+     * until when the kernel's answer that one is gone stands. zebra reuses
+     * the ids, so a creation takes its id out again. */
+    std::map<uint32_t, std::chrono::steady_clock::time_point> m_deletedNhgs;
+
+    struct NhgFlush
+    {
+        std::chrono::steady_clock::time_point due;
+        /* m_remoteMacSeq at the delete, or at the group's creation after it. */
+        uint64_t seq;
+        /* An RTM_NEWNEXTHOP followed the delete. */
+        bool recreated;
+        int tries;
+    };
+    /* Deleted nexthop groups whose rows are still to withdraw. */
+    std::map<uint32_t, NhgFlush> m_nhgFlushPending;
+    SelectableTimer m_nhgFlushTimer;
 };
 
 }

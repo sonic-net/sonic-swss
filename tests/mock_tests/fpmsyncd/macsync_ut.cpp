@@ -11,24 +11,31 @@
 #include "schema.h"
 #include "redisutility.h"
 #include "mock_table.h"
+#include "selectabletimer.h"
 
 #include <gtest/gtest.h>
 
 #include <net/if.h>
 
+#include <cerrno>
 #include <cstring>
+#include <map>
+#include <set>
 #include <vector>
 
 #include <linux/if_ether.h>
 #include <linux/neighbour.h>
+#include <linux/nexthop.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netlink/route/link.h>
 
 #define private public
 #include "fpmsyncd/macsync.h"
 #undef private
 
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/fpmsyncd.h"
 
 using namespace swss;
 
@@ -146,6 +153,15 @@ public:
         Table table(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
         return table.get(key, values);
     }
+
+    /* orchagent has not read MacSync's last write to the row yet. */
+    void unread(const std::string& k)
+    {
+        Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+        appFdb.del(k);
+    }
+
+    std::size_t rowDels() { return testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME); }
 
     std::string fieldValue(const std::vector<FieldValueTuple>& values,
                            const std::string& field)
@@ -606,7 +622,8 @@ TEST_F(MacSyncTest, LocalMacOnAnUnresolvedPortSendsNothing)
  * A MAC on an Ethernet Segment we also hold locally is reachable through our own
  * access port, so zebra sends it against that port with neither a VTEP nor a
  * nexthop group. It must be programmed against the port, not discarded as the
- * bridge-side duplicate, and FdbOrch disables ageing on it.
+ * bridge-side duplicate. zebra's NUD_NOARP only keeps it from ageing: the row is
+ * dynamic, so FdbOrch installs a static entry that a local learn may move.
  */
 TEST_F(MacSyncTest, MacOnLocalEthernetSegmentProgrammedAgainstItsPort)
 {
@@ -625,7 +642,7 @@ TEST_F(MacSyncTest, MacOnLocalEthernetSegmentProgrammedAgainstItsPort)
     EXPECT_EQ(fieldValue(values, "ifname"), "lo");
     EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
     EXPECT_EQ(fieldValue(values, "nexthop_group"), "");
-    EXPECT_EQ(fieldValue(values, "type"), "static");
+    EXPECT_EQ(fieldValue(values, "type"), "dynamic");
 
     cfgEs.del("lo");
 }
@@ -978,4 +995,1946 @@ TEST_F(MacSyncTest, RemoteMacDestinationChangeReplacesARowItDidNotWrite)
     ASSERT_TRUE(getEntry(TEST_KEY, values));
     EXPECT_EQ(fieldValue(values, "nexthop_group"), "4242");
     EXPECT_EQ(fieldValue(values, "remote_vtep"), "");
+}
+
+/*
+ * Deleting a VxLAN netdev flushes its FDB in the kernel, and zebra sends no
+ * per-MAC delete for it. The rows of its VLAN must go with it.
+ */
+namespace {
+
+const unsigned int VTEP_IFINDEX = 1000;
+const unsigned int OTHER_VTEP_IFINDEX = 1001;
+
+}
+
+class MacSyncLinkDelTest : public MacSyncTest
+{
+public:
+    void SetUp() override
+    {
+        MacSyncTest::SetUp();
+        m_macSync->m_ifIndexToName = [this](unsigned int ifindex) {
+            auto it = m_links.find(ifindex);
+            return it == m_links.end() ? std::string() : it->second;
+        };
+        m_links[VTEP_IFINDEX] = "vtep1-100";
+        m_links[OTHER_VTEP_IFINDEX] = "vtep1-200";
+    }
+
+    void addRemoteMac(unsigned int ifindex, uint16_t vlan, uint8_t lastOctet,
+                      uint16_t type = RTM_NEWNEIGH)
+    {
+        MacMsg req;
+        buildMacMsg(req, type, NUD_REACHABLE);
+        setLastOctet(req, lastOctet);
+        req.ndm.ndm_ifindex = (int)ifindex;
+        addVlan(req, vlan);
+        addVtep(req, "10.1.1.1");
+        addSrcVni(req, TEST_VNI);
+        feed(req);
+    }
+
+    /* NDA_LLADDR is the first attribute buildMacMsg() adds. */
+    void setLastOctet(MacMsg& req, uint8_t octet)
+    {
+        auto *rta = (struct rtattr *)(void *)((char *)&req.n + NLMSG_LENGTH(sizeof(struct ndmsg)));
+        ((uint8_t *)RTA_DATA(rta))[ETH_ALEN - 1] = octet;
+    }
+
+    std::string key(uint16_t vlan, uint8_t lastOctet)
+    {
+        char mac[18];
+        snprintf(mac, sizeof(mac), "00:11:22:33:44:%02x", lastOctet);
+        return "Vlan" + std::to_string(vlan) + ":" + mac;
+    }
+
+    bool hasEntry(const std::string& k)
+    {
+        std::vector<FieldValueTuple> values;
+        return getEntry(k, values);
+    }
+
+    /* A row some other writer left in APPL_DB. */
+    void putRow(const std::string& k, const std::vector<FieldValueTuple>& row)
+    {
+        Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+        appFdb.set(k, row);
+    }
+
+    /* Delivers a link deletion the way fpmsyncd's netlink socket does. */
+    void delLink(unsigned int ifindex, const char *name, const char *type, int family = AF_UNSPEC)
+    {
+        struct rtnl_link *link = rtnl_link_alloc();
+        rtnl_link_set_ifindex(link, (int)ifindex);
+        rtnl_link_set_name(link, name);
+        if (type)
+        {
+            rtnl_link_set_type(link, type);
+        }
+        rtnl_link_set_family(link, family);
+        m_links.erase(ifindex);
+        m_routeSync->onMsg(RTM_DELLINK, (struct nl_object *)link);
+        rtnl_link_put(link);
+    }
+
+    std::map<unsigned int, std::string> m_links;
+};
+
+TEST_F(MacSyncLinkDelTest, RemoteMacsWithdrawnWithTheirVxlanLink)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    addRemoteMac(OTHER_VTEP_IFINDEX, 200, 0x01);
+    ASSERT_TRUE(hasEntry(key(100, 0x01)));
+    ASSERT_TRUE(hasEntry(key(100, 0x02)));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(200, 0x01)));
+}
+
+/* An add zebra queued before the netdev went away must not bring a row back. */
+TEST_F(MacSyncLinkDelTest, AddOnADeletedLinkIsSkipped)
+{
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A late delete still resolves its row through NDA_VLAN. */
+TEST_F(MacSyncLinkDelTest, DeleteOnADeletedLinkStillWithdraws)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    m_links.erase(VTEP_IFINDEX);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A VLAN remapped to a new VNI gets a new netdev under the same name. The old
+ * one's delete, still queued when zebra sends a MAC on the new one, is read
+ * first, so it takes only the old rows. */
+TEST_F(MacSyncLinkDelTest, QueuedLinkDeleteIsReadBeforeAMac)
+{
+    const unsigned int NEW_IFINDEX = 1002;
+    bool queued = false;
+    m_macSync->setLinkReader([this, &queued]() {
+        if (queued)
+        {
+            queued = false;
+            delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+        }
+    });
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    m_links[NEW_IFINDEX] = "vtep1-100";
+    queued = true;
+    addRemoteMac(NEW_IFINDEX, 100, 0x02);
+
+    EXPECT_FALSE(queued);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+    m_macSync->setLinkReader(nullptr);
+}
+
+/* A row orchagent has not read yet is not in APPL_DB, and goes all the same. */
+TEST_F(MacSyncLinkDelTest, RowOrchagentHasNotReadGoesWithTheLink)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    unread(key(100, 0x01));
+    auto dels = rowDels();
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* The VLAN's rows go whoever wrote them; Ethernet Segment port rows (no VTEP,
+ * the kernel keeps them on the port) and other VLANs' rows stay. Rows another
+ * writer left are the ones the connect marked stale. */
+TEST_F(MacSyncLinkDelTest, RowsOfTheVlanGoWhoeverWroteThem)
+{
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    putRow(key(100, 0x02), {{"nexthop_group", "7"}, {"type", "dynamic"}, {"vni", "20100"}});
+    putRow(key(100, 0x03), {{"ifname", "PortChannel1"}, {"type", "dynamic"}, {"vni", "0"}});
+    putRow(key(1000, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "21000"}});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+    EXPECT_TRUE(hasEntry(key(1000, 0x01)));
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.count(key(100, 0x01)), 0u);
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.count(key(100, 0x03)), 1u);
+}
+
+/* The rows of a deleted netdev are found without searching APPL_DB, which
+ * orchagent shares, once per netdev. */
+TEST_F(MacSyncLinkDelTest, LinkDeleteDoesNotSearchAppDb)
+{
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    testing_db::resetOperationCounters();
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    delLink(OTHER_VTEP_IFINDEX, "vtep1-200", "vxlan");
+
+    EXPECT_EQ(testing_db::getGetKeysCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getGetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+}
+
+/* A row seen at an earlier connect and kept without its fields is read back
+ * to tell an Ethernet Segment port row from a remote one. */
+TEST_F(MacSyncLinkDelTest, StaleRowKeptWithoutItsFieldsIsReadBack)
+{
+    ASSERT_FALSE(m_macSync->markRemoteMacsStale(0));
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    putRow(key(100, 0x03), {{"ifname", "PortChannel1"}, {"type", "dynamic"}, {"vni", "0"}});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    ASSERT_TRUE(m_macSync->m_staleRemoteMacs[key(100, 0x01)].empty());
+    ASSERT_TRUE(m_macSync->m_staleRemoteMacs[key(100, 0x03)].empty());
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+}
+
+/* A queued row is marked by its key alone, and zebra's unchanged replay of it
+ * is still found unchanged. */
+TEST_F(MacSyncLinkDelTest, QueuedRowIsMarkedByKeyAlone)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    ASSERT_EQ(m_macSync->m_staleRemoteMacs.count(key(100, 0x01)), 1u);
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs[key(100, 0x01)].empty());
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A port leaving the bridge (AF_BRIDGE) and a non-VxLAN netdev flush nothing:
+ * the kernel keeps a VxLAN netdev's own FDB in the first case, and has none of
+ * these rows in the second. */
+TEST_F(MacSyncLinkDelTest, OnlyAVxlanNetdevDeletionFlushes)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan", AF_BRIDGE);
+    m_links[VTEP_IFINDEX] = "vtep1-100";
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", nullptr);
+    m_links[VTEP_IFINDEX] = "vtep1-100";
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "bond");
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* fdbsyncd owns APPL_DB in kernel mode. */
+TEST_F(MacSyncLinkDelTest, KernelModeLeavesRowsToFdbsyncd)
+{
+    putRow(key(100, 0x01), {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", "20100"}});
+    m_macSync->m_fpmMode = false;
+
+    delLink(VTEP_IFINDEX, "vtep1-100", "vxlan");
+
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* A netdev not named <tunnel>-<vid> names no VLAN, so no row is taken. */
+TEST_F(MacSyncLinkDelTest, UnconventionalNameWithdrawsNothing)
+{
+    m_links[VTEP_IFINDEX] = "vxlanif";
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    req.ndm.ndm_ifindex = (int)VTEP_IFINDEX;
+    addVlan(req, TEST_VLAN);
+    addVtep(req, "10.1.1.1");
+    feed(req);
+    ASSERT_TRUE(hasEntry(TEST_KEY));
+
+    delLink(VTEP_IFINDEX, "vxlanif", "vxlan");
+
+    EXPECT_TRUE(hasEntry(TEST_KEY));
+}
+
+/*
+ * zebra replays the remote MACs it holds on every FPM connect, and after a
+ * restart of either side or a dropped connection that is the only way a MAC
+ * it withdrew meanwhile can be found out. Rows it does not send again go,
+ * whoever wrote them.
+ */
+class MacSyncStaleTest : public MacSyncLinkDelTest
+{
+public:
+    /* Rows an earlier fpmsyncd, or fdbsyncd in kernel mode, left in APPL_DB. */
+    void putRows(std::initializer_list<std::string> keys)
+    {
+        for (const auto& k : keys)
+        {
+            putRow(k, {{"remote_vtep", "10.1.1.1"}, {"type", "dynamic"}, {"vni", std::to_string(TEST_VNI)}});
+        }
+    }
+
+    /* A bgp warm restart timer unlike any settle rule interval. */
+    static constexpr time_t WARM_TIMER = 300;
+
+    std::chrono::steady_clock::time_point m_t0 = std::chrono::steady_clock::now();
+};
+
+constexpr time_t MacSyncStaleTest::WARM_TIMER;
+
+TEST_F(MacSyncStaleTest, ReconnectWithdrawsRowsZebraDoesNotSendAgain)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x03);
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_HOLD)), 0);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+}
+
+/* A row zebra withdraws during the replay is gone either way. */
+TEST_F(MacSyncStaleTest, DeleteDuringReplayStillWithdraws)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+
+    testing_db::resetOperationCounters();
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_HOLD)), 0);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+}
+
+/* The replay sends every MAC again; an unchanged row is not rewritten, so the
+ * ASIC entry is not removed and added back. */
+TEST_F(MacSyncStaleTest, UnchangedRowIsNotRewritten)
+{
+    putRows({key(100, 0x01)});
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+
+    m_macSync->withdrawStaleRemoteMacs();
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/* Outside a replay an add is written again even when unchanged. */
+TEST_F(MacSyncStaleTest, LiveAddRewritesTheRow)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* A MAC that moved to another VTEP while the connection was down is replaced. */
+TEST_F(MacSyncStaleTest, ChangedRowIsReplaced)
+{
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+    setLastOctet(req, 0x01);
+    req.ndm.ndm_ifindex = (int)VTEP_IFINDEX;
+    addVlan(req, 100);
+    addVtep(req, "10.2.2.2");
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+
+    m_macSync->withdrawStaleRemoteMacs();
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(key(100, 0x01), values));
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "10.2.2.2");
+}
+
+/* After a bgp restart the rows the old processes left in APPL_DB are
+ * reconciled against what the new zebra sends. */
+TEST_F(MacSyncStaleTest, RestartWithdrawsRowsTheNewZebraDoesNotSend)
+{
+    putRows({key(100, 0x01), key(100, 0x02)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x03);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(MacSync::STALE_SWEEP_HOLD)), 0);
+
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_FALSE(hasEntry(key(100, 0x02)));
+    EXPECT_TRUE(hasEntry(key(100, 0x03)));
+}
+
+/* A row orchagent has not read yet is not in APPL_DB, and is stale all the
+ * same: zebra may have withdrawn the MAC while the connection was down. */
+TEST_F(MacSyncStaleTest, RowOrchagentHasNotReadIsMarked)
+{
+    ASSERT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    unread(key(100, 0x01));
+
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    auto dels = rowDels();
+    m_macSync->withdrawStaleRemoteMacs();
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* A row MacSync withdrew is still in APPL_DB until orchagent reads the delete,
+ * so zebra's replay of the MAC writes it again instead of keeping it. */
+TEST_F(MacSyncStaleTest, WithdrawnRowOrchagentHasNotReadIsWrittenAgain)
+{
+    ASSERT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01, RTM_DELNEIGH);
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+}
+
+/* Each connect starts again from what APPL_DB holds. */
+TEST_F(MacSyncStaleTest, SecondConnectMarksTheRowsAgain)
+{
+    putRows({key(100, 0x01), key(100, 0x02)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.size(), 2u);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    m_macSync->withdrawStaleRemoteMacs();
+
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/* The sweep waits for zebra's replay, which runs behind its routes, to end. */
+TEST_F(MacSyncStaleTest, SweepWaitsForTheChannelToGoQuiet)
+{
+    using std::chrono::seconds;
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    auto hold = m_t0 + seconds(MacSync::STALE_SWEEP_HOLD);
+    m_macSync->noteFpmMessage(hold - seconds(1));
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(hold), MacSync::STALE_SWEEP_QUIET - 1);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(hold + seconds(MacSync::STALE_SWEEP_QUIET - 1)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/*
+ * The first remote MAC of a burst can be read in the same poll that returns
+ * the stale timer, before the main loop notes the FPM message: the channel is
+ * not quiet then.
+ */
+TEST_F(MacSyncStaleTest, FirstRemoteMacOfABurstIsNotQuiet)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    auto connect = std::chrono::steady_clock::now() - seconds(MacSync::STALE_SWEEP_HOLD + 5);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, connect));
+    m_macSync->noteFpmMessage(connect);
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    EXPECT_GT(m_macSync->onStaleSweepTimer(std::chrono::steady_clock::now()), 0);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* No remote MAC from zebra yet means the EVPN sessions are not up, however
+ * quiet the channel: the rows stay until the bound. */
+TEST_F(MacSyncStaleTest, SweepWaitsForARemoteMacFromZebra)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(MacSync::STALE_SWEEP_HOLD)),
+              MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(MacSync::STALE_SWEEP_MAX)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A channel that never goes quiet still gets its sweep. */
+TEST_F(MacSyncStaleTest, SweepRunsByTheBoundOnABusyChannel)
+{
+    using std::chrono::seconds;
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+
+    auto bound = m_t0 + seconds(MacSync::STALE_SWEEP_MAX);
+    m_macSync->noteFpmMessage(bound - seconds(1));
+    EXPECT_GT(m_macSync->onStaleSweepTimer(bound - seconds(1)), 0);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(bound), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* fpmsyncd re-arms eoiuCheckTimer (5 s, then 1 s) and macStaleTimer from their
+ * own expiry, while the periodic timer still runs. */
+TEST(RestartTimerTest, ReArmWhileRunningTakesTheNewInterval)
+{
+    SelectableTimer timer(timespec{0, 0});
+    timer.setInterval(timespec{5, 0});
+    timer.start();
+
+    restartTimer(timer, timespec{1, 0});
+
+    itimerspec armed;
+    ASSERT_EQ(timerfd_gettime(timer.getFd(), &armed), 0);
+    EXPECT_EQ(armed.it_interval.tv_sec, 1);
+    EXPECT_LE(armed.it_value.tv_sec, 1);
+
+    restartTimer(timer, timespec{3, 0});
+
+    ASSERT_EQ(timerfd_gettime(timer.getFd(), &armed), 0);
+    EXPECT_EQ(armed.it_interval.tv_sec, 3);
+    EXPECT_GE(armed.it_value.tv_sec, 2);
+    timer.stop();
+}
+
+/* Nothing in APPL_DB starts no sweep. */
+TEST_F(MacSyncStaleTest, EmptyTableMarksNothing)
+{
+    EXPECT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+}
+
+/* fdbsyncd owns APPL_DB in kernel mode, and nothing there is swept. */
+TEST_F(MacSyncStaleTest, KernelModeMarksNothing)
+{
+    putRows({key(100, 0x01)});
+    m_macSync->m_fpmMode = false;
+
+    EXPECT_FALSE(m_macSync->markRemoteMacsStale(0, m_t0));
+    m_macSync->withdrawStaleRemoteMacs();
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* With bgp warm restart off, a connect takes the settle rule. */
+TEST_F(MacSyncStaleTest, ColdStartTakesTheSettleRule)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(0, m_t0), MacSync::STALE_SWEEP_HOLD);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(MacSync::STALE_SWEEP_HOLD)),
+              MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/*
+ * In a warm start the rows zebra has not sent again go at the warm restart
+ * timer, however long BGP takes and whatever the channel does before then.
+ */
+TEST_F(MacSyncStaleTest, WarmStartWithdrawsAtTheWarmRestartTimer)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01), key(100, 0x02)});
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), WARM_TIMER);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    /* zebra has sent a MAC and the channel is quiet: the settle rule would sweep. */
+    auto settled = m_t0 + seconds(MacSync::STALE_SWEEP_HOLD + MacSync::STALE_SWEEP_QUIET);
+    m_macSync->noteFpmMessage(m_t0);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(settled), WARM_TIMER - MacSync::STALE_SWEEP_HOLD - MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+}
+
+/* No remote MAC from zebra by the warm restart timer: the rows go anyway. */
+TEST_F(MacSyncStaleTest, WarmStartNeedsNoRemoteMacFromZebra)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    m_macSync->noteFpmMessage(m_t0 + std::chrono::seconds(WARM_TIMER));
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* An FPM drop after the warm start's sweep has zebra still up: settle rule. */
+TEST_F(MacSyncStaleTest, ReconnectAfterTheWarmStartTakesTheSettleRule)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    ASSERT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(WARM_TIMER)), 0);
+
+    auto t1 = m_t0 + seconds(1000);
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, t1), MacSync::STALE_SWEEP_HOLD);
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(t1 + seconds(MacSync::STALE_SWEEP_HOLD)), MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(t1 + seconds(MacSync::STALE_SWEEP_MAX)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/* A warm start with nothing stale is over at once; a later connect settles. */
+TEST_F(MacSyncStaleTest, ReconnectAfterAnEmptyWarmStartTakesTheSettleRule)
+{
+    EXPECT_FALSE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), MacSync::STALE_SWEEP_HOLD);
+}
+
+/* An FPM drop before the warm start's sweep keeps the warm restart timer,
+ * counted again from the reconnect as the route reconcile is. */
+TEST_F(MacSyncStaleTest, ReconnectDuringTheWarmStartKeepsTheWarmRestartTimer)
+{
+    using std::chrono::seconds;
+
+    putRows({key(100, 0x01), key(100, 0x02)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    ASSERT_GT(m_macSync->onStaleSweepTimer(m_t0 + seconds(60)), 0);
+
+    auto t1 = m_t0 + seconds(60);
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, t1), WARM_TIMER);
+    EXPECT_EQ(m_macSync->m_staleRemoteMacs.size(), 2u);
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + seconds(WARM_TIMER)), 60);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(t1 + seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+    EXPECT_TRUE(hasEntry(key(100, 0x02)));
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, t1 + seconds(1000)), MacSync::STALE_SWEEP_HOLD);
+}
+
+/* A row still stale from the last connect, which zebra then replays unchanged,
+ * is not rewritten either. */
+TEST_F(MacSyncStaleTest, ReconnectKeepsARowStillStaleFromTheLastConnect)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    testing_db::resetOperationCounters();
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+}
+
+/* Guards the logic only: within a process checkAndStart() stays true once it
+ * returned true, unless restore_count goes missing from STATE_DB. */
+TEST_F(MacSyncStaleTest, ReconnectDuringTheWarmStartWithWarmRestartOffSettles)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(0, m_t0), MacSync::STALE_SWEEP_HOLD);
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), MacSync::STALE_SWEEP_HOLD);
+}
+
+/* bgp warm restart turned on after a cold start: an FPM drop still settles. */
+TEST_F(MacSyncStaleTest, ReconnectAfterAColdStartSettles)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_EQ(m_macSync->markRemoteMacsStale(0, m_t0), MacSync::STALE_SWEEP_HOLD);
+
+    EXPECT_EQ(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0), MacSync::STALE_SWEEP_HOLD);
+}
+
+/*
+ * With bgp_eoiu set the routes reconcile at the EOIU hold, which waits only
+ * for the unicast EORs; the remote MAC rows wait for the warm restart timer.
+ */
+TEST_F(MacSyncStaleTest, EoiuReconcileLeavesTheStaleRows)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(WARM_TIMER, m_t0));
+
+    auto dels = rowDels();
+    m_macSync->onWarmStartEnd();
+    EXPECT_EQ(rowDels(), dels);
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+
+    EXPECT_EQ(m_macSync->onStaleSweepTimer(m_t0 + std::chrono::seconds(WARM_TIMER)), 0);
+    EXPECT_FALSE(hasEntry(key(100, 0x01)));
+}
+
+/*
+ * fpmsyncd holds its shared pipeline during a warm restart, which an FPM
+ * reconnect also starts; MacSync's rows go through a pipeline of its own.
+ */
+TEST_F(MacSyncStaleTest, RemoteMacWritesUseTheirOwnPipeline)
+{
+    EXPECT_NE(&m_macSync->m_pipeline, m_pipeline.get());
+    EXPECT_NE(m_macSync->m_pipeline.getDBConnector(), m_pipeline->getDBConnector());
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    m_macSync->flush();
+    EXPECT_TRUE(hasEntry(key(100, 0x01)));
+}
+
+/* A replayed row that is not rewritten writes nothing. */
+TEST_F(MacSyncStaleTest, UnchangedReplayRowWritesNothing)
+{
+    putRows({key(100, 0x01)});
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0, m_t0));
+    testing_db::resetOperationCounters();
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x01);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(rowDels(), 0u);
+
+    addRemoteMac(VTEP_IFINDEX, 100, 0x02);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 1u);
+}
+
+/*
+ * bgpd does not send a route again when only its ESI changes, so a port's
+ * local MACs are reported to zebra again (delete, then add back) when the port
+ * joins or leaves an Ethernet Segment in a VLAN.
+ */
+class MacSyncEsReReportTest : public MacSyncTest
+{
+public:
+    void SetUp() override
+    {
+        MacSyncTest::SetUp();
+        m_macSync->m_ifNameToIndex = [](const std::string& name) -> unsigned int {
+            if (name == "PortChannel1")
+                return 101;
+            if (name == "Ethernet4")
+                return 102;
+            if (name == "Ethernet0")
+                return 21;
+            return 0;
+        };
+        m_macSync->onFpmConnected(m_fpm);
+        learn("Vlan100:00:11:22:33:44:01", "PortChannel1");
+        learn("Vlan100:00:11:22:33:44:02", "PortChannel1");
+        learn("Vlan100:00:11:22:33:44:03", "Ethernet4");
+        learn("Vlan200:00:11:22:33:44:04", "PortChannel1");
+        m_base = m_fpm.count();
+    }
+
+    void learn(const std::string& key, const std::string& port)
+    {
+        m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{key, SET_COMMAND,
+                                                               {{"port", port}, {"type", "dynamic"}}});
+    }
+
+    /* "add 01", "del 02", ... for what was sent since SetUp(). */
+    std::vector<std::string> sent()
+    {
+        std::vector<std::string> out;
+        for (size_t i = m_base; i < m_fpm.count(); i++)
+        {
+            const nlmsghdr *hdr = m_fpm.at(i);
+            const struct rtattr *lladdr = findAttr(hdr, NDA_LLADDR);
+            char octet[3];
+            snprintf(octet, sizeof(octet), "%02x", ((const uint8_t *)RTA_DATA(lladdr))[ETH_ALEN - 1]);
+            out.push_back(std::string(hdr->nlmsg_type == RTM_NEWNEIGH ? "add " : "del ") + octet);
+        }
+        return out;
+    }
+
+    std::chrono::steady_clock::time_point due()
+    {
+        return std::chrono::steady_clock::now() + std::chrono::milliseconds(2 * MacSync::ES_READD_DELAY_MS);
+    }
+
+    RecordingFpm m_fpm;
+    size_t m_base = 0;
+};
+
+TEST_F(MacSyncEsReReportTest, EsAttachReportsThePortsMacsAgain)
+{
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    EXPECT_EQ(sent(), (std::vector<std::string>{"del 01", "del 02"}));
+
+    m_macSync->processEsReAdd(std::chrono::steady_clock::now());
+    EXPECT_EQ(sent().size(), 2u);
+
+    m_macSync->processEsReAdd(due());
+    EXPECT_EQ(sent(), (std::vector<std::string>{"del 01", "del 02", "add 01", "add 02"}));
+    EXPECT_TRUE(m_macSync->m_esReAddPending.empty());
+}
+
+TEST_F(MacSyncEsReReportTest, EsRemovalReportsThePortsMacsAgain)
+{
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    m_macSync->processEsReAdd(due());
+    m_base = m_fpm.count();
+
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", false);
+    m_macSync->processEsReAdd(due());
+    EXPECT_EQ(sent(), (std::vector<std::string>{"del 01", "del 02", "add 01", "add 02"}));
+}
+
+/* A DF election or ES peer change rewrites a row that is already there. */
+TEST_F(MacSyncEsReReportTest, RowRewriteReportsNothing)
+{
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    m_base = m_fpm.count();
+
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    m_macSync->onEsPortVlan("Vlan300:PortChannel1", false);
+    EXPECT_TRUE(sent().empty());
+    m_macSync->processEsReAdd(due());
+    EXPECT_EQ(sent(), (std::vector<std::string>{"add 01", "add 02"}));
+}
+
+/* The rows zebra wrote before this daemon started are already known. */
+TEST_F(MacSyncEsReReportTest, RowsInAppDbAtStartAreKnown)
+{
+    Table df(m_appDb.get(), "EVPN_DF_TABLE");
+    df.set("Vlan100:PortChannel1", std::vector<FieldValueTuple>{{"df", "true"}});
+    MacSync restarted(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+    restarted.m_fpmMode = true;
+    RecordingFpm fpm;
+    restarted.onFpmConnected(fpm);
+    restarted.m_ifNameToIndex = m_macSync->m_ifNameToIndex;
+    restarted.processStateFdbEntry(KeyOpFieldsValuesTuple{"Vlan100:00:11:22:33:44:01", SET_COMMAND,
+                                                          {{"port", "PortChannel1"}, {"type", "dynamic"}}});
+
+    restarted.onEsPortVlan("Vlan100:PortChannel1", true);
+    EXPECT_EQ(fpm.count(), 1u);
+}
+
+/* At the end of a warm restart the keys the new zebra has not sent again are
+ * taken as gone: the segment coming back later is a change. */
+TEST_F(MacSyncEsReReportTest, WarmRestartForgetsRowsZebraDidNotSendAgain)
+{
+    Table df(m_appDb.get(), "EVPN_DF_TABLE");
+    df.set("Vlan100:PortChannel1", std::vector<FieldValueTuple>{{"df", "true"}});
+    df.set("Vlan200:PortChannel1", std::vector<FieldValueTuple>{{"df", "true"}});
+    MacSync restarted(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+    restarted.m_fpmMode = true;
+    RecordingFpm fpm;
+    restarted.onFpmConnected(fpm);
+    restarted.m_ifNameToIndex = m_macSync->m_ifNameToIndex;
+    restarted.processStateFdbEntry(KeyOpFieldsValuesTuple{"Vlan100:00:11:22:33:44:01", SET_COMMAND,
+                                                          {{"port", "PortChannel1"}, {"type", "dynamic"}}});
+    restarted.processStateFdbEntry(KeyOpFieldsValuesTuple{"Vlan200:00:11:22:33:44:04", SET_COMMAND,
+                                                          {{"port", "PortChannel1"}, {"type", "dynamic"}}});
+    ASSERT_EQ(fpm.count(), 2u);
+
+    restarted.onEsPortVlan("Vlan200:PortChannel1", true);
+    restarted.onWarmStartEnd();
+    EXPECT_EQ(fpm.count(), 2u);
+
+    restarted.onEsPortVlan("Vlan100:PortChannel1", true);
+    EXPECT_EQ(fpm.count(), 3u);
+    restarted.onEsPortVlan("Vlan200:PortChannel1", true);
+    EXPECT_EQ(fpm.count(), 3u);
+}
+
+/* An update of the MAC in the window reaches zebra itself; no re-add follows. */
+TEST_F(MacSyncEsReReportTest, UpdateInTheWindowCancelsTheReAdd)
+{
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{"Vlan100:00:11:22:33:44:01", DEL_COMMAND, {}});
+    m_macSync->processEsReAdd(due());
+
+    EXPECT_EQ(sent(), (std::vector<std::string>{"del 01", "del 02", "del 01", "add 02"}));
+}
+
+/* zebra stays up across a dropped FPM connection, so the re-add waits for the next one. */
+TEST_F(MacSyncEsReReportTest, ReAddWaitsForTheConnection)
+{
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    m_macSync->onFpmDisconnected();
+    m_macSync->processEsReAdd(due());
+    EXPECT_EQ(sent().size(), 2u);
+    EXPECT_EQ(m_macSync->m_esReAddPending.size(), 2u);
+
+    m_macSync->onFpmConnected(m_fpm);
+    m_macSync->processEsReAdd(due() + std::chrono::seconds(1));
+    EXPECT_EQ(sent(), (std::vector<std::string>{"del 01", "del 02", "add 01", "add 02"}));
+}
+
+/* fdbsyncd reports the local MACs in kernel mode. */
+TEST_F(MacSyncEsReReportTest, KernelModeReportsNothing)
+{
+    m_macSync->m_fpmMode = false;
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+    m_macSync->processEsReAdd(due());
+
+    EXPECT_TRUE(sent().empty());
+}
+
+/* The EVPN_DF_TABLE row zebra sends for the port reaches MacSync through RouteSync. */
+TEST_F(MacSyncEsReReportTest, DfMessageReachesMacSync)
+{
+    learn("Vlan10:00:11:22:33:44:05", "Ethernet0");
+    m_base = m_fpm.count();
+
+    struct
+    {
+        struct nlmsghdr n;
+        struct evpn_df_msg df;
+    } msg{};
+    msg.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct evpn_df_msg));
+    msg.n.nlmsg_type = RTM_FPM_ADD_EVPN_DF;
+    msg.df.edm_ifindex = 21;
+    msg.df.edm_vid = 10;
+    m_routeSync->onMsgRaw(&msg.n);
+
+    EXPECT_EQ(sent(), (std::vector<std::string>{"del 05"}));
+}
+
+/*
+ * zebra answers the re-report's delete of a MAC an ES peer also advertises by
+ * sending the MAC as remote (on the segment's next hop group), and keeps it
+ * after the sessions close. Written, the row replaces the hardware's local
+ * entry and its STATE_DB delete cancels the re-add, so the MAC stays remote.
+ */
+class MacSyncEsHeldRowTest : public MacSyncEsReReportTest
+{
+public:
+    static constexpr int VXLAN_IFINDEX = 50;
+
+    void SetUp() override
+    {
+        MacSyncEsReReportTest::SetUp();
+        m_macSync->m_ifIndexToName = [](unsigned int ifindex) {
+            return ifindex == VXLAN_IFINDEX ? std::string("vtep1-100") : std::string();
+        };
+        learn(TEST_KEY, "PortChannel1");
+        m_macSync->onEsPortVlan("Vlan100:PortChannel1", true);
+        m_macSync->processEsReAdd(due());
+        m_macSync->m_esReAddGrace.clear();
+        m_base = m_fpm.count();
+    }
+
+    /* zebra's remote MAC on VXLAN_IFINDEX: on the ES group, or with vtep on a VTEP. */
+    void zebraSendsRemote(uint16_t type = RTM_NEWNEIGH, const char *vtep = nullptr,
+                          uint16_t state = NUD_REACHABLE)
+    {
+        MacMsg req;
+        buildMacMsg(req, type, state);
+        req.ndm.ndm_ifindex = VXLAN_IFINDEX;
+        addSrcVni(req, TEST_VNI);
+        if (vtep)
+        {
+            addVtep(req, vtep);
+        }
+        else
+        {
+            addNhgId(req, 536870916);
+        }
+        feed(req);
+    }
+
+    void esChange()
+    {
+        m_macSync->onEsPortVlan("Vlan100:PortChannel1", false);
+        m_base = m_fpm.count();
+    }
+
+    bool hasRow()
+    {
+        std::vector<FieldValueTuple> values;
+        return getEntry(TEST_KEY, values);
+    }
+
+    std::string rowField(const std::string& field)
+    {
+        std::vector<FieldValueTuple> values;
+        getEntry(TEST_KEY, values);
+        return fieldValue(values, field);
+    }
+
+    std::vector<std::string> sentFor55()
+    {
+        std::vector<std::string> out;
+        for (const auto& s : sent())
+        {
+            if (s.compare(s.size() - 2, 2, "55") == 0)
+            {
+                out.push_back(s);
+            }
+        }
+        return out;
+    }
+};
+
+constexpr int MacSyncEsHeldRowTest::VXLAN_IFINDEX;
+
+TEST_F(MacSyncEsHeldRowTest, ReAddFiresAndZebrasHeldRowIsNeverWritten)
+{
+    m_macSync->onEsPortVlan("Vlan100:PortChannel1", false);
+    EXPECT_EQ(sentFor55(), (std::vector<std::string>{"del 55"}));
+
+    zebraSendsRemote();
+    EXPECT_FALSE(hasRow());
+
+    m_macSync->processEsReAdd(due());
+    EXPECT_EQ(sentFor55(), (std::vector<std::string>{"del 55", "add 55"}));
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+    EXPECT_EQ(m_macSync->m_localMacs.count(TEST_KEY), 1u);
+}
+
+/* zebra's answer can be read after the re-add went out. */
+TEST_F(MacSyncEsHeldRowTest, AnswerReadAfterTheReAddIsDropped)
+{
+    esChange();
+    m_macSync->processEsReAdd(due());
+    zebraSendsRemote();
+    EXPECT_FALSE(hasRow());
+
+    m_macSync->m_esReAddGrace[TEST_KEY] = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+    zebraSendsRemote();
+    EXPECT_EQ(rowField("nexthop_group"), "536870916");
+}
+
+TEST_F(MacSyncEsHeldRowTest, StateDbDeleteInTheWindowWritesTheHeldRow)
+{
+    esChange();
+    zebraSendsRemote();
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    EXPECT_EQ(rowField("nexthop_group"), "536870916");
+
+    m_macSync->processEsReAdd(due());
+    EXPECT_EQ(sentFor55(), (std::vector<std::string>{"del 55"}));
+    EXPECT_TRUE(hasRow());
+
+    zebraSendsRemote(RTM_DELNEIGH);
+    EXPECT_FALSE(hasRow());
+}
+
+TEST_F(MacSyncEsHeldRowTest, StateDbAddInTheWindowDropsTheHeldRow)
+{
+    esChange();
+    zebraSendsRemote();
+    learn(TEST_KEY, "PortChannel1");
+    m_macSync->processEsReAdd(due());
+
+    EXPECT_EQ(sentFor55(), (std::vector<std::string>{"add 55"}));
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+}
+
+/* An update the daemon cannot use leaves the re-add and the held row as they are. */
+TEST_F(MacSyncEsHeldRowTest, MalformedStateDbAddKeepsTheReAdd)
+{
+    esChange();
+    zebraSendsRemote();
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, SET_COMMAND, {{"type", "dynamic"}}});
+
+    EXPECT_EQ(m_macSync->m_esReAddPending.count(TEST_KEY), 1u);
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(TEST_KEY), 1u);
+}
+
+TEST_F(MacSyncEsHeldRowTest, ZebraDeleteInTheWindowDropsTheHeldRow)
+{
+    esChange();
+    zebraSendsRemote();
+    zebraSendsRemote(RTM_DELNEIGH);
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+}
+
+/* A move to a single-homed VTEP is no answer to the re-report. */
+TEST_F(MacSyncEsHeldRowTest, MoveToAVtepInTheWindowIsWritten)
+{
+    esChange();
+    zebraSendsRemote(RTM_NEWNEIGH, "10.0.0.9");
+    EXPECT_EQ(rowField("remote_vtep"), "10.0.0.9");
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+}
+
+/* FdbOrch keeps a provisioned local MAC over a sticky remote one either way. */
+TEST_F(MacSyncEsHeldRowTest, StickyAnswerIsWritten)
+{
+    esChange();
+    zebraSendsRemote(RTM_NEWNEIGH, nullptr, NUD_REACHABLE | NUD_NOARP);
+    EXPECT_EQ(rowField("type"), "static");
+}
+
+TEST_F(MacSyncEsHeldRowTest, RowAlreadyThereGoesWhenTheAnswerIsHeld)
+{
+    zebraSendsRemote(RTM_NEWNEIGH, "10.0.0.9");
+    ASSERT_TRUE(hasRow());
+
+    esChange();
+    zebraSendsRemote();
+    EXPECT_FALSE(hasRow());
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(TEST_KEY), 1u);
+}
+
+TEST_F(MacSyncEsHeldRowTest, EsPortRowInTheWindowReplacesTheHeldRow)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("lo", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+    unsigned int lo = if_nametoindex("lo");
+    m_macSync->m_ifIndexToName = [lo](unsigned int ifindex) {
+        return ifindex == lo ? std::string("lo") : std::string();
+    };
+
+    esChange();
+    zebraSendsRemote();
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE | NUD_NOARP);
+    req.ndm.ndm_ifindex = (int)lo;
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+
+    EXPECT_EQ(rowField("ifname"), "lo");
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+    cfgEs.del("lo");
+}
+
+/* zebra sends its remote MACs again on the next connect. */
+TEST_F(MacSyncEsHeldRowTest, DisconnectDropsTheHeldRow)
+{
+    esChange();
+    zebraSendsRemote();
+    m_macSync->onFpmDisconnected();
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+}
+
+TEST_F(MacSyncEsHeldRowTest, LinkDeleteDropsTheHeldRow)
+{
+    esChange();
+    zebraSendsRemote();
+    m_macSync->onVxlanLinkDel("vtep1-100");
+    m_macSync->m_ifIndexToName = [](unsigned int) { return std::string(); };
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_esReAddDeferred.empty());
+}
+
+/* With no re-add sent, zebra keeps the MAC it answered with. */
+TEST_F(MacSyncEsHeldRowTest, ReAddNotSentWritesTheHeldRow)
+{
+    esChange();
+    zebraSendsRemote();
+    m_macSync->m_ifNameToIndex = [](const std::string&) -> unsigned int { return 0; };
+    m_macSync->processEsReAdd(due());
+
+    EXPECT_TRUE(sentFor55().empty());
+    EXPECT_EQ(rowField("nexthop_group"), "536870916");
+}
+
+/* With no re-add pending, zebra's answer is written at once. */
+TEST_F(MacSyncEsHeldRowTest, RemoteMacOutsideTheWindowIsWritten)
+{
+    zebraSendsRemote();
+    EXPECT_EQ(rowField("nexthop_group"), "536870916");
+}
+
+/*
+ * A local learn replaces a remote MAC in the kernel bridge, so zebra sends no
+ * delete for the remote one: the row goes when the MAC is learnt locally.
+ */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesTheRemoteRow)
+{
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    zebraSendsRemote();
+    ASSERT_TRUE(hasRow());
+
+    auto dels = rowDels();
+    learn(TEST_KEY, "PortChannel1");
+    EXPECT_FALSE(hasRow());
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* The row goes whoever wrote it. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesARowItDidNotWrite)
+{
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    Table appFdb(m_appDb.get(), APP_VXLAN_FDB_TABLE_NAME);
+    appFdb.set(TEST_KEY, std::vector<FieldValueTuple>{{"remote_vtep", "10.1.1.1"},
+                                                      {"type", "dynamic"},
+                                                      {"vni", std::to_string(TEST_VNI)}});
+    /* As the connect finds it. */
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+
+    learn(TEST_KEY, "PortChannel1");
+    EXPECT_FALSE(hasRow());
+    EXPECT_TRUE(m_macSync->m_staleRemoteMacs.empty());
+}
+
+/* A row orchagent has not read yet is not in APPL_DB, and goes all the same. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnRemovesARowOrchagentHasNotRead)
+{
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, DEL_COMMAND, {}});
+    zebraSendsRemote();
+    unread(TEST_KEY);
+    auto dels = rowDels();
+
+    learn(TEST_KEY, "PortChannel1");
+    EXPECT_EQ(rowDels(), dels + 1);
+}
+
+/* A local learn with no remote row for the MAC reads nothing from APPL_DB. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnDoesNotReadAppDb)
+{
+    testing_db::resetOperationCounters();
+    learn("Vlan100:00:11:22:33:44:66", "PortChannel1");
+    learn("Vlan100:00:11:22:33:44:67", "PortChannel1");
+
+    EXPECT_EQ(testing_db::getGetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getGetKeysCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+}
+
+/* With no remote row, a local learn writes nothing to APPL_DB. */
+TEST_F(MacSyncEsHeldRowTest, LocalLearnWithoutARemoteRowWritesNothing)
+{
+    testing_db::resetOperationCounters();
+    learn("Vlan100:00:11:22:33:44:66", "PortChannel1");
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+}
+
+/* A row on an Ethernet Segment port is the module's to withdraw. */
+TEST_F(MacSyncTest, LocalLearnKeepsAnEthernetSegmentPortRow)
+{
+    Table cfgEs(m_cfgDb.get(), "EVPN_ETHERNET_SEGMENT");
+    cfgEs.set("lo", std::vector<FieldValueTuple>{{"esi", "AUTO"}});
+    RecordingFpm fpm;
+    m_macSync->onFpmConnected(fpm);
+
+    MacMsg req;
+    buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE | NUD_NOARP);
+    req.ndm.ndm_ifindex = (int)if_nametoindex("lo");
+    addVlan(req, TEST_VLAN);
+    addSrcVni(req, TEST_VNI);
+    feed(req);
+    m_macSync->processStateFdbEntry(KeyOpFieldsValuesTuple{TEST_KEY, SET_COMMAND,
+                                                           {{"port", "lo"}, {"type", "dynamic"}}});
+
+    std::vector<FieldValueTuple> values;
+    EXPECT_TRUE(getEntry(TEST_KEY, values));
+    EXPECT_EQ(fieldValue(values, "ifname"), "lo");
+
+    cfgEs.del("lo");
+}
+
+/*
+ * zebra programs an Ethernet Segment's L2 nexthop group straight into the
+ * kernel, and deleting it there flushes the kernel FDB entries on it. A MAC
+ * zebra frees on the group without a delete of its own must lose its row the
+ * same way, or the row and the group stay in the ASIC.
+ */
+class MacSyncNhgFlushTest : public MacSyncTest
+{
+public:
+    static constexpr int VXLAN_IFINDEX = 50;
+    static constexpr uint32_t ES_NHG = 536870916;
+    static constexpr uint32_t OTHER_NHG = 536870917;
+    static constexpr uint32_t VTEP_NH = 11;
+
+    void SetUp() override
+    {
+        MacSyncTest::SetUp();
+        m_macSync->m_ifIndexToName = [](unsigned int ifindex) {
+            return ifindex == VXLAN_IFINDEX ? std::string("vtep1-100") : std::string();
+        };
+        m_realNexthopState = m_macSync->m_kernelNexthopState;
+        m_macSync->m_kernelNexthopState = [this](uint32_t id) {
+            auto it = m_kernelIds.find(id);
+            if (it == m_kernelIds.end())
+            {
+                return MacSync::NexthopState::Absent;
+            }
+            return it->second ? MacSync::NexthopState::Fdb : MacSync::NexthopState::Absent;
+        };
+    }
+
+    /* The ids the kernel holds, and whether each is an FDB nexthop, as
+     * RTM_GETNEXTHOP would answer. */
+    std::map<uint32_t, bool> m_kernelIds;
+    std::function<MacSync::NexthopState(uint32_t)> m_realNexthopState;
+
+    struct NhMsg
+    {
+        struct nlmsghdr n;
+        struct nhmsg nhm;
+        char buf[256];
+    };
+
+    void addNhAttr(NhMsg& req, int type, const void *data, size_t alen)
+    {
+        size_t len = RTA_LENGTH(alen);
+        struct rtattr *rta =
+            (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(req.n.nlmsg_len));
+        rta->rta_type = (unsigned short)type;
+        rta->rta_len = (unsigned short)len;
+        if (alen)
+        {
+            memcpy(RTA_DATA(rta), data, alen);
+        }
+        req.n.nlmsg_len = (uint32_t)(NLMSG_ALIGN(req.n.nlmsg_len) + RTA_ALIGN(len));
+    }
+
+    /* A kernel nexthop change and its notification; members make it a group. */
+    void kernelNh(uint16_t type, uint32_t id, bool fdb = true, std::vector<uint32_t> members = {VTEP_NH})
+    {
+        if (type == RTM_NEWNEXTHOP)
+        {
+            m_kernelIds[id] = fdb;
+        }
+        else
+        {
+            m_kernelIds.erase(id);
+        }
+
+        NhMsg req;
+        memset(&req, 0, sizeof(req));
+        req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+        req.n.nlmsg_type = type;
+        req.nhm.nh_family = AF_UNSPEC;
+        addNhAttr(req, NHA_ID, &id, sizeof(id));
+        if (!members.empty())
+        {
+            std::vector<struct nexthop_grp> grp(members.size());
+            for (size_t i = 0; i < members.size(); i++)
+            {
+                memset(&grp[i], 0, sizeof(grp[i]));
+                grp[i].id = members[i];
+            }
+            addNhAttr(req, NHA_GROUP, grp.data(), grp.size() * sizeof(struct nexthop_grp));
+        }
+        if (fdb)
+        {
+            addNhAttr(req, NHA_FDB, nullptr, 0);
+        }
+        m_macSync->onKernelNexthop(&req.n);
+    }
+
+    /* zebra's remote MAC for the MAC whose last byte is last, on a group or a VTEP. */
+    void remote(uint8_t last, uint32_t nhg, const char *vtep = nullptr)
+    {
+        MacMsg req;
+        buildMacMsg(req, RTM_NEWNEIGH, NUD_REACHABLE);
+        struct rtattr *lladdr =
+            (struct rtattr *)(void *)(((char *)&req.n) + NLMSG_ALIGN(NLMSG_LENGTH(sizeof(struct ndmsg))));
+        ((uint8_t *)RTA_DATA(lladdr))[ETH_ALEN - 1] = last;
+        req.ndm.ndm_ifindex = VXLAN_IFINDEX;
+        addSrcVni(req, TEST_VNI);
+        if (vtep)
+        {
+            addVtep(req, vtep);
+        }
+        else
+        {
+            addNhgId(req, nhg);
+        }
+        feed(req);
+    }
+
+    static std::string key(uint8_t last)
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "Vlan100:00:11:22:33:44:%02x", last);
+        return buf;
+    }
+
+    bool hasRow(uint8_t last)
+    {
+        std::vector<FieldValueTuple> values;
+        return getEntry(key(last), values);
+    }
+
+    static std::chrono::steady_clock::time_point due()
+    {
+        return std::chrono::steady_clock::now() +
+               std::chrono::milliseconds(MacSync::NHG_FLUSH_DELAY_MS + 1000);
+    }
+};
+
+constexpr int MacSyncNhgFlushTest::VXLAN_IFINDEX;
+constexpr uint32_t MacSyncNhgFlushTest::ES_NHG;
+constexpr uint32_t MacSyncNhgFlushTest::OTHER_NHG;
+constexpr uint32_t MacSyncNhgFlushTest::VTEP_NH;
+
+TEST_F(MacSyncNhgFlushTest, GroupDeleteWithdrawsItsRows)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    ASSERT_TRUE(hasRow(0x55));
+
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(std::chrono::steady_clock::now());
+    EXPECT_TRUE(hasRow(0x55));
+
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_EQ(m_macSync->m_remoteRows.count(key(0x55)), 0u);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* A MAC zebra sent before its group's delete is read after the flush when the
+ * FPM channel lags; the kernel has no such group, so it is not written. */
+TEST_F(MacSyncNhgFlushTest, MacReadAfterItsGroupWentIsDropped)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+
+    remote(0x55, ES_NHG);
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* zebra's MACs on a group it deleted arrive back to back; the kernel is asked
+ * once for the burst, not once per MAC. */
+TEST_F(MacSyncNhgFlushTest, BurstOnAGoneGroupAsksTheKernelOnce)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+
+    int asked = 0;
+    auto kernel = m_macSync->m_kernelNexthopState;
+    m_macSync->m_kernelNexthopState = [&asked, kernel](uint32_t id) {
+        asked++;
+        return kernel(id);
+    };
+
+    for (uint8_t last = 0x50; last < 0x60; last++)
+    {
+        remote(last, ES_NHG);
+        EXPECT_FALSE(hasRow(last));
+    }
+    EXPECT_EQ(asked, 1);
+}
+
+/* The answer stands only for the burst: a creation that was not read is found
+ * by the next lookup. */
+TEST_F(MacSyncNhgFlushTest, AnswerThatAGroupIsGoneExpires)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    ASSERT_FALSE(hasRow(0x55));
+    ASSERT_EQ(m_macSync->m_deletedNhgs.count(ES_NHG), 1u);
+
+    m_kernelIds[ES_NHG] = true;
+    m_macSync->m_deletedNhgs[ES_NHG] = std::chrono::steady_clock::now() - std::chrono::milliseconds(1);
+    remote(0x56, ES_NHG);
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(m_macSync->m_deletedNhgs.empty());
+}
+
+/* A creation read from the kernel ends the answer at once. */
+TEST_F(MacSyncNhgFlushTest, CreationEndsTheAnswerThatTheGroupIsGone)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    ASSERT_FALSE(hasRow(0x55));
+
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x56, ES_NHG);
+    EXPECT_TRUE(hasRow(0x56));
+}
+
+/* The rows are found by their group, which follows each rewrite and withdrawal. */
+TEST_F(MacSyncNhgFlushTest, RowsAreIndexedByTheirGroup)
+{
+    remote(0x55, ES_NHG);
+    remote(0x56, ES_NHG);
+    ASSERT_EQ(m_macSync->m_rowsByGroup[ES_NHG].size(), 2u);
+
+    remote(0x55, OTHER_NHG);
+    EXPECT_EQ(m_macSync->m_rowsByGroup[ES_NHG], std::set<std::string>{key(0x56)});
+    EXPECT_EQ(m_macSync->m_rowsByGroup[OTHER_NHG], std::set<std::string>{key(0x55)});
+
+    remote(0x55, 0, "10.0.0.2");
+    remote(0x56, 0, "10.0.0.2");
+    EXPECT_TRUE(m_macSync->m_rowsByGroup.empty());
+    EXPECT_EQ(m_macSync->m_remoteRows[key(0x55)].group, 0u);
+
+    remote(0x57, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x57));
+    EXPECT_TRUE(m_macSync->m_rowsByGroup.empty());
+}
+
+/* A creation that was not read: the kernel has the group again. */
+TEST_F(MacSyncNhgFlushTest, MacOnAGroupTheKernelHasAgainIsWritten)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+
+    remote(0x55, ES_NHG);
+    EXPECT_TRUE(hasRow(0x55));
+    EXPECT_TRUE(m_macSync->m_deletedNhgs.empty());
+}
+
+/* A group the daemon never saw created still flushes on its own delete. */
+TEST_F(MacSyncNhgFlushTest, UnseenGroupDeleteWithdrawsItsRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* The kernel notifies the group's own delete when its last member goes. */
+TEST_F(MacSyncNhgFlushTest, MemberDeleteAloneKeepsTheRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, VTEP_NH, true, {});
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+/* A group created again with the same id: what zebra sends for it stays, and
+ * the rows it does not send again went with the deleted group. */
+TEST_F(MacSyncNhgFlushTest, RecreatedGroupKeepsOnlyTheRowsSentAgain)
+{
+    remote(0x55, ES_NHG);
+    remote(0x56, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    /* Sent before the creation: on the old group, whose kernel entry is gone. */
+    remote(0x58, ES_NHG);
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x56, ES_NHG);
+    remote(0x57, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_FALSE(hasRow(0x58));
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(hasRow(0x57));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* A creation still queued at the flush is read first. */
+TEST_F(MacSyncNhgFlushTest, FlushReadsQueuedKernelMessagesFirst)
+{
+    int asked = 0;
+    m_macSync->m_kernelNexthopState = [&asked](uint32_t) {
+        asked++;
+        return MacSync::NexthopState::Fdb;
+    };
+    std::vector<std::pair<uint16_t, uint32_t>> queued;
+    m_macSync->setKernelNexthopReader([this, &queued]() {
+        auto events = std::move(queued);
+        queued.clear();
+        for (const auto& event : events)
+        {
+            kernelNh(event.first, event.second);
+        }
+    });
+
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    queued = {{RTM_NEWNEXTHOP, ES_NHG}};
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(queued.empty());
+    EXPECT_EQ(asked, 0);
+    EXPECT_FALSE(hasRow(0x55));
+    m_macSync->setKernelNexthopReader(nullptr);
+}
+
+/* With the group gone, a row sent after the delete names nothing either. */
+TEST_F(MacSyncNhgFlushTest, LateRowOnAGoneGroupIsWithdrawn)
+{
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* zebra sends MACs on a group only after it creates the group in the kernel,
+ * so the kernel messages queued when an FPM MAC message is read come first. */
+TEST_F(MacSyncNhgFlushTest, QueuedKernelMessagesAreReadBeforeAMac)
+{
+    std::vector<std::pair<uint16_t, uint32_t>> queued;
+    m_macSync->setKernelNexthopReader([this, &queued]() {
+        auto events = std::move(queued);
+        queued.clear();
+        for (const auto& event : events)
+        {
+            kernelNh(event.first, event.second);
+        }
+    });
+
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    queued = {{RTM_DELNEXTHOP, ES_NHG}, {RTM_NEWNEXTHOP, ES_NHG}};
+    remote(0x56, ES_NHG);
+    EXPECT_TRUE(queued.empty());
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_TRUE(hasRow(0x56));
+    m_macSync->setKernelNexthopReader(nullptr);
+}
+
+/* A later delete of the new group takes the rows sent for it too. */
+TEST_F(MacSyncNhgFlushTest, SecondDeleteWithdrawsTheNewGroupsRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x56, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_FALSE(hasRow(0x56));
+}
+
+/* Routing and FDB nexthops share the ids: a routing nexthop that takes the id
+ * neither keeps the rows nor counts as the group created again. */
+TEST_F(MacSyncNhgFlushTest, RoutingNexthopOnTheIdDoesNotKeepTheRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG, false);
+    EXPECT_FALSE(m_macSync->m_nhgFlushPending.begin()->second.recreated);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* The kernel has a group under the id, but its creation was never read: the
+ * rows sent before the delete went with the old group, later ones stay. */
+TEST_F(MacSyncNhgFlushTest, GroupPresentWithoutItsCreationKeepsTheLaterRows)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+    remote(0x56, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* zebra programs the group before it re-installs the MACs over FPM, so the
+ * re-install can be read before the kernel's RTM_NEWNEXTHOP, or that is lost. */
+TEST_F(MacSyncNhgFlushTest, UnreadRecreationKeepsTheReinstalledRows)
+{
+    kernelNh(RTM_NEWNEXTHOP, ES_NHG);
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+    remote(0x55, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* An unclear answer is asked again, and the rows are kept once the tries run out. */
+TEST_F(MacSyncNhgFlushTest, UnknownKernelAnswerKeepsTheRows)
+{
+    int asked = 0;
+    m_macSync->m_kernelNexthopState = [&asked](uint32_t) {
+        asked++;
+        return MacSync::NexthopState::Unknown;
+    };
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    for (int i = 0; i < MacSync::NHG_FLUSH_TRIES; i++)
+    {
+        ASSERT_EQ(m_macSync->m_nhgFlushPending.size(), 1u);
+        m_macSync->processNhgFlush(m_macSync->m_nhgFlushPending.begin()->second.due);
+        EXPECT_TRUE(hasRow(0x55));
+    }
+    EXPECT_EQ(asked, MacSync::NHG_FLUSH_TRIES);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+TEST_F(MacSyncNhgFlushTest, UnknownKernelAnswerIsAskedAgain)
+{
+    auto answer = MacSync::NexthopState::Unknown;
+    m_macSync->m_kernelNexthopState = [&answer](uint32_t) { return answer; };
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+    ASSERT_EQ(m_macSync->m_nhgFlushPending.size(), 1u);
+
+    answer = MacSync::NexthopState::Absent;
+    m_macSync->processNhgFlush(m_macSync->m_nhgFlushPending.begin()->second.due);
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+/* A row zebra moved off the group before its delete is not the group's. */
+TEST_F(MacSyncNhgFlushTest, RowMovedOffTheGroupStays)
+{
+    remote(0x55, ES_NHG);
+    remote(0x55, 0, "10.0.0.2");
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+
+    std::vector<FieldValueTuple> values;
+    ASSERT_TRUE(getEntry(key(0x55), values));
+    EXPECT_EQ(fieldValue(values, "remote_vtep"), "10.0.0.2");
+}
+
+/* A row an earlier fpmsyncd wrote that zebra replays unchanged is not
+ * rewritten, and is on the group as much as a new one. */
+TEST_F(MacSyncNhgFlushTest, UnchangedReplayRowIsOnTheGroup)
+{
+    remote(0x55, ES_NHG);
+    m_macSync->m_remoteRows.clear();
+    m_macSync->m_rowsByGroup.clear();
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    testing_db::resetOperationCounters();
+    remote(0x55, ES_NHG);
+    ASSERT_EQ(testing_db::getProducerSetCount(APP_VXLAN_FDB_TABLE_NAME), 0u);
+
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+}
+
+TEST_F(MacSyncNhgFlushTest, OnlyTheDeletedGroupsRowsGo)
+{
+    kernelNh(RTM_NEWNEXTHOP, OTHER_NHG);
+    remote(0x55, ES_NHG);
+    remote(0x56, OTHER_NHG);
+    remote(0x57, 0, "10.0.0.2");
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_TRUE(hasRow(0x56));
+    EXPECT_TRUE(hasRow(0x57));
+}
+
+/* Deletes read close together go in one pass. */
+TEST_F(MacSyncNhgFlushTest, DeletesCloseTogetherFlushTogether)
+{
+    remote(0x55, ES_NHG);
+    remote(0x56, OTHER_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, OTHER_NHG);
+    m_macSync->processNhgFlush(m_macSync->m_nhgFlushPending.begin()->second.due);
+    EXPECT_FALSE(hasRow(0x55));
+    EXPECT_FALSE(hasRow(0x56));
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+TEST_F(MacSyncNhgFlushTest, RoutingNexthopDeleteIsIgnored)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG, false);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG, false, {});
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+/* Rows from before a reconnect carry the old zebra's ids; the stale sweep has them. */
+TEST_F(MacSyncNhgFlushTest, StaleRowIsLeftToTheSweep)
+{
+    remote(0x55, ES_NHG);
+    ASSERT_TRUE(m_macSync->markRemoteMacsStale(0));
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+TEST_F(MacSyncNhgFlushTest, HeldRowOnTheGroupIsDropped)
+{
+    MacSync::HeldRow held{VXLAN_IFINDEX, {{"nexthop_group", std::to_string(ES_NHG)}, {"type", "dynamic"}}};
+    m_macSync->m_esReAddDeferred.emplace(key(0x55), held);
+    MacSync::HeldRow other{VXLAN_IFINDEX, {{"nexthop_group", std::to_string(OTHER_NHG)}, {"type", "dynamic"}}};
+    m_macSync->m_esReAddDeferred.emplace(key(0x56), other);
+
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->processNhgFlush(due());
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(key(0x55)), 0u);
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(key(0x56)), 1u);
+}
+
+TEST_F(MacSyncNhgFlushTest, HeldRowOnALiveGroupIsKept)
+{
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_kernelIds[ES_NHG] = true;
+    MacSync::HeldRow held{VXLAN_IFINDEX, {{"nexthop_group", std::to_string(ES_NHG)}, {"type", "dynamic"}},
+                          ++m_macSync->m_remoteMacSeq};
+    m_macSync->m_esReAddDeferred.emplace(key(0x55), held);
+    m_macSync->processNhgFlush(due());
+    EXPECT_EQ(m_macSync->m_esReAddDeferred.count(key(0x55)), 1u);
+}
+
+TEST_F(MacSyncNhgFlushTest, DisconnectCancelsTheFlush)
+{
+    remote(0x55, ES_NHG);
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    m_macSync->onFpmDisconnected();
+    m_macSync->processNhgFlush(due());
+    EXPECT_TRUE(hasRow(0x55));
+}
+
+TEST_F(MacSyncNhgFlushTest, KernelModeIgnoresNexthops)
+{
+    remote(0x55, ES_NHG);
+    m_macSync->m_fpmMode = false;
+    kernelNh(RTM_DELNEXTHOP, ES_NHG);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+TEST_F(MacSyncNhgFlushTest, TruncatedMessageIsIgnored)
+{
+    remote(0x55, ES_NHG);
+    NhMsg req;
+    memset(&req, 0, sizeof(req));
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg)) - 1;
+    req.n.nlmsg_type = RTM_DELNEXTHOP;
+    m_macSync->onKernelNexthop(&req.n);
+
+    uint32_t id = ES_NHG;
+    struct nexthop_grp grp;
+    memset(&grp, 0, sizeof(grp));
+    grp.id = VTEP_NH;
+    req.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+    addNhAttr(req, NHA_ID, &id, 2);
+    addNhAttr(req, NHA_GROUP, &grp, sizeof(grp));
+    addNhAttr(req, NHA_FDB, nullptr, 0);
+    m_macSync->onKernelNexthop(&req.n);
+    EXPECT_TRUE(m_macSync->m_nhgFlushPending.empty());
+}
+
+/* The kernel's answers to RTM_GETNEXTHOP. */
+TEST_F(MacSyncNhgFlushTest, NexthopReplyIsParsed)
+{
+    struct
+    {
+        struct nlmsghdr n;
+        struct nlmsgerr err;
+    } nack;
+    auto error = [&nack](int code, uint32_t seq) {
+        memset(&nack, 0, sizeof(nack));
+        nack.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nlmsgerr));
+        nack.n.nlmsg_type = NLMSG_ERROR;
+        nack.n.nlmsg_seq = seq;
+        nack.err.error = code;
+    };
+    MacSync::NexthopState state = MacSync::NexthopState::Fdb;
+
+    error(-ENOENT, 1);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
+
+    error(-EPERM, 1);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Unknown);
+
+    error(0, 1);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Unknown);
+
+    error(-ENOENT, 2);
+    state = MacSync::NexthopState::Fdb;
+    EXPECT_FALSE(MacSync::parseNexthopReply((char *)&nack, sizeof(nack), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Fdb);
+
+    /* Another request's answer, then this one's. */
+    struct
+    {
+        decltype(nack) other;
+        decltype(nack) mine;
+    } both;
+    error(-EPERM, 2);
+    both.other = nack;
+    error(-ENOENT, 1);
+    both.mine = nack;
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&both, sizeof(both), 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
+
+    auto reply = [this](bool fdb) {
+        NhMsg msg;
+        memset(&msg, 0, sizeof(msg));
+        msg.n.nlmsg_len = NLMSG_LENGTH(sizeof(struct nhmsg));
+        msg.n.nlmsg_type = RTM_NEWNEXTHOP;
+        msg.n.nlmsg_seq = 1;
+        uint32_t id = ES_NHG;
+        addNhAttr(msg, NHA_ID, &id, sizeof(id));
+        if (fdb)
+        {
+            addNhAttr(msg, NHA_FDB, nullptr, 0);
+        }
+        return msg;
+    };
+    NhMsg msg = reply(true);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&msg, msg.n.nlmsg_len, 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Fdb);
+
+    msg = reply(false);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&msg, msg.n.nlmsg_len, 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
+
+    /* An attribute cut short. */
+    msg = reply(true);
+    struct rtattr *last = (struct rtattr *)(void *)((char *)&msg.n + msg.n.nlmsg_len - RTA_LENGTH(0));
+    last->rta_len = RTA_LENGTH(8);
+    ASSERT_TRUE(MacSync::parseNexthopReply((char *)&msg, msg.n.nlmsg_len, 1, state));
+    EXPECT_EQ(state, MacSync::NexthopState::Unknown);
+}
+
+/* A real lookup of an id nothing holds. */
+TEST_F(MacSyncNhgFlushTest, KernelLookupOfAnUnusedId)
+{
+    auto state = m_realNexthopState(0xfffffff0u);
+    if (state == MacSync::NexthopState::Unknown)
+    {
+        GTEST_SKIP() << "no RTM_GETNEXTHOP answer here";
+    }
+    EXPECT_EQ(state, MacSync::NexthopState::Absent);
 }

@@ -2425,6 +2425,11 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
              df_msg->edm_vid,
              if_name);
 
+    if (m_macsync && strcmp(if_name, ifname_unknown) != 0)
+    {
+        m_macsync->onEsPortVlan(df_entry_key, h->nlmsg_type == RTM_FPM_ADD_EVPN_DF);
+    }
+
     if (h->nlmsg_type == RTM_FPM_DEL_EVPN_DF)
     {
         if (!warmRestartInProgress)
@@ -2668,6 +2673,15 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (nlmsg_type == RTM_NEWLINK || nlmsg_type == RTM_DELLINK)
     {
         nl_cache_refill(m_nl_sock, m_link_cache);
+
+        /* AF_BRIDGE carries a port leaving the bridge, not the netdev going away. */
+        struct rtnl_link *link = (struct rtnl_link *)obj;
+        const char *type = rtnl_link_get_type(link);
+        if (nlmsg_type == RTM_DELLINK && m_macsync && rtnl_link_get_family(link) != AF_BRIDGE &&
+            type && strcmp(type, "vxlan") == 0 && rtnl_link_get_name(link))
+        {
+            m_macsync->onVxlanLinkDel(rtnl_link_get_name(link));
+        }
         return;
     }
 

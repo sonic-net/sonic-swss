@@ -1,5 +1,7 @@
 #include <iostream>
+#include <memory>
 #include <inttypes.h>
+#include <poll.h>
 #include <sys/stat.h>
 #include <jemalloc/jemalloc.h>
 #include "logger.h"
@@ -53,6 +55,18 @@ const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
 // TODO: support eoiu hold interval config
 const uint32_t DEFAULT_EOIU_HOLD_INTERVAL = 3;
 
+/* Kernel nexthop messages for MacSync; zebra's FPM nexthops reach RouteSync directly. */
+class KernelNexthopMsg : public NetMsg
+{
+public:
+    explicit KernelNexthopMsg(MacSync& macsync) : m_macsync(macsync) {}
+    void onMsg(int, struct nl_object *) override {}
+    void onMsgRaw(struct nlmsghdr *h) override { m_macsync.onKernelNexthop(h); }
+
+private:
+    MacSync& m_macsync;
+};
+
 // Check if eoiu state reached by both ipv4 and ipv6
 static bool eoiuFlagsSet(Table &bgpStateTable)
 {
@@ -98,6 +112,33 @@ int main(int argc, char **argv)
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
+    macsync.setLinkReader([&netlink]() {
+        struct pollfd pfd = {netlink.getFd(), POLLIN, 0};
+        while (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
+        {
+            netlink.readData();
+        }
+    });
+
+    /* Its own socket, so routing nexthop churn does not delay link events;
+     * only fpm mode reads it. NetDispatcher runs a raw handler only for a
+     * type with no parsed one. */
+    std::unique_ptr<NetLink> nexthopNetlink;
+    KernelNexthopMsg kernelNexthop(macsync);
+    if (macsync.isFpmMode())
+    {
+        nexthopNetlink = std::make_unique<NetLink>();
+        nexthopNetlink->registerGroup(RTNLGRP_NEXTHOP);
+        NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEXTHOP, &kernelNexthop);
+        NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEXTHOP, &kernelNexthop);
+        macsync.setKernelNexthopReader([&nexthopNetlink]() {
+            struct pollfd pfd = {nexthopNetlink->getFd(), POLLIN, 0};
+            while (poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN))
+            {
+                nexthopNetlink->readData();
+            }
+        });
+    }
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
@@ -137,6 +178,8 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
+            SelectableTimer macStaleTimer(timespec{0, 0});
+            SelectableTimer esDfWarmTimer(timespec{0, 0});
            
             /*
              * Pipeline should be flushed right away to deal with state pending
@@ -152,7 +195,13 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            if (nexthopNetlink)
+            {
+                s.addSelectable(nexthopNetlink.get());
+            }
             s.addSelectable(macsync.getStateFdbTable());
+            s.addSelectable(macsync.getEsReAddTimer());
+            s.addSelectable(macsync.getNhgFlushTimer());
 
             if (sync.isSuppressionEnabled())
             {
@@ -161,6 +210,7 @@ int main(int argc, char **argv)
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.getWarmStartHelper().checkAndStart();
+            time_t macWarmRestartTimer = 0;
             if (warmStartEnabled)
             {
                 // Reconcile writes the route tables directly on this thread.
@@ -176,6 +226,7 @@ int main(int argc, char **argv)
                 {
                     warmStartTimer.setInterval(timespec{warmRestartIval, 0});
                 }
+                macWarmRestartTimer = warmRestartIval ? warmRestartIval : DEFAULT_ROUTING_RESTART_INTERVAL;
 
                 /* Execute restoration instruction and kick off warm-restart timer */
                 if (sync.getWarmStartHelper().runRestoration())
@@ -183,6 +234,14 @@ int main(int argc, char **argv)
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
                     SWSS_LOG_NOTICE("Warm-Restart timer started.");
+                }
+                else
+                {
+                    /* No routes to reconcile, but the EVPN_DF_TABLE keys read at
+                     * start still wait for zebra until the timer. */
+                    esDfWarmTimer.setInterval(timespec{macWarmRestartTimer, 0});
+                    esDfWarmTimer.start();
+                    s.addSelectable(&esDfWarmTimer);
                 }
 
                 // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
@@ -195,9 +254,35 @@ int main(int argc, char **argv)
             {
                 sync.startRouteCoalescer();
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
+
+                /* zebra sends the EVPN_DF_TABLE keys it holds right after the connect;
+                 * those read at start that it has not sent by then are gone. */
+                esDfWarmTimer.setInterval(timespec{MacSync::STALE_SWEEP_HOLD, 0});
+                esDfWarmTimer.start();
+                s.addSelectable(&esDfWarmTimer);
+            }
+
+            /* In a warm start MacSync's stale rows go at the warm restart timer,
+             * not at the EOIU hold, which waits only for the unicast EORs. */
+            time_t macStaleWait = macsync.markRemoteMacsStale(macWarmRestartTimer);
+            if (macStaleWait)
+            {
+                macStaleTimer.setInterval(timespec{macStaleWait, 0});
+                macStaleTimer.start();
+                s.addSelectable(&macStaleTimer);
             }
 
             gSelectTimeout = INFINITE;
+
+            /* A warm restart holds the shared pipeline until the reconcile;
+             * MacSync's writes go through its own pipeline, which is not held. */
+            auto flushWrites = [&]() {
+                if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
+                {
+                    flushPipeline(pipeline);
+                }
+                macsync.flush();
+            };
 
             while (true)
             {
@@ -210,9 +295,30 @@ int main(int argc, char **argv)
                  */
                 s.select(&temps, gSelectTimeout);
 
+                if (temps == (Selectable *)&fpm)
+                {
+                    macsync.noteFpmMessage();
+                }
+
+                /* MacSync's handlers write VXLAN_FDB_TABLE too. */
                 if (temps == (Selectable *)macsync.getStateFdbTable())
                 {
                     macsync.processStateFdb();
+                    flushWrites();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getEsReAddTimer())
+                {
+                    macsync.processEsReAdd();
+                    flushWrites();
+                    continue;
+                }
+
+                if (temps == (Selectable *)macsync.getNhgFlushTimer())
+                {
+                    macsync.processNhgFlush();
+                    flushWrites();
                     continue;
                 }
 
@@ -234,11 +340,37 @@ int main(int argc, char **argv)
                     }
 
                     sync.onWarmStartEnd(applStateDb);
+                    /* The EOIU covers only the unicast families; zebra can still
+                     * send EVPN DF entries until the warm restart timer, which
+                     * stays armed when the EOIU hold fires first. */
+                    if (temps == &warmStartTimer)
+                    {
+                        macsync.onWarmStartEnd();
+                    }
 
                     // remove the one-shot timer.
                     s.removeSelectable(temps);
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (temps == &esDfWarmTimer)
+                {
+                    macsync.onWarmStartEnd();
+                    s.removeSelectable(&esDfWarmTimer);
+                }
+                else if (temps == &macStaleTimer)
+                {
+                    time_t wait = macsync.onStaleSweepTimer();
+
+                    if (wait)
+                    {
+                        restartTimer(macStaleTimer, timespec{wait, 0});
+                    }
+                    else
+                    {
+                        s.removeSelectable(&macStaleTimer);
+                        macsync.flush();
+                    }
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
@@ -263,9 +395,7 @@ int main(int argc, char **argv)
                             s.removeSelectable(&eoiuCheckTimer);
                             continue;
                         }
-                        eoiuCheckTimer.setInterval(timespec{1, 0});
-                        // re-start eoiu check timer
-                        eoiuCheckTimer.start();
+                        restartTimer(eoiuCheckTimer, timespec{1, 0});
                         SWSS_LOG_DEBUG("Warm-Restart eoiuCheckTimer restarted");
                     }
                     else
@@ -286,15 +416,17 @@ int main(int argc, char **argv)
                         sync.onRouteResponse(key, fieldValues);
                     }
                 }
-                else if (!warmStartEnabled || sync.getWarmStartHelper().isReconciled())
+                else
                 {
-                    flushPipeline(pipeline);
+                    flushWrites();
                 }
             }
         }
         catch (FpmLink::FpmConnectionClosedException &e)
         {
             macsync.onFpmDisconnected();
+            /* the loop does not flush MacSync's pipeline again until an event after the reconnect */
+            macsync.flush();
             cout << "Connection lost, reconnecting..." << endl;
         }
     }
