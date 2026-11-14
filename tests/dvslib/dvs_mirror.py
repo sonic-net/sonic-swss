@@ -68,6 +68,30 @@ class DVSMirror(object):
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
+    def create_sflow_session(self, name, src, dst, dscp, ttl, queue, src_ports, direction="RX",
+                             sample_rate=None, truncate_size=None, udp_dst_port=None, gre_type=None):
+        mirror_entry = {
+            "type": "SFLOW",
+            "src_ip": src,
+            "dst_ip": dst,
+            "dscp": dscp,
+            "ttl": ttl,
+            "queue": queue,
+            "src_port": src_ports,
+            "direction": direction
+        }
+
+        if sample_rate:
+            mirror_entry["sample_rate"] = sample_rate
+        if truncate_size:
+            mirror_entry["truncate_size"] = truncate_size
+        if udp_dst_port:
+            mirror_entry["udp_dst_port"] = udp_dst_port
+        if gre_type:
+            mirror_entry["gre_type"] = gre_type
+
+        self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
+
     def remove_mirror_session(self, name):
         self.config_db.delete_entry("MIRROR_SESSION", name)
 

@@ -2421,6 +2421,45 @@ void SwitchOrch::querySwitchSamplePacketCapability()
         SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
+    // Check if SAI supports the SFLOW mirror session type.
+    m_mirrorSessionSflowSupported = false;
+    const auto* mirrorTypeMeta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_MIRROR_SESSION,
+                                                                SAI_MIRROR_SESSION_ATTR_TYPE);
+    if (mirrorTypeMeta && mirrorTypeMeta->isenum)
+    {
+        vector<int32_t> values_list(mirrorTypeMeta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(values_list.size());
+        values.list = values_list.data();
+
+        status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                            SAI_OBJECT_TYPE_MIRROR_SESSION,
+                                                            SAI_MIRROR_SESSION_ATTR_TYPE,
+                                                            &values);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query mirror session type capability %d", status);
+        }
+        else
+        {
+            for (uint32_t i = 0; i < values.count; i++)
+            {
+                if (values.list[i] == SAI_MIRROR_SESSION_TYPE_SFLOW)
+                {
+                    m_mirrorSessionSflowSupported = true;
+                    break;
+                }
+            }
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Could not read mirror session type enum metadata");
+    }
+    SWSS_LOG_NOTICE("mirror session SFLOW type capability %d", m_mirrorSessionSflowSupported);
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SFLOW_CAPABLE,
+                          m_mirrorSessionSflowSupported ? "true" : "false");
+
     set_switch_capability(fvVector);
 }
 
