@@ -1,5 +1,7 @@
 #include <linux/if_ether.h>
 
+#include <algorithm>
+#include <cstring>
 #include <unordered_map>
 #include <utility>
 #include <exception>
@@ -34,6 +36,7 @@
 #define MIRROR_SESSION_TYPE                 "type"
 #define MIRROR_SESSION_SAMPLE_RATE          "sample_rate"
 #define MIRROR_SESSION_TRUNCATE_SIZE        "truncate_size"
+#define MIRROR_SESSION_LABEL                "label"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -57,6 +60,27 @@ extern PortsOrch*       gPortsOrch;
 extern string           gMySwitchType;
 
 using namespace std::rel_ops;
+
+namespace
+{
+bool isValidMirrorSessionLabel(const string& label)
+{
+    constexpr size_t maxLabelLength =
+        sizeof(((sai_attribute_value_t *)nullptr)->chardata) - 1;
+
+    if (label.empty() || label.size() > maxLabelLength)
+    {
+        return false;
+    }
+
+    return std::all_of(label.begin(), label.end(), [](unsigned char character) {
+        return (character >= 'a' && character <= 'z') ||
+               (character >= 'A' && character <= 'Z') ||
+               (character >= '0' && character <= '9') ||
+               character == '_' || character == '-';
+    });
+}
+}
 
 MirrorEntry::MirrorEntry(const string& platform) :
         status(false),
@@ -394,10 +418,27 @@ bool MirrorOrch::isHwResourcesAvailable()
     return availCount > 0;
 }
 
+bool MirrorOrch::isMirrorSessionLabelInUse(const string& label, string& sessionName) const
+{
+    auto duplicate = std::find_if(
+        m_syncdMirrors.begin(),
+        m_syncdMirrors.end(),
+        [&label](const auto& session) {
+            return session.second.label == label;
+        });
+
+    if (duplicate == m_syncdMirrors.end())
+    {
+        return false;
+    }
+
+    sessionName = duplicate->first;
+    return true;
+}
+
 task_process_status MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
-
 
     if (m_syncdMirrors.find(key) != m_syncdMirrors.end())
     {
@@ -447,14 +488,6 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             }
             else if (fvField(i) == MIRROR_SESSION_POLICER)
             {
-                if (!m_policerOrch->policerExists(fvValue(i)))
-                {
-                    SWSS_LOG_ERROR("Failed to get policer %s",
-                            fvValue(i).c_str());
-                    return task_process_status::task_need_retry;
-                }
-
-                m_policerOrch->increaseRefCount(fvValue(i));
                 entry.policer = fvValue(i);
             }
             else if (fvField(i) == MIRROR_SESSION_SRC_PORT)
@@ -507,6 +540,26 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                     return task_process_status::task_invalid_entry;
                 }
             }
+            else if (fvField(i) == MIRROR_SESSION_LABEL)
+            {
+                const string& label = fvValue(i);
+                if (!isValidMirrorSessionLabel(label))
+                {
+                    SWSS_LOG_ERROR("Invalid label for mirror session %s", key.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+
+                string existingSession;
+                if (isMirrorSessionLabelInUse(label, existingSession))
+                {
+                    SWSS_LOG_ERROR(
+                        "Failed to create mirror session %s: label %s is already used by session %s",
+                        key.c_str(), label.c_str(), existingSession.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+
+                entry.label = label;
+            }
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s", key.c_str(), fvField(i).c_str());
@@ -549,6 +602,15 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
+    // Platform capability: reject early if LABEL CREATE is not supported
+    if (!entry.label.empty() && !m_capabilities.isMirrorSessionLabelSupported())
+    {
+        SWSS_LOG_ERROR(
+            "Failed to create mirror session %s: LABEL CREATE is not supported by SAI",
+            key.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
     // Platform capability: reject early if the per-direction sampled mirroring
     // capability is not supported by the ASIC.
     if (entry.sample_rate > 0)
@@ -583,6 +645,18 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     {
         SWSS_LOG_ERROR("Failed to create session %s: HW resources are not available", key.c_str());
         return task_process_status::task_failed;
+    }
+
+    if (!entry.policer.empty())
+    {
+        if (!m_policerOrch->policerExists(entry.policer))
+        {
+            SWSS_LOG_WARN("Failed to reference policer %s for mirror session %s: policer does not exist, retrying",
+                          entry.policer.c_str(), key.c_str());
+            return task_process_status::task_need_retry;
+        }
+
+        m_policerOrch->increaseRefCount(entry.policer);
     }
 
     m_syncdMirrors.emplace(key, entry);
@@ -738,6 +812,14 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
         {
             m_mirrorTable.hdel(name, MIRROR_SESSION_TRUNCATE_SIZE);
         }
+    }
+
+    // Label is create-only. Publish it when CONFIG defined one; omit the
+    // field for unlabeled/legacy sessions so STATE_DB stays backward
+    // compatible. Session delete removes the whole STATE_DB key.
+    if ((attr.empty() || attr == MIRROR_SESSION_LABEL) && !session.label.empty())
+    {
+        fvVector.emplace_back(MIRROR_SESSION_LABEL, session.label);
     }
 
     m_mirrorTable.set(name, fvVector);
@@ -1210,6 +1292,14 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
         attr.id = SAI_MIRROR_SESSION_ATTR_POLICER;
         attr.value.oid = oid;
+        attrs.push_back(attr);
+    }
+
+    if (!session.label.empty())
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_LABEL;
+        memset(attr.value.chardata, 0, sizeof(attr.value.chardata));
+        memcpy(attr.value.chardata, session.label.data(), session.label.size());
         attrs.push_back(attr);
     }
 
