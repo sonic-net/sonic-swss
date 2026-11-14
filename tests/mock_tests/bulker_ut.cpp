@@ -506,4 +506,164 @@ namespace bulker_test
         ASSERT_FALSE(gRouteBulker.bulk_entry_pending_removal_or_set(route_entry));
         ASSERT_FALSE(gRouteBulker.bulk_entry_pending_removal(route_entry));
     }
+    /* SAI-like route table for the duplicate tests: every entry a bulk call
+     * names is counted, and an entry named twice in one call fails the second
+     * time (remove: ITEM_NOT_FOUND, create: ITEM_ALREADY_EXISTS). */
+    static std::vector<uint32_t> dup_stub_remove_counts;
+    static std::vector<uint32_t> dup_stub_create_counts;
+
+    static uint32_t dup_stub_host(const sai_route_entry_t &e)
+    {
+        return ntohl(e.destination.addr.ip4) & 0xff;
+    }
+
+    static sai_status_t dup_stub_bulk_remove_route_entry(
+        uint32_t object_count, const sai_route_entry_t *route_entry,
+        sai_bulk_op_error_mode_t /*mode*/, sai_status_t *object_statuses)
+    {
+        std::unordered_set<uint32_t> seen;
+        for (uint32_t i = 0; i < object_count; i++)
+        {
+            dup_stub_remove_counts.push_back(dup_stub_host(route_entry[i]));
+            object_statuses[i] = seen.insert(dup_stub_host(route_entry[i])).second ?
+                                 SAI_STATUS_SUCCESS : SAI_STATUS_ITEM_NOT_FOUND;
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_status_t dup_stub_bulk_create_route_entry(
+        uint32_t object_count, const sai_route_entry_t *route_entry,
+        const uint32_t * /*attr_count*/, const sai_attribute_t ** /*attr_list*/,
+        sai_bulk_op_error_mode_t /*mode*/, sai_status_t *object_statuses)
+    {
+        std::unordered_set<uint32_t> seen;
+        for (uint32_t i = 0; i < object_count; i++)
+        {
+            dup_stub_create_counts.push_back(dup_stub_host(route_entry[i]));
+            object_statuses[i] = seen.insert(dup_stub_host(route_entry[i])).second ?
+                                 SAI_STATUS_SUCCESS : SAI_STATUS_ITEM_ALREADY_EXISTS;
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    static sai_route_entry_t dup_host_entry(uint32_t host)
+    {
+        sai_route_entry_t e;
+        e.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        e.destination.addr.ip4 = htonl(0x64321900 + host);
+        e.destination.mask.ip4 = htonl(0xffffffff);
+        e.vr_id = 0x0;
+        e.switch_id = 0x0;
+        return e;
+    }
+
+    static void dup_stage_two_removes(EntityBulker<sai_route_api_t> &bulker, deque<sai_status_t> &statuses)
+    {
+        auto e = dup_host_entry(12);
+        auto other = dup_host_entry(13);
+        statuses.emplace_back();
+        bulker.remove_entry(&statuses.back(), &e);
+        statuses.emplace_back();
+        bulker.remove_entry(&statuses.back(), &other);
+        statuses.emplace_back();
+        bulker.remove_entry(&statuses.back(), &e);
+    }
+
+    TEST_F(BulkerTest, BulkerRemoveSameEntryTwiceRemovesOnce)
+    {
+        sai_route_api->remove_route_entries = dup_stub_bulk_remove_route_entry;
+        EntityBulker<sai_route_api_t> bulker(sai_route_api, 1000);
+        deque<sai_status_t> statuses;
+        dup_stage_two_removes(bulker, statuses);
+        ASSERT_EQ(bulker.removing_entries_count(), 2u);
+
+        dup_stub_remove_counts.clear();
+        bulker.flush();
+
+        ASSERT_EQ(dup_stub_remove_counts, (std::vector<uint32_t>{12, 13}));
+        EXPECT_EQ(statuses[0], SAI_STATUS_SUCCESS);
+        EXPECT_EQ(statuses[1], SAI_STATUS_SUCCESS);
+        /* The repeated request is not a separate SAI operation */
+        EXPECT_EQ(statuses[2], SAI_STATUS_NOT_EXECUTED);
+        EXPECT_EQ(bulker.removing_entries_count(), 0u);
+    }
+
+    TEST_F(BulkerTest, BulkerChunkedRemoveSameEntryTwiceRemovesOnce)
+    {
+        sai_route_api->remove_route_entries = dup_stub_bulk_remove_route_entry;
+        /* Chunk size 1: each entry is its own bulk call */
+        EntityBulker<sai_route_api_t> one(sai_route_api, 1);
+        deque<sai_status_t> statuses;
+        dup_stage_two_removes(one, statuses);
+        dup_stub_remove_counts.clear();
+        one.flush();
+        ASSERT_EQ(dup_stub_remove_counts, (std::vector<uint32_t>{12, 13}));
+        EXPECT_EQ(statuses[0], SAI_STATUS_SUCCESS);
+        EXPECT_EQ(statuses[1], SAI_STATUS_SUCCESS);
+
+        /* Both copies inside one chunk */
+        EntityBulker<sai_route_api_t> two(sai_route_api, 2);
+        deque<sai_status_t> two_statuses;
+        auto e = dup_host_entry(12);
+        auto other = dup_host_entry(13);
+        for (auto *p : {&e, &e, &other})
+        {
+            two_statuses.emplace_back();
+            two.remove_entry(&two_statuses.back(), p);
+        }
+        dup_stub_remove_counts.clear();
+        two.flush();
+        ASSERT_EQ(dup_stub_remove_counts, (std::vector<uint32_t>{12, 13}));
+        EXPECT_EQ(two_statuses[0], SAI_STATUS_SUCCESS);
+        EXPECT_EQ(two_statuses[2], SAI_STATUS_SUCCESS);
+    }
+
+    /* create X, remove X (claimed done at once), create X again: one SAI create */
+    static void dup_stage_create_remove_create(EntityBulker<sai_route_api_t> &bulker, deque<sai_status_t> &statuses,
+                                               const sai_attribute_t *attr)
+    {
+        auto e = dup_host_entry(12);
+        auto other = dup_host_entry(13);
+        statuses.emplace_back();
+        bulker.create_entry(&statuses.back(), &e, 1, attr);
+        statuses.emplace_back();
+        bulker.create_entry(&statuses.back(), &other, 1, attr);
+        statuses.emplace_back();
+        bulker.remove_entry(&statuses.back(), &e);
+        statuses.emplace_back();
+        bulker.create_entry(&statuses.back(), &e, 1, attr);
+    }
+
+    TEST_F(BulkerTest, BulkerCreateRemoveCreateCreatesOnce)
+    {
+        sai_route_api->create_route_entries = dup_stub_bulk_create_route_entry;
+        sai_route_api->remove_route_entries = dup_stub_bulk_remove_route_entry;
+        sai_attribute_t attr;
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+        EntityBulker<sai_route_api_t> bulker(sai_route_api, 1000);
+        deque<sai_status_t> statuses;
+        dup_stage_create_remove_create(bulker, statuses, &attr);
+        EXPECT_EQ(statuses[2], SAI_STATUS_SUCCESS);
+        ASSERT_EQ(bulker.creating_entries_count(), 2u);
+
+        dup_stub_create_counts.clear();
+        dup_stub_remove_counts.clear();
+        bulker.flush();
+        ASSERT_EQ(dup_stub_create_counts, (std::vector<uint32_t>{12, 13}));
+        EXPECT_TRUE(dup_stub_remove_counts.empty());
+        EXPECT_EQ(statuses[1], SAI_STATUS_SUCCESS);
+        EXPECT_EQ(statuses[3], SAI_STATUS_SUCCESS);
+
+        /* Chunk size 1: each slot is its own bulk call */
+        EntityBulker<sai_route_api_t> one(sai_route_api, 1);
+        deque<sai_status_t> st;
+        dup_stage_create_remove_create(one, st, &attr);
+        dup_stub_create_counts.clear();
+        one.flush();
+        ASSERT_EQ(dup_stub_create_counts, (std::vector<uint32_t>{12, 13}));
+        EXPECT_EQ(st[1], SAI_STATUS_SUCCESS);
+        EXPECT_EQ(st[3], SAI_STATUS_SUCCESS);
+    }
 }

@@ -11,6 +11,7 @@
 #include "mock_response_publisher.h"
 #include "mock_sai_api.h"
 #include "bulker.h"
+#include "sairedis.h"
 
 extern string gMySwitchType;
 extern bool gEnableFibSuppress;
@@ -70,6 +71,8 @@ namespace routeorch_test
     shared_ptr<swss::DBConnector> m_chassis_app_db;
 
     int create_route_count = 0;
+    /* Called for each route entry the bulk remove is handed, when set */
+    std::function<void(const sai_route_entry_t &)> remove_route_probe;
     int set_route_count = 0;
     int remove_route_count = 0;
     int sai_fail_count = 0;
@@ -101,6 +104,10 @@ namespace routeorch_test
         _Out_ sai_status_t *object_statuses)
     {
         remove_route_count++;
+        for (uint32_t i = 0; remove_route_probe && i < object_count; i++)
+        {
+            remove_route_probe(route_entry[i]);
+        }
         return old_remove_route_entries(object_count, route_entry, mode, object_statuses);
     }
 
@@ -835,6 +842,109 @@ namespace routeorch_test
         ASSERT_EQ(current_create_count, create_route_count);
         ASSERT_EQ(current_remove_count, remove_route_count);
         ASSERT_EQ(current_set_count, set_route_count);
+    }
+
+    /* Counts the syncd dump requests handleSaiFailure() makes */
+    static int dup_del_dump_requests = 0;
+    static sai_set_switch_attribute_fn dup_del_old_set_switch = nullptr;
+    static sai_status_t dup_del_set_switch_attribute(sai_object_id_t switch_id, const sai_attribute_t *attr)
+    {
+        if (attr && attr->id == SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD)
+        {
+            dup_del_dump_requests++;
+            return SAI_STATUS_SUCCESS;
+        }
+        return dup_del_old_set_switch(switch_id, attr);
+    }
+
+    /* fpmsyncd keys a host route without its mask and FgNhgOrch with it; DELs
+     * for both keys in one batch must reach the SAI as a single removal. */
+    TEST_F(RouteOrchTest, RouteOrchDelBothKeysOfHostRouteRemovesOnce)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        const IpPrefix prefix("100.50.25.12/32");
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"100.50.25.12", "SET", { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_NE(gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix),
+                  gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+
+        int host_removes = 0;
+        remove_route_probe = [&](const sai_route_entry_t &e) {
+            if (e.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4 &&
+                e.destination.addr.ip4 == htonl(0x6432190c) && e.destination.mask.ip4 == 0xffffffff)
+            {
+                host_removes++;
+            }
+        };
+        auto fail_count = sai_fail_count;
+        sai_switch_api_t ut_switch_api = *sai_switch_api;
+        auto *saved_switch_api = sai_switch_api;
+        dup_del_old_set_switch = saved_switch_api->set_switch_attribute;
+        ut_switch_api.set_switch_attribute = dup_del_set_switch_attribute;
+        sai_switch_api = &ut_switch_api;
+        dup_del_dump_requests = 0;
+
+        entries.clear();
+        entries.push_back({"100.50.25.12/32", "DEL", {}});
+        entries.push_back({"100.50.25.12", "DEL", {}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        remove_route_probe = nullptr;
+        sai_switch_api = saved_switch_api;
+
+        EXPECT_EQ(host_removes, 1);
+        EXPECT_EQ(sai_fail_count, fail_count);
+        /* No request is treated as a failed SAI remove */
+        EXPECT_EQ(dup_del_dump_requests, 0);
+        EXPECT_EQ(gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix),
+                  gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(gRouteOrch->gRouteBulker.removing_entries_count(), 0u);
+
+        /* The prefix programs again afterwards */
+        auto create_count = create_route_count;
+        entries.clear();
+        entries.push_back({"100.50.25.12/32", "SET", { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"} }});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(create_route_count, create_count + 1);
+        EXPECT_NE(gRouteOrch->m_syncdRoutes[gVirtualRouterId].find(prefix),
+                  gRouteOrch->m_syncdRoutes[gVirtualRouterId].end());
+    }
+
+    /* With FIB suppression each key's route state entry is removed, also the key whose removal was skipped */
+    TEST_F(RouteOrchTest, RouteOrchDelBothKeysOfHostRoutePublishesBoth)
+    {
+        gEnableFibSuppress = true;
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"100.50.25.13", "SET", { {"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}, {"protocol", "bgp"} }});
+        consumer->addToSync(entries);
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, "100.50.25.13", ::testing::_, ::testing::_, false))
+            .Times(::testing::AnyNumber());
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ::testing::Mock::VerifyAndClearExpectations(gMockResponsePublisher.get());
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, "100.50.25.13", std::vector<FieldValueTuple>{},
+                                                     ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, "100.50.25.13/32", std::vector<FieldValueTuple>{},
+                                                     ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        entries.clear();
+        entries.push_back({"100.50.25.13/32", "DEL", {}});
+        entries.push_back({"100.50.25.13", "DEL", {}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_TRUE(consumer->m_toSync.empty());
+
+        gMockResponsePublisher.reset();
+        gEnableFibSuppress = false;
     }
 
     TEST_F(RouteOrchTest, RouteOrchTestDelSetDiffNexthop)
