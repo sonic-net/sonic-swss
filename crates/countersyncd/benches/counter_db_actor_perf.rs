@@ -1,4 +1,3 @@
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
@@ -13,8 +12,6 @@ use swss_common::{CxxString, DbConnector};
 mod ipfix_bench_data;
 use ipfix_bench_data::{datasets, PreparedDataset};
 
-const COUNTERS_DB_ID: i32 = 2;
-const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 
 fn build_stats_batch(count: usize, start_seq: usize, records: usize) -> SAIStatsBatchMessage {
     let type_id = SaiObjectType::Port.to_u32();
@@ -35,7 +32,7 @@ fn build_stats_batch(count: usize, start_seq: usize, records: usize) -> SAIStats
 
 fn seed_port_name_map(port_count: usize) {
     let db =
-        DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0).expect("connect counter db for seed");
+        DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true).expect("connect counter db for seed");
 
     let table = "COUNTERS_PORT_NAME_MAP";
     for idx in 0..port_count {
@@ -47,21 +44,9 @@ fn seed_port_name_map(port_count: usize) {
 }
 
 fn flush_counters_db() {
-    let output = Command::new("redis-cli")
-        .args([
-            "-s",
-            SOCK_PATH,
-            "-n",
-            &COUNTERS_DB_ID.to_string(),
-            "FLUSHDB",
-        ])
-        .stdout(Stdio::null())
-        .output()
-        .expect("spawn redis-cli for flush");
-
-    if !output.status.success() {
-        panic!("redis-cli FLUSHDB failed with status {}", output.status);
-    }
+    let db = DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
+        .expect("connect counter db for flush");
+    assert!(db.flush_db().expect("flush counters DB"));
 }
 
 async fn run_stream(prepared: PreparedDataset) -> (Duration, usize) {
