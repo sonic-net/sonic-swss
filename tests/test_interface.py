@@ -2321,18 +2321,26 @@ class TestRouterInterface(object):
     def test_interfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
         self.loopback_action_test("Ethernet8", "drop")
-        
+
     def test_interfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
         self.loopback_action_test("Ethernet8", "forward")
 
     def test_subInterfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
-        self.loopback_action_test("Ethernet8.1", "drop")
-        
+        self.set_admin_status(dvs, "Ethernet8", "up")
+        try:
+            self.loopback_action_test("Ethernet8.1", "drop")
+        finally:
+            self.set_admin_status(dvs, "Ethernet8", "down")
+
     def test_subInterfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
-        self.loopback_action_test("Ethernet8.1", "forward")
+        self.set_admin_status(dvs, "Ethernet8", "up")
+        try:
+            self.loopback_action_test("Ethernet8.1", "forward")
+        finally:
+            self.set_admin_status(dvs, "Ethernet8", "down")
 
     def test_vlanInterfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
