@@ -2,6 +2,7 @@
 #include <set>
 #include <inttypes.h>
 #include <iomanip>
+#include <limits>
 
 #include "switchorch.h"
 #include "crmorch.h"
@@ -17,6 +18,38 @@
 
 using namespace std;
 using namespace swss;
+
+namespace
+{
+
+template <typename T>
+bool parseUnsignedDecimal(const string &value, T &parsed)
+{
+    if (value.empty() || value.find_first_not_of("0123456789") != string::npos)
+    {
+        return false;
+    }
+
+    try
+    {
+        size_t idx = 0;
+        const auto parsedValue = stoull(value, &idx, 10);
+
+        if (idx != value.size() || parsedValue > numeric_limits<T>::max())
+        {
+            return false;
+        }
+
+        parsed = static_cast<T>(parsedValue);
+        return true;
+    }
+    catch (const exception &)
+    {
+        return false;
+    }
+}
+
+} // namespace
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
@@ -727,7 +760,7 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED:
                     case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED:
-                        attr.value.u32 = to_uint<uint32_t>(value);
+                        invalid_attr = !parseUnsignedDecimal(value, attr.value.u32);
                         break;
 
                     case SAI_SWITCH_ATTR_FDB_AGING_TIME:
@@ -758,7 +791,7 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         }
                         else
                         {
-                            attr.value.u8 = to_uint<uint8_t>(value);
+                            invalid_attr = !parseUnsignedDecimal(value, attr.value.u8);
                         }
                         break;
                     case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET:
@@ -769,7 +802,7 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         }
                         else
                         {
-                            attr.value.u8 = to_uint<uint8_t>(value);
+                            invalid_attr = !parseUnsignedDecimal(value, attr.value.u8);
                         }
                         break;
 
