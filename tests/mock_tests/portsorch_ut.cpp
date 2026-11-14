@@ -3797,6 +3797,9 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, PortVerifyOperFec)
     {
         _hook_sai_port_api();
+        // Oper FEC is read back from the SAI mock; set it explicitly instead of
+        // inheriting whatever an earlier test left (breaks under sharding).
+        _sai_port_fec_mode = SAI_PORT_FEC_MODE_RS;
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table statePortTable = Table(m_state_db.get(), STATE_PORT_TABLE_NAME);
         std::deque<KeyOpFieldsValuesTuple> entries;
