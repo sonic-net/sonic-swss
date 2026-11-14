@@ -48,6 +48,8 @@
 
 extern bool gTraditionalFlexCounter;
 
+extern std::vector<sai_object_id_t> gGearboxOids;
+
 namespace flexcounter_test
 {
     using namespace std;
@@ -1055,6 +1057,76 @@ namespace flexcounter_test
                 static_cast<Orch *>(flexCounterOrch)->doTask();
                 ASSERT_EQ(flexCounterOrch->m_groupsWithBulkChunkSize.find("PORT"), flexCounterOrch->m_groupsWithBulkChunkSize.end());
             }
+        }
+
+
+        // Gearbox port counter group: while gearbox is disabled the GBPORT
+        // key is ignored, once enabled it drives the gearbox group, and the
+        // PORT status also drives the gearbox group.
+        {
+            // In the traditional counter model gearbox group writes go to the
+            // gearbox flex counter database rather than through the SAI hook.
+            auto gbFlexCounterDb = std::make_shared<swss::DBConnector>("GB_FLEX_COUNTER_DB", 0);
+            auto gbGroupTable = std::make_shared<swss::Table>(gbFlexCounterDb.get(), "FLEX_COUNTER_GROUP_TABLE");
+            auto checkGbGroup = [&](std::vector<swss::FieldValueTuple> entries) {
+                if (gTraditionalFlexCounter)
+                {
+                    // The group entry carries the stats mode written at
+                    // construction in the traditional model.
+                    entries.push_back({STATS_MODE_FIELD, STATS_MODE_READ});
+                    return _checkFlexCounterTableContent(gbGroupTable, GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, entries);
+                }
+                return checkFlexCounterGroup(GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, entries);
+            };
+
+            flexCounterCfg.set("GBPORT", { {POLL_INTERVAL_FIELD, "30000"},
+                                           {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+            flexCounterOrch->addExistingData(&flexCounterCfg);
+            static_cast<Orch *>(flexCounterOrch)->doTask();
+
+            // While gearbox is disabled the GBPORT configuration must not be
+            // applied (in the traditional model the group entry itself exists
+            // with its compile-time defaults from PortsOrch construction).
+            {
+                std::vector<swss::FieldValueTuple> fvs;
+                gbGroupTable->get(GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
+                mockFlexCounterGroupTable->get(GB_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
+                for (const auto &fv : fvs)
+                {
+                    ASSERT_FALSE(fvField(fv) == POLL_INTERVAL_FIELD && fvValue(fv) == "30000");
+                }
+            }
+
+            gPortsOrch->m_gearboxEnabled = true;
+            gGearboxOids.push_back(gSwitchId);
+
+            flexCounterCfg.set("GBPORT", { {POLL_INTERVAL_FIELD, "25000"},
+                                           {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+            flexCounterOrch->addExistingData(&flexCounterCfg);
+            static_cast<Orch *>(flexCounterOrch)->doTask();
+
+            ASSERT_TRUE(checkGbGroup({
+                                         {POLL_INTERVAL_FIELD, "25000"},
+                                         {FLEX_COUNTER_STATUS_FIELD, "enable"}
+                                     }));
+
+            // PORT status drives the gearbox group as well
+            flexCounterCfg.set("PORT", { {FLEX_COUNTER_STATUS_FIELD, "disable"} });
+            flexCounterOrch->addExistingData(&flexCounterCfg);
+            static_cast<Orch *>(flexCounterOrch)->doTask();
+
+            ASSERT_TRUE(checkGbGroup({
+                                         {POLL_INTERVAL_FIELD, "25000"},
+                                         {FLEX_COUNTER_STATUS_FIELD, "disable"}
+                                     }));
+
+            // restore
+            flexCounterCfg.set("PORT", { {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+            flexCounterOrch->addExistingData(&flexCounterCfg);
+            static_cast<Orch *>(flexCounterOrch)->doTask();
+
+            gGearboxOids.pop_back();
+            gPortsOrch->m_gearboxEnabled = false;
         }
 
         // Remove buffer pools
