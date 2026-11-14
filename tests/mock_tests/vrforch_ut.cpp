@@ -1,5 +1,6 @@
 #include "mock_orch_test.h"
 #include "mock_sai_api.h"
+#include "mock_sai_tunnel.h"
 
 #define protected public
 #include "orch.h"
@@ -28,12 +29,22 @@ class VrfOrchTest : public MockOrchTest
     EvpnNvoOrch *m_evpn_nvo_orch = nullptr;
     VxlanTunnelMapOrch *m_vxlan_tunnel_map_orch = nullptr;
     VxlanVrfMapOrch *m_vxlan_vrf_map_orch = nullptr;
+    MockSaiTunnel m_tunnel_mock;
+    decltype(sai_tunnel_api->remove_tunnel) m_saved_remove_tunnel = nullptr;
 
     void PostSetUp() override
     {
         INIT_SAI_API_MOCK(virtual_router);
         INIT_SAI_API_MOCK(route);
         MockSaiApis();
+
+        mock_sai_tunnel = &m_tunnel_mock;
+        m_saved_remove_tunnel = sai_tunnel_api->remove_tunnel;
+        sai_tunnel_api->remove_tunnel = mock_remove_tunnel;
+        ON_CALL(m_tunnel_mock, remove_tunnel(_))
+            .WillByDefault(Invoke([this](sai_object_id_t tunnel_id) {
+                return m_saved_remove_tunnel(tunnel_id);
+            }));
 
         m_vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(
             m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
@@ -50,6 +61,8 @@ class VrfOrchTest : public MockOrchTest
     {
         delete m_evpn_nvo_orch;
         m_evpn_nvo_orch = nullptr;
+        sai_tunnel_api->remove_tunnel = m_saved_remove_tunnel;
+        mock_sai_tunnel = nullptr;
         RestoreSaiApis();
         DEINIT_SAI_API_MOCK(route);
         DEINIT_SAI_API_MOCK(virtual_router);
@@ -867,28 +880,14 @@ TEST_F(VrfOrchTest, VxlanVrfMapReaddCompletesReadyPendingDeletion)
     ASSERT_EQ(tunnel->vlan_vrf_vni_count, 0u);
 
     // Model the point after the final remote reference drains but before its
-    // deferred cleanup callback runs. The replacement SET must wait without
-    // taking over a tunnel that is now ready for deletion.
+    // deferred cleanup callback runs. The replacement SET owns a retry path,
+    // so it completes the retained cleanup and recreates a clean tunnel.
     tunnel->updateRemoteEndPointIpRef("2.2.2.2", false);
     tunnel->eraseRemoteEndPoint("2.2.2.2");
     ASSERT_FALSE(tunnel->isTunnelReferenced());
 
     consumer->addToSync(
         {{replacement_map, "SET", {{"vni", "5700"}, {"vrf", "default"}}}});
-    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
-
-    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
-    EXPECT_EQ(consumer->m_toSync.size(), 1u);
-    EXPECT_TRUE(tunnel->isActive());
-    EXPECT_TRUE(tunnel->del_tnl_hw_pending);
-    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
-
-    // The reference-release owner completes the old tunnel cleanup. The
-    // retained SET then retries and recreates a clean tunnel.
-    tunnel->deletePendingSIPTunnel();
-    ASSERT_FALSE(tunnel->isActive());
-    ASSERT_FALSE(tunnel->del_tnl_hw_pending);
-
     static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
 
     EXPECT_TRUE(consumer->m_toSync.empty());
@@ -933,6 +932,96 @@ TEST_F(VrfOrchTest, VxlanVrfMapReaddRecreatesAfterCompletedDeletion)
     EXPECT_TRUE(consumer->m_toSync.empty());
     EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
     EXPECT_TRUE(tunnel->isActive());
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 1u);
+}
+
+TEST_F(VrfOrchTest, LastVrfMapDeleteFailureRetainsTunnelCleanupOwnership)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+    auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
+    ASSERT_NE(tunnel, nullptr);
+
+    // Remove the synthetic remote reference so deleting the final local map
+    // immediately attempts tunnel hardware teardown.
+    tunnel->updateRemoteEndPointIpRef("2.2.2.2", false);
+    tunnel->eraseRemoteEndPoint("2.2.2.2");
+    ASSERT_FALSE(tunnel->isTunnelReferenced());
+
+    const string map_key = "EVPN_2.2.2.2:map_default_5950";
+    consumer->addToSync(
+        {{map_key, "SET", {{"vni", "5950"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(map_key));
+    ASSERT_EQ(tunnel->vlan_vrf_vni_count, 1u);
+
+    EXPECT_CALL(m_tunnel_mock, remove_tunnel(_))
+        .WillOnce(Return(SAI_STATUS_FAILURE));
+
+    consumer->addToSync({{map_key, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    ASSERT_TRUE(tunnel->isActive());
+    // The map reference is gone, so the retained pending state now owns the
+    // remaining hardware cleanup.
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
+    EXPECT_TRUE(tunnel->del_tnl_hw_pending);
+}
+
+TEST_F(VrfOrchTest, PendingTunnelDeleteFailureMakesProgressOnMapRetry)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+
+    auto consumer = vxlanVrfConsumer();
+    ASSERT_NE(consumer, nullptr);
+    auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
+    ASSERT_NE(tunnel, nullptr);
+
+    const string old_map = "EVPN_2.2.2.2:map_default_5960";
+    const string replacement_map = "EVPN_2.2.2.2:map_default_5970";
+
+    consumer->addToSync(
+        {{old_map, "SET", {{"vni", "5960"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(consumer->m_toSync.empty());
+
+    // The remote reference postpones teardown when the final local map leaves.
+    consumer->addToSync({{old_map, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(tunnel->del_tnl_hw_pending);
+    ASSERT_EQ(tunnel->vlan_vrf_vni_count, 0u);
+
+    tunnel->updateRemoteEndPointIpRef("2.2.2.2", false);
+    tunnel->eraseRemoteEndPoint("2.2.2.2");
+    ASSERT_FALSE(tunnel->isTunnelReferenced());
+
+    EXPECT_CALL(m_tunnel_mock, remove_tunnel(_))
+        .WillOnce(Throw(std::runtime_error("injected tunnel removal failure")))
+        .WillRepeatedly(Invoke([this](sai_object_id_t tunnel_id) {
+            return m_saved_remove_tunnel(tunnel_id);
+        }));
+
+    // Model the reference-release owner making its one cleanup attempt.
+    tunnel->deletePendingSIPTunnel();
+    ASSERT_TRUE(tunnel->isActive());
+    ASSERT_TRUE(tunnel->del_tnl_hw_pending);
+
+    // There are no remaining remote-reference events. Retrying the queued map
+    // must drive the safe cleanup to completion and then recreate the tunnel.
+    consumer->addToSync(
+        {{replacement_map, "SET", {{"vni", "5970"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(replacement_map));
+    EXPECT_TRUE(tunnel->isActive());
+    EXPECT_FALSE(tunnel->del_tnl_hw_pending);
     EXPECT_EQ(tunnel->vlan_vrf_vni_count, 1u);
 }
 
