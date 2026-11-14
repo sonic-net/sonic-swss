@@ -28,6 +28,8 @@ using namespace swss;
 #define SRV6_FLEX_COUNTER_UPDATE_TIMER 1
 #define SRV6_STAT_COUNTER_POLLING_INTERVAL_MS 10000
 
+constexpr char DEFAULT_VRF_NAME[] = "default";
+
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t  gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -1523,7 +1525,7 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
     sai_object_id_t vrf_oid = gVirtualRouterId;
     if (mySidVrfRequired(end_behavior))
     {
-        if (dt_vrf == "default")
+        if (dt_vrf == DEFAULT_VRF_NAME)
         {
             vrf_oid = gVirtualRouterId;
         }
@@ -1904,7 +1906,7 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
         applied.counter = counter_oid;
         srv6_my_sid_table_.emplace(key_string, applied);
 
-        if (mySidVrfRequired(end_behavior))
+        if (mySidVrfRequired(end_behavior) && dt_vrf != DEFAULT_VRF_NAME)
         {
             m_vrfOrch->increaseVrfRefCount(dt_vrf);
         }
@@ -2073,11 +2075,13 @@ task_process_status Srv6Orch::createUpdateMysidEntry(string my_sid_string, const
 
     bool old_vrf_required = mySidVrfRequired(current.endBehavior);
     bool new_vrf_required = mySidVrfRequired(end_behavior);
-    if (new_vrf_required && (!old_vrf_required || current.endVrfString != dt_vrf))
+    if (new_vrf_required && dt_vrf != DEFAULT_VRF_NAME &&
+        (!old_vrf_required || current.endVrfString != dt_vrf))
     {
         m_vrfOrch->increaseVrfRefCount(dt_vrf);
     }
-    if (old_vrf_required && (!new_vrf_required || current.endVrfString != dt_vrf))
+    if (old_vrf_required && current.endVrfString != DEFAULT_VRF_NAME &&
+        (!new_vrf_required || current.endVrfString != dt_vrf))
     {
         m_vrfOrch->decreaseVrfRefCount(current.endVrfString);
     }
@@ -2136,7 +2140,7 @@ task_process_status Srv6Orch::deleteMysidEntry(const string my_sid_string)
 
     if (!cached.references_released)
     {
-        if (mySidVrfRequired(cached.endBehavior))
+        if (mySidVrfRequired(cached.endBehavior) && cached.endVrfString != DEFAULT_VRF_NAME)
         {
             m_vrfOrch->decreaseVrfRefCount(cached.endVrfString);
         }
