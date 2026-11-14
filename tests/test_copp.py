@@ -935,3 +935,133 @@ class TestCopp(object):
                     break
             if trap_id not in disabled_traps:
                 assert trap_found == True
+
+    def setup_exclude_ports(self, dvs):
+        self.setup_copp(dvs)
+        self.exclude_ctbl = swsscommon.Table(self.cdb, "COPP_TRAP_EXCLUDE_PORTS")
+        self.port_oids = dvs.get_counters_db().get_entry("COUNTERS_PORT_NAME_MAP", "")
+
+    def set_exclude_ports(self, ports):
+        if ports is None:
+            self.exclude_ctbl._del("GLOBAL")
+        else:
+            self.exclude_ctbl.set("GLOBAL", swsscommon.FieldValuePairs([("ports@", ",".join(ports))]))
+        time.sleep(2)
+
+    def get_trap_exclude_ports(self, trap_id):
+        for key in self.trap_atbl.getKeys():
+            (status, fvs) = self.trap_atbl.get(key)
+            fvs = dict(fvs)
+            if fvs.get("SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE") == traps_to_trap_type[trap_id]:
+                count, _, oids = fvs.get("SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST", "0:null").partition(":")
+                return set(oids.split(",")) if int(count) else set()
+        return None
+
+    def assert_excluded(self, trap_ids, ports):
+        expected = {self.port_oids[p] for p in ports}
+        for trap_id in trap_ids:
+            assert self.get_trap_exclude_ports(trap_id) == expected, trap_id
+
+    def test_exclude_ports_global(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        (status, fvs) = self.capability_stbl.get("traps")
+        assert status and dict(fvs).get("exclude_ports_supported") == "true"
+
+        self.set_exclude_ports(["Ethernet4", "Ethernet0"])
+        self.assert_excluded(["lacp", "arp_req", "ip2me", "udld"], ["Ethernet0", "Ethernet4"])
+        self.set_exclude_ports(None)
+
+    def test_exclude_ports_update(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        self.set_exclude_ports(["Ethernet0"])
+        self.assert_excluded(["lacp"], ["Ethernet0"])
+
+        self.set_exclude_ports(["Ethernet4", "Ethernet8"])
+        self.assert_excluded(["lacp"], ["Ethernet4", "Ethernet8"])
+
+        self.set_exclude_ports([])
+        self.assert_excluded(["lacp"], [])
+
+        self.set_exclude_ports(["Ethernet0"])
+        self.set_exclude_ports(None)
+        self.assert_excluded(["lacp"], [])
+
+    def test_exclude_ports_feature_toggle(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        self.set_exclude_ports(["Ethernet0"])
+
+        self.feature_tbl.set("sflow", swsscommon.FieldValuePairs([("state", "enabled")]))
+        time.sleep(2)
+        self.assert_excluded(["sample_packet"], ["Ethernet0"])
+
+        self.feature_tbl.set("sflow", swsscommon.FieldValuePairs([("state", "disabled")]))
+        time.sleep(2)
+        assert self.get_trap_exclude_ports("sample_packet") is None
+
+        self.feature_tbl.set("sflow", swsscommon.FieldValuePairs([("state", "enabled")]))
+        time.sleep(2)
+        self.assert_excluded(["sample_packet"], ["Ethernet0"])
+
+        self.feature_tbl.set("sflow", swsscommon.FieldValuePairs([("state", "disabled")]))
+        self.set_exclude_ports(None)
+
+    def test_exclude_ports_trap_action(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        self.set_exclude_ports(["Ethernet0"])
+
+        self.trap_group_ctbl.set("queue4_group1", swsscommon.FieldValuePairs([("trap_action", "drop")]))
+        time.sleep(2)
+        self.assert_excluded(["lacp"], [])
+
+        self.trap_group_ctbl.set("queue4_group1", swsscommon.FieldValuePairs([("trap_action", "trap")]))
+        time.sleep(2)
+        self.assert_excluded(["lacp"], ["Ethernet0"])
+
+        # Deleting the override re-creates the group from the init config, still with the list
+        self.trap_group_ctbl._del("queue4_group1")
+        time.sleep(2)
+        self.assert_excluded(["lacp"], ["Ethernet0"])
+        self.set_exclude_ports(None)
+
+    def test_exclude_ports_nonexistent_port(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        self.set_exclude_ports(["Ethernet0", "Ethernet1000"])
+        self.assert_excluded(["lacp"], ["Ethernet0"])
+        self.set_exclude_ports(None)
+
+    def test_exclude_ports_new_trap(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        self.set_exclude_ports(["Ethernet0"])
+
+        self.trap_ctbl.set("exclude_test", swsscommon.FieldValuePairs(
+            [("trap_ids", "ospf"), ("trap_group", "queue4_group1"), ("always_enabled", "true")]))
+        time.sleep(2)
+        self.assert_excluded(["ospf"], ["Ethernet0"])
+
+        self.trap_ctbl._del("exclude_test")
+        self.set_exclude_ports(None)
+
+    def test_exclude_ports_lag_member(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        lag_tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        member_tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
+        lag_tbl.set("PortChannel0001", swsscommon.FieldValuePairs([("admin_status", "up"), ("mtu", "9100")]))
+        member_tbl.set("PortChannel0001|Ethernet8", swsscommon.FieldValuePairs([("NULL", "NULL")]))
+        time.sleep(2)
+
+        self.set_exclude_ports(["Ethernet0", "Ethernet8"])
+        self.assert_excluded(["lacp"], ["Ethernet0"])
+
+        member_tbl._del("PortChannel0001|Ethernet8")
+        time.sleep(2)
+        self.assert_excluded(["lacp"], ["Ethernet0", "Ethernet8"])
+
+        lag_tbl._del("PortChannel0001")
+        self.set_exclude_ports(None)
+
+    def test_exclude_ports_ttl_error(self, dvs, testlog):
+        self.setup_exclude_ports(dvs)
+        self.set_exclude_ports(["Ethernet0"])
+        self.assert_excluded(["ttl_error"], ["Ethernet0"])
+        self.set_exclude_ports(None)
+        self.assert_excluded(["ttl_error"], [])

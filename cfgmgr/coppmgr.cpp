@@ -124,6 +124,7 @@ void CoppMgr::setFeatureTrapIdsStatus(string feature, bool enable)
     if (checkTrapGroupPending(trap_group) && !prev_group_state)
     {
         m_appCoppTable.del(trap_group);
+        m_groupExcludePorts.erase(trap_group);
         delCoppGroupStateOk(trap_group);
         return;
     }
@@ -140,6 +141,7 @@ void CoppMgr::setFeatureTrapIdsStatus(string feature, bool enable)
             FieldValueTuple fv(i.first, i.second);
             fvs.push_back(fv);
         }
+        addExcludePortsFv(trap_group, fvs);
     }
     getTrapGroupTrapIds(trap_group, trap_ids);
     if (!trap_ids.empty())
@@ -298,6 +300,9 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgCoppTrapTable(cfgDb, CFG_COPP_TRAP_TABLE_NAME),
         m_cfgCoppGroupTable(cfgDb, CFG_COPP_GROUP_TABLE_NAME),
         m_cfgFeatureTable(cfgDb, CFG_FEATURE_TABLE_NAME),
+        m_cfgCoppTrapExcludePortsTable(cfgDb, CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME),
+        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
+        m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_appCoppTable(appDb, APP_COPP_TABLE_NAME),
         m_stateCoppTrapTable(stateDb, STATE_COPP_TRAP_TABLE_NAME),
         m_stateCoppGroupTable(stateDb, STATE_COPP_GROUP_TABLE_NAME),
@@ -330,6 +335,8 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgFeatureTable.get(i, feature_fvs);
         m_featuresCfgTable.emplace(i, feature_fvs);
     }
+
+    loadExcludePorts();
 
     mergeConfig(m_coppTrapInitCfg, trap_cfg, trap_cfg_keys, m_cfgCoppTrapTable);
 
@@ -391,6 +398,13 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
             FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
             trap_group_fvs.push_back(fv);
         }
+
+        string preserved_exclude_ports;
+        if (m_coppTable.hget(i.first, COPP_GROUP_EXCLUDE_PORTS_FIELD, preserved_exclude_ports))
+        {
+            m_groupExcludePorts[i.first] = preserved_exclude_ports;
+        }
+        addExcludePortsFv(i.first, trap_group_fvs);
 
         if (!trap_group_fvs.empty())
         {
@@ -882,6 +896,7 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
                     m_coppGroupFvs[key][fvField(fv)] = fvValue(fv);
                 }
             }
+            updateGroupExcludePorts(key);
         }
         else if (op == DEL_COMMAND)
         {
@@ -891,6 +906,7 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
                 m_appCoppTable.del(key);
                 delCoppGroupStateOk(key);
             }
+            m_groupExcludePorts.erase(key);
 
             /* If the COPP group was part of init config, it needs to be recreated
              * with field values from init. The configuration delete should just clear
@@ -911,6 +927,7 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
                         FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
                         fvs.push_back(fv);
                     }
+                    addExcludePortsFv(key, fvs);
                     m_appCoppTable.set(key, fvs);
                     setCoppGroupStateOk(key);
                 }
@@ -965,6 +982,121 @@ void CoppMgr::doFeatureTask(Consumer &consumer)
     }
 }
 
+void CoppMgr::loadExcludePorts()
+{
+    vector<FieldValueTuple> fvs;
+    set<string> ports;
+    m_cfgCoppTrapExcludePortsTable.get("GLOBAL", fvs);
+    for (auto &fv : fvs)
+    {
+        if (fvField(fv) == "ports@" || fvField(fv) == "ports")
+        {
+            for (auto &port : tokenize(fvValue(fv), list_item_delimiter))
+            {
+                ports.insert(port);
+            }
+        }
+    }
+
+    set<string> lag_members;
+    vector<string> lag_member_keys;
+    if (!ports.empty())
+    {
+        m_cfgLagMemberTable.getKeys(lag_member_keys);
+    }
+    for (auto &key : lag_member_keys)
+    {
+        auto tokens = tokenize(key, config_db_key_delimiter);
+        if (tokens.size() == 2)
+        {
+            lag_members.insert(tokens[1]);
+        }
+    }
+
+    m_excludePorts.clear();
+    for (auto &port : ports)
+    {
+        vector<FieldValueTuple> port_fvs;
+        if (!m_cfgPortTable.get(port, port_fvs))
+        {
+            SWSS_LOG_NOTICE("Ignoring trap exclude port %s, not a configured port", port.c_str());
+            continue;
+        }
+        if (lag_members.find(port) != lag_members.end())
+        {
+            SWSS_LOG_NOTICE("Ignoring trap exclude port %s, it is a PortChannel member", port.c_str());
+            continue;
+        }
+        if (!m_excludePorts.empty())
+        {
+            m_excludePorts += list_item_delimiter;
+        }
+        m_excludePorts += port;
+    }
+}
+
+string CoppMgr::getEffectiveExcludePorts(const string &trap_group)
+{
+    if (m_excludePorts.empty())
+    {
+        return "";
+    }
+
+    auto group = m_coppGroupFvs.find(trap_group);
+    if (group != m_coppGroupFvs.end())
+    {
+        /* No trap_action (e.g. the default group) means the traps use trap */
+        auto action = group->second.find(COPP_GROUP_TRAP_ACTION_FIELD);
+        if (action != group->second.end() && action->second != "trap" && action->second != "copy")
+        {
+            SWSS_LOG_NOTICE("Not excluding ports on trap group %s with trap_action %s",
+                            trap_group.c_str(), action->second.c_str());
+            return "";
+        }
+    }
+    return m_excludePorts;
+}
+
+void CoppMgr::addExcludePortsFv(const string &trap_group, vector<FieldValueTuple> &fvs)
+{
+    string ports = getEffectiveExcludePorts(trap_group);
+    if (!ports.empty() || !m_groupExcludePorts[trap_group].empty())
+    {
+        fvs.push_back(FieldValueTuple(COPP_GROUP_EXCLUDE_PORTS_FIELD, ports));
+    }
+    m_groupExcludePorts[trap_group] = ports;
+}
+
+void CoppMgr::updateGroupExcludePorts(const string &trap_group)
+{
+    if (checkTrapGroupPending(trap_group))
+    {
+        return;
+    }
+
+    string ports = getEffectiveExcludePorts(trap_group);
+    if (ports == m_groupExcludePorts[trap_group])
+    {
+        return;
+    }
+
+    vector<FieldValueTuple> fvs = { { COPP_GROUP_EXCLUDE_PORTS_FIELD, ports } };
+    m_appCoppTable.set(trap_group, fvs);
+    m_groupExcludePorts[trap_group] = ports;
+}
+
+void CoppMgr::doCoppTrapExcludePortsTask(Consumer &consumer)
+{
+    /* The list is re-read from CONFIG_DB, so the entries themselves are not needed */
+    consumer.m_toSync.clear();
+
+    loadExcludePorts();
+    for (auto &group : m_coppGroupFvs)
+    {
+        updateGroupExcludePorts(group.first);
+    }
+}
+
 void CoppMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -981,5 +1113,10 @@ void CoppMgr::doTask(Consumer &consumer)
     else if (table == CFG_FEATURE_TABLE_NAME)
     {
         doFeatureTask(consumer);
+    }
+    else if (table == CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME || table == CFG_PORT_TABLE_NAME ||
+             table == CFG_LAG_MEMBER_TABLE_NAME)
+    {
+        doCoppTrapExcludePortsTask(consumer);
     }
 }

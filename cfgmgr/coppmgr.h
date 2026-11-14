@@ -11,6 +11,12 @@
 
 namespace swss {
 
+/* CONFIG_DB table of ports excluded from every CoPP trap. Defined here until
+ * swss-common's schema.h carries it. */
+#ifndef CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME
+#define CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME "COPP_TRAP_EXCLUDE_PORTS"
+#endif
+
 /* COPP Trap Table Fields */
 #define COPP_TRAP_ID_LIST_FIELD                "trap_ids"
 #define COPP_TRAP_GROUP_FIELD                  "trap_group"
@@ -30,6 +36,7 @@ namespace swss {
 #define COPP_GROUP_POLICER_ACTION_GREEN_FIELD  "green_action"
 #define COPP_GROUP_POLICER_ACTION_RED_FIELD    "red_action"
 #define COPP_GROUP_POLICER_ACTION_YELLOW_FIELD "yellow_action"
+#define COPP_GROUP_EXCLUDE_PORTS_FIELD         "exclude_ports"
 
 /* sflow genetlink fields */
 #define COPP_GROUP_GENETLINK_NAME_FIELD        "genetlink_name"
@@ -67,6 +74,7 @@ public:
     using Orch::doTask;
 private:
     Table                  m_cfgCoppTrapTable, m_cfgCoppGroupTable, m_cfgFeatureTable, m_coppTable;
+    Table                  m_cfgCoppTrapExcludePortsTable, m_cfgPortTable, m_cfgLagMemberTable;
     Table                  m_stateCoppTrapTable, m_stateCoppGroupTable;
     ProducerStateTable     m_appCoppTable;
     CoppTrapConfMap        m_coppTrapConfMap;
@@ -76,12 +84,20 @@ private:
     CoppCfg                m_coppTrapInitCfg;
     CoppCfg                m_featuresCfgTable;
     std::string            m_coppCfgfile;
+    std::string            m_excludePorts;
+    std::map<std::string, std::string> m_groupExcludePorts;
 
 
     void doTask(Consumer &consumer);
     void doCoppGroupTask(Consumer &consumer);
     void doCoppTrapTask(Consumer &consumer);
     void doFeatureTask(Consumer &consumer);
+    void doCoppTrapExcludePortsTask(Consumer &consumer);
+
+    void loadExcludePorts();
+    std::string getEffectiveExcludePorts(const std::string &trap_group);
+    void addExcludePortsFv(const std::string &trap_group, std::vector<FieldValueTuple> &fvs);
+    void updateGroupExcludePorts(const std::string &trap_group);
 
     void getTrapGroupTrapIds(std::string trap_group, std::string &trap_ids);
     void removeTrapIdsFromTrapGroup(std::string trap_group, std::string trap_ids);

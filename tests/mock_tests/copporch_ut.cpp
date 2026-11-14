@@ -592,4 +592,135 @@ namespace copporch_test
             ASSERT_EQ(trapGroupIdMap.size(), 1);
         }
     }
+
+    static std::vector<sai_object_id_t> getTrapExcludePorts(CoppOrch &orch, sai_hostif_trap_type_t trapId)
+    {
+        std::vector<sai_object_id_t> list(32);
+        sai_attribute_t attr;
+        attr.id = SAI_HOSTIF_TRAP_ATTR_EXCLUDE_PORT_LIST;
+        attr.value.objlist.count = static_cast<uint32_t>(list.size());
+        attr.value.objlist.list = list.data();
+
+        auto traps = Portal::CoppOrchInternal::getTrapGroupIdMap(orch);
+        if (sai_hostif_api->get_hostif_trap_attribute(traps.at(trapId).trap_obj, 1, &attr) != SAI_STATUS_SUCCESS)
+        {
+            return {};
+        }
+        list.resize(attr.value.objlist.count);
+        return list;
+    }
+
+    static std::vector<sai_object_id_t> getPortIds(const std::vector<std::string> &aliases)
+    {
+        std::vector<sai_object_id_t> ids;
+        for (const auto &alias : aliases)
+        {
+            Port port;
+            EXPECT_TRUE(gPortsOrch->getPort(alias, port));
+            ids.push_back(port.m_port_id);
+        }
+        return ids;
+    }
+
+    TEST_F(CoppOrchTest, ExcludePorts_CapabilityPublished)
+    {
+        MockCoppOrch coppOrch;
+
+        std::string value;
+        DBConnector stateDb("STATE_DB", 0);
+        Table capTable(&stateDb, STATE_COPP_TRAP_CAPABILITY_TABLE_NAME);
+        ASSERT_TRUE(capTable.hget("traps", "exclude_ports_supported", value));
+        EXPECT_EQ(value, Portal::CoppOrchInternal::excludePortsSupported(coppOrch.get()) ? "true" : "false");
+    }
+
+    TEST_F(CoppOrchTest, ExcludePorts_CreateSetClear)
+    {
+        const std::string group = "queue4_group1";
+        MockCoppOrch coppOrch;
+        Portal::CoppOrchInternal::excludePortsSupported(coppOrch.get()) = true;
+
+        // Create with a list
+        coppOrch.doCoppTableTask({ { group, SET_COMMAND, {
+            { copp_trap_action_field, "trap" }, { copp_queue_field, "4" },
+            { copp_trap_id_list, "bgp" }, { copp_exclude_ports_field, "Ethernet0,Ethernet4" } } } });
+        EXPECT_EQ(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_BGP), getPortIds({ "Ethernet0", "Ethernet4" }));
+
+        // A trap added later inherits the list
+        coppOrch.doCoppTableTask({ { group, SET_COMMAND, { { copp_trap_id_list, "bgp,lacp" } } } });
+        EXPECT_EQ(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_LACP), getPortIds({ "Ethernet0", "Ethernet4" }));
+
+        // Change the list on existing traps
+        coppOrch.doCoppTableTask({ { group, SET_COMMAND, { { copp_exclude_ports_field, "Ethernet8" } } } });
+        EXPECT_EQ(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_BGP), getPortIds({ "Ethernet8" }));
+        EXPECT_EQ(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_LACP), getPortIds({ "Ethernet8" }));
+
+        // Clear
+        coppOrch.doCoppTableTask({ { group, SET_COMMAND, { { copp_exclude_ports_field, "" } } } });
+        EXPECT_TRUE(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_BGP).empty());
+        EXPECT_TRUE(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_LACP).empty());
+
+        // Delete
+        coppOrch.doCoppTableTask({ { group, DEL_COMMAND, { } } });
+        EXPECT_TRUE(coppOrch.get().getTrapGroupMap().count(group) == 0);
+    }
+
+    TEST_F(CoppOrchTest, ExcludePorts_DefaultGroupTtlError)
+    {
+        MockCoppOrch coppOrch;
+        Portal::CoppOrchInternal::excludePortsSupported(coppOrch.get()) = true;
+
+        coppOrch.doCoppTableTask({ { "default", SET_COMMAND, {
+            { copp_queue_field, "0" }, { copp_exclude_ports_field, "Ethernet0" } } } });
+        EXPECT_EQ(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_TTL_ERROR), getPortIds({ "Ethernet0" }));
+    }
+
+    TEST_F(CoppOrchTest, ExcludePorts_Unsupported)
+    {
+        const std::string group = "queue4_group1";
+        MockCoppOrch coppOrch;
+        Portal::CoppOrchInternal::excludePortsSupported(coppOrch.get()) = false;
+
+        // The field is ignored, even for a port that does not exist
+        ASSERT_EQ(coppOrch.doProcessCoppRule({ { group, SET_COMMAND, {
+            { copp_trap_action_field, "trap" }, { copp_queue_field, "4" },
+            { copp_trap_id_list, "bgp" }, { copp_exclude_ports_field, "Ethernet0,Ethernet9999" } } } }),
+            task_process_status::task_success);
+        EXPECT_TRUE(getTrapExcludePorts(coppOrch.get(), SAI_HOSTIF_TRAP_TYPE_BGP).empty());
+    }
+
+    TEST_F(CoppOrchTest, ExcludePorts_PortNotCreatedRetry)
+    {
+        const std::string group = "queue4_group1";
+        MockCoppOrch coppOrch;
+        Portal::CoppOrchInternal::excludePortsSupported(coppOrch.get()) = true;
+
+        ASSERT_EQ(coppOrch.doProcessCoppRule({ { group, SET_COMMAND, {
+            { copp_trap_action_field, "trap" }, { copp_queue_field, "4" },
+            { copp_trap_id_list, "bgp" }, { copp_exclude_ports_field, "Ethernet0,Ethernet9999" } } } }),
+            task_process_status::task_need_retry);
+        EXPECT_TRUE(coppOrch.get().getTrapGroupMap().count(group) == 0);
+    }
+
+    TEST_F(CoppOrchTest, ExcludePorts_PortRefCount)
+    {
+        const std::string group = "queue4_group1";
+        MockCoppOrch coppOrch;
+        Portal::CoppOrchInternal::excludePortsSupported(coppOrch.get()) = true;
+        auto &refs = gPortsOrch->m_port_ref_count;
+        const auto ref0 = refs["Ethernet0"];
+        const auto ref4 = refs["Ethernet4"];
+
+        // Excluded ports hold a reference so portsorch defers their removal
+        coppOrch.doCoppTableTask({ { group, SET_COMMAND, {
+            { copp_trap_action_field, "trap" }, { copp_queue_field, "4" },
+            { copp_trap_id_list, "bgp" }, { copp_exclude_ports_field, "Ethernet0" } } } });
+        EXPECT_EQ(refs["Ethernet0"], ref0 + 1);
+
+        coppOrch.doCoppTableTask({ { group, SET_COMMAND, { { copp_exclude_ports_field, "Ethernet4" } } } });
+        EXPECT_EQ(refs["Ethernet0"], ref0);
+        EXPECT_EQ(refs["Ethernet4"], ref4 + 1);
+
+        coppOrch.doCoppTableTask({ { group, DEL_COMMAND, { } } });
+        EXPECT_EQ(refs["Ethernet4"], ref4);
+    }
 }

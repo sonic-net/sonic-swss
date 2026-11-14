@@ -28,6 +28,7 @@ using namespace swss;
 const std::string copp_trap_id_list                = "trap_ids";
 const std::string copp_trap_action_field           = "trap_action";
 const std::string copp_trap_priority_field         = "trap_priority";
+const std::string copp_exclude_ports_field         = "exclude_ports";
 
 const std::string copp_queue_field                 = "queue";
 
@@ -105,6 +106,8 @@ protected:
     TrapGroupHostIfMap m_trap_group_hostif_map;
     TrapIdHostIfTableMap m_trapid_hostif_table_map;
     TrapGroupTrapIdAttribs m_trap_group_trap_id_attrs;
+    std::map<std::string, std::vector<sai_object_id_t>> m_trap_group_exclude_ports;
+    bool m_exclude_ports_supported = false;
     TrapObjectTrapNameMap m_trap_obj_name_map;
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
     // Policer OID -> trap group name for bound policer counters; process-local
@@ -168,12 +171,15 @@ protected:
                                        std::vector<sai_hostif_trap_type_t> &rem_trap_ids);
 
     bool processTrapGroupDel (std::string trap_group_name);
+    void setTrapGroupExcludePorts(const std::string &trap_group_name, const std::vector<sai_object_id_t> &exclude_ports);
 
-    bool getAttribsFromTrapGroup (std::vector<swss::FieldValueTuple> &fv_tuple,
+    task_process_status getAttribsFromTrapGroup (std::vector<swss::FieldValueTuple> &fv_tuple,
                                   std::vector<sai_attribute_t> &trap_gr_attribs,
                                   std::vector<sai_attribute_t> &trap_id_attribs,
                                   std::vector<sai_attribute_t> &policer_attribs,
-                                  std::vector<sai_attribute_t> &genetlink_attribs);
+                                  std::vector<sai_attribute_t> &genetlink_attribs,
+                                  bool &has_exclude_ports,
+                                  std::vector<sai_object_id_t> &exclude_ports);
 
     bool trapGroupUpdatePolicer (std::string trap_group_name, std::vector<sai_attribute_t> &policer_attribs);
 
