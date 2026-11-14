@@ -38,6 +38,11 @@ resources:
 parameters:
   - name: debian_version
     type: string
+    default: trixie
+  # The docker-sonic-vs base image from sonic-buildimage is bookworm, so the
+  # swss packages installed into it, and the stages that test it, use this.
+  - name: vs_debian_version
+    type: string
     default: bookworm
 
 variables:
@@ -58,6 +63,17 @@ stages:
       artifact_name: sonic-swss-${{ parameters.debian_version }}
       debian_version: ${{ parameters.debian_version }}
       archive_pytests: true
+      archive_gcov: false
+
+- stage: BuildBookworm
+  dependsOn: []
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      pool: sonicso1ES-amd64
+      artifact_name: sonic-swss-${{ parameters.vs_debian_version }}
+      debian_version: ${{ parameters.vs_debian_version }}
       archive_gcov: true
 
 - stage: BuildAsan
@@ -67,8 +83,8 @@ stages:
     parameters:
       arch: amd64
       pool: sonicso1ES-amd64
-      artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
-      debian_version: ${{ parameters.debian_version }}
+      artifact_name: sonic-swss-asan-${{ parameters.vs_debian_version }}
+      debian_version: ${{ parameters.vs_debian_version }}
       asan: true
 
 - stage: BuildArm
@@ -93,25 +109,17 @@ stages:
       debian_version: ${{ parameters.debian_version }}
       archive_gcov: false
 
-- stage: BuildTrixie
+- stage: BuildBookwormArm
   dependsOn: BuildArm
   condition: succeeded('BuildArm')
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:
-      arch: amd64
-      pool: sonicso1ES-amd64
-      artifact_name: sonic-swss-trixie
-      debian_version: trixie
-      archive_gcov: false
-
-  - template: .azure-pipelines/build-template.yml
-    parameters:
       arch: armhf
       timeout: 240
       pool: sonicso1ES-armhf
-      artifact_name: sonic-swss-trixie.armhf
-      debian_version: trixie
+      artifact_name: sonic-swss-${{ parameters.vs_debian_version }}.armhf
+      debian_version: ${{ parameters.vs_debian_version }}
       archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
@@ -119,20 +127,20 @@ stages:
       arch: arm64
       timeout: 240
       pool: sonicso1ES-arm64
-      artifact_name: sonic-swss-trixie.arm64
-      debian_version: trixie
+      artifact_name: sonic-swss-${{ parameters.vs_debian_version }}.arm64
+      debian_version: ${{ parameters.vs_debian_version }}
       archive_gcov: false
 
 - stage: BuildDocker
-  dependsOn: Build
-  condition: succeeded('Build')
+  dependsOn: BuildBookworm
+  condition: succeeded('BuildBookworm')
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
-      swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
-      sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
-      swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
-      vpp_artifact_name: vpp-${{ parameters.debian_version }}
+      swss_common_artifact_name: sonic-swss-common-${{ parameters.vs_debian_version }}
+      sairedis_artifact_name: sonic-sairedis-${{ parameters.vs_debian_version }}
+      swss_artifact_name: sonic-swss-${{ parameters.vs_debian_version }}
+      vpp_artifact_name: vpp-${{ parameters.vs_debian_version }}
       artifact_name: docker-sonic-vs
       debug_pkg: swss-dbg
       include_gcov: true
@@ -144,11 +152,11 @@ stages:
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
-      swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
-      sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
-      swss_artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
+      swss_common_artifact_name: sonic-swss-common-${{ parameters.vs_debian_version }}
+      sairedis_artifact_name: sonic-sairedis-${{ parameters.vs_debian_version }}
+      swss_artifact_name: sonic-swss-asan-${{ parameters.vs_debian_version }}
       artifact_name: docker-sonic-vs-asan
-      vpp_artifact_name: vpp-${{ parameters.debian_version }}
+      vpp_artifact_name: vpp-${{ parameters.vs_debian_version }}
       asan: true
       debug_pkg: swss-dbg
       include_gcov: true
@@ -162,7 +170,7 @@ stages:
     parameters:
       log_artifact_name: log
       archive_gcov: true
-      debian_version: ${{ parameters.debian_version }}
+      debian_version: ${{ parameters.vs_debian_version }}
       extra_modes:
         - name: single_asic_voq
           pattern: 'test_portchannel.py test_neighbor.py test_route.py'
@@ -179,7 +187,7 @@ stages:
       docker_sonic_vs_name: docker-sonic-vs-asan
       asan: true
       continue_on_error: true
-      debian_version: ${{ parameters.debian_version }}
+      debian_version: ${{ parameters.vs_debian_version }}
       extra_modes:
         - name: single_asic_voq
           pattern: 'test_portchannel.py test_neighbor.py test_route.py'
@@ -193,9 +201,9 @@ stages:
   - template: .azure-pipelines/gcov.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-${{ parameters.debian_version }}
-      swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
-      sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
-      swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
+      sonic_slave: sonic-slave-${{ parameters.vs_debian_version }}
+      swss_common_artifact_name: sonic-swss-common-${{ parameters.vs_debian_version }}
+      sairedis_artifact_name: sonic-sairedis-${{ parameters.vs_debian_version }}
+      swss_artifact_name: sonic-swss-${{ parameters.vs_debian_version }}
       artifact_name: sonic-gcov
       archive_gcov: true
