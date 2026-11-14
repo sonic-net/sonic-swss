@@ -241,7 +241,8 @@ private:
     TunnelUsers tnl_users_;
     VxlanTunnel* vtep_ptr=NULL;
     tunnel_creation_src_t src_creation_;
-    VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)
+    // NOT_SET is programmed as PIPE; UNIFORM must be requested explicitly.
+    VxlanTunnelTTLMode decap_ttl_mode_;
     uint8_t encap_dedicated_mappers_ = 0;
     uint8_t decap_dedicated_mappers_ = 0;
 };
