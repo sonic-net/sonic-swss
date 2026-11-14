@@ -1,6 +1,8 @@
 #include <limits.h>
 #include <inttypes.h>
+#include <cstring>
 #include <unordered_map>
+#include <sys/time.h>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
@@ -10,6 +12,7 @@
 #include "notifier.h"
 #include "schema.h"
 #include "subscriberstatetable.h"
+#include "warm_restart.h"
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t* sai_switch_api;
@@ -33,9 +36,17 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
     m_stateDb(new DBConnector("STATE_DB", 0)),
     m_stateTable(new Table(m_stateDb.get(), PFC_WD_STATE_TABLE)),
+    m_queueStateTable(new Table(m_stateDb.get(), PFC_WD_QUEUE_STATE_TABLE)),
+    m_stormHistoryTable(new Table(m_stateDb.get(), PFC_WD_STORM_HISTORY_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
+
+    if (!WarmStart::isWarmStart())
+    {
+        closeStormsOnColdStart();
+    }
+
     if (m_platform == "")
     {
         SWSS_LOG_ERROR("Platform environment variable is not defined");
@@ -390,6 +401,8 @@ task_process_status PfcWdBaseOrch::deleteEntry(const string& name)
     }
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
+    // Only a config removal clears storms; createEntry's internal restart keeps them.
+    clearStormLog(port.m_alias);
     m_pfcwd_ports.erase(port.m_alias);
     return task_process_status::task_success;
 }
@@ -426,6 +439,8 @@ void PfcWdBaseOrch::report_pfc_storm(sai_object_id_t queueId, sai_object_id_t po
     }
 
     event_publish(g_events_handle, "pfc-storm", &params);
+
+    recordStormDetected(portAlias, queueIndex);
 }
 
 void PfcWdBaseOrch::report_pfc_restored(sai_object_id_t queueId, sai_object_id_t portId,
@@ -437,4 +452,455 @@ void PfcWdBaseOrch::report_pfc_restored(sai_object_id_t queueId, sai_object_id_t
         queueIndex,
         queueId,
         portId);
+
+    recordStormRestored(portAlias, queueIndex, queueId);
+}
+
+// A malformed value reads as zero instead of throwing out of the watchdog
+// timer.
+static uint64_t parseQueueStat(const string& field, const string& value)
+{
+    try
+    {
+        return stoull(value);
+    }
+    catch (const logic_error&)
+    {
+        SWSS_LOG_ERROR("Bad PFC WD counter value %s=%s", field.c_str(), value.c_str());
+        return 0;
+    }
+}
+
+bool PfcWdBaseOrch::readQueueSaiStats(sai_object_id_t queueId, PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    // Zeroed up front so a failed read leaves no stale value behind.
+    counters = {};
+
+    static const vector<sai_stat_id_t> queueStatIds =
+    {
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_DROPPED_PACKETS,
+    };
+    vector<uint64_t> queueStats(queueStatIds.size());
+
+    sai_status_t status = sai_queue_api->get_queue_stats(
+            queueId, static_cast<uint32_t>(queueStatIds.size()), queueStatIds.data(), queueStats.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", queueId, status);
+        return false;
+    }
+
+    counters.txPkt = queueStats[0];
+    counters.txDropPkt = queueStats[1];
+
+    return true;
+}
+
+PfcWdQueueStats PfcWdBaseOrch::getQueueStats(const shared_ptr<Table>& countersTable,
+                                             const string& queueIdStr)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdQueueStats stats;
+    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    stats.operational = true;
+    vector<FieldValueTuple> fieldValues;
+
+    if (!countersTable->get(queueIdStr, fieldValues))
+    {
+        return stats;
+    }
+
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+        if (field == PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED)
+        {
+            stats.detectCount = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED)
+        {
+            stats.restoreCount = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATUS)
+        {
+            stats.operational = value == PFC_WD_QUEUE_STATUS_OPERATIONAL ? true : false;
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS)
+        {
+            stats.txPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS)
+        {
+            stats.txDropPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS)
+        {
+            stats.rxPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS)
+        {
+            stats.rxDropPkt = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS_LAST)
+        {
+            stats.txPktLast = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST)
+        {
+            stats.txDropPktLast = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS_LAST)
+        {
+            stats.rxPktLast = parseQueueStat(field, value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST)
+        {
+            stats.rxDropPktLast = parseQueueStat(field, value);
+        }
+    }
+
+    return stats;
+}
+
+void PfcWdBaseOrch::updateQueueStats(const shared_ptr<Table>& countersTable,
+                                     const string& queueIdStr,
+                                     const PfcWdQueueStats& stats)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> resultFvValues;
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(stats.detectCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(stats.restoreCount));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS, to_string(stats.txPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS, to_string(stats.txDropPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS, to_string(stats.rxPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS, to_string(stats.rxDropPkt));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS_LAST, to_string(stats.txPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST, to_string(stats.txDropPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS_LAST, to_string(stats.rxPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST, to_string(stats.rxDropPktLast));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, stats.operational ?
+                                                     PFC_WD_QUEUE_STATUS_OPERATIONAL :
+                                                     PFC_WD_QUEUE_STATUS_STORMED);
+
+    countersTable->set(queueIdStr, resultFvValues);
+}
+
+static bool parseDecimal(const string& text, uint64_t& number)
+{
+    if (text.empty() || text.size() > 19 || text.find_first_not_of("0123456789") != string::npos)
+    {
+        return false;
+    }
+    number = stoull(text);
+    return true;
+}
+
+static string stormKey(const string& portAlias, uint8_t queueIndex)
+{
+    return portAlias + "|" + to_string(static_cast<unsigned>(queueIndex));
+}
+
+static string stormField(uint64_t number, const char* suffix)
+{
+    return "storm_" + to_string(number) + "_" + suffix;
+}
+
+static uint64_t nowMicroseconds()
+{
+    struct timeval tv;
+    gettimeofday(&tv, nullptr);
+    return static_cast<uint64_t>(tv.tv_sec) * 1000000ULL + static_cast<uint64_t>(tv.tv_usec);
+}
+
+// Storm last_storm is detected and neither restored nor interrupted.
+static bool openStorm(const shared_ptr<Table>& history, const string& key,
+                      uint64_t& number, string& detected)
+{
+    string last, ignored;
+    return history->hget(key, PFC_WD_STORM_HISTORY_LAST_STORM, last) &&
+           parseDecimal(last, number) &&
+           history->hget(key, stormField(number, PFC_WD_STORM_HISTORY_DETECTED), detected) &&
+           !history->hget(key, stormField(number, PFC_WD_STORM_HISTORY_RESTORED), ignored) &&
+           !history->hget(key, stormField(number, PFC_WD_STORM_HISTORY_INTERRUPTED), ignored);
+}
+
+static uint64_t storedCount(const shared_ptr<Table>& state, const string& key, const char* field)
+{
+    string text;
+    uint64_t count = 0;
+    if (!state->hget(key, field, text) || !parseDecimal(text, count))
+    {
+        return 0;
+    }
+    return count;
+}
+
+void PfcWdBaseOrch::clearStormLog(const string& portAlias)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+        {
+            m_queueStateTable->del(stormKey(portAlias, i));
+            m_stormHistoryTable->del(stormKey(portAlias, i));
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to clear PFC watchdog storm records for %s: %s",
+                      portAlias.c_str(), e.what());
+    }
+}
+
+void PfcWdBaseOrch::closeStormsOnColdStart()
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        vector<string> keys;
+        m_queueStateTable->getKeys(keys);
+        for (const auto& key : keys)
+        {
+            m_queueStateTable->del(key);
+        }
+
+        const string now = to_string(nowMicroseconds());
+        keys.clear();
+        m_stormHistoryTable->getKeys(keys);
+        for (const auto& key : keys)
+        {
+            uint64_t n = 0;
+            string detected;
+            if (openStorm(m_stormHistoryTable, key, n, detected))
+            {
+                m_stormHistoryTable->hset(key, stormField(n, PFC_WD_STORM_HISTORY_INTERRUPTED), now);
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to close PFC watchdog storm records on cold start: %s", e.what());
+    }
+}
+
+void PfcWdBaseOrch::interruptStorm(const string& portAlias, uint8_t queueIndex)
+{
+    SWSS_LOG_ENTER();
+
+    const string key = stormKey(portAlias, queueIndex);
+    try
+    {
+        uint64_t n = 0;
+        string detected;
+        if (openStorm(m_stormHistoryTable, key, n, detected))
+        {
+            m_stormHistoryTable->hset(key, stormField(n, PFC_WD_STORM_HISTORY_INTERRUPTED),
+                                      to_string(nowMicroseconds()));
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to interrupt PFC watchdog storm record for %s: %s",
+                      key.c_str(), e.what());
+    }
+}
+
+void PfcWdBaseOrch::recordStormDetected(const string& portAlias, uint8_t queueIndex)
+{
+    SWSS_LOG_ENTER();
+
+    const string key = stormKey(portAlias, queueIndex);
+    try
+    {
+        uint64_t n = 0;
+        string detected;
+        if (openStorm(m_stormHistoryTable, key, n, detected))
+        {
+            // Still open, e.g. replayed after a warm restart: same storm.
+            return;
+        }
+
+        const string now = to_string(nowMicroseconds());
+
+        m_queueStateTable->set(key, {
+            {PFC_WD_QUEUE_STATE_STATUS, PFC_WD_QUEUE_STATE_STATUS_DETECTED},
+            {PFC_WD_QUEUE_STATE_DETECTION_COUNT,
+             to_string(storedCount(m_queueStateTable, key, PFC_WD_QUEUE_STATE_DETECTION_COUNT) + 1)},
+            {PFC_WD_QUEUE_STATE_RESTORATION_COUNT,
+             to_string(storedCount(m_queueStateTable, key, PFC_WD_QUEUE_STATE_RESTORATION_COUNT))},
+            {PFC_WD_QUEUE_STATE_LAST_DETECTION_TIME, now},
+        });
+
+        string last;
+        if (!m_stormHistoryTable->hget(key, PFC_WD_STORM_HISTORY_LAST_STORM, last) ||
+            !parseDecimal(last, n))
+        {
+            n = 0;
+        }
+        n++;
+
+        m_stormHistoryTable->set(key, {
+            {PFC_WD_STORM_HISTORY_LAST_STORM, to_string(n)},
+            {stormField(n, PFC_WD_STORM_HISTORY_DETECTED), now},
+        });
+
+        if (n > PFC_WD_STORM_HISTORY_DEPTH)
+        {
+            const uint64_t old = n - PFC_WD_STORM_HISTORY_DEPTH;
+            for (const char* suffix : {PFC_WD_STORM_HISTORY_DETECTED, PFC_WD_STORM_HISTORY_RESTORED,
+                                       PFC_WD_STORM_HISTORY_DURATION_MS, PFC_WD_STORM_HISTORY_TX_PACKETS,
+                                       PFC_WD_STORM_HISTORY_TX_DROPPED, PFC_WD_STORM_HISTORY_RX_PACKETS,
+                                       PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_INTERRUPTED})
+            {
+                m_stormHistoryTable->hdel(key, stormField(old, suffix));
+            }
+        }
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to record PFC watchdog storm detection for %s: %s",
+                      key.c_str(), e.what());
+    }
+}
+
+void PfcWdBaseOrch::recordStormRestored(const string& portAlias, uint8_t queueIndex,
+                                        sai_object_id_t queueId)
+{
+    SWSS_LOG_ENTER();
+
+    const string key = stormKey(portAlias, queueIndex);
+    try
+    {
+        const uint64_t nowUs = nowMicroseconds();
+        const string now = to_string(nowUs);
+
+        vector<FieldValueTuple> state = {
+            {PFC_WD_QUEUE_STATE_STATUS, PFC_WD_QUEUE_STATE_STATUS_RESTORED},
+            {PFC_WD_QUEUE_STATE_RESTORATION_COUNT,
+             to_string(storedCount(m_queueStateTable, key, PFC_WD_QUEUE_STATE_RESTORATION_COUNT) + 1)},
+            {PFC_WD_QUEUE_STATE_LAST_RESTORATION_TIME, now},
+        };
+
+        uint64_t n = 0;
+        string detected;
+        if (openStorm(m_stormHistoryTable, key, n, detected))
+        {
+            uint64_t detectUs = 0;
+            const string durationMs = to_string((parseDecimal(detected, detectUs) && nowUs >= detectUs)
+                                                ? (nowUs - detectUs) / 1000 : 0);
+            const auto stats = getQueueStats(m_countersTable, sai_serialize_object_id(queueId));
+
+            m_stormHistoryTable->set(key, {
+                {stormField(n, PFC_WD_STORM_HISTORY_RESTORED), now},
+                {stormField(n, PFC_WD_STORM_HISTORY_DURATION_MS), durationMs},
+                {stormField(n, PFC_WD_STORM_HISTORY_TX_PACKETS), to_string(stats.txPktLast)},
+                {stormField(n, PFC_WD_STORM_HISTORY_TX_DROPPED), to_string(stats.txDropPktLast)},
+                {stormField(n, PFC_WD_STORM_HISTORY_RX_PACKETS), to_string(stats.rxPktLast)},
+                {stormField(n, PFC_WD_STORM_HISTORY_RX_DROPPED), to_string(stats.rxDropPktLast)},
+            });
+            state.emplace_back(PFC_WD_QUEUE_STATE_STORM_DURATION_MS, durationMs);
+        }
+
+        m_queueStateTable->set(key, state);
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_WARN("Failed to record PFC watchdog storm restoration for %s: %s",
+                      key.c_str(), e.what());
+    }
+}
+
+void PfcWdBaseOrch::beginStormCounters(const shared_ptr<Table>& countersTable,
+                                       const string& queueIdStr,
+                                       PfcWdHwStats hwStats,
+                                       PfcWdHwStats& baseline)
+{
+    SWSS_LOG_ENTER();
+
+    auto stats = getQueueStats(countersTable, queueIdStr);
+
+    // Only a genuinely new storm bumps the detect count. If a storm was already
+    // in progress we are resuming it, so the counters carry over untouched.
+    if (!(stats.detectCount > stats.restoreCount))
+    {
+        stats.detectCount++;
+
+        stats.txPktLast = 0;
+        stats.txDropPktLast = 0;
+        stats.rxPktLast = 0;
+        stats.rxDropPktLast = 0;
+    }
+    stats.operational = false;
+
+    baseline = hwStats;
+
+    updateQueueStats(countersTable, queueIdStr, stats);
+}
+
+void PfcWdBaseOrch::accumulateStormCounters(const shared_ptr<Table>& countersTable,
+                                            const string& queueIdStr,
+                                            PfcWdHwStats hwStats,
+                                            PfcWdHwStats& baseline,
+                                            bool periodic,
+                                            bool baselineValid)
+{
+    SWSS_LOG_ENTER();
+
+    auto stats = getQueueStats(countersTable, queueIdStr);
+
+    if (!periodic)
+    {
+        stats.restoreCount++;
+    }
+    stats.operational = !periodic;
+
+    if (baselineValid)
+    {
+        // A backward jump is read as a counter reset rather than wrapping the
+        // subtraction: the storm gets what the counter has reached since.
+        auto delta = [&](uint64_t cur, uint64_t base, const char *name) -> uint64_t
+        {
+            if (cur >= base)
+            {
+                return cur - base;
+            }
+
+            SWSS_LOG_WARN("PFC WD counter reset on queue %s: %s went from %" PRIu64 " to %" PRIu64,
+                          queueIdStr.c_str(), name, base, cur);
+            return cur;
+        };
+
+        const uint64_t dTxPkt     = delta(hwStats.txPkt,     baseline.txPkt,     "txPkt");
+        const uint64_t dTxDropPkt = delta(hwStats.txDropPkt, baseline.txDropPkt, "txDropPkt");
+        const uint64_t dRxPkt     = delta(hwStats.rxPkt,     baseline.rxPkt,     "rxPkt");
+        const uint64_t dRxDropPkt = delta(hwStats.rxDropPkt, baseline.rxDropPkt, "rxDropPkt");
+
+        stats.txPktLast     += dTxPkt;
+        stats.txDropPktLast += dTxDropPkt;
+        stats.rxPktLast     += dRxPkt;
+        stats.rxDropPktLast += dRxDropPkt;
+
+        stats.txPkt     += dTxPkt;
+        stats.txDropPkt += dTxDropPkt;
+        stats.rxPkt     += dRxPkt;
+        stats.rxDropPkt += dRxDropPkt;
+    }
+
+    baseline = hwStats;
+
+    updateQueueStats(countersTable, queueIdStr, stats);
 }
