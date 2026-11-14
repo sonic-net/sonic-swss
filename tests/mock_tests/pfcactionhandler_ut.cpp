@@ -621,4 +621,79 @@ namespace pfcactionhandler_test
         // An unknown event is rejected without throwing.
         EXPECT_FALSE(orch->startWdActionOnQueue("bogus_event", queueOid));
     }
+
+    // registerInWdDb is also the path for a SET on an already registered port
+    // (action change without a stop). The existing queue entry must take the
+    // new action, so the next storm runs the new handler, not the one the port
+    // was first registered with.
+    TEST_F(PfcActionHandlerTest, PfcWdSwOrchActionChangeUpdatesExistingEntry)
+    {
+        vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
+        static const vector<sai_port_stat_t> portStatIds = {
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+        };
+        static const vector<sai_queue_stat_t> queueStatIds = {
+            SAI_QUEUE_STAT_PACKETS,
+        };
+        static const vector<sai_queue_attr_t> queueAttrIds = {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        auto orch = make_unique<PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>>(
+            m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_GT(port.m_queue_ids.size(), 3U);
+        sai_object_id_t queueOid = port.m_queue_ids[3];
+        string queueOidStr = sai_serialize_object_id(queueOid);
+
+        // TC 3 is the only lossless TC on the port.
+        ASSERT_TRUE(gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, 1 << 3));
+
+        ASSERT_TRUE(orch->registerInWdDb(port, 200, 200, PfcWdAction::PFC_WD_ACTION_DROP, "disable"));
+        ASSERT_EQ(orch->m_entryMap.count(queueOid), 1U);
+        EXPECT_EQ(orch->m_entryMap.at(queueOid).action, PfcWdAction::PFC_WD_ACTION_DROP);
+
+        // Reconfigure to forward without unregistering first.
+        ASSERT_TRUE(orch->registerInWdDb(port, 200, 200, PfcWdAction::PFC_WD_ACTION_FORWARD, "disable"));
+        ASSERT_EQ(orch->m_entryMap.count(queueOid), 1U);
+        EXPECT_EQ(orch->m_entryMap.at(queueOid).action, PfcWdAction::PFC_WD_ACTION_FORWARD);
+
+        string action;
+        EXPECT_TRUE(m_countersTable->hget(queueOidStr, "PFC_WD_ACTION", action));
+        EXPECT_EQ(action, "forward");
+
+        // The storm now runs the forward handler: no drop ACL rule.
+        EXPECT_TRUE(orch->startWdActionOnQueue("storm", queueOid));
+        {
+            auto &entry = orch->m_entryMap.at(queueOid);
+            ASSERT_NE(entry.handler, nullptr);
+            EXPECT_EQ(dynamic_pointer_cast<PfcWdAclHandler>(entry.handler), nullptr);
+            EXPECT_EQ(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+        }
+        EXPECT_TRUE(orch->startWdActionOnQueue("restore", queueOid));
+        EXPECT_EQ(orch->m_entryMap.at(queueOid).handler, nullptr);
+
+        // And back to drop: the storm installs the drop ACL rule.
+        ASSERT_TRUE(orch->registerInWdDb(port, 200, 200, PfcWdAction::PFC_WD_ACTION_DROP, "disable"));
+        EXPECT_EQ(orch->m_entryMap.at(queueOid).action, PfcWdAction::PFC_WD_ACTION_DROP);
+        EXPECT_TRUE(m_countersTable->hget(queueOidStr, "PFC_WD_ACTION", action));
+        EXPECT_EQ(action, "drop");
+
+        EXPECT_TRUE(orch->startWdActionOnQueue("storm", queueOid));
+        {
+            auto &entry = orch->m_entryMap.at(queueOid);
+            ASSERT_NE(entry.handler, nullptr);
+            EXPECT_NE(dynamic_pointer_cast<PfcWdAclHandler>(entry.handler), nullptr);
+            EXPECT_TRUE(entry.handler->isValid());
+            EXPECT_NE(gAclOrch->getAclRule(INGRESS_TABLE_DROP, ingressRuleName(3)), nullptr);
+        }
+
+        // Restore and unregister before the orch (and gAclOrch) go away.
+        EXPECT_TRUE(orch->startWdActionOnQueue("restore", queueOid));
+        EXPECT_EQ(orch->m_entryMap.at(queueOid).handler, nullptr);
+        orch->unregisterFromWdDb(port);
+        EXPECT_EQ(orch->m_entryMap.count(queueOid), 0U);
+    }
 }
