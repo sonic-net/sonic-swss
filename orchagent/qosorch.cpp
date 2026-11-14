@@ -1,4 +1,5 @@
 #include "tokenize.h"
+#include "converter.h"
 #include "qosorch.h"
 #include "logger.h"
 #include "crmorch.h"
@@ -11,6 +12,7 @@
 #include <iostream>
 #include <string>
 #include <climits>
+#include <memory>
 #include <boost/algorithm/string.hpp>
 
 using namespace std;
@@ -238,7 +240,8 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     sai_attribute_t list_attr;
     sai_qos_map_list_t dscp_map_list;
     dscp_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    dscp_map_list.list = new sai_qos_map_t[dscp_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[dscp_map_list.count]());
+    dscp_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -250,6 +253,7 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     list_attr.value.qosmap.count = dscp_map_list.count;
     list_attr.value.qosmap.list = dscp_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -308,7 +312,8 @@ bool MplsTcToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple
     sai_attribute_t list_attr;
     sai_qos_map_list_t exp_map_list;
     exp_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    exp_map_list.list = new sai_qos_map_t[exp_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[exp_map_list.count]());
+    exp_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -320,6 +325,7 @@ bool MplsTcToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple
     list_attr.value.qosmap.count = exp_map_list.count;
     list_attr.value.qosmap.list = exp_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -432,7 +438,8 @@ bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     sai_attribute_t list_attr;
     sai_qos_map_list_t tc_map_list;
     tc_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    tc_map_list.list = new sai_qos_map_t[tc_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[tc_map_list.count]());
+    tc_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -443,6 +450,7 @@ bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     list_attr.value.qosmap.count = tc_map_list.count;
     list_attr.value.qosmap.list = tc_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -486,7 +494,8 @@ bool TcToDot1pMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     sai_attribute_t list_attr;
     sai_qos_map_list_t tc_map_list;
     tc_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    tc_map_list.list = new sai_qos_map_t[tc_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[tc_map_list.count]());
+    tc_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -497,6 +506,7 @@ bool TcToDot1pMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     list_attr.value.qosmap.count = tc_map_list.count;
     list_attr.value.qosmap.list = tc_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -887,7 +897,8 @@ bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  tc_to_pg_map_list;
     tc_to_pg_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    tc_to_pg_map_list.list = new sai_qos_map_t[tc_to_pg_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[tc_to_pg_map_list.count]());
+    tc_to_pg_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -898,6 +909,7 @@ bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple
     list_attr.value.qosmap.count = tc_to_pg_map_list.count;
     list_attr.value.qosmap.list = tc_to_pg_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -940,7 +952,8 @@ bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  pfc_prio_to_pg_map_list;
     pfc_prio_to_pg_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    pfc_prio_to_pg_map_list.list = new sai_qos_map_t[pfc_prio_to_pg_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[pfc_prio_to_pg_map_list.count]());
+    pfc_prio_to_pg_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -951,6 +964,7 @@ bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     list_attr.value.qosmap.count = pfc_prio_to_pg_map_list.count;
     list_attr.value.qosmap.list = pfc_prio_to_pg_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -994,7 +1008,8 @@ bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  pfc_to_queue_map_list;
     pfc_to_queue_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
-    pfc_to_queue_map_list.list = new sai_qos_map_t[pfc_to_queue_map_list.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[pfc_to_queue_map_list.count]());
+    pfc_to_queue_map_list.list = map_list.get();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -1005,6 +1020,7 @@ bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
     list_attr.value.qosmap.count = pfc_to_queue_map_list.count;
     list_attr.value.qosmap.list = pfc_to_queue_map_list.list;
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -1045,7 +1061,8 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = (uint32_t)kfvFieldsValues(tuple).size();
-    list_attr.value.qosmap.list = new sai_qos_map_t[list_attr.value.qosmap.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[list_attr.value.qosmap.count]());
+    list_attr.value.qosmap.list = map_list.get();
     uint32_t ind = 0;
 
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
@@ -1056,13 +1073,11 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             if (value < 0)
             {
                 SWSS_LOG_ERROR("DSCP value %d is negative", value);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             else if (value > DSCP_MAX_VAL)
             {
                 SWSS_LOG_ERROR("DSCP value %d is greater than max value %d", value, DSCP_MAX_VAL);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].key.dscp = static_cast<sai_uint8_t>(value);
@@ -1072,7 +1087,6 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             if ((value < 0) || (value >= max_num_fcs))
             {
                 SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %d", value, max_num_fcs - 1);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].value.fc = static_cast<sai_uint8_t>(value);
@@ -1081,14 +1095,14 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
                             list_attr.value.qosmap.list[ind].key.dscp,
                             list_attr.value.qosmap.list[ind].value.fc);
         }
-        catch(const invalid_argument& e)
+        catch (const std::logic_error& e)
         {
             SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
-            delete[] list_attr.value.qosmap.list;
             return false;
         }
     }
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -1139,7 +1153,8 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = (uint32_t)kfvFieldsValues(tuple).size();
-    list_attr.value.qosmap.list = new sai_qos_map_t[list_attr.value.qosmap.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[list_attr.value.qosmap.count]());
+    list_attr.value.qosmap.list = map_list.get();
     uint32_t ind = 0;
 
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
@@ -1150,13 +1165,11 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
             if (value < 0)
             {
                 SWSS_LOG_ERROR("EXP value %d is negative", value);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             else if (value > EXP_MAX_VAL)
             {
                 SWSS_LOG_ERROR("EXP value %d is greater than max value %d", value, EXP_MAX_VAL);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].key.mpls_exp = static_cast<sai_uint8_t>(value);
@@ -1166,7 +1179,6 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
             if ((value < 0) || (value >= max_num_fcs))
             {
                 SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %hu", value, max_num_fcs - 1);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].value.fc = static_cast<sai_uint8_t>(value);
@@ -1175,14 +1187,14 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
                             list_attr.value.qosmap.list[ind].key.mpls_exp,
                             list_attr.value.qosmap.list[ind].value.fc);
         }
-        catch(const invalid_argument& e)
+        catch (const std::logic_error& e)
         {
             SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
-            delete[] list_attr.value.qosmap.list;
             return false;
         }
     }
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -1221,7 +1233,8 @@ bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = (uint32_t)kfvFieldsValues(tuple).size();
-    list_attr.value.qosmap.list = new sai_qos_map_t[list_attr.value.qosmap.count]();
+    std::unique_ptr<sai_qos_map_t[]> map_list(new sai_qos_map_t[list_attr.value.qosmap.count]());
+    list_attr.value.qosmap.list = map_list.get();
     uint32_t ind = 0;
 
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
@@ -1232,13 +1245,11 @@ bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             if (value < 0)
             {
                 SWSS_LOG_ERROR("DSCP value %d is negative", value);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             else if (value > DSCP_MAX_VAL)
             {
                 SWSS_LOG_ERROR("DSCP value %d is greater than max value %d", value, DSCP_MAX_VAL);
-                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].key.tc = static_cast<sai_uint8_t>(stoi(fvField(*i)));
@@ -1248,14 +1259,14 @@ bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
                             list_attr.value.qosmap.list[ind].key.tc,
                             list_attr.value.qosmap.list[ind].value.dscp);
         }
-        catch(const invalid_argument& e)
+        catch (const std::logic_error& e)
         {
             SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
-            delete[] list_attr.value.qosmap.list;
             return false;
         }
     }
     attributes.push_back(list_attr);
+    map_list.release();
     return true;
 }
 
@@ -2112,7 +2123,34 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
 
     sai_uint8_t pfc_enable = 0;
     sai_uint8_t pfcwd_sw_enable = 0;
+    // Parse every PFC field before changing QoS references. A malformed value
+    // can throw, and the task is dropped by doTask() on that path.
+    for (const auto &field_value : kfvFieldsValues(tuple))
+    {
+        if (fvField(field_value) != pfc_enable_name && fvField(field_value) != pfcwd_sw_enable_name)
+        {
+            continue;
+        }
+
+        sai_uint8_t bitmask = 0;
+        for (const auto &queue_index : tokenize(fvValue(field_value), list_item_delimiter))
+        {
+            auto queue = to_uint<sai_uint8_t>(queue_index, 0, 7);
+            bitmask |= static_cast<sai_uint8_t>(1u << queue);
+        }
+
+        if (fvField(field_value) == pfc_enable_name)
+        {
+            pfc_enable = bitmask;
+        }
+        else
+        {
+            pfcwd_sw_enable = bitmask;
+        }
+    }
+
     map<sai_port_attr_t, pair<string, sai_object_id_t>> update_list;
+    vector<pair<string, string>> pending_references;
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
         /* Check all map instances are created before applying to ports */
@@ -2130,29 +2168,13 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             }
 
             update_list[qos_to_attr_map[map_type_name]] = make_pair(map_name, id);
-            setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, map_type_name, object_name);
+            pending_references.emplace_back(map_type_name, object_name);
         }
+    }
 
-        else if (fvField(*it) == pfc_enable_name || fvField(*it) == pfcwd_sw_enable_name)
-        {
-            sai_uint8_t bitmask = 0;
-            vector<string> queue_indexes;
-            queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
-            for(string q_ind : queue_indexes)
-            {
-                sai_uint8_t q_val = (uint8_t)stoi(q_ind);
-                bitmask |= (uint8_t)(1 << q_val);
-            }
-
-            if (fvField(*it) == pfc_enable_name)
-            {
-                pfc_enable = bitmask;
-            }
-            else
-            {
-                pfcwd_sw_enable = bitmask;
-            }
-        }
+    for (const auto &reference : pending_references)
+    {
+        setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, reference.first, reference.second);
     }
 
     /* Remove any map that was configured but isn't there any longer. */
@@ -2272,7 +2294,16 @@ void QosOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer, it->second);
+        task_process_status task_status;
+        try
+        {
+            task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer, it->second);
+        }
+        catch (const std::logic_error &e)
+        {
+            SWSS_LOG_ERROR("Invalid %s task: %s", qos_map_type_name.c_str(), e.what());
+            task_status = task_process_status::task_invalid_entry;
+        }
         switch(task_status)
         {
             case task_process_status::task_success :
@@ -2346,4 +2377,3 @@ void QosOrch::removeTunnelReference(std::string referencing_table_name, std::str
     removeObject(m_qos_maps, referencing_table_name, tunnel_name);
     SWSS_LOG_INFO("Freed QoS objects referenced by %s:%s", referencing_table_name.c_str(), tunnel_name.c_str());
 }
-
