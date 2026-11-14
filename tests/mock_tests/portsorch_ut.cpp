@@ -6135,11 +6135,17 @@ struct PfcWdHwOrchTest : public PortsOrchTest
         _sai_port_dlr_intervals.clear();
         _sai_queue_dldr_enabled.clear();
 
+        beforeOrchCreated();
+
         vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
         gPfcWdHwOrch = new PfcWdHwOrch(
             m_config_db.get(), pfc_wd_tables,
             s_portStatIds, s_queueStatIds, s_queueAttrIds);
     }
+
+    // Runs after the databases are reset and before the orch is built, so a
+    // test can leave state from a previous orchagent run for the orch to find.
+    virtual void beforeOrchCreated() {}
 
     void TearDown() override
     {
@@ -6694,6 +6700,29 @@ TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
     gPortsOrch->getPort("Ethernet0", port);
     ASSERT_EQ(_sai_port_dld_intervals.count(port.m_port_id), 1u);
     ASSERT_EQ(_sai_port_dlr_intervals.count(port.m_port_id), 1u);
+}
+
+// STATE_DB survives an orchagent restart, so a row from the previous run
+// would keep reporting a watchdog that this run has not programmed.
+struct PfcWdHwOrchStaleStateTest : public PfcWdHwOrchTest
+{
+    void beforeOrchCreated() override
+    {
+        Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+        hwStateTable.set("Ethernet0", {
+            { "recovery_type", "hardware" },
+            { "status", "configured" },
+            { "hw_detection_time", "400" },
+            { "hw_restoration_time", "400" }
+        });
+    }
+};
+
+TEST_F(PfcWdHwOrchStaleStateTest, ConstructionDropsStaleHwState)
+{
+    Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+    vector<FieldValueTuple> hwState;
+    ASSERT_FALSE(hwStateTable.get("Ethernet0", hwState));
 }
 
 TEST_F(PfcWdHwOrchTest, IntervalsSet)
