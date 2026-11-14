@@ -23,6 +23,25 @@ ASIC_NHG_MEMB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
 ASIC_NH_TB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
 ASIC_RIF = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
 
+
+@pytest.mark.parametrize("table,key,fields", [
+    (FG_NHG, "invalid_bucket_size", {"bucket_size": "not-a-number"}),
+    (FG_NHG, "negative_bucket_size", {"bucket_size": "-1"}),
+    (FG_NHG, "invalid_max_next_hops", {"bucket_size": "8", "max_next_hops": "4294967296"}),
+    (FG_NHG_MEMBER, "10.99.99.99", {"FG_NHG": "missing", "bank": "not-a-number"}),
+])
+def test_malformed_fg_nhg_input_does_not_restart_orchagent(dvs, table, key, fields):
+    rc, original_pid = dvs.runcmd("pgrep -x orchagent")
+    assert rc == 0 and original_pid.strip()
+    config_db = dvs.get_config_db()
+    try:
+        config_db.create_entry(table, key, fields)
+        time.sleep(2)
+        rc, current_pid = dvs.runcmd("pgrep -x orchagent")
+        assert rc == 0 and current_pid.strip() == original_pid.strip()
+    finally:
+        config_db.delete_entry(table, key)
+
 def create_entry(db, table, key, pairs):
     db.create_entry(table, key, pairs)
     programmed_table = db.wait_for_entry(table,key)
