@@ -301,6 +301,7 @@ public:
 
     bool setPortPtIntfId(const Port& port, sai_uint16_t intf_id);
     bool setPortPtTimestampTemplate(const Port& port, sai_port_path_tracing_timestamp_type_t ts_type);
+    bool setPortPtpMode(const Port& port, sai_port_ptp_mode_t mode);
     task_process_status setPortFastLinkupEnabled(Port &port, bool enable);
 
 private:

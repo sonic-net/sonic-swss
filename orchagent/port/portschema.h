@@ -53,6 +53,11 @@
 #define PORT_ROLE_REC "Rec"
 #define PORT_ROLE_DPC "Dpc"
 
+#define PORT_PTP_MODE           "ptp_mode"
+#define PORT_PTP_MODE_NONE      "none"
+#define PORT_PTP_MODE_ONE_STEP  "one-step"
+#define PORT_PTP_MODE_TWO_STEP  "two-step"
+
 #define PORT_PT_TIMESTAMP_TEMPLATE_1 "template1"
 #define PORT_PT_TIMESTAMP_TEMPLATE_2 "template2"
 #define PORT_PT_TIMESTAMP_TEMPLATE_3 "template3"

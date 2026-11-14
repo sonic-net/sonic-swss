@@ -1394,6 +1394,13 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
             p.m_fec_cfg = true;
         }
 
+        if (cit.pt_ptp_mode.is_set)
+        {
+            attr.id = SAI_PORT_ATTR_PTP_MODE;
+            attr.value.s32 = cit.pt_ptp_mode.value;
+            attrList.push_back(attr);
+        }
+
         if (cit.tpid.is_set)
         {
             if (cit.tpid.value != DEFAULT_TPID)
@@ -5779,6 +5786,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s Timestamp Template to %s",
                             p.m_alias.c_str(), m_portHlpr.getPtTimestampTemplateStr(pCfg).c_str()
                         );
+                    }
+                }
+
+                if (pCfg.pt_ptp_mode.is_set)
+                {
+                    if (p.m_ptp_mode != pCfg.pt_ptp_mode.value)
+                    {
+                        if (!setPortPtpMode(p, pCfg.pt_ptp_mode.value))
+                        {
+                            it++;
+                            continue;
+                        }
+                        p.m_ptp_mode = pCfg.pt_ptp_mode.value;
+                        m_portList[p.m_alias] = p;
                     }
                 }
             }
@@ -11910,6 +11931,24 @@ bool PortsOrch::setPortPtTimestampTemplate(const Port& port, sai_port_path_traci
         }
     }
 
+    return true;
+}
+
+bool PortsOrch::setPortPtpMode(const Port& port, sai_port_ptp_mode_t mode)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PTP_MODE;
+    attr.value.s32 = mode;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
     return true;
 }
 
