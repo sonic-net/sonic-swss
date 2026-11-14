@@ -319,6 +319,10 @@ void FdbOrch::clearFdbEntry(const FdbEntry& entry, const FdbData& fdbData)
     }
 
     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
+    if (gNeighOrch)
+    {
+        gNeighOrch->processFDBRemoteUpdate(update.entry);
+    }
     SWSS_LOG_INFO("FdbEntry removed from internal cache, MAC: %s , port: %s, BVID: 0x%" PRIx64,
                    update.entry.mac.to_string().c_str(), update.entry.port_name.c_str(), update.entry.bv_id);
 }
@@ -657,6 +661,11 @@ void FdbOrch::update(sai_fdb_event_t        type,
              */
             gNeighOrch->processFDBAdd(update.entry);
             notifyTunnelOrch(port_old);
+        }
+        else if (gNeighOrch)
+        {
+            /* Neighbors kept out of the SAI while this MAC was behind a tunnel */
+            gNeighOrch->processFDBRemoteUpdate(update.entry);
         }
 
         /* Forward the LEARN to the embedded MacMoveGuard so a preceding AGED
@@ -2221,13 +2230,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             attrs.push_back(attr);
         }
 
-        /* A local MAC moved to a remote VTEP takes its neighbors out of the SAI. Behind a bridge
-         * port next hop group they stay: the SAI resolves them through the group's bridge port. */
-        if ((fdbData.dest_type == FdbDest::VTEP) &&
-            macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED) &&
-            (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED)) {
-            gNeighOrch->processFDBDelete(entry);
-        }
+        /*
+         * A local MAC moved behind a VTEP or a bridge port next hop group keeps its
+         * neighbors in the SAI, which follows the MAC onto the tunnel or group (those
+         * with a host route over a tunnel are already out of the SAI).
+         */
     }
     else if (macUpdate
             && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
@@ -2437,6 +2444,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
+    /* Retry the neighbors on this MAC that were kept out of the SAI. */
+    if (gNeighOrch)
+    {
+        gNeighOrch->processFDBRemoteUpdate(entry);
+    }
+
     return true;
 }
 
@@ -2568,6 +2581,12 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     update.add = false;
 
     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
+
+    if (gNeighOrch && (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED) && (port.m_type == Port::TUNNEL))
+    {
+        /* Neighbors programmed on a withdrawn remote MAC have no path left. */
+        gNeighOrch->processFDBRemoteDelete(entry);
+    }
 
     notifyTunnelOrch(update.port);
 
