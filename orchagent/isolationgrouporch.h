@@ -94,6 +94,12 @@ public:
         this->notify(type, cntx);
     }
 
+    size_t getNumOfMembers() const { return m_members.size(); }
+    size_t getNumOfPendingMembers() const { return m_pending_members.size(); }
+    size_t getNumOfBindPorts() const { return m_bind_ports.size(); }
+    size_t getNumOfPendingBindPorts() const { return m_pending_bind_ports.size(); }
+    sai_object_id_t getOid() const { return m_oid; }
+
 protected:
     string m_name;
     isolation_group_type_t m_type;
