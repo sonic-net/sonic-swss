@@ -6599,4 +6599,130 @@ namespace vnetorch_test
             },
             ::testing::ExitedWithCode(0), "");
     }
+
+    class VNetOrchPendingNhgTest : public VNetOrchTest
+    {
+    protected:
+        const string vnet = "Vnet_pending";
+        const NextHopKey nh1{IpAddress("10.0.0.1"), "Ethernet0"};
+        const NextHopKey nh2{IpAddress("10.0.0.2"), "Ethernet0"};
+
+        void SetUp() override
+        {
+            VNetOrchTest::SetUp();
+            setVxlanTunnel("tunnel_pending", "99.99.99.99");
+            setVnet(vnet, "tunnel_pending", "1000", "");
+            createL3Interface("Ethernet0", "10.0.0.254/24");
+            setPortOperStatus("Ethernet0", SAI_PORT_OPER_STATUS_UP);
+            m_vnetRouteOrch->vnet_tunnel_route_check_directly_connected[vnet] = true;
+        }
+
+        NextHopGroupKey localGroup(bool single = false)
+        {
+            NextHopGroupKey nhg("", true);
+            nhg.add(nh1);
+            if (!single)
+            {
+                nhg.add(nh2);
+            }
+            return nhg;
+        }
+
+        VNetVrfObject* vrf()
+        {
+            return m_vnetOrch->getTypePtr<VNetVrfObject>(vnet);
+        }
+
+        void resolve(const NextHopKey& nh)
+        {
+            addNeighbor(nh.alias, nh.ip_address.to_string(), "00:11:22:33:44:55");
+            ASSERT_TRUE(gNeighOrch->hasNextHop(nh));
+        }
+
+
+    };
+
+    TEST_F(VNetOrchPendingNhgTest, AllPendingDefersAtGroupCapacity)
+    {
+        size_t borrowed = 0;
+        while (gRouteOrch->checkNextHopGroupCount())
+        {
+            gRouteOrch->increaseNextHopGroupCount();
+            ++borrowed;
+        }
+        auto nhg = localGroup();
+        const bool created = m_vnetRouteOrch->addNextHopGroup(vnet, nhg, vrf(), "custom", true);
+        for (size_t i = 0; i < borrowed; ++i)
+        {
+            gRouteOrch->decreaseNextHopGroupCount();
+        }
+        ASSERT_TRUE(created);
+        const auto& info = m_vnetRouteOrch->syncd_nexthop_groups_[vnet].at(nhg);
+        EXPECT_EQ(info.next_hop_group_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(info.pending_members.size(), 2u);
+        EXPECT_TRUE(info.active_members.empty());
+        EXPECT_TRUE(m_vnetRouteOrch->removeNextHopGroup(vnet, nhg, vrf()));
+    }
+
+    TEST_F(VNetOrchPendingNhgTest, ValidNextHopCreatesDeferredMultiNhg)
+    {
+        auto nhg = localGroup();
+        ASSERT_TRUE(m_vnetRouteOrch->addNextHopGroup(vnet, nhg, vrf(), "custom", true));
+        const auto& info = m_vnetRouteOrch->syncd_nexthop_groups_[vnet].at(nhg);
+        EXPECT_EQ(info.next_hop_group_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(info.pending_members.size(), 2u);
+        EXPECT_TRUE(info.active_members.empty());
+        resolve(nh1);
+        EXPECT_NE(info.next_hop_group_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(info.active_members.size(), 1u);
+        EXPECT_EQ(info.pending_members.size(), 1u);
+        resolve(nh2);
+        EXPECT_EQ(info.active_members.size(), 2u);
+        EXPECT_TRUE(info.pending_members.empty());
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh1), 0);
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh2), 0);
+        EXPECT_TRUE(m_vnetRouteOrch->removeNextHopGroup(vnet, nhg, vrf()));
+    }
+
+    TEST_F(VNetOrchPendingNhgTest, NeighborAddContinuesAfterGroupFailure)
+    {
+        auto first = localGroup();
+        auto second = localGroup(true);
+        second.add(NextHopKey(IpAddress("10.0.0.3"), "Ethernet0"));
+        const string other_vnet = "Vnet_z_pending";
+        setVnet(other_vnet, "tunnel_pending", "1001", "");
+        m_vnetRouteOrch->vnet_tunnel_route_check_directly_connected[other_vnet] = true;
+        ASSERT_TRUE(m_vnetRouteOrch->addNextHopGroup(vnet, first, vrf(), "custom", true));
+        ASSERT_TRUE(m_vnetRouteOrch->addNextHopGroup(vnet, second, vrf(), "custom", true));
+        ASSERT_TRUE(m_vnetRouteOrch->addNextHopGroup(
+            other_vnet, first, m_vnetOrch->getTypePtr<VNetVrfObject>(other_vnet), "custom", true));
+
+        EXPECT_CALL(*mock_sai_next_hop_group_api, create_next_hop_group_member(_, _, _, _))
+            .WillOnce(Return(SAI_STATUS_FAILURE))
+            .WillRepeatedly(DoDefault());
+        resolve(nh1);
+
+        size_t activated = 0;
+        size_t waiting = 0;
+        for (const auto& groups : m_vnetRouteOrch->syncd_nexthop_groups_)
+        {
+            for (const auto& group : groups.second)
+            {
+                activated += group.second.active_members.count(nh1);
+                waiting += group.second.pending_members.count(nh1);
+            }
+        }
+        EXPECT_EQ(activated, 2u);
+        EXPECT_EQ(waiting, 1u);
+        EXPECT_TRUE(m_vnetRouteOrch->validNextHopInNextHopGroup(nh1));
+        for (const auto& groups : m_vnetRouteOrch->syncd_nexthop_groups_)
+        {
+            for (const auto& group : groups.second)
+            {
+                EXPECT_EQ(group.second.active_members.count(nh1), 1u);
+                EXPECT_EQ(group.second.pending_members.count(nh1), 0u);
+            }
+        }
+    }
+
 }
