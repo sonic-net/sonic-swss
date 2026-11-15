@@ -8,6 +8,7 @@
 #include "muxorch.h"
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
+#include "vnetorch.h"
 
 #include <boost/algorithm/string.hpp>
 
@@ -522,6 +523,12 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
                 nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
         }
     }
+
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    if (vnet_route_orch)
+    {
+        vnet_route_orch->validNextHopInNextHopGroup(nexthop);
+    }
     return true;
 }
 
@@ -613,6 +620,12 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
             SWSS_LOG_WARN("Failed to set NHFLAGS_IFDOWN on nexthop %s for interface %s",
                 nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
         }
+    }
+
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    if (vnet_route_orch)
+    {
+        vnet_route_orch->validNextHopInNextHopGroup(nexthop);
     }
     return true;
 }

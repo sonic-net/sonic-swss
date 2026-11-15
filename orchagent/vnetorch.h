@@ -95,9 +95,10 @@ public:
 
 struct NextHopGroupInfo
 {
-    sai_object_id_t                         next_hop_group_id;      // next hop group id (null for single nexthop)
-    int                                     ref_count;              // reference count
+    sai_object_id_t                         next_hop_group_id = SAI_NULL_OBJECT_ID; // NHG or direct-NH OID; null while deferred.
+    int                                     ref_count = 0;          // reference count
     std::map<NextHopKey, sai_object_id_t>   active_members;         // active nexthops and nexthop group member id (null for single nexthop)
+    std::map<NextHopKey, uint32_t>          pending_members;        // Local NHs awaiting resolution or route activation.
     std::set<IpPrefix>                      tunnel_routes;
 };
 
@@ -527,10 +528,20 @@ public:
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
     void updateCustomBfdState(const IpAddress& monitoring_ip, const string& state);
     void updateAllMonitoringSession(const string& vnet);
+    bool validNextHopInNextHopGroup(const NextHopKey& nexthop);
 
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+
+    bool matchesPendingNextHop(const string& vnet,
+                               const NextHopGroupInfo& nhg_info,
+                               const NextHopKey& pending,
+                               const NextHopKey& resolved) const;
+    bool activateVnetTunnelRoutes(const string& vnet, NextHopGroupKey& nexthops);
+    bool addResolvedMemberToNextHopGroup(const string& vnet, NextHopGroupKey& nhg,
+                                         NextHopGroupInfo& nhg_info, const NextHopKey& nexthop,
+                                         VNetVrfObject* vrf_obj);
 
     void addRoute(const std::string & vnet, const IpPrefix & ipPrefix, const nextHop& nh);
     void delRoute(const IpPrefix& ipPrefix);
