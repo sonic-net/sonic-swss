@@ -5690,6 +5690,105 @@ namespace fdborch_vxlan_ut
         ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
     }
 
+    void verifyPortNhgAlreadyExistsRetries(PortsOrch *portsOrch, bool moveToNhg)
+    {
+        setUpPortNhgTopology(portsOrch);
+        portsOrch->m_portList[NHG_REMOTE].m_type = Port::NEXTHOP_GROUP;
+        const string oldPort = moveToNhg ? ETH0 : NHG_REMOTE;
+        const string newPort = moveToNhg ? NHG_REMOTE : ETH0;
+        const auto crmUsed = []() {
+            return gCrmOrch->m_resourcesMap.at(CrmResourceType::CRM_FDB_ENTRY)
+                .countersMap["STATS"].usedCounter;
+        };
+        const auto initialCrmUsed = crmUsed();
+
+        InSequence sai_order;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+                .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+            EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+                .WillOnce(testing::Return(attempt < 2 ?
+                    SAI_STATUS_ITEM_ALREADY_EXISTS : SAI_STATUS_SUCCESS));
+        }
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _)).Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:b1");
+        entry.bv_id = portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData localData;
+        localData.type = moveToNhg ? "dynamic" : "static";
+        localData.origin = FDB_ORIGIN_PROVISIONED;
+
+        FdbData nhgData;
+        nhgData.type = "dynamic";
+        nhgData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        nhgData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgData.dest_value = "536870913";
+        nhgData.vni = 40;
+
+        const FdbData oldData = moveToNhg ? localData : nhgData;
+        const FdbData targetData = moveToNhg ? nhgData : localData;
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, oldPort, oldData));
+        ASSERT_EQ(crmUsed(), initialCrmUsed + 1);
+
+        const string key = "Vlan40:" + entry.mac.to_string();
+        string statePort;
+        ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget(key, "port", statePort), moveToNhg);
+
+        // Hardware can relearn the MAC between remove and create. Each collision
+        // must leave the SET pending and the previous bookkeeping intact.
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            ASSERT_FALSE(gFdbOrch->addFdbEntry(entry, newPort, targetData));
+            ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, oldData.dest_type);
+            ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, oldData.origin);
+            ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                      portsOrch->m_portList[oldPort].m_bridge_port_id);
+            ASSERT_EQ(portsOrch->m_portList[oldPort].m_fdb_count, 1);
+            ASSERT_EQ(portsOrch->m_portList[newPort].m_fdb_count, 0);
+            ASSERT_EQ(portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+            ASSERT_EQ(crmUsed(), initialCrmUsed + 1);
+            ASSERT_EQ(gFdbOrch->m_entries_by_port[oldPort].size(), 1);
+            ASSERT_TRUE(gFdbOrch->m_entries_by_port[newPort].empty());
+            ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget(key, "port", statePort), moveToNhg);
+            if (moveToNhg)
+            {
+                ASSERT_EQ(statePort, ETH0);
+            }
+        }
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, newPort, targetData));
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, targetData.dest_type);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, targetData.origin);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  portsOrch->m_portList[newPort].m_bridge_port_id);
+        ASSERT_EQ(portsOrch->m_portList[oldPort].m_fdb_count, 0);
+        ASSERT_EQ(portsOrch->m_portList[newPort].m_fdb_count, 1);
+        ASSERT_EQ(portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(crmUsed(), initialCrmUsed + 1);
+        ASSERT_TRUE(gFdbOrch->m_entries_by_port[oldPort].empty());
+        ASSERT_EQ(gFdbOrch->m_entries_by_port[newPort].size(), 1);
+        ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget(key, "port", statePort), !moveToNhg);
+        if (!moveToNhg)
+        {
+            ASSERT_EQ(statePort, ETH0);
+        }
+    }
+
+    TEST_F(VxlanFdbOrchTest, PortNhgLocalToNhgCreateAlreadyExistsRetries)
+    {
+        verifyPortNhgAlreadyExistsRetries(m_portsOrch.get(), true);
+    }
+
+    TEST_F(VxlanFdbOrchTest, PortNhgToProvisionedCreateAlreadyExistsRetries)
+    {
+        verifyPortNhgAlreadyExistsRetries(m_portsOrch.get(), false);
+    }
+
     TEST_F(VxlanFdbOrchTest, NhgRemoteLearnedLocallyUsesRemoveAndCreate)
     {
         ASSERT_NE(m_portsOrch, nullptr);
