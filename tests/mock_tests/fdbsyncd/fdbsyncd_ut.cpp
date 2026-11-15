@@ -3666,6 +3666,8 @@ TEST_F(FdbSyncdLeftVlanTest, NoFlushAfterSuccessfulDelete)
  * bridge, EINVAL while it is still a bridge port in other VLANs).
  */
 static std::string g_bridgeReplaceOutput;
+static std::string g_bridgeVlanShowOutput;
+static int g_bridgeVlanShowRc;
 
 static int refuseBridgeReplace(const std::string &cmd, std::string &out)
 {
@@ -3675,6 +3677,11 @@ static int refuseBridgeReplace(const std::string &cmd, std::string &out)
     {
         out = g_bridgeReplaceOutput;
         return 255;
+    }
+    if (cmd.find("bridge vlan show") != std::string::npos)
+    {
+        out = g_bridgeVlanShowOutput;
+        return g_bridgeVlanShowRc;
     }
     return 0;
 }
@@ -3688,6 +3695,16 @@ public:
         callback = nullptr;
     }
 
+    bool m_kernelVlanSet = false;
+
+    /* What `bridge vlan show dev Ethernet160 vid 2100` answers; default: the port is not in the VLAN */
+    void setKernelVlanShow(int rc, const std::string &output)
+    {
+        g_bridgeVlanShowRc = rc;
+        g_bridgeVlanShowOutput = output;
+        m_kernelVlanSet = true;
+    }
+
     std::string learnRefused(const std::string &output)
     {
         struct m_fdb_info info;
@@ -3697,6 +3714,10 @@ public:
         info.type = FDB_TYPE_DYNAMIC;
         info.op_type = FDB_OPER_ADD;
         g_bridgeReplaceOutput = output;
+        if (!m_kernelVlanSet)
+        {
+            setKernelVlanShow(0, "port              vlan-id  \n");
+        }
         callback = refuseBridgeReplace;
         mockCallArgs.clear();
         return errorLogsOf([&]() { m_mockFdbSync.updateLocalMac(&info); });
@@ -3746,9 +3767,57 @@ TEST_F(FdbSyncdLeftVlanLearnTest, LearnAfterPortLeftVlanIsNotAnError)
     EXPECT_EQ(errors, "");
 }
 
+// A configured member stays a member even where the kernel lacks the VLAN (spanning tree)
 TEST_F(FdbSyncdLeftVlanLearnTest, RefusedLearnOnMemberIsAnError)
 {
     Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    Table(m_configDb.get(), CFG_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160",
+                                                            { FieldValueTuple("tagging_mode", "untagged") });
+    auto errors = learnRefused("RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb replace 02:4c:45:00:00:61 dev Ethernet160"), std::string::npos);
+    EXPECT_EQ(mockCallArgs.size(), 1u);
+}
+
+// A member without a CONFIG_DB row (added at run time) that the kernel still has in the VLAN
+TEST_F(FdbSyncdLeftVlanLearnTest, RefusedLearnOnKernelMemberIsAnError)
+{
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    setKernelVlanShow(0, "port              vlan-id  \nEthernet160       2100 PVID Egress Untagged\n");
+    auto errors = learnRefused("RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_NE(errors.find("Failed cmd: bridge fdb replace 02:4c:45:00:00:61 dev Ethernet160"), std::string::npos);
+}
+
+/*
+ * The member delete is under way: the CONFIG_DB row is gone and vlanmgrd has removed the kernel
+ * member, but not yet the STATE_DB row.
+ */
+TEST_F(FdbSyncdLeftVlanLearnTest, LearnBeforeStateRowRemovedIsNotAnError)
+{
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    addRemoteMac();
+    auto errors = learnRefused("RTNETLINK answers: Invalid argument\n");
+
+    EXPECT_EQ(errors, "");
+    ASSERT_EQ(mockCallArgs.size(), 2u);
+    EXPECT_EQ(mockCallArgs[1], "bridge vlan show dev Ethernet160 vid 2100");
+    EXPECT_FALSE(vxlanEntryDeleted());
+    EXPECT_EQ(m_mockFdbSync.m_mac.count("Vlan2100:02:4c:45:00:00:61"), 1u);
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, LearnAfterPortLeftBridgeBeforeStateRowRemovedIsNotAnError)
+{
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    auto errors = learnRefused("RTNETLINK answers: Operation not supported\n");
+
+    EXPECT_EQ(errors, "");
+}
+
+TEST_F(FdbSyncdLeftVlanLearnTest, RefusedLearnIsAnErrorWhenKernelVlanUnknown)
+{
+    Table(m_stateDb.get(), STATE_VLAN_MEMBER_TABLE_NAME).set("Vlan2100|Ethernet160", { FieldValueTuple("state", "ok") });
+    setKernelVlanShow(255, "Cannot find device \"Ethernet160\"\n");
     auto errors = learnRefused("RTNETLINK answers: Invalid argument\n");
 
     EXPECT_NE(errors.find("Failed cmd: bridge fdb replace 02:4c:45:00:00:61 dev Ethernet160"), std::string::npos);
