@@ -2387,6 +2387,26 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
     else
     {
+        auto retireOldEntry = [&]()
+        {
+            if (!oldPort.m_alias.empty()) {
+                oldPort.m_fdb_count--;
+                m_portsOrch->setPort(oldPort.m_alias, oldPort);
+            }
+            if (!oldVlan.m_alias.empty()) {
+                oldVlan.m_fdb_count--;
+                SWSS_LOG_DEBUG("mac moved, oldvlan %s, m_fdb_count %d", oldVlan.m_alias.c_str(), oldVlan.m_fdb_count);
+                m_portsOrch->setPort(oldVlan.m_alias, oldVlan);
+            }
+
+            // Remove the existing entry since its port_name is changed
+            (void)m_entries.erase(entry);
+
+            notifyTunnelOrch(oldPort);
+            SWSS_LOG_INFO("FdbOrch Removed old entry, mac=%s bv_id=0x%" PRIx64 " port:%s",
+                           entry.mac.to_string().c_str(), entry.bv_id, port.m_alias.c_str());
+        };
+
         if (macMoveLocalToRemote || recreatePortNhgTransition)
         {
             status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
@@ -2415,22 +2435,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                 }
             }
 
-            if (!oldPort.m_alias.empty()) {
-                oldPort.m_fdb_count--;
-                m_portsOrch->setPort(oldPort.m_alias, oldPort);
+            if (!recreatePortNhgTransition)
+            {
+                retireOldEntry();
             }
-            if (!oldVlan.m_alias.empty()) {
-                oldVlan.m_fdb_count--;
-                SWSS_LOG_DEBUG("mac moved, oldvlan %s, m_fdb_count %d", oldVlan.m_alias.c_str(), oldVlan.m_fdb_count);
-                m_portsOrch->setPort(oldVlan.m_alias, oldVlan);
-            }
-
-            // Remove the existing entry since its port_name is changed
-            (void)m_entries.erase(entry);
-
-            notifyTunnelOrch(oldPort);
-            SWSS_LOG_INFO("FdbOrch Removed old entry, mac=%s bv_id=0x%" PRIx64 " port:%s",
-                           entry.mac.to_string().c_str(), entry.bv_id, port.m_alias.c_str());
         }
 
         SWSS_LOG_INFO("FdbOrch MAC-Create %s FDB %s in %s on %s", fdbData.type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
@@ -2441,10 +2449,18 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
-            if (recreatePortNhgTransition &&
-                status != SAI_STATUS_ITEM_ALREADY_EXISTS)
+            if (recreatePortNhgTransition && status == SAI_STATUS_ITEM_ALREADY_EXISTS)
             {
+                /* A concurrent learn may have installed a different destination or
+                 * entry type. Keep the old software bookkeeping and the SET queued
+                 * so the next attempt removes that row and retries the create. */
+                return false;
+            }
+
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+            if (recreatePortNhgTransition)
+            {
+                retireOldEntry();
                 /* The old entry is gone from ASIC and cache; retire its
                  * STATE_DB row, CRM count and observers so a replay of
                  * this SET is handled as a fresh add. */
@@ -2483,6 +2499,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 return parseHandleSaiStatusFailure(handle_status);
             }
+        }
+        if (recreatePortNhgTransition)
+        {
+            retireOldEntry();
         }
         port.m_fdb_count++;
         m_portsOrch->setPort(port.m_alias, port);
