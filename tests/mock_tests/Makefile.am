@@ -255,7 +255,7 @@ tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAG
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDFLAGS = -Wl,--wrap=sai_query_stats_st_capability -Wl,--wrap=sai_query_attribute_capability \
                 -Wl,--wrap=sai_query_attribute_enum_values_capability -Wl,--wrap=sai_metadata_get_attr_metadata \
-                -Wl,--wrap=sai_query_stats_capability
+                -Wl,--wrap=sai_query_stats_capability -Wl,--wrap=sai_object_type_get_availability
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
