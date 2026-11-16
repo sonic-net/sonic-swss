@@ -227,6 +227,7 @@ private:
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
     bool applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
+    task_process_status applyTcToQueueMapToSystemPort(const Port &port, sai_object_id_t map_id);
 private:
     qos_table_handler_map m_qos_handler_map;
 
