@@ -2554,6 +2554,11 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
             entry.vniVlanMapName = vniVlanMapName;
             entry.vlan_id = vlan_id;
             remove_tunnel_map_entry(tnl_map_entry_id);
+            // The VLAN map remains configured, but its SAI entry is owned by
+            // the L3 mapping until that mapping is removed.  Do not retain the
+            // OID of the entry that was just deleted.
+            vxlan_tun_map_orch->updateTnlMapId(
+                entry.vniVlanMapName, SAI_NULL_OBJECT_ID);
             SWSS_LOG_DEBUG("remove_tunnel_map_entry name %s, vlan %d, vni %d\n", entry.vniVlanMapName.c_str(), entry.vlan_id, entry.vni_id);
         }
         /*
@@ -2652,17 +2657,18 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         SWSS_LOG_NOTICE("VxlanVrfMapOrch Vxlan tunnel VRF encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
 
-        if (!entry.isL2Vni)
-        {
-            entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(entry.vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
-            SWSS_LOG_NOTICE("VxlanVrfMapOrch vni %d, isL2Vni %d\n", entry.vni_id, entry.isL2Vni);
+        // The VLAN map present when this VRF map was created may have been
+        // removed or replaced while the VNI was L3.  Restore only the current
+        // map, never the cached one.
+        entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(
+            entry.vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
+        SWSS_LOG_NOTICE("VxlanVrfMapOrch vni %d, isL2Vni %d\n", entry.vni_id, entry.isL2Vni);
 
-            if (entry.isL2Vni)
-            {
-                entry.vniVlanMapName = vniVlanMapName;
-                entry.vlan_id = vlan_id;
-                SWSS_LOG_DEBUG("add_tunnel_map_entry name %s, vlan %d, vni %d\n", entry.vniVlanMapName.c_str(), entry.vlan_id, entry.vni_id);
-            }
+        if (entry.isL2Vni)
+        {
+            entry.vniVlanMapName = vniVlanMapName;
+            entry.vlan_id = vlan_id;
+            SWSS_LOG_DEBUG("add_tunnel_map_entry name %s, vlan %d, vni %d\n", entry.vniVlanMapName.c_str(), entry.vlan_id, entry.vni_id);
         }
 
         remove_tunnel_map_entry(entry.encap_id);
@@ -2670,7 +2676,7 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         remove_tunnel_map_entry(entry.decap_id);
         vrf_orch->decreaseVrfRefCount(vrf_name);
 
-        if(entry.isL2Vni)
+        if (entry.isL2Vni && tnl_map_entry_id == SAI_NULL_OBJECT_ID)
         {
             const auto tunnel_map_id = tunnel_obj->getDecapMapId(TUNNEL_MAP_T_VLAN);
             SWSS_LOG_NOTICE("Adding tunnel map entry. Tunnel: %s %s",tunnel_name.c_str(),entry.vniVlanMapName.c_str());
@@ -3154,5 +3160,13 @@ void VxlanTunnelMapOrch::updateTnlMapId(std::string vniVlanMapName, sai_object_i
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("name %s\n", vniVlanMapName.c_str());
-    vxlan_tunnel_map_table_[vniVlanMapName].map_entry_id = tunnel_map_id;
+    auto map_entry = vxlan_tunnel_map_table_.find(vniVlanMapName);
+    if (map_entry == vxlan_tunnel_map_table_.end())
+    {
+        SWSS_LOG_WARN("Vxlan tunnel map '%s' no longer exists; map entry id is not updated",
+                      vniVlanMapName.c_str());
+        return;
+    }
+
+    map_entry->second.map_entry_id = tunnel_map_id;
 }
