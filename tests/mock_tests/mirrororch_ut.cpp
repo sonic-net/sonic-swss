@@ -15,6 +15,7 @@
 
 extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_port_api_t *sai_port_api;
+extern sai_mirror_api_t *sai_mirror_api;
 
 namespace mirrororch_test
 {
@@ -470,6 +471,165 @@ TEST_F(SampleBindingTest, ExportDeactivateWaitsForAttachmentCleanupAndReactivate
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     remove("Ethernet0|rx");
     ASSERT_TRUE(gMirrorOrch->deactivateSession("export1", session));
+}
+
+// Exercise MirrorOrch's retry and FDB-update handlers with a VLAN destination.
+class VlanFdbRecoveryTest : public SampleBindingTest
+{
+protected:
+    Port vlan;
+    Port oldMonitor;
+    Port newMonitor;
+    FdbEntry fdbEntry;
+    const NextHopKey nextHop{string("10.0.0.2"), string("Vlan1000")};
+
+    void setUpVlanExport()
+    {
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", oldMonitor));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", newMonitor));
+
+        vlan = Port("Vlan1000", Port::VLAN);
+        vlan.m_vlan_info.vlan_id = 1000;
+        vlan.m_vlan_info.vlan_oid = 0x260000000001ULL;
+        vlan.m_members.insert(oldMonitor.m_alias);
+        vlan.m_members.insert(newMonitor.m_alias);
+        gPortsOrch->setPort(vlan.m_alias, vlan);
+        gPortsOrch->saiOidToAlias[vlan.m_vlan_info.vlan_oid] = vlan.m_alias;
+
+        // Keep both bridge-port mappings resolvable while the old FDB entry
+        // is flush-pending, as when a port still belongs to another VLAN.
+        oldMonitor.m_bridge_port_id = 0x260000000002ULL;
+        newMonitor.m_bridge_port_id = 0x260000000003ULL;
+        gPortsOrch->setPort(oldMonitor.m_alias, oldMonitor);
+        gPortsOrch->setPort(newMonitor.m_alias, newMonitor);
+        gPortsOrch->saiOidToAlias[oldMonitor.m_bridge_port_id] = oldMonitor.m_alias;
+        gPortsOrch->saiOidToAlias[newMonitor.m_bridge_port_id] = newMonitor.m_alias;
+
+        fdbEntry.mac = MacAddress("00:11:22:33:44:55");
+        fdbEntry.bv_id = vlan.m_vlan_info.vlan_oid;
+        fdbEntry.port_name = oldMonitor.m_alias;
+        FdbData data;
+        data.bridge_port_id = oldMonitor.m_bridge_port_id;
+        data.is_flush_pending = false;
+        gFdbOrch->m_entries[fdbEntry] = data;
+
+        gNeighOrch->m_syncdNeighbors[nextHop].mac = fdbEntry.mac;
+        gNeighOrch->m_syncdNextHops[nextHop] = {SAI_NULL_OBJECT_ID, 0, 0};
+
+        auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
+        session.status = false;
+        session.sessionId = SAI_NULL_OBJECT_ID;
+        session.srcIp = IpAddress("10.0.0.1");
+        session.dstIp = IpAddress("10.0.0.2");
+        session.greType = 0x8949;
+        session.nexthopInfo.nexthop = nextHop;
+        session.neighborInfo.neighbor = nextHop;
+        session.neighborInfo.mac = fdbEntry.mac;
+        session.neighborInfo.port = vlan;
+        session.neighborInfo.portId = oldMonitor.m_port_id;
+        ASSERT_TRUE(gMirrorOrch->activateSession("export1", session));
+        ASSERT_EQ(gMirrorOrch->createSampleBinding("Ethernet0|rx", fields()), task_success);
+        ASSERT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+
+        // Verify that the FDB resolves to the old member; this entry will
+        // remain cached after that member is removed.
+        Port resolved;
+        ASSERT_TRUE(gFdbOrch->getPort(fdbEntry.mac, vlan.m_vlan_info.vlan_id, resolved));
+        ASSERT_EQ(resolved.m_port_id, oldMonitor.m_port_id);
+    }
+
+    void removeOldMemberWithFailedDetach()
+    {
+        vlan.m_members.erase(oldMonitor.m_alias);
+        gPortsOrch->setPort(vlan.m_alias, vlan);
+        gFdbOrch->m_entries[fdbEntry].is_flush_pending = true;
+        g_fail_mirror_session_set = true;
+        gMirrorOrch->updateVlanMember({vlan, oldMonitor, false});
+        EXPECT_TRUE(gMirrorOrch->m_syncdMirrors.at("export1").status);
+        EXPECT_EQ(gMirrorOrch->m_sampleSuspendedExports.count("export1"), 1u);
+    }
+
+    void addFreshFdb()
+    {
+        FdbData data;
+        data.bridge_port_id = newMonitor.m_bridge_port_id;
+        data.is_flush_pending = false;
+        gFdbOrch->m_entries[fdbEntry] = data;
+        FdbUpdate update{};
+        update.entry = fdbEntry;
+        update.entry.port_name = newMonitor.m_alias;
+        update.port = newMonitor;
+        update.add = true;
+        gMirrorOrch->updateFdb(update);
+    }
+
+    void verifyMonitorPort(sai_object_id_t expected)
+    {
+        const auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
+        sai_attribute_t attr{};
+        attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+        ASSERT_EQ(sai_mirror_api->get_mirror_session_attribute(session.sessionId, 1, &attr), SAI_STATUS_SUCCESS);
+        EXPECT_EQ(attr.value.oid, expected);
+    }
+};
+
+TEST_F(VlanFdbRecoveryTest, RetryWaitsForFreshFdbAfterMonitorMemberRemoval)
+{
+    setUpVlanExport();
+    removeOldMemberWithFailedDetach();
+    g_fail_mirror_session_set = false;
+
+    gMirrorOrch->doTask();
+    auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
+    EXPECT_FALSE(session.status);
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+
+    // Neighbor changes must not re-read the stale FDB while waiting.
+    gMirrorOrch->updateNeighbor({nextHop, fdbEntry.mac, true});
+    EXPECT_FALSE(session.status);
+
+    // The FDB flush notification can arrive after the session is inactive.
+    FdbUpdate removed{};
+    removed.entry = fdbEntry;
+    removed.add = false;
+    gMirrorOrch->updateFdb(removed);
+    EXPECT_FALSE(session.status);
+
+    addFreshFdb();
+    EXPECT_TRUE(session.status);
+    EXPECT_EQ(session.neighborInfo.portId, newMonitor.m_port_id);
+    verifyMonitorPort(newMonitor.m_port_id);
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    remove("Ethernet0|rx");
+    if (session.status)
+    {
+        EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
+    }
+}
+
+TEST_F(VlanFdbRecoveryTest, FreshFdbBeforeCleanupCompletesIsNotLost)
+{
+    setUpVlanExport();
+    removeOldMemberWithFailedDetach();
+    gMirrorOrch->updateNeighbor({nextHop, fdbEntry.mac, true});
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").neighborInfo.portId, SAI_NULL_OBJECT_ID);
+    addFreshFdb();
+    EXPECT_TRUE(gMirrorOrch->m_syncdMirrors.at("export1").status);
+    EXPECT_EQ(gMirrorOrch->m_sampleSuspendedExports.count("export1"), 1u);
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").neighborInfo.portId, newMonitor.m_port_id);
+
+    g_fail_mirror_session_set = false;
+    gMirrorOrch->doTask();
+    auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
+    EXPECT_TRUE(session.status);
+    EXPECT_EQ(session.neighborInfo.portId, newMonitor.m_port_id);
+    verifyMonitorPort(newMonitor.m_port_id);
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    remove("Ethernet0|rx");
+    if (session.status)
+    {
+        EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
+    }
 }
 
 }

@@ -157,7 +157,7 @@ class TestSampledMirror:
         self.lag_members.remove(('10', 'Ethernet4'))
         self.detached('Ethernet4')
         assert self.attached('Ethernet0', 'rx', '5000') == original
-        assert self.dvs.config_db.get_keys('PORT_MIRROR_SAMPLE') == ['PortChannel10|rx']
+        assert list(self.dvs.config_db.get_keys('PORT_MIRROR_SAMPLE')) == ['PortChannel10|rx']
 
     def test_global_sflow_down_blocks_binding_until_removed(self):
         self.dvs.config_db.create_entry('SFLOW', 'global', {'admin_state': 'down'})

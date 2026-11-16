@@ -771,6 +771,15 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             SWSS_LOG_NOTICE("Get mirror session destination IP neighbor VLAN %d",
                     session.neighborInfo.port.m_vlan_info.vlan_id);
 
+            // The FDB cache can still point to the removed monitor port until
+            // the flush completes. Wait for updateFdb() to set the new port.
+            if (session.neighborInfo.port.m_vlan_info.vlan_oid == session.waitingFdbVlan &&
+                session.neighborInfo.mac == session.waitingFdbMac &&
+                session.neighborInfo.portId == SAI_NULL_OBJECT_ID)
+            {
+                return false;
+            }
+
             // Recover the VLAN member monitor port picked before warm reboot
             // since the FDB entries are not yet learned on the hardware
             if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
@@ -1148,6 +1157,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         }
     }
 
+    session.waitingFdbVlan = SAI_NULL_OBJECT_ID;
     setSessionState(name, session);
 
     MirrorSessionUpdate update = { name, true };
@@ -1869,7 +1879,10 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
         // Remove the monitor port
         else
         {
-            deactivateSession(name, session);
+            if (session.status)
+            {
+                deactivateSession(name, session);
+            }
             session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
         }
     }
@@ -1985,7 +1998,11 @@ void MirrorOrch::updateVlanMember(const VlanMemberUpdate& update)
 
         // Deactivate session. Wait for FDB event to activate session
         session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
-        deactivateSession(name, session);
+        if (!deactivateSession(name, session))
+        {
+            session.waitingFdbVlan = update.vlan.m_vlan_info.vlan_oid;
+            session.waitingFdbMac = session.neighborInfo.mac;
+        }
     }
 }
 

@@ -60,6 +60,11 @@ struct MirrorEntry
         sai_object_id_t portId;
     } neighborInfo;
 
+    // Set when cleanup fails after the VLAN monitor port is removed. The session
+    // waits for an FDB update for this VLAN and MAC until it is activated again.
+    sai_object_id_t waitingFdbVlan = SAI_NULL_OBJECT_ID;
+    MacAddress waitingFdbMac;
+
     sai_object_id_t sessionId;
 
     int64_t refCount;
