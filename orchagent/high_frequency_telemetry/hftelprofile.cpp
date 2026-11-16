@@ -939,13 +939,16 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
     attr.value.oid = getTAMReportObjID(object_type);
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_tel_type(
-            &sai_object,
-            gSwitchId,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_tel_type(
+                &sai_object,
+                gSwitchId,
+                static_cast<uint32_t>(attrs.size()),
+                attrs.data())) != task_success)
+    {
+        SWSS_LOG_THROW("Failed to create the TAM tel type object for profile %s", m_profile_name.c_str());
+    }
 
     m_sai_tam_tel_type_objs[key] = move(
         sai_guard_t(
@@ -1000,12 +1003,15 @@ void HFTelProfile::initTelemetry()
     attr.value.objlist.list = &sai_tam_collector_obj;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
-        SAI_API_TAM,
-        sai_tam_api->create_tam_telemetry(
-            &sai_object,
-            gSwitchId, static_cast<uint32_t>(attrs.size()),
-            attrs.data()));
+    if (handleSaiCreateStatus(
+            SAI_API_TAM,
+            sai_tam_api->create_tam_telemetry(
+                &sai_object,
+                gSwitchId, static_cast<uint32_t>(attrs.size()),
+                attrs.data())) != task_success)
+    {
+        SWSS_LOG_THROW("Failed to create the TAM telemetry object for profile %s", m_profile_name.c_str());
+    }
 
     m_sai_tam_telemetry_list.push_back(sai_object);
     HFTELUTILS_SET_SAI_OBJECT_LIST(

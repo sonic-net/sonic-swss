@@ -871,6 +871,7 @@ namespace hftelprofile_ut
                 new (&p->m_sai_tam_tel_type_objs) decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
                 new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
+                new (&p->m_sai_tam_tel_type_list) decay_t<decltype(p->m_sai_tam_tel_type_list)>();
                 p->m_sai_tam_telemetry_obj = make_shared<sai_object_id_t>(0x900);
             }
 
@@ -880,6 +881,7 @@ namespace hftelprofile_ut
                 p->m_profile_name.~basic_string();
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_tel_type_states.~unordered_map();
+                p->m_sai_tam_tel_type_list.~vector();
                 p->m_sai_tam_report_objs.~unordered_map();
                 p->m_sai_tam_telemetry_obj.~shared_ptr();
                 p = nullptr;
@@ -1201,6 +1203,13 @@ namespace hftelprofile_ut
             return SAI_STATUS_SUCCESS;
         }
 
+        static sai_status_t mock_create_table_full(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            *oid = next_oid++;
+            return SAI_STATUS_TABLE_FULL;
+        }
+
         static sai_status_t mock_get(sai_object_id_t, uint32_t, sai_attribute_t *)
         {
             ++get_calls;
@@ -1298,5 +1307,37 @@ namespace hftelprofile_ut
         EXPECT_TRUE(tam_telemetry_lists[tam_oid].empty());
         EXPECT_TRUE(telemetry_list.empty());
         EXPECT_EQ(get_calls, 0);
+    }
+
+    TEST_F(ObjectListTest, FailedCreateIsNotAddedToLists)
+    {
+        const sai_object_id_t tam_oid = 0x10;
+        const sai_object_id_t collector_oid = 0x20;
+        CounterNameCache cache;
+        vector<sai_object_id_t> telemetry_list;
+
+        auto profile_a = make_unique<HFTelProfile>(
+            "a", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        sai_object_id_t telemetry_a = *profile_a->m_sai_tam_telemetry_obj;
+
+        ut_api.create_tam_telemetry = mock_create_table_full;
+        EXPECT_THROW(make_unique<HFTelProfile>(
+            "b", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE), runtime_error);
+        ut_api.create_tam_tel_type = mock_create_table_full;
+        EXPECT_THROW(profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        ut_api.create_tam_telemetry = mock_create;
+        ut_api.create_tam_tel_type = mock_create;
+
+        auto profile_c = make_unique<HFTelProfile>(
+            "c", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        sai_object_id_t telemetry_c = *profile_c->m_sai_tam_telemetry_obj;
+        EXPECT_EQ(tam_telemetry_lists[tam_oid], vector<sai_object_id_t>({telemetry_a, telemetry_c}));
+
+        sai_object_id_t port_type = profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT);
+        EXPECT_EQ(tam_type_lists[telemetry_a], vector<sai_object_id_t>({port_type}));
+
+        profile_a.reset();
+        EXPECT_EQ(tam_telemetry_lists[tam_oid], vector<sai_object_id_t>({telemetry_c}));
+        EXPECT_EQ(telemetry_list, vector<sai_object_id_t>({telemetry_c}));
     }
 }
