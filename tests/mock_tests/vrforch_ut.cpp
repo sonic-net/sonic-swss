@@ -31,6 +31,7 @@ class VrfOrchTest : public MockOrchTest
     VxlanVrfMapOrch *m_vxlan_vrf_map_orch = nullptr;
     MockSaiTunnel m_tunnel_mock;
     decltype(sai_tunnel_api->remove_tunnel) m_saved_remove_tunnel = nullptr;
+    bool m_ports_initialized_for_vlan = false;
 
     void PostSetUp() override
     {
@@ -97,6 +98,63 @@ class VrfOrchTest : public MockOrchTest
     {
         return dynamic_cast<Consumer *>(
             m_vxlan_vrf_map_orch->getExecutor(APP_VXLAN_VRF_TABLE_NAME));
+    }
+
+    Consumer *vxlanTunnelMapConsumer()
+    {
+        return dynamic_cast<Consumer *>(
+            m_vxlan_tunnel_map_orch->getExecutor(APP_VXLAN_TUNNEL_MAP_TABLE_NAME));
+    }
+
+    void createVlan(const string& vlan)
+    {
+        if (!m_ports_initialized_for_vlan)
+        {
+            Table port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+            auto ports = ut_helper::getInitialSaiPorts();
+            for (const auto& port : ports)
+            {
+                port_table.set(port.first, port.second);
+            }
+            port_table.set("PortConfigDone", {{"count", to_string(ports.size())}});
+            port_table.set("PortInitDone", {{}});
+            gPortsOrch->addExistingData(&port_table);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            m_ports_initialized_for_vlan = true;
+        }
+
+        auto consumer = dynamic_cast<Consumer *>(
+            gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(
+            {{vlan, "SET", {{"admin_status", "up"}, {"mtu", "9100"},
+                             {"mac", "00:aa:bb:cc:dd:ee"}}}});
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        Port vlan_port;
+        ASSERT_TRUE(gPortsOrch->getVlanByVlanId(
+            static_cast<sai_vlan_id_t>(stoul(vlan.substr(4))), vlan_port));
+    }
+
+    void addL2VniMap(const string& key, const string& vlan, uint32_t vni)
+    {
+        auto consumer = vxlanTunnelMapConsumer();
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(
+            {{key, "SET", {{"vni", to_string(vni)}, {"vlan", vlan}}}});
+        static_cast<Orch *>(m_vxlan_tunnel_map_orch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_TRUE(m_vxlan_tunnel_map_orch->isTunnelMapExists(key));
+    }
+
+    void delL2VniMap(const string& key)
+    {
+        auto consumer = vxlanTunnelMapConsumer();
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync({{key, "DEL", {}}});
+        static_cast<Orch *>(m_vxlan_tunnel_map_orch)->doTask();
+        ASSERT_TRUE(consumer->m_toSync.empty());
+        ASSERT_FALSE(m_vxlan_tunnel_map_orch->isTunnelMapExists(key));
     }
 };
 
@@ -970,6 +1028,112 @@ TEST_F(VrfOrchTest, LastVrfMapDeleteFailureRetainsTunnelCleanupOwnership)
     // remaining hardware cleanup.
     EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
     EXPECT_TRUE(tunnel->del_tnl_hw_pending);
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapDeleteDoesNotRestoreDeletedL2Map)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+    createVlan("Vlan100");
+
+    const string l2_map = "EVPN_2.2.2.2:map_l2_5980";
+    const string vrf_map = "EVPN_2.2.2.2:map_default_5980";
+    addL2VniMap(l2_map, "Vlan100", 5980);
+
+    auto vrf_consumer = vxlanVrfConsumer();
+    ASSERT_NE(vrf_consumer, nullptr);
+    vrf_consumer->addToSync(
+        {{vrf_map, "SET", {{"vni", "5980"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(vrf_consumer->m_toSync.empty());
+    ASSERT_TRUE(m_vxlan_vrf_map_orch->isVrfMapExists(vrf_map));
+
+    delL2VniMap(l2_map);
+
+    vrf_consumer->addToSync({{vrf_map, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(vrf_consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_vrf_map_orch->isVrfMapExists(vrf_map));
+    EXPECT_FALSE(m_vxlan_tunnel_map_orch->isTunnelMapExists(l2_map));
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapDeleteRestoresCurrentReplacementL2Map)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+    createVlan("Vlan100");
+    createVlan("Vlan200");
+
+    const string old_l2_map = "EVPN_2.2.2.2:map_old_5990";
+    const string new_l2_map = "EVPN_2.2.2.2:map_new_5990";
+    const string vrf_map = "EVPN_2.2.2.2:map_default_5990";
+    addL2VniMap(old_l2_map, "Vlan100", 5990);
+
+    auto vrf_consumer = vxlanVrfConsumer();
+    ASSERT_NE(vrf_consumer, nullptr);
+    vrf_consumer->addToSync(
+        {{vrf_map, "SET", {{"vni", "5990"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(vrf_consumer->m_toSync.empty());
+
+    delL2VniMap(old_l2_map);
+    addL2VniMap(new_l2_map, "Vlan200", 5990);
+
+    sai_object_id_t current_entry_id = SAI_NULL_OBJECT_ID;
+    uint32_t current_vlan = 0;
+    string current_map;
+    ASSERT_TRUE(m_vxlan_tunnel_map_orch->isVniVlanMapExists(
+        5990, current_map, &current_entry_id, &current_vlan));
+    ASSERT_EQ(current_map, new_l2_map);
+    ASSERT_EQ(current_vlan, 200u);
+    ASSERT_EQ(current_entry_id, SAI_NULL_OBJECT_ID);
+
+    vrf_consumer->addToSync({{vrf_map, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(vrf_consumer->m_toSync.empty());
+    EXPECT_FALSE(m_vxlan_tunnel_map_orch->isTunnelMapExists(old_l2_map));
+    EXPECT_TRUE(m_vxlan_tunnel_map_orch->isVniVlanMapExists(
+        5990, current_map, &current_entry_id, &current_vlan));
+    EXPECT_EQ(current_map, new_l2_map);
+    EXPECT_EQ(current_vlan, 200u);
+    EXPECT_NE(current_entry_id, SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(VrfOrchTest, VxlanVrfMapTracksRemovedOriginalL2EntryAsAbsent)
+{
+    provisionEvpnVtep();
+    addVrf("default");
+    createVlan("Vlan300");
+
+    const string l2_map = "EVPN_2.2.2.2:map_l2_6000";
+    const string vrf_map = "EVPN_2.2.2.2:map_default_6000";
+    addL2VniMap(l2_map, "Vlan300", 6000);
+
+    auto vrf_consumer = vxlanVrfConsumer();
+    ASSERT_NE(vrf_consumer, nullptr);
+    vrf_consumer->addToSync(
+        {{vrf_map, "SET", {{"vni", "6000"}, {"vrf", "default"}}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+    ASSERT_TRUE(vrf_consumer->m_toSync.empty());
+
+    sai_object_id_t l2_entry_id = SAI_NULL_OBJECT_ID;
+    uint32_t vlan_id = 0;
+    string map_name;
+    ASSERT_TRUE(m_vxlan_tunnel_map_orch->isVniVlanMapExists(
+        6000, map_name, &l2_entry_id, &vlan_id));
+    EXPECT_EQ(map_name, l2_map);
+    EXPECT_EQ(vlan_id, 300u);
+    EXPECT_EQ(l2_entry_id, SAI_NULL_OBJECT_ID);
+
+    vrf_consumer->addToSync({{vrf_map, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    ASSERT_TRUE(m_vxlan_tunnel_map_orch->isVniVlanMapExists(
+        6000, map_name, &l2_entry_id, &vlan_id));
+    EXPECT_EQ(map_name, l2_map);
+    EXPECT_NE(l2_entry_id, SAI_NULL_OBJECT_ID);
 }
 
 TEST_F(VrfOrchTest, PendingTunnelDeleteFailureMakesProgressOnMapRetry)
