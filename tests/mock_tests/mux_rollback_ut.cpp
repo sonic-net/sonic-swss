@@ -1114,6 +1114,7 @@ namespace mux_rollback_test
 
         m_MuxCable->nbr_handler_->neighbors_.erase(IpAddress(ip));
         gNeighOrch->m_syncdNeighbors.erase(entry);
+    }
 
     static const string SLB_ROUTE = "10.10.100.0/27";
 
