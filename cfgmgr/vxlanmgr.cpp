@@ -443,17 +443,35 @@ bool VxlanMgr::doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
 
     const std::string & vxlanTunnelName = kfvKey(t);
 
-    // Update vxlan tunnel cache
+    // Update vxlan tunnel cache, merging partial CONFIG_DB updates into any existing entry
     TunCache tuncache;
-
-    tuncache.fvt = kfvFieldsValues(t);
     tuncache.vlan_vni_refcnt = 0;
     tuncache.m_sourceIp = "NULL";
 
-    for (auto i : kfvFieldsValues(t))
+    std::string old_src_ip = "NULL";
+    auto existing = m_vxlanTunnelCache.find(vxlanTunnelName);
+    if (existing != m_vxlanTunnelCache.end())
+    {
+        tuncache = existing->second;
+        old_src_ip = existing->second.m_sourceIp;
+    }
+
+    for (const auto &i : kfvFieldsValues(t))
     {
         const std::string & field = fvField(i);
         const std::string & value = fvValue(i);
+        auto fvt_it = std::find_if(
+            tuncache.fvt.begin(),
+            tuncache.fvt.end(),
+            [&field](const FieldValueTuple &fv) { return fvField(fv) == field; });
+        if (fvt_it != tuncache.fvt.end())
+        {
+            fvt_it->second = value;
+        }
+        else
+        {
+            tuncache.fvt.push_back(i);
+        }
         if (field == SOURCE_IP)
         {
             tuncache.m_sourceIp = value;
@@ -463,8 +481,76 @@ bool VxlanMgr::doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
     m_appVxlanTunnelTableProducer.set(vxlanTunnelName, kfvFieldsValues(t));
     m_vxlanTunnelCache[vxlanTunnelName] = tuncache;
 
+    if (old_src_ip != "NULL" && tuncache.m_sourceIp != "NULL" &&
+        old_src_ip != tuncache.m_sourceIp && tuncache.vlan_vni_refcnt)
+    {
+        // The kernel netdevices carry the source IP as their local address, and
+        // zebra advertises EVPN routes from it
+        recreateVxlanNetdevices(vxlanTunnelName);
+    }
+
     SWSS_LOG_NOTICE("Create vxlan tunnel %s", vxlanTunnelName.c_str());
     return true;
+}
+
+void VxlanMgr::recreateVxlanNetdevices(const std::string &vxlanTunnelName)
+{
+    SWSS_LOG_ENTER();
+
+    const auto &fvt = m_vxlanTunnelCache[vxlanTunnelName].fvt;
+    std::string src_ip = m_vxlanTunnelCache[vxlanTunnelName].m_sourceIp;
+    std::string dst_ip;
+    for (const auto &fv : fvt)
+    {
+        if (fvField(fv) == DST_IP)
+        {
+            dst_ip = fvValue(fv);
+        }
+    }
+
+    if (!areValidVxlanTunnelAddresses(src_ip, dst_ip))
+    {
+        SWSS_LOG_ERROR("Skipping VXLAN netdevice recreation for %s because source or destination IP is invalid",
+                       vxlanTunnelName.c_str());
+        return;
+    }
+
+    const std::string map_prefix = vxlanTunnelName + delimiter;
+    const std::string vlan_prefix = "Vlan";
+
+    for (const auto &kv : m_vxlanTunnelMapCache)
+    {
+        if (kv.first.compare(0, map_prefix.length(), map_prefix) != 0)
+        {
+            continue;
+        }
+
+        const MapCache &map_entry = kv.second;
+        if (map_entry.vlan.length() <= vlan_prefix.length() ||
+            map_entry.vlan.compare(0, vlan_prefix.length(), vlan_prefix) != 0)
+        {
+            SWSS_LOG_ERROR("Skipping VXLAN netdevice recreation for map %s with unexpected VLAN %s",
+                           kv.first.c_str(), map_entry.vlan.c_str());
+            continue;
+        }
+        std::string vlan_id = map_entry.vlan.substr(vlan_prefix.length());
+
+        SWSS_LOG_NOTICE("Recreating %s for vxlan tunnel %s source IP %s",
+                        map_entry.vxlan_dev_name.c_str(), vxlanTunnelName.c_str(), src_ip.c_str());
+
+        downVxlanNetdevice(map_entry.vxlan_dev_name);
+        if (deleteVxlanNetdevice(map_entry.vxlan_dev_name) != RET_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to delete %s before recreating with source IP %s",
+                           map_entry.vxlan_dev_name.c_str(), src_ip.c_str());
+            continue;
+        }
+        if (createVxlanNetdevice(vxlanTunnelName, map_entry.vni_id, src_ip, dst_ip, vlan_id) != RET_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to recreate %s with source IP %s",
+                           map_entry.vxlan_dev_name.c_str(), src_ip.c_str());
+        }
+    }
 }
 
 bool VxlanMgr::doVxlanTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
@@ -1020,7 +1106,7 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
 
     // Case 1: Entry exist - Erase from cache & return
     // Case 2: Entry does not exist - Create netDevice in Kernel
-    // Case 3: Entry exist but modified - Not taken care. Will address later
+    // Case 3: Entry exist but modified - recreateVxlanNetdevices() on a source IP change
 
     if (m_in_reconcile)
     {

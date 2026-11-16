@@ -345,6 +345,36 @@ class TestVxlan(object):
             delete_entry_tbl(config_db, "VXLAN_TUNNEL", tunnel_name)
             delete_entry_tbl(config_db, "VLAN", vlan_name)
 
+    def test_source_ip_update_recreates_netdevice(self, dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        tunnel_name = "vtep_upd"
+        map_name = "{}|entry".format(tunnel_name)
+        vlan_name = "Vlan61"
+        vxlan_device = "{}-61".format(tunnel_name)
+
+        def netdevice_local_is(address):
+            def check():
+                status, output = dvs.runcmd(["ip", "-d", "link", "show", vxlan_device])
+                return status == 0 and "local {} ".format(address) in output, output
+            return check
+
+        try:
+            create_entry_tbl(config_db, "VLAN", '|', vlan_name, [("vlanid", "61")])
+            create_entry_tbl(config_db, "VXLAN_TUNNEL", '|', tunnel_name, [("src_ip", "192.0.2.11")])
+            create_entry_tbl(config_db, "VXLAN_TUNNEL_MAP", '|', map_name, [("vni", "861"), ("vlan", vlan_name)])
+            wait_for_result(netdevice_local_is("192.0.2.11"),
+                            failure_message="{} not created with 192.0.2.11".format(vxlan_device))
+
+            # e.g. an MCLAG pair moving to a shared anycast VTEP address
+            create_entry_tbl(config_db, "VXLAN_TUNNEL", '|', tunnel_name, [("src_ip", "192.0.2.13")])
+            wait_for_result(netdevice_local_is("192.0.2.13"),
+                            failure_message="{} kept its old local address".format(vxlan_device))
+
+        finally:
+            delete_entry_tbl(config_db, "VXLAN_TUNNEL_MAP", map_name)
+            delete_entry_tbl(config_db, "VXLAN_TUNNEL", tunnel_name)
+            delete_entry_tbl(config_db, "VLAN", vlan_name)
+
     def test_restore_rejects_invalid_tunnel_source_address(self, dvs, testlog):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
