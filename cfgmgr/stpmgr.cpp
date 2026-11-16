@@ -20,6 +20,42 @@
 using namespace std;
 using namespace swss;
 
+namespace {
+
+// Dedicated bridge nft table: drop PVST+ PDUs (dst 01:00:0c:cc:cc:cd) on forward.
+// Table is removed on restore so add path stays idempotent.
+constexpr char pvstNftBridgeTable[] = "sonic_stp_pvst";
+
+void preventPvstPduFlooding()
+{
+    std::string res;
+    const std::string tableName(pvstNftBridgeTable);
+    const std::string cmd =
+          "nft delete table bridge " + tableName + " ; "
+          "nft add table bridge " + tableName + " && "
+          "nft 'add chain bridge " + tableName +
+          " forward { type filter hook forward priority 0; policy accept; }' && "
+          "nft add rule bridge " + tableName + " forward ether daddr 01:00:0c:cc:cc:cd drop";
+
+    int ret = swss::exec(cmd, res);
+    if ( ret != 0 ) {
+        SWSS_LOG_ERROR( "Failed to install nft rule to prevent PVST PDU flooding - %d", ret );
+    }
+}
+
+void restorePvstPduFlooding()
+{
+    std::string res;
+    const std::string cmd =
+          std::string("nft delete table bridge ") + pvstNftBridgeTable;
+    int ret = swss::exec(cmd, res);
+    if ( ret != 0 ) {
+        SWSS_LOG_ERROR( "Failed to remove nft rule which prevented PVST PDU flooding - %d", ret );
+    }
+}
+
+} // namespace
+
 static bool parseInteger(const std::string &value, int &result, const char *field)
 {
     if (value.empty() ||
@@ -73,8 +109,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-    int ret = system("ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP");
-    SWSS_LOG_DEBUG("ebtables ret %d", ret);
+    restorePvstPduFlooding();
 }
 
 void StpMgr::doTask(Consumer &consumer)
@@ -101,8 +136,6 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -157,14 +190,9 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                     {
                         if (l2ProtoEnabled == L2_NONE)
                         {
-                            const std::string cmd = std::string("") +
-                                " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                            std::string res;
-                            int ret = swss::exec(cmd, res);
-                            if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed for PVST %d", ret);
-
+                            preventPvstPduFlooding();
                             l2ProtoEnabled = L2_PVSTP;
+                            SWSS_LOG_DEBUG( "Enabling PVST" );
                         }
                         msg.stp_mode = L2_PVSTP;
                     }
@@ -175,6 +203,7 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
                             l2ProtoEnabled = L2_MSTP;
                         }
                         msg.stp_mode = L2_MSTP;
+                        SWSS_LOG_DEBUG( "Enabling MSTP" );
 
                         // Assign all VLANs to zero instance for MSTP
                         fill_n(m_vlanInstMap, MAX_VLANS, 0);
@@ -202,15 +231,9 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
             // Initialize all VLANs to Invalid instance
             fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
 
-            // Remove ebtables rule based on protocol mode
             if (l2ProtoEnabled == L2_PVSTP)
             {
-                const std::string pvst_cmd =
-                    "ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                std::string res_pvst;
-                int ret_pvst = swss::exec(pvst_cmd, res_pvst);
-                if (ret_pvst != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
+                restorePvstPduFlooding();
             }
             l2ProtoEnabled = L2_NONE;
         }
@@ -463,7 +486,7 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
                 {
                     int value = 0;
                     configValid = parseInteger(fvValue(i), value, "max_hops");
-                    msg.max_hops = static_cast<uint8_t>(value);
+                    msg.max_hop = static_cast<uint8_t>(value);
                 }
                 else
                 {
@@ -690,7 +713,8 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "loop_guard")
             {
-                msg->loop_guard = (value == "true") ? 1 : 0;
+                // Enable the below line once updated stp_ipc.h is available
+                // msg->loop_guard = (value == "true") ? 1 : 0;
             }
             else if (field == "bpdu_guard")
             {
@@ -728,7 +752,7 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "edge_port" && l2ProtoEnabled ==L2_MSTP)
             {
-                msg->edge_port = (value == "true") ? 1 : 0;
+                msg->edge = (value == "true") ? 1 : 0;
             }
             else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
             {
@@ -814,6 +838,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     {
         STP_VLAN_MEM_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
+        msg.priority  = -1;
 
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -847,8 +872,6 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
         if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
         {
             int8_t tagging_mode = TAGGED_MODE;
-            msg.priority = -1;
-            msg.path_cost = 0;
 
             if (op == SET_COMMAND)
             {
@@ -1194,7 +1217,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        STP_MST_INST_CONFIG_MSG *msg = NULL;
+        MST_INST_CONFIG_MSG *msg = NULL;
         uint32_t len = 0;
 
         KeyOpFieldsValuesTuple t = it->second;
@@ -1255,12 +1278,12 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             updateVlanInstanceMap(instance_id, vlan_ids, true);
 
             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
-            len = sizeof(STP_MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
+            len = sizeof(MST_INST_CONFIG_MSG) + static_cast<uint32_t>(vlan_count * sizeof(VLAN_LIST));
 
-            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
+            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
-                SWSS_LOG_ERROR("Memory allocation failed for STP_MST_INST_CONFIG_MSG");
+                SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
                 return;
             }
 
@@ -1279,8 +1302,8 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            len = sizeof(STP_MST_INST_CONFIG_MSG);
-            msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
+            len = sizeof(MST_INST_CONFIG_MSG);
+            msg = (MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
             {
                 SWSS_LOG_ERROR("Memory allocation failed for MST_INST_CONFIG_MSG");
@@ -1437,7 +1460,8 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
     int rc;
 
     len = msgLen + (offsetof(struct STP_IPC_MSG, data));
-    SWSS_LOG_INFO("tx_msg len %d msglen %d", (int)len, msgLen);
+    SWSS_LOG_INFO( "tx_msg len %d msglen %u for proto_mode %d",
+                   (int)len, msgLen, l2ProtoEnabled );
 
     tx_msg = (STP_IPC_MSG *)calloc(1, len);
     if (tx_msg == NULL)
@@ -1448,6 +1472,7 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 
     tx_msg->msg_type = msgType;
     tx_msg->msg_len  = msgLen;
+    tx_msg->proto_mode  = l2ProtoEnabled;
     memcpy(tx_msg->data, data, msgLen);
 
     bzero(&addr, sizeof(addr));
