@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from dvslib.dvs_bridge_port_protection import (
     bpp_dvs_enabled, bpp_requirements,
-    bpp_instrumented, ProtectionDVS, FpmSession, CONFIG, STATE, BP,
+    bpp_instrumented, ProtectionDVS, FpmSession, CONFIG, BP,
     GROUP_ATTR, BINDING, OBJECTS, NHG, NHGM, TUNNEL,
     run, poll, stable,
 )
@@ -200,14 +200,14 @@ def test_cli_policy_updates_keep_primary_packets_and_learned_entries(traffic):
     entry = traffic.learn()
     for field,value in [('protection_mode','software'),('admin_mode','primary'),
                         ('revertive','true'),('wait_to_restore_time_ms','3000')]:
-        run(traffic.dvs,['config','portchannel999','protection',field,value])
+        run(traffic.dvs,['config','portchannel','protection',traffic.po,field,value])
     traffic.member()
     traffic.group()
     traffic.bind()
     traffic.path('PRIMARY')
     assert 'PRIMARY' in traffic.show() and 'STEADY' in traffic.show()
     before = traffic.config.get_entry(CONFIG,traffic.po)
-    rc,_ = traffic.dvs.runcmd(['config','portchannel999','protection','wait_to_restore_time_ms','-1'])
+    rc,_ = traffic.dvs.runcmd(['config','portchannel','protection',traffic.po,'wait_to_restore_time_ms','-1'])
     assert rc!=0
     assert traffic.config.get_entry(CONFIG,traffic.po)==before
     traffic.primary_objects_preserved(entry)

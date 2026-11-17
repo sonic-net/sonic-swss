@@ -7,7 +7,7 @@ import struct
 import pytest
 from dvslib.dvs_bridge_port_protection import (
     bpp_dvs_enabled, bpp_requirements,
-    bpp, bpp_instrumented, bpp_fpm, FpmSession, BINDING, OBJECTS, FPM_IDS, CONFIG, STATE,
+    bpp, bpp_instrumented, bpp_fpm, FpmSession, BINDING, OBJECTS, FPM_IDS, CONFIG,
     BP, NHG, NH, TUNNEL, GROUP_ATTR, ADMIN_ATTR, run, poll, stable,
     frame, binding_frame, member_frame, group_frame, restart_fpmsyncd_after_sigkill,
 )
@@ -260,7 +260,7 @@ def test_same_session_wrong_object_kind_cannot_overwrite_or_delete(bpp,bpp_fpm):
 def test_cli_through_fpm_and_swss_show_reports_confirmed_readback(bpp,bpp_fpm):
     for field,value in [('protection_mode','software'),('admin_mode','auto'),
                         ('revertive','false'),('wait_to_restore_time_ms','5000')]:
-        run(bpp.dvs,['config','portchannel999','protection',field,value])
+        run(bpp.dvs,['config','portchannel','protection',bpp.po,field,value])
     bpp.wait(admin_mode='AUTO')
     bpp.config.wait_for_field_match(CONFIG,bpp.po,{'revertive':'false','wait_to_restore_time_ms':'5000'})
     replay(bpp,bpp_fpm); bpp.path('PRIMARY')

@@ -2147,9 +2147,12 @@ TEST_F(BpProtectionObserverTest, MissingAliasRejectsOldGeneratedRequestsAndLegac
 
 TEST_F(BpProtectionObserverTest, RuntimeConstructorRejectsMissingSubjectsBeforeRegistering)
 {
-    for (const auto &subjects : {std::make_pair(static_cast<PortsOrch *>(nullptr), builder.get()),
-        std::make_pair(gPortsOrch, static_cast<L2NhgOrch *>(nullptr)),
-        std::make_pair(static_cast<PortsOrch *>(nullptr), static_cast<L2NhgOrch *>(nullptr))})
+    const std::vector<std::pair<PortsOrch *, L2NhgOrch *>> cases = {
+        {nullptr, builder.get()},
+        {gPortsOrch, nullptr},
+        {nullptr, nullptr},
+    };
+    for (const auto &subjects : cases)
     {
         EXPECT_THROW(BpProtOrch(m_config_db.get(), m_state_db.get(), m_app_db.get(),
             subjects.first, subjects.second), std::invalid_argument);

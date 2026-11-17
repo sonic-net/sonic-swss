@@ -64,24 +64,38 @@ def protection_portchannel(dvs):
 
 def test_cli_policy_to_swss_state_and_show(protection_portchannel):
     dvs = protection_portchannel
-    run(dvs, ["config", "portchannel999", "protection", "admin_mode", "primary"])
-    policy = dict(DEFAULTS, admin_mode="PRIMARY")
-    dvs.get_config_db().wait_for_field_match(CONFIG_TABLE, PORTCHANNEL, policy)
+    run(dvs, ["config", "portchannel", "protection", PORTCHANNEL, "admin_mode", "primary"])
+    policy = {"admin_mode": "PRIMARY"}
+    dvs.get_config_db().wait_for_exact_match(CONFIG_TABLE, PORTCHANNEL, policy)
     check_policy(dvs, policy)
 
     run(dvs, ["config", "portchannel", "protection", PORTCHANNEL,
               "admin_mode", "protection"])
     policy["admin_mode"] = "PROTECTION"
     check_policy(dvs, policy)
-    rc, _ = dvs.runcmd(["config", "portchannel999", "protection", "admin_mode", "invalid"])
+    rc, _ = dvs.runcmd(["config", "portchannel", "protection", PORTCHANNEL, "admin_mode", "invalid"])
     assert rc != 0
     assert dvs.get_config_db().get_entry(CONFIG_TABLE, PORTCHANNEL) == policy
     check_policy(dvs, policy)
-    run(dvs, ["config", "portchannel999", "protection", "delete"])
+    run(dvs, ["config", "portchannel", "protection", PORTCHANNEL, "delete"])
     dvs.get_config_db().wait_for_deleted_entry(CONFIG_TABLE, PORTCHANNEL)
     dvs.get_state_db().wait_for_deleted_entry(STATE_TABLE, PORTCHANNEL)
     assert "No bridge-port protection state available" in run(
         dvs, ["show", "bridge-port-protection", PORTCHANNEL])
+
+
+@pytest.mark.parametrize("field,value,normalized", [
+    ("protection_mode", "software", "SOFTWARE"),
+    ("admin_mode", "primary", "PRIMARY"),
+    ("revertive", "true", "true"),
+    ("wait_to_restore_time_ms", "5000", "5000"),
+])
+def test_cli_sparse_policy_preserves_implicit_runtime_defaults(protection_portchannel, field, value, normalized):
+    dvs = protection_portchannel
+    run(dvs, ["config", "portchannel", "protection", PORTCHANNEL, field, value])
+    explicit = {field: normalized}
+    dvs.get_config_db().wait_for_exact_match(CONFIG_TABLE, PORTCHANNEL, explicit)
+    check_policy(dvs, dict(DEFAULTS, **explicit))
 
 
 @pytest.mark.parametrize("defaults_only", [True, False])
@@ -94,7 +108,7 @@ def test_save_and_restart_restore_policy(protection_portchannel, defaults_only):
         for field, value in [("admin_mode", "protection"), ("revertive", "true"),
                              ("wait_to_restore_time_ms", "5000")]:
             run(dvs, ["config", "portchannel", "protection", PORTCHANNEL, field, value])
-        policy.update(admin_mode="PROTECTION", revertive="true", wait_to_restore_time_ms="5000")
+        policy = {"admin_mode": "PROTECTION", "revertive": "true", "wait_to_restore_time_ms": "5000"}
     check_policy(dvs, policy)
 
     token = uuid.uuid4().hex

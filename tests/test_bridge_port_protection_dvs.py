@@ -3,7 +3,6 @@
 Collection does not start a testbed. Matching protection-capable SAI and current shared-header test artifacts are
 prerequisites. FPM socket fixtures use a synthetic sender; live FRR is separate.
 """
-import time
 import pytest
 from dvslib.dvs_bridge_port_protection import (
     bpp_dvs_enabled, bpp_requirements,

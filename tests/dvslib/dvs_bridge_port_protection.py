@@ -276,6 +276,7 @@ class ProtectionDVS:
             run(self.dvs,['config','vlan','member','del','999',self.po])
             poll(lambda: True if not self.bridge_vlan_members(old) else None)
             return old
+        return None
 
     def bridge_vlan_members(self, bridge):
         table='ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER'
