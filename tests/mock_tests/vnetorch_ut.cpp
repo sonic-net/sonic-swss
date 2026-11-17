@@ -337,12 +337,12 @@ namespace vnetorch_test
         return g_savedSetRouteAttr(e, attr);
     }
 
-    // gRouteOrch programs VNET *local* routes through its route bulker, which
-    // copies the SAI create/remove_route_entries function pointers at
+    // gRouteOrch programs VNET *local* routes into VNetRouteOrch's route bulker,
+    // which copies the SAI create/remove_route_entries function pointers at
     // construction time (bulker.h) -- i.e. before PostSetUp() can apply the SAI
     // mock. So, like captureSetRouteEntryAttr above, these bulk entries are
     // captured with a plain function-pointer trampoline installed early in
-    // ApplySaiMock() (before gRouteOrch is constructed) rather than via gmock.
+    // ApplySaiMock() (before the orchs are constructed) rather than via gmock.
     static sai_status_t (*g_savedCreateRouteEntries)(
         uint32_t, const sai_route_entry_t *, const uint32_t *,
         const sai_attribute_t **, sai_bulk_op_error_mode_t, sai_status_t *) = nullptr;
@@ -602,8 +602,8 @@ namespace vnetorch_test
             }
         }
 
-        // Runs inside PrepareSai(), before any Orch (incl. gRouteOrch) is built.
-        // gRouteOrch's route bulker copies the SAI create/remove_route_entries
+        // Runs inside PrepareSai(), before any Orch is built. VNetRouteOrch's
+        // route bulker copies the SAI create/remove_route_entries
         // function pointers at construction (bulker.h), so to capture the VNET
         // *local* routes it programs in bulk we must install our trampolines on
         // the real sai_route_api here -- PostSetUp() (where the gmock swap runs)
@@ -922,9 +922,10 @@ namespace vnetorch_test
         // VNetRouteOrch programs, calling through to real libsaivs so downstream
         // references (route -> next hop -> tunnel) resolve to valid OIDs.
         // VNetRouteOrch programs tunnel routes via the non-bulk single-object
-        // create calls captured here; VNET *local* routes go through gRouteOrch's
-        // route bulker, whose bulk *_route_entries APIs are captured separately by
-        // the ApplySaiMock() trampolines (the bulker binds them before this runs).
+        // create calls captured here; VNET *local* routes go through
+        // VNetRouteOrch's route bulker, whose bulk *_route_entries APIs are
+        // captured separately by the ApplySaiMock() trampolines (the bulker
+        // binds them before this runs).
         void installRouteMock()
         {
             ON_CALL(*mock_sai_next_hop_api, create_next_hop(_, _, _, _))

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <stdexcept>
+#include <functional>
 #include <boost/functional/hash.hpp>
 #include <sairedis.h>
 #include "sai.h"
@@ -633,6 +634,19 @@ public:
 
     void flush()
     {
+        /* flush() is not cursor-aware: it walks the full order vectors and
+         * zeros flushing_*_pos at the end. Calling it while flush_until()
+         * has partial progress (any cursor != 0) would abandon that
+         * progress and reset the resume point. Fail loudly rather than
+         * silently reset (SWSS_LOG_THROW stays active under NDEBUG, unlike
+         * assert). */
+        if (flushing_remove_pos != 0 || flushing_create_pos != 0 || flushing_set_pos != 0)
+        {
+            SWSS_LOG_THROW("EntityBulker::flush() called with flush_until() in progress "
+                           "(remove=%zu create=%zu set=%zu)",
+                           flushing_remove_pos, flushing_create_pos, flushing_set_pos);
+        }
+
         // Removing
         if (!removing_entries.empty())
         {
@@ -707,7 +721,7 @@ public:
 
             for (auto const& entry : set_order)
             {
-                // Skip the entry if it is alreay processed.
+                // Skip the entry if it is already processed.
                 // All attributes of an entry are processed in the first run.
                 if (entries.count(entry) != 0)
                 {
@@ -742,6 +756,206 @@ public:
             setting_entries.clear();
             set_order.clear();
         }
+
+        /* A full flush invalidates any partial flush_until progress. */
+        flushing_remove_pos = 0;
+        flushing_create_pos = 0;
+        flushing_set_pos = 0;
+    }
+
+    /* Quantum-aware flush (HLD sonic-net/SONiC#2328 section 7.5). Flushes
+     * pending work in max_bulk_size chunks -- one SAI bulk call per chunk,
+     * the natural yield point -- and stops at the first chunk boundary
+     * where expired() is true. Returns true once everything pending has
+     * been flushed (same postcondition as flush(), containers cleared);
+     * false when it stopped with work remaining. At least one chunk is
+     * flushed per call, so a caller polling with an already-expired
+     * deadline still makes progress.
+     *
+     * Between a false return and the resuming call the caller must not
+     * stage new work or call flush()/clear() on this bulker: the resume
+     * cursors below assume the order vectors only ever grow. */
+    bool flush_until(const std::function<bool()>& expired)
+    {
+        /* Yield discipline: hitting the deadline at a chunk flush or a
+         * section boundary only arms pendingYield -- the scan keeps walking
+         * and returns false the moment the next unexecuted unit is found
+         * (rewinding the cursor so the resume re-reads it). A false return
+         * therefore guarantees concrete work remains: a chunk that exactly
+         * finishes the backlog completes in this invocation instead of
+         * costing a spurious re-invocation that rescans and flushes
+         * nothing. */
+        bool pendingYield = false;
+
+        // Removing
+        if (!removing_entries.empty())
+        {
+            std::vector<Te> rs;
+
+            while (flushing_remove_pos < remove_order.size())
+            {
+                auto const& entry = remove_order[flushing_remove_pos];
+                flushing_remove_pos++;
+                auto i = removing_entries.find(entry);
+                if (i == removing_entries.end())
+                {
+                    continue;
+                }
+                sai_status_t *object_status = i->second;
+                if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                {
+                    if (pendingYield)
+                    {
+                        flushing_remove_pos--;
+                        return false;
+                    }
+                    rs.push_back(entry);
+
+                    if (rs.size() >= max_bulk_size)
+                    {
+                        flush_removing_entries(rs);
+                        pendingYield = expired();
+                    }
+                }
+            }
+            flush_removing_entries(rs);
+
+            removing_entries.clear();
+            remove_order.clear();
+            flushing_remove_pos = 0;
+            if (!pendingYield)
+            {
+                pendingYield = expired();
+            }
+        }
+
+        // Creating
+        if (!creating_entries.empty())
+        {
+            std::vector<Te> rs;
+            std::vector<sai_attribute_t const*> tss;
+            std::vector<uint32_t> cs;
+            /* Duplicate create_order slots (create, quick remove, create
+             * again): skipped within this call by the set, across calls by
+             * the executed-status check, since every yield point has flushed
+             * all staged work. */
+            std::unordered_set<Te> entries;
+            bool dedup = create_order.size() != creating_entries.size();
+
+            while (flushing_create_pos < create_order.size())
+            {
+                auto const& entry = create_order[flushing_create_pos];
+                flushing_create_pos++;
+                if (dedup && entries.count(entry) != 0)
+                {
+                    continue;
+                }
+                auto i = creating_entries.find(entry);
+                if (i == creating_entries.end())
+                {
+                    continue;
+                }
+                auto const& attrs = i->second.first;
+                sai_status_t *object_status = i->second.second;
+                if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                {
+                    if (pendingYield)
+                    {
+                        flushing_create_pos--;
+                        return false;
+                    }
+                    if (dedup)
+                    {
+                        entries.insert(entry);
+                    }
+                    rs.push_back(entry);
+                    tss.push_back(attrs.data());
+                    cs.push_back((uint32_t)attrs.size());
+
+                    if (rs.size() >= max_bulk_size)
+                    {
+                        flush_creating_entries(rs, tss, cs);
+                        pendingYield = expired();
+                    }
+                }
+            }
+            flush_creating_entries(rs, tss, cs);
+
+            creating_entries.clear();
+            create_order.clear();
+            flushing_create_pos = 0;
+            if (!pendingYield)
+            {
+                pendingYield = expired();
+            }
+        }
+
+        // Setting. flushing_set_pos carries the resume point across calls,
+        // so an update-heavy batch that yields often does not rescan
+        // set_order from the start every quantum (set_order holds one slot
+        // per set_entry_attribute call, i.e. per attribute). Duplicate
+        // occurrences of an entry are handled at two levels: within a call,
+        // the per-call set below stops a duplicate from double-staging
+        // attributes that are staged but not yet flushed; across calls, the
+        // executed-status check suffices, because every yield point has
+        // flushed all staged work.
+        if (!setting_entries.empty())
+        {
+            std::vector<Te> rs;
+            std::vector<sai_attribute_t> ts;
+            std::vector<sai_status_t*> status_vector;
+            // Entries whose attribute list was already walked in this call.
+            std::unordered_set<Te> entries;
+
+            while (flushing_set_pos < set_order.size())
+            {
+                auto const& entry = set_order[flushing_set_pos];
+                flushing_set_pos++;
+                if (entries.count(entry) != 0)
+                {
+                    continue;
+                }
+                auto i = setting_entries.find(entry);
+                if (i == setting_entries.end())
+                {
+                    continue;
+                }
+                entries.insert(entry);
+                auto const& attrs = i->second;
+                for (auto const& ia: attrs)
+                {
+                    auto const& attr = ia.first;
+                    sai_status_t *object_status = ia.second;
+                    if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                    {
+                        if (pendingYield)
+                        {
+                            /* Rewind so the resume re-reads this occurrence;
+                             * its already-executed attributes are skipped by
+                             * the status check. */
+                            flushing_set_pos--;
+                            return false;
+                        }
+                        rs.push_back(entry);
+                        ts.push_back(attr);
+                        status_vector.push_back(object_status);
+
+                        if (rs.size() >= max_bulk_size)
+                        {
+                            flush_setting_entries(rs, ts, status_vector);
+                            pendingYield = expired();
+                        }
+                    }
+                }
+            }
+            flush_setting_entries(rs, ts, status_vector);
+
+            setting_entries.clear();
+            set_order.clear();
+            flushing_set_pos = 0;
+        }
+
+        return true;
     }
 
     void clear()
@@ -752,6 +966,9 @@ public:
         remove_order.clear();
         create_order.clear();
         set_order.clear();
+        flushing_remove_pos = 0;
+        flushing_create_pos = 0;
+        flushing_set_pos = 0;
     }
 
     size_t creating_entries_count() const
@@ -812,6 +1029,13 @@ private:
     std::vector<Te>                                         create_order;
     std::vector<Te>                                         set_order;
     std::vector<Te>                                         remove_order;
+
+    /* flush_until resume cursors into the order vectors. Valid only across
+     * a partial flush_until sequence (order vectors untouched in between);
+     * reset when a section completes, in clear(), and by a plain flush(). */
+    size_t                                                  flushing_remove_pos = 0;
+    size_t                                                  flushing_create_pos = 0;
+    size_t                                                  flushing_set_pos = 0;
 
     size_t max_bulk_size;
 
