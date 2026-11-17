@@ -1,6 +1,7 @@
 #include "gtest/gtest.h"
 #include <string>
 #include <vector>
+#include <map>
 #include <algorithm>
 #include <deque>
 #include <sstream>
@@ -21,58 +22,98 @@ namespace vnetmgr_ut
 
 using namespace swss;
 
-static bool g_fail_link_show_dev = false;
-static bool g_fail_route_add    = false;
-static bool g_fail_neigh_add    = false;
-static bool g_fail_fdb_add      = false;
+static std::map<std::string, int> g_links;
+static std::string g_txDetails;
+static int g_nextIfindex = 100;
+static bool g_fail_route_add = false;
+static bool g_fail_neigh_add = false;
+static bool g_fail_nft = false;
+static std::string g_routeShowV4;
+static std::string g_neighShow;
+static std::string g_tcFilterShow;
 
-static int vnet_cb(const std::string &cmd, std::string &stdout)
+static std::string unquote(const std::string &s)
 {
-    mockCallArgs.push_back(cmd);
-    if (cmd.find("-o link show dev ") != std::string::npos)
+    std::string r;
+    for (char c : s) if (c != '"' && c != '\'') r += c;
+    return r;
+}
+
+static std::string devFromShow(const std::string &cmd)
+{
+    auto pos = cmd.find("link show dev ");
+    std::string dev = cmd.substr(pos + strlen("link show dev "));
+    return dev.substr(0, dev.find(' '));
+}
+
+static int vnet_cb(const std::string &rawCmd, std::string &stdout)
+{
+    mockCallArgs.push_back(rawCmd);
+    const std::string cmd = unquote(rawCmd);
+    stdout.clear();
+    if (cmd.find("link show dev ") != std::string::npos)
     {
-        return g_fail_link_show_dev ? 1 : 0;
+        std::string dev = devFromShow(cmd);
+        auto it = g_links.find(dev);
+        if (it == g_links.end()) return 1;
+        stdout = std::to_string(it->second) + ": " + dev + ": <UP> mtu 1450";
+        if (dev == VNET_VXLAN_TX_DEV) stdout += " " + g_txDetails;
+        stdout += "\n";
+        return 0;
     }
-    if (g_fail_route_add && cmd.find(" route replace ") != std::string::npos)
+    if (cmd.find("link add " VNET_VXLAN_TX_DEV " ") != std::string::npos)
+    {
+        g_links[VNET_VXLAN_TX_DEV] = g_nextIfindex++;
+        std::string params = cmd.substr(cmd.find("type vxlan"));
+        g_txDetails = params.substr(0, params.find(" &&")) + " ";
+        return 0;
+    }
+    if (cmd.find("link del dev " VNET_VXLAN_TX_DEV) != std::string::npos)
+    {
+        g_links.erase(VNET_VXLAN_TX_DEV);
+        return 0;
+    }
+    if (g_fail_nft && cmd.find("nft ") != std::string::npos && cmd.find("chain out") != std::string::npos)
     {
         return 1;
     }
-    if (g_fail_neigh_add && cmd.find(" neigh replace ") != std::string::npos)
+    if (g_fail_route_add && cmd.find(" route replace ") != std::string::npos) return 1;
+    if (g_fail_neigh_add && cmd.find(" neigh replace ") != std::string::npos) return 1;
+    if (cmd.find("-o route show vrf") != std::string::npos)
     {
-        return 1;
+        if (cmd.find(" -4 ") != std::string::npos) stdout = g_routeShowV4;
+        return 0;
     }
-    if (g_fail_fdb_add && cmd.find(" fdb replace ") != std::string::npos)
+    if (cmd.find("neigh show dev") != std::string::npos)
     {
-        return 1;
+        stdout = g_neighShow;
+        return 0;
+    }
+    if (cmd.find("filter show dev") != std::string::npos)
+    {
+        stdout = g_tcFilterShow;
+        return 0;
     }
     return 0;
 }
 
-static bool cmdWasIssued(const std::string &needle)
+static bool issued(const std::string &needle)
 {
     for (const auto &c : mockCallArgs)
     {
-        if (c.find(needle) != std::string::npos) return true;
+        if (unquote(c).find(needle) != std::string::npos) return true;
     }
     return false;
 }
 
-static bool cmdHasTokens(const std::string &tokens)
+static int issuedCount(const std::string &needle)
 {
-    std::istringstream iss(tokens);
-    std::vector<std::string> toks;
-    std::string t;
-    while (iss >> t) toks.push_back(t);
+    int n = 0;
     for (const auto &c : mockCallArgs)
     {
-        bool ok = true;
-        for (const auto &tok : toks)
-        {
-            if (c.find(tok) == std::string::npos) { ok = false; break; }
-        }
-        if (ok) return true;
+        if (unquote(c).find(needle) != std::string::npos) n++;
     }
-    return false;
+    return n;
 }
 
 static KeyOpFieldsValuesTuple makeTuple(const std::string &key,
@@ -80,6 +121,17 @@ static KeyOpFieldsValuesTuple makeTuple(const std::string &key,
                                         const std::vector<FieldValueTuple> &fvs)
 {
     return KeyOpFieldsValuesTuple{key, op, fvs};
+}
+
+static KeyOpFieldsValuesTuple route(const std::string &key, const std::string &ep,
+                                    const std::string &mac, const std::string &vni = "",
+                                    const std::string &kernel = "true")
+{
+    std::vector<FieldValueTuple> fvs = {{"endpoint", ep}};
+    if (!mac.empty()) fvs.push_back({"mac_address", mac});
+    if (!vni.empty()) fvs.push_back({"vni", vni});
+    fvs.push_back({"install_on_kernel", kernel});
+    return makeTuple(key, SET_COMMAND, fvs);
 }
 
 struct VNetMgrTest : public ::testing::Test
@@ -98,12 +150,19 @@ struct VNetMgrTest : public ::testing::Test
         m_tables = {};
         mockCallArgs.clear();
         callback = vnet_cb;
-        g_fail_link_show_dev = false;
+        g_links = {{"Vxlan1000", 10}, {"Brvxlan1000", 11}, {"Vxlan2000", 12}, {"Brvxlan2000", 13}};
+        g_txDetails.clear();
+        g_nextIfindex = 100;
         g_fail_route_add = false;
         g_fail_neigh_add = false;
-        g_fail_fdb_add = false;
+        g_fail_nft = false;
+        g_routeShowV4.clear();
+        g_neighShow.clear();
+        g_tcFilterShow.clear();
         swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set(
             "switch", {{"vxlan_router_mac", "00:00:5e:00:53:01"}});
+        swss::Table(m_cfg_db.get(), CFG_VXLAN_TUNNEL_TABLE_NAME).set(
+            "tunnel0", {{"src_ip", "10.1.0.1"}});
     }
 
     void TearDown() override
@@ -122,6 +181,10 @@ static void createVnet(VNetMgr &mgr,
     ASSERT_TRUE(mgr.doVnetCreateTask(v));
 }
 
+static const char *R1 = "route replace 192.168.1.1/32 encap ip id 1000 dst 10.0.0.2 src 10.1.0.1 "
+                        "via inet6 fe80::200:0:1 dev VxlanOutbSvd vrf Vnet1 onlink proto redirect";
+static const char *N1 = "-6 neigh replace fe80::200:0:1 lladdr 02:00:00:00:00:01 dev VxlanOutbSvd nud permanent";
+
 TEST_F(VNetMgrTest, VnetCreateCachesVni)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
@@ -139,217 +202,383 @@ TEST_F(VNetMgrTest, VnetCreateIncompleteFieldsAreIgnored)
     ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
 }
 
-TEST_F(VNetMgrTest, VnetDeleteRemovesCacheEntry)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-    auto d = makeTuple("Vnet1", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
-    ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
-}
-
 TEST_F(VNetMgrTest, RouteTunnelBeforeVnetReturnsFalse)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+}
+
+TEST_F(VNetMgrTest, RouteDeferredUntilVtepSrcIpKnown)
+{
+    swss::Table(m_cfg_db.get(), CFG_VXLAN_TUNNEL_TABLE_NAME).del("tunnel0");
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01", "1000");
     ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_FALSE(issued(" route replace "));
+    ASSERT_FALSE(issued("link add"));
+
+    swss::Table(m_cfg_db.get(), CFG_VXLAN_TUNNEL_TABLE_NAME).set("tunnel0", {{"src_ip", "10.1.0.1"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(issued(R1));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelDeferredUntilNetdevAppears)
+TEST_F(VNetMgrTest, FirstRouteCreatesTxDeviceNftNeighAndRoute)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    g_fail_link_show_dev = true;
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01", "1000")));
 
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
-    ASSERT_FALSE(cmdWasIssued(" neigh replace "));
-    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
+    ASSERT_TRUE(issued("link add VxlanOutbSvd type vxlan external dstport 4790 local 10.1.0.1 nolearning"));
+    ASSERT_TRUE(issued("link set dev VxlanOutbSvd up"));
+    ASSERT_TRUE(issued("table inet sonic_vnet_vxtx {}; delete table inet sonic_vnet_vxtx; table inet sonic_vnet_vxtx {"));
+    ASSERT_TRUE(issued("type filter hook output priority 0; policy accept; ip saddr 10.1.0.1 udp dport 4790 udp dport set 4789;"));
+    ASSERT_TRUE(issued("type filter hook input priority 0; policy accept; udp dport 4790 drop;"));
+    ASSERT_TRUE(issued(N1));
+    ASSERT_TRUE(issued(R1));
+    ASSERT_FALSE(issued(" fdb "));
+    ASSERT_FALSE(issued("Brvxlan"));
+    ASSERT_TRUE(mgr.m_txReady);
+    ASSERT_TRUE(mgr.m_txReady);
+    ASSERT_EQ(mgr.m_neighRefs["02:00:00:00:00:01"], 1);
+}
 
-    g_fail_link_show_dev = false;
+TEST_F(VNetMgrTest, TxDeviceCreatedOnlyOnce)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
     mockCallArgs.clear();
-
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.1.1/32 via 10.0.0.2 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.2 lladdr 02:00:00:00:00:01 Brvxlan1000 nud permanent"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.2.0/24", "10.0.0.3", "02:00:00:00:00:02")));
+    ASSERT_FALSE(issued("link add"));
+    ASSERT_FALSE(issued("nft "));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelSameVni)
+TEST_F(VNetMgrTest, TxDevicePortFollowsSwitchVxlanPort)
+{
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_port", "13330"}});
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("type vxlan external dstport 13331 local 10.1.0.1"));
+    ASSERT_TRUE(issued("udp dport 13331 udp dport set 13330;"));
+}
+
+TEST_F(VNetMgrTest, RouteVniDefaultsToVnetVni)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.1.1/32 via 10.0.0.2 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.2 lladdr 02:00:00:00:00:01 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    ASSERT_FALSE(cmdWasIssued(" vni 1000"));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued(R1));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelCrossVniUsesFdbOverride)
+TEST_F(VNetMgrTest, RouteCrossVniCarriedInEncap)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.2.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.3"}, {"mac_address", "02:00:00:00:00:02"},
-         {"vni", "2000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.2.1/32 via 10.0.0.3 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:02 Vxlan1000 10.0.0.3 vni 2000"));
-    ASSERT_FALSE(cmdHasTokens("Vxlan2000"));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.2.1/32", "10.0.0.3", "02:00:00:00:00:02", "2000")));
+    ASSERT_TRUE(issued("route replace 192.168.2.1/32 encap ip id 2000 dst 10.0.0.3 src 10.1.0.1 via inet6 fe80::200:0:2 dev VxlanOutbSvd vrf Vnet1 onlink"));
+    ASSERT_FALSE(issued("Vxlan2000"));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelIpv6HostRouteAddsNeigh)
+TEST_F(VNetMgrTest, SameEndpointDifferentMacsGetOwnNexthops)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|2001:db8::1/128", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    // Neigh keyed on endpoint (v4 underlay), not the inner v6 prefix.
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.2 lladdr 02:00:00:00:00:01 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("route replace 2001:db8::1/128 via 10.0.0.2 Brvxlan1000 Vnet1 onlink"));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.2", "aa:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.6.0/24", "10.0.0.2", "BB:00:00:00:00:02")));
+    ASSERT_TRUE(issued("-6 neigh replace fe80::aa00:0:1 lladdr aa:00:00:00:00:01 dev VxlanOutbSvd"));
+    ASSERT_TRUE(issued("-6 neigh replace fe80::bb00:0:2 lladdr bb:00:00:00:00:02 dev VxlanOutbSvd"));
+    ASSERT_TRUE(issued("route replace 192.168.5.0/24 encap ip id 1000 dst 10.0.0.2 src 10.1.0.1 via inet6 fe80::aa00:0:1"));
+    ASSERT_TRUE(issued("route replace 192.168.6.0/24 encap ip id 1000 dst 10.0.0.2 src 10.1.0.1 via inet6 fe80::bb00:0:2"));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelPrefixShapesInstallIdentically)
+TEST_F(VNetMgrTest, SameMacDifferentEndpointAndVniShareOneNeigh)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-
-    auto subnet = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(subnet));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.5.0/24 via 10.0.0.2 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.2 lladdr 02:00:00:00:00:01 Brvxlan1000 nud permanent"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-
-    mockCallArgs.clear();
-    auto def = makeTuple("Vnet1|0.0.0.0/0", SET_COMMAND,
-        {{"endpoint", "10.0.0.9"}, {"mac_address", "02:00:00:00:00:aa"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(def));
-    ASSERT_TRUE(cmdHasTokens("route replace 0.0.0.0/0 via 10.0.0.9 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.9 lladdr 02:00:00:00:00:aa Brvxlan1000 nud permanent"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:aa Vxlan1000 10.0.0.9"));
+    createVnet(mgr, "Vnet2", "2000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.6.0/24", "10.0.0.3", "02:00:00:00:00:01", "3000")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet2|192.168.5.0/24", "10.0.0.4", "02:00:00:00:00:01")));
+    ASSERT_EQ(issuedCount(" neigh replace "), 1);
+    ASSERT_EQ(mgr.m_neighRefs["02:00:00:00:00:01"], 3);
+    ASSERT_TRUE(issued("route replace 192.168.5.0/24 encap ip id 1000 dst 10.0.0.2 src 10.1.0.1 via inet6 fe80::200:0:1 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_TRUE(issued("route replace 192.168.6.0/24 encap ip id 3000 dst 10.0.0.3 src 10.1.0.1 via inet6 fe80::200:0:1 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_TRUE(issued("route replace 192.168.5.0/24 encap ip id 2000 dst 10.0.0.4 src 10.1.0.1 via inet6 fe80::200:0:1 dev VxlanOutbSvd vrf Vnet2"));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelInstallOnKernelFalseSkipsIpCommands)
+TEST_F(VNetMgrTest, Ipv6PrefixAndIpv6Endpoint)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "false"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
-    ASSERT_FALSE(cmdWasIssued(" neigh replace "));
-    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|2001:db8::1/128", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("route replace 2001:db8::1/128 encap ip id 1000 dst 10.0.0.2 src 10.1.0.1 via inet6 fe80::200:0:1 dev VxlanOutbSvd vrf Vnet1 onlink"));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|2001:db8::2/128", "fc00::2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("route replace 2001:db8::2/128 encap ip6 id 1000 dst fc00::2"));
 }
 
-TEST_F(VNetMgrTest, RouteTunnelSharedMacLifecycle)
+TEST_F(VNetMgrTest, InstallOnKernelFalseSkipsKernel)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01", "1000", "false")));
+    ASSERT_FALSE(issued(" route replace "));
+    ASSERT_FALSE(issued(" neigh replace "));
+    ASSERT_FALSE(issued("link add"));
+}
 
-    auto r1 = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    auto r2 = makeTuple("Vnet1|192.168.6.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r1));
-    mockCallArgs.clear();
+TEST_F(VNetMgrTest, MissingMacFallsBackToRouterMac)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "")));
+    ASSERT_TRUE(issued("-6 neigh replace fe80::5e00:5301 lladdr 00:00:5e:00:53:01"));
+    ASSERT_TRUE(issued("via inet6 fe80::5e00:5301 dev VxlanOutbSvd"));
+}
 
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r2));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.6.0/24 via 10.0.0.2 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.2 lladdr 02:00:00:00:00:01 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].count, 2);
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].endpoint, "10.0.0.2");
+TEST_F(VNetMgrTest, InvalidMacIsNotInstalled)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "zz:00")));
+    ASSERT_FALSE(issued(" route replace "));
+    ASSERT_TRUE(mgr.m_kernelRouteTunnelCache.empty());
+}
 
-    // Deleting the first prefix must NOT tear down neigh/FDB — r2 still uses them.
+TEST_F(VNetMgrTest, SharedMacNeighRefcounted)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.6.0/24", "10.0.0.2", "02:00:00:00:00:01")));
+
     mockCallArgs.clear();
     ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.5.0/24", DEL_COMMAND, {})));
-    ASSERT_TRUE(cmdHasTokens("route del 192.168.5.0/24 Brvxlan1000 Vnet1"));
-    ASSERT_FALSE(cmdWasIssued(" neigh del "));
-    ASSERT_FALSE(cmdWasIssued(" fdb del "));
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].count, 1);
+    ASSERT_TRUE(issued("route del 192.168.5.0/24 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_FALSE(issued(" neigh del "));
+    ASSERT_EQ(mgr.m_neighRefs["02:00:00:00:00:01"], 1);
 
     mockCallArgs.clear();
     ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.6.0/24", DEL_COMMAND, {})));
-    ASSERT_TRUE(cmdHasTokens("route del 192.168.6.0/24 Brvxlan1000 Vnet1"));
-    ASSERT_TRUE(cmdHasTokens("neigh del 10.0.0.2 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    ASSERT_EQ(mgr.m_macRefs.count("Vnet1|02:00:00:00:00:01"), 0u);
+    ASSERT_TRUE(issued("route del 192.168.6.0/24 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_TRUE(issued("-6 neigh del fe80::200:0:1 dev VxlanOutbSvd"));
+    ASSERT_EQ(mgr.m_neighRefs.count("02:00:00:00:00:01"), 0u);
 }
 
-TEST_F(VNetMgrTest, RouteTunnelDeleteRemovesKernelState)
+TEST_F(VNetMgrTest, EndpointChangeIsHitlessReplace)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.2", "02:00:00:00:00:01")));
     mockCallArgs.clear();
-
-    auto d = makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
-    ASSERT_TRUE(cmdHasTokens("route del 192.168.1.1/32 Brvxlan1000 Vnet1"));
-    ASSERT_TRUE(cmdHasTokens("neigh del 10.0.0.2 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.3", "02:00:00:00:00:01", "2000")));
+    ASSERT_TRUE(issued("route replace 192.168.5.0/24 encap ip id 2000 dst 10.0.0.3"));
+    ASSERT_FALSE(issued(" route del "));
+    ASSERT_FALSE(issued(" neigh "));
+    ASSERT_EQ(mgr.m_neighRefs["02:00:00:00:00:01"], 1);
+    ASSERT_EQ(mgr.m_kernelRouteTunnelCache["Vnet1|192.168.5.0/24"].m_dstIp, "10.0.0.3");
 }
 
-TEST_F(VNetMgrTest, RouteTunnelFdbFailureRollsBackNeigh)
+TEST_F(VNetMgrTest, MacChangeSwapsNeigh)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    g_fail_fdb_add = true;
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_TRUE(cmdWasIssued(" neigh del "));
-    // route replace must NOT have been attempted (neigh/FDB set up before route now).
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.2", "02:00:00:00:00:01")));
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.5.0/24", "10.0.0.2", "02:00:00:00:00:aa")));
+    ASSERT_TRUE(issued("-6 neigh replace fe80::200:0:aa lladdr 02:00:00:00:00:aa"));
+    ASSERT_TRUE(issued("via inet6 fe80::200:0:aa dev VxlanOutbSvd"));
+    ASSERT_TRUE(issued("-6 neigh del fe80::200:0:1 dev VxlanOutbSvd"));
+    ASSERT_EQ(mgr.m_neighRefs.count("02:00:00:00:00:01"), 0u);
+    ASSERT_EQ(mgr.m_neighRefs["02:00:00:00:00:aa"], 1);
 }
 
-TEST_F(VNetMgrTest, RouteTunnelRouteAddFailureRollsBackSharedState)
+TEST_F(VNetMgrTest, RouteAddFailureRollsBackNewNeigh)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
     g_fail_route_add = true;
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
-    // Freshly-installed neigh+FDB must be torn down because no prefix survived.
-    ASSERT_TRUE(cmdWasIssued(" fdb del "));
-    ASSERT_TRUE(cmdWasIssued(" neigh del "));
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("-6 neigh del fe80::200:0:1 dev VxlanOutbSvd"));
+    ASSERT_TRUE(mgr.m_neighRefs.empty());
+    ASSERT_TRUE(mgr.m_kernelRouteTunnelCache.empty());
 }
 
-TEST_F(VNetMgrTest, RouteTunnelNeighFailureLeavesNoState)
+TEST_F(VNetMgrTest, NeighFailureSkipsRoute)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
     g_fail_neigh_add = true;
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_FALSE(issued(" route replace "));
+}
+
+TEST_F(VNetMgrTest, NftFailureFailsRouteTaskForRetry)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    g_fail_nft = true;
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_FALSE(issued(R1));
+    ASSERT_FALSE(mgr.m_txReady);
+
+    g_fail_nft = false;
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_FALSE(issued("link add"));
+    ASSERT_TRUE(issued("udp dport 4790 udp dport set 4789"));
+    ASSERT_TRUE(issued(R1));
+    ASSERT_TRUE(mgr.m_txReady);
+}
+
+TEST_F(VNetMgrTest, ExistingMatchingTxDeviceIsAdopted)
+{
+    g_links[VNET_VXLAN_TX_DEV] = 55;
+    g_txDetails = "vxlan external id 0 local 10.1.0.1 srcport 0 0 dstport 4790 nolearning ";
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_FALSE(issued("link add"));
+    ASSERT_FALSE(issued("link del"));
+    ASSERT_TRUE(mgr.m_txReady);
+}
+
+TEST_F(VNetMgrTest, ExistingMismatchedTxDeviceIsRecreated)
+{
+    g_links[VNET_VXLAN_TX_DEV] = 55;
+    g_txDetails = "vxlan external id 0 local 10.9.9.9 srcport 0 0 dstport 4790 nolearning ";
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("link del dev VxlanOutbSvd"));
+    ASSERT_TRUE(issued("link add VxlanOutbSvd type vxlan external dstport 4790 local 10.1.0.1"));
+}
+
+TEST_F(VNetMgrTest, DmacBypassInstalledOncePerVniAndNotBlocking)
+{
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).hdel("switch", "vxlan_router_mac");
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued(R1));
+    ASSERT_FALSE(issued("tc qdisc replace"));
+
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_router_mac", "aa:bb:cc:dd:ee:ff"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.2.2/32", "10.0.0.3", "02:00:00:00:00:02")));
+    ASSERT_TRUE(issued("tc qdisc replace dev Vxlan1000 clsact"));
+    ASSERT_TRUE(issued("tc filter add dev Vxlan1000 ingress pref 1 handle 1 matchall action pedit ex munge eth dst set aa:bb:cc:dd:ee:ff"));
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.3.3/32", "10.0.0.4", "02:00:00:00:00:03")));
+    ASSERT_FALSE(issued("tc qdisc replace"));
+}
+
+TEST_F(VNetMgrTest, KernelRouteDeferredUntilVxlanNetdevButAppDbPublishedOnce)
+{
+    g_links.erase("Vxlan1000");
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    swss::ConsumerStateTable consumer(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+    auto r = route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01");
+
     ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
-    // Neigh failed first -> route replace must not have been attempted, no FDB either.
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
-    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_FALSE(issued(" route replace "));
+    ASSERT_FALSE(issued("tc "));
+    std::deque<swss::KeyOpFieldsValuesTuple> entries;
+    consumer.pops(entries);
+    ASSERT_EQ(entries.size(), 1u);
+    ASSERT_EQ(kfvOp(entries.front()), SET_COMMAND);
+
+    g_links["Vxlan1000"] = 10;
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(issued("tc qdisc replace dev Vxlan1000 clsact"));
+    ASSERT_TRUE(issued(R1));
+    entries.clear();
+    consumer.pops(entries);
+    ASSERT_TRUE(entries.empty());
+}
+
+TEST_F(VNetMgrTest, DmacBypassReappliedOnVxlanStateEvent)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVxlanStateTask(makeTuple("Vxlan1000", SET_COMMAND, {{"state", "ok"}})));
+    ASSERT_FALSE(issued("tc qdisc replace"));
+
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("tc qdisc replace dev Vxlan1000 clsact"));
+
+    ASSERT_TRUE(mgr.doVxlanStateTask(makeTuple("Vxlan1000", DEL_COMMAND, {})));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 0u);
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVxlanStateTask(makeTuple("Vxlan1000", SET_COMMAND, {{"state", "ok"}})));
+    ASSERT_TRUE(issued("tc filter add dev Vxlan1000 ingress pref 1 handle 1 matchall"));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVxlanStateTask(makeTuple("Vxlan1000", SET_COMMAND, {{"state", "ok"}})));
+    ASSERT_TRUE(issued("tc filter add dev Vxlan1000"));
+
+    g_tcFilterShow = "filter protocol all pref 1 matchall chain 0 handle 0x1\n";
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVxlanStateTask(makeTuple("Vxlan1000", SET_COMMAND, {{"state", "ok"}})));
+    ASSERT_TRUE(issued("tc filter show dev Vxlan1000 ingress pref 1"));
+    ASSERT_FALSE(issued("tc filter add"));
+    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVxlanStateTask(makeTuple("Vxlan2000", SET_COMMAND, {{"state", "ok"}})));
+    ASSERT_FALSE(issued("tc "));
+}
+
+TEST_F(VNetMgrTest, VnetDeleteRemovesBypassAndLastVnetTearsDownTx)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    auto r = route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {})));
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetDeleteTask(makeTuple("Vnet1", DEL_COMMAND, {})));
+    ASSERT_TRUE(issued("tc qdisc del dev Vxlan1000 clsact"));
+    ASSERT_TRUE(issued("link del dev VxlanOutbSvd"));
+    ASSERT_TRUE(issued("nft delete table inet sonic_vnet_vxtx"));
+    ASSERT_FALSE(mgr.m_txReady);
+    ASSERT_EQ(mgr.m_vnetCache.find("Vnet1"), mgr.m_vnetCache.end());
+}
+
+TEST_F(VNetMgrTest, DmacBypassDeleteSkippedWhenNeverInstalled)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetDeleteTask(makeTuple("Vnet1", DEL_COMMAND, {})));
+    ASSERT_FALSE(issued("tc qdisc del"));
+}
+
+TEST_F(VNetMgrTest, ReconcileRemovesStaleRoutesAndNeighbours)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+
+    g_routeShowV4 =
+        "192.168.1.1 encap ip id 1000 src 10.1.0.1 dst 10.0.0.2 ttl 0 tos 0 via inet6 fe80::200:0:1 dev VxlanOutbSvd onlink \n"
+        "192.168.9.0/24 encap ip id 1000 src 10.1.0.1 dst 10.0.0.9 ttl 0 tos 0 via inet6 fe80::200:0:9 dev VxlanOutbSvd onlink \n"
+        "default encap ip id 1000 src 10.1.0.1 dst 10.0.0.9 ttl 0 tos 0 via inet6 fe80::200:0:9 dev VxlanOutbSvd onlink \n";
+    g_neighShow =
+        "fe80::200:0:1 lladdr 02:00:00:00:00:01 PERMANENT\n"
+        "fe80::200:0:9 lladdr 02:00:00:00:00:09 PERMANENT\n";
+    mockCallArgs.clear();
+    mgr.reconcileKernelState();
+    ASSERT_FALSE(issued("route del 192.168.1.1 "));
+    ASSERT_TRUE(issued("route del 192.168.9.0/24 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_TRUE(issued("route del 0.0.0.0/0 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_FALSE(issued("neigh del fe80::200:0:1 "));
+    ASSERT_TRUE(issued("-6 neigh del fe80::200:0:9 dev VxlanOutbSvd"));
 }
 
 TEST_F(VNetMgrTest, LocalVnetRouteDoesNotHitKernel)
@@ -361,10 +590,9 @@ TEST_F(VNetMgrTest, LocalVnetRouteDoesNotHitKernel)
     ASSERT_TRUE(mgr.doVnetRouteTask(r, SET_COMMAND));
     auto d = makeTuple("Vnet1|192.168.10.0/24", DEL_COMMAND, {});
     ASSERT_TRUE(mgr.doVnetRouteTask(d, DEL_COMMAND));
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
-    ASSERT_FALSE(cmdWasIssued(" neigh add "));
+    ASSERT_FALSE(issued(" route replace "));
+    ASSERT_FALSE(issued(" neigh "));
 }
-
 
 static bool popAppDbEntry(swss::DBConnector *db, const std::string &tableName,
                           const std::string &key, std::string &opOut,
@@ -389,10 +617,7 @@ TEST_F(VNetMgrTest, RouteTunnelPublishedToAppDbNStripsInstallOnKernel)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01", "1000")));
 
     std::string op;
     std::vector<swss::FieldValueTuple> fvs;
@@ -419,12 +644,8 @@ TEST_F(VNetMgrTest, RouteTunnelDeletePublishesDelToAppDb)
     createVnet(mgr, "Vnet1", "1000");
     swss::ConsumerStateTable consumer(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
 
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    auto d = makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01", "1000")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {})));
 
     std::deque<swss::KeyOpFieldsValuesTuple> entries;
     consumer.pops(entries);
@@ -463,261 +684,23 @@ TEST_F(VNetMgrTest, LocalVnetRoutePublishedToAppDbAndDeleted)
     ASSERT_EQ(op, DEL_COMMAND);
 }
 
-TEST_F(VNetMgrTest, RouteTunnelMalformedPrefix)
+TEST_F(VNetMgrTest, RouteTunnelMalformedPrefixStillPublished)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.1.1/abc", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/abc", "10.0.0.2", "02:00:00:00:00:01", "1000")));
 
     std::string op;
     std::vector<swss::FieldValueTuple> fvs;
     ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME,
                               "Vnet1:192.168.1.1/abc", op, fvs));
     ASSERT_EQ(op, SET_COMMAND);
-    bool endpointOk = false;
-    for (const auto &fv : fvs)
-    {
-        if (fvField(fv) == "endpoint" && fvValue(fv) == "10.0.0.2") endpointOk = true;
-    }
-    ASSERT_TRUE(endpointOk);
 
-    auto d = makeTuple("Vnet1|192.168.1.1/abc", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.1.1/abc", DEL_COMMAND, {})));
     ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME,
                               "Vnet1:192.168.1.1/abc", op, fvs));
     ASSERT_EQ(op, DEL_COMMAND);
 }
 
-
-TEST_F(VNetMgrTest, RouteTunnelSinglePrefixEndpointChangeDeletesAndRecreates)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto r1 = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r1));
-    mockCallArgs.clear();
-
-    auto r1_moved = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.3"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r1_moved));
-
-    // Tear-down at OLD_EP.
-    ASSERT_TRUE(cmdHasTokens("route del 192.168.5.0/24 Brvxlan1000 Vnet1"));
-    ASSERT_TRUE(cmdHasTokens("neigh del 10.0.0.2 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    // Reinstall at NEW_EP.
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.3 lladdr 02:00:00:00:00:01 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:01 Vxlan1000 10.0.0.3"));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.5.0/24 via 10.0.0.3 Brvxlan1000 Vnet1 onlink"));
-
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].count, 1);
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].endpoint, "10.0.0.3");
-    ASSERT_EQ(mgr.m_kernelRouteTunnelCache["Vnet1|192.168.5.0/24"].m_dstIp, "10.0.0.3");
-}
-
-TEST_F(VNetMgrTest, RouteTunnelLatestWinsAcrossCollisions)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto p1 = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(p1));
-
-    // Fresh prefix, same endpoint, different MAC: neigh (keyed by IP) is clobbered
-    // to the new MAC; a fresh FDB entry is installed for the new MAC.
-    mockCallArgs.clear();
-    auto p2 = makeTuple("Vnet1|192.168.6.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:ff:ff:ff:ff:ff"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(p2));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.2 lladdr 02:ff:ff:ff:ff:ff Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:ff:ff:ff:ff:ff Vxlan1000 10.0.0.2"));
-
-    // Fresh prefix, same MAC as p1, different endpoint: shared FDB moves to new EP.
-    mockCallArgs.clear();
-    auto p3 = makeTuple("Vnet1|192.168.7.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.9"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(p3));
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.9 lladdr 02:00:00:00:00:01 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:01 Vxlan1000 10.0.0.9"));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.7.0/24 via 10.0.0.9 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].count, 2);
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].endpoint, "10.0.0.9");
-
-    // Update p1 with a new endpoint (same MAC): old state torn down, new installed.
-    mockCallArgs.clear();
-    auto p1_new = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.5"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(p1_new));
-    ASSERT_TRUE(cmdHasTokens("route del 192.168.5.0/24 Brvxlan1000 Vnet1"));
-    ASSERT_TRUE(cmdHasTokens("neigh del 10.0.0.2 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.5.0/24 via 10.0.0.5 Brvxlan1000 Vnet1 onlink"));
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].count, 2);
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:01"].endpoint, "10.0.0.5");
-    ASSERT_EQ(mgr.m_kernelRouteTunnelCache["Vnet1|192.168.5.0/24"].m_dstIp, "10.0.0.5");
-}
-
-TEST_F(VNetMgrTest, RouteTunnelMacChangeOnExistingPrefixTearsDownAndRecreates)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto r = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    mockCallArgs.clear();
-
-    auto r_mac_swap = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.3"}, {"mac_address", "02:00:00:00:00:aa"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r_mac_swap));
-
-    // Old MAC torn down.
-    ASSERT_TRUE(cmdHasTokens("neigh del 10.0.0.2 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    // New MAC installed at new endpoint.
-    ASSERT_TRUE(cmdHasTokens("neigh replace 10.0.0.3 lladdr 02:00:00:00:00:aa Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb replace 02:00:00:00:00:aa Vxlan1000 10.0.0.3"));
-    ASSERT_TRUE(cmdHasTokens("route replace 192.168.5.0/24 via 10.0.0.3 Brvxlan1000 Vnet1 onlink"));
-
-    ASSERT_EQ(mgr.m_macRefs.count("Vnet1|02:00:00:00:00:01"), 0u);
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:aa"].count, 1);
-    ASSERT_EQ(mgr.m_macRefs["Vnet1|02:00:00:00:00:aa"].endpoint, "10.0.0.3");
-}
-
-TEST_F(VNetMgrTest, RouteTunnelDeleteAfterMigrationTearsDownAtCurrentEndpoint)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto r = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-
-    auto r_moved = makeTuple("Vnet1|192.168.5.0/24", SET_COMMAND,
-        {{"endpoint", "10.0.0.9"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r_moved));
-    mockCallArgs.clear();
-
-    auto d = makeTuple("Vnet1|192.168.5.0/24", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(d));
-    ASSERT_TRUE(cmdHasTokens("neigh del 10.0.0.9 Brvxlan1000"));
-    ASSERT_TRUE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.9"));
-    ASSERT_FALSE(cmdHasTokens("fdb del 02:00:00:00:00:01 Vxlan1000 10.0.0.2"));
-    ASSERT_EQ(mgr.m_macRefs.count("Vnet1|02:00:00:00:00:01"), 0u);
-}
-
-static void setRouterMac(swss::DBConnector *appDb, const std::string & routerMac = "aa:bb:cc:dd:ee:ff")
-{
-    swss::Table t(appDb, APP_SWITCH_TABLE_NAME);
-    t.set("switch", {{"vxlan_router_mac", routerMac}});
-}
-
-TEST_F(VNetMgrTest, RouteDefersWhenSwitchTableMissing)
-{
-    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).del("switch");
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
-    ASSERT_FALSE(cmdWasIssued(" neigh replace "));
-    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
-    ASSERT_FALSE(cmdWasIssued("tc qdisc replace"));
-}
-
-TEST_F(VNetMgrTest, DmacBypassInstalledOncePerVni)
-{
-    setRouterMac(m_app_db.get());
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto r1 = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r1));
-    ASSERT_TRUE(cmdHasTokens("tc qdisc replace dev Vxlan1000 clsact"));
-    ASSERT_TRUE(cmdHasTokens("tc filter replace dev Vxlan1000 ingress matchall action pedit ex munge eth dst set aa:bb:cc:dd:ee:ff"));
-    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
-
-    mockCallArgs.clear();
-    auto r2 = makeTuple("Vnet1|192.168.2.2/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.3"}, {"mac_address", "02:00:00:00:00:02"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r2));
-    ASSERT_FALSE(cmdWasIssued("tc qdisc replace"));
-    ASSERT_FALSE(cmdWasIssued("tc filter replace"));
-}
-
-TEST_F(VNetMgrTest, DmacBypassDefersRouteWhenSwitchMacMissing)
-{
-    setRouterMac(m_app_db.get(), "");
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_FALSE(cmdWasIssued("tc qdisc replace"));
-    ASSERT_FALSE(cmdWasIssued(" route replace "));
-    ASSERT_FALSE(cmdWasIssued(" neigh replace "));
-    ASSERT_FALSE(cmdWasIssued(" fdb replace "));
-    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 0u);
-
-    setRouterMac(m_app_db.get(), "aa:bb:cc:dd:ee:ff");
-    mockCallArgs.clear();
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_TRUE(cmdHasTokens("tc filter replace dev Vxlan1000 ingress matchall action pedit ex munge eth dst set aa:bb:cc:dd:ee:ff"));
-    ASSERT_TRUE(cmdWasIssued(" route replace "));
-    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
-}
-
-TEST_F(VNetMgrTest, DmacBypassRemovedOnVnetDelete)
-{
-    setRouterMac(m_app_db.get());
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-    auto r = makeTuple("Vnet1|192.168.1.1/32", SET_COMMAND,
-        {{"endpoint", "10.0.0.2"}, {"mac_address", "02:00:00:00:00:01"},
-         {"vni", "1000"}, {"install_on_kernel", "true"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(r));
-    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 1u);
-    mockCallArgs.clear();
-
-    auto d = makeTuple("Vnet1", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
-    ASSERT_TRUE(cmdHasTokens("tc qdisc del dev Vxlan1000 clsact"));
-    ASSERT_EQ(mgr.m_dmacBypassInstalledVnis.count("1000"), 0u);
-}
-
-TEST_F(VNetMgrTest, DmacBypassDeleteSkippedWhenNeverInstalled)
-{
-    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
-    createVnet(mgr, "Vnet1", "1000");
-    mockCallArgs.clear();
-
-    auto d = makeTuple("Vnet1", DEL_COMMAND, {});
-    ASSERT_TRUE(mgr.doVnetDeleteTask(d));
-    ASSERT_FALSE(cmdWasIssued("tc qdisc del"));
-}
-
 } // namespace vnetmgr_ut
+

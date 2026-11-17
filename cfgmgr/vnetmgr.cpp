@@ -1,12 +1,21 @@
 #include <algorithm>
 #include <sstream>
 #include <string>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include "logger.h"
 #include "vnetmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "tokenize.h"
+#include "ipaddress.h"
+#include "ipprefix.h"
+#include "macaddress.h"
+#include "subscriberstatetable.h"
 
 #define TC_CMD "/sbin/tc"
+#define NFT_CMD "/usr/sbin/nft"
 
 #define VXLAN_TUNNEL "vxlan_tunnel"
 #define MAC_ADDRESS "mac_address"
@@ -14,8 +23,8 @@
 #define INSTALL_ON_KERNEL "install_on_kernel"
 #define VNI "vni"
 #define VNET "vnet"
+#define SOURCE_IP "src_ip"
 #define VXLAN_NAME_PREFIX "Vxlan"
-#define VXLAN_IF_NAME_PREFIX "Brvxlan"
 #define RET_SUCCESS 0
 
 using namespace std;
@@ -26,16 +35,87 @@ static inline std::string getVxlanDeviceName(const std::string & vnetVni)
     return std::string(VXLAN_NAME_PREFIX) + vnetVni;
 }
 
-static inline std::string bridgeDevNameFor(const std::string & vnetVni)
+static inline bool isV6(const std::string & ip)
 {
-    return std::string(VXLAN_IF_NAME_PREFIX) + vnetVni;
+    return ip.find(':') != std::string::npos;
 }
 
-static int cmdShowLink(const std::string & dev, std::string & res)
+static std::string normalizeMac(const std::string & mac)
+{
+    uint8_t raw[ETHER_ADDR_LEN];
+    if (!MacAddress::parseMacString(mac, raw))
+    {
+        return "";
+    }
+    return MacAddress(raw).to_string();
+}
+
+static std::string macToNexthop(const std::string & mac)
+{
+    uint8_t m[ETHER_ADDR_LEN];
+    if (!MacAddress::parseMacString(mac, m))
+    {
+        return "";
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), "fe80::%x:%x:%x",
+             (m[0] << 8) | m[1], (m[2] << 8) | m[3], (m[4] << 8) | m[5]);
+    return IpAddress(buf).to_string();
+}
+
+static bool linkExists(const std::string & dev, std::string * details = nullptr)
 {
     ostringstream cmd;
-    cmd << IP_CMD " -o link show dev " << shellquote(dev);
+    cmd << IP_CMD << (details ? " -d" : "") << " -o link show dev " << shellquote(dev);
+    std::string res;
+    if (swss::exec(cmd.str(), res) != RET_SUCCESS)
+    {
+        return false;
+    }
+    if (details)
+    {
+        *details = res;
+    }
+    return true;
+}
+
+static int cmdCreateTxDevice(const std::string & vtep, unsigned port, std::string & res)
+{
+    ostringstream cmd;
+    cmd << IP_CMD " link add " VNET_VXLAN_TX_DEV " type vxlan external"
+        << " dstport " << port
+        << " local " << shellquote(vtep)
+        << " nolearning && "
+        << IP_CMD " link set dev " VNET_VXLAN_TX_DEV " up";
     return swss::exec(cmd.str(), res);
+}
+
+static int cmdDeleteTxDevice(std::string & res)
+{
+    return swss::exec(IP_CMD " link del dev " VNET_VXLAN_TX_DEV, res);
+}
+
+static int cmdInstallNft(const std::string & vtep, unsigned basePort, std::string & res)
+{
+    const unsigned txPort = basePort + 1;
+    const std::string fam = isV6(vtep) ? "ip6" : "ip";
+    ostringstream rules;
+    rules << "table inet " VNET_NFT_TABLE " {}; "
+          << "delete table inet " VNET_NFT_TABLE "; "
+          << "table inet " VNET_NFT_TABLE " { "
+          << "chain out { type filter hook output priority 0; policy accept; "
+          << fam << " saddr " << vtep << " udp dport " << txPort
+          << " udp dport set " << basePort << "; }; "
+          << "chain in { type filter hook input priority 0; policy accept; "
+          << "udp dport " << txPort << " drop; }; }";
+    ostringstream cmd;
+    cmd << NFT_CMD " " << shellquote(rules.str()) << " 2>&1";
+    return swss::exec(cmd.str(), res);
+}
+
+static int cmdDeleteNft(std::string & res)
+{
+    return swss::exec(NFT_CMD " delete table inet " VNET_NFT_TABLE, res);
 }
 
 static int cmdCreateKernelRoute(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
@@ -43,88 +123,43 @@ static int cmdCreateKernelRoute(const swss::VNetMgr::VxlanKernelRouteInfo & info
     ostringstream cmd;
     cmd << IP_CMD " route replace "
         << shellquote(info.m_prefix)
-        << " via " << shellquote(info.m_dstIp)
-        << " dev " << shellquote(bridgeDevNameFor(info.m_vnetVni))
+        << " encap " << (isV6(info.m_dstIp) ? "ip6" : "ip")
+        << " id " << shellquote(info.m_vni)
+        << " dst " << shellquote(info.m_dstIp)
+        << " src " << shellquote(info.m_srcIp)
+        << " via inet6 " << shellquote(macToNexthop(info.m_dstMac))
+        << " dev " VNET_VXLAN_TX_DEV
         << " vrf " << shellquote(info.m_vnet)
-        << " onlink";
+        << " onlink proto redirect";
     return swss::exec(cmd.str(), res);
 }
 
-static int cmdDeleteKernelRoute(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
+static int cmdDeleteKernelRoute(const std::string & prefix, const std::string & vnet, std::string & res)
 {
     ostringstream cmd;
     cmd << IP_CMD " route del "
-        << shellquote(info.m_prefix)
-        << " dev " << shellquote(bridgeDevNameFor(info.m_vnetVni))
-        << " vrf " << shellquote(info.m_vnet);
+        << shellquote(prefix)
+        << " dev " VNET_VXLAN_TX_DEV
+        << " vrf " << shellquote(vnet);
     return swss::exec(cmd.str(), res);
 }
 
-static int cmdCreateNeighEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
+static int cmdCreateNeighEntry(const std::string & mac, std::string & res)
 {
     ostringstream cmd;
-    cmd << IP_CMD " neigh replace "
-        << shellquote(info.m_dstIp)
-        << " lladdr " << shellquote(info.m_dstMac)
-        << " dev " << shellquote(bridgeDevNameFor(info.m_vnetVni))
+    cmd << IP_CMD " -6 neigh replace "
+        << shellquote(macToNexthop(mac))
+        << " lladdr " << shellquote(mac)
+        << " dev " VNET_VXLAN_TX_DEV
         << " nud permanent";
     return swss::exec(cmd.str(), res);
 }
 
-static int cmdDeleteNeighEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
+static int cmdDeleteNeighIp(const std::string & ip, std::string & res)
 {
     ostringstream cmd;
-    cmd << IP_CMD " neigh del "
-        << shellquote(info.m_dstIp)
-        << " dev " << shellquote(bridgeDevNameFor(info.m_vnetVni));
+    cmd << IP_CMD " -6 neigh del " << shellquote(ip) << " dev " VNET_VXLAN_TX_DEV;
     return swss::exec(cmd.str(), res);
-}
-
-static int cmdCreateFdbEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
-{
-    // Use `bridge fdb replace` (not `append`) so repeated installs do not create dup entries
-    ostringstream self;
-    self << BRIDGE_CMD " fdb replace " << shellquote(info.m_dstMac)
-         << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
-         << " dst " << shellquote(info.m_dstIp);
-    if (info.m_vni != info.m_vnetVni)
-    {
-        self << " vni " << shellquote(info.m_vni);
-    }
-    int r = swss::exec(self.str(), res);
-    if (r != RET_SUCCESS) return r;
-
-    ostringstream bridgeEntry;
-    bridgeEntry << BRIDGE_CMD " fdb replace " << shellquote(info.m_dstMac)
-                << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
-                << " master static";
-    r = swss::exec(bridgeEntry.str(), res);
-    if (r != RET_SUCCESS)
-    {
-        ostringstream rollback;
-        rollback << BRIDGE_CMD " fdb del " << shellquote(info.m_dstMac)
-                 << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
-                 << " dst " << shellquote(info.m_dstIp);
-        std::string rbRes;
-        swss::exec(rollback.str(), rbRes);
-    }
-    return r;
-}
-
-static int cmdDeleteFdbEntry(const swss::VNetMgr::VxlanKernelRouteInfo & info, std::string & res)
-{
-    ostringstream self;
-    self << BRIDGE_CMD " fdb del " << shellquote(info.m_dstMac)
-         << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
-         << " dst " << shellquote(info.m_dstIp);
-    int r = swss::exec(self.str(), res);
-
-    ostringstream bridgeEntry;
-    bridgeEntry << BRIDGE_CMD " fdb del " << shellquote(info.m_dstMac)
-                << " dev " << shellquote(getVxlanDeviceName(info.m_vnetVni))
-                << " master";
-    swss::exec(bridgeEntry.str(), res);
-    return r;
 }
 
 static int cmdInstallDmacBypass(const std::string & vxlanDev, const std::string & brmac, std::string & res)
@@ -135,9 +170,18 @@ static int cmdInstallDmacBypass(const std::string & vxlanDev, const std::string 
         int r = swss::exec(cmd.str(), res);
         if (r != RET_SUCCESS) return r;
     }
+    {
+        ostringstream cmd;
+        cmd << TC_CMD " filter show dev " << shellquote(vxlanDev) << " ingress pref 1";
+        int r = swss::exec(cmd.str(), res);
+        if (r == RET_SUCCESS && !res.empty())
+        {
+            return RET_SUCCESS;
+        }
+    }
     ostringstream cmd;
-    cmd << TC_CMD " filter replace dev " << shellquote(vxlanDev)
-        << " ingress matchall action pedit ex munge eth dst set " << shellquote(brmac);
+    cmd << TC_CMD " filter add dev " << shellquote(vxlanDev)
+        << " ingress pref 1 handle 1 matchall action pedit ex munge eth dst set " << shellquote(brmac);
     return swss::exec(cmd.str(), res);
 }
 
@@ -148,13 +192,21 @@ static int cmdRemoveDmacBypass(const std::string & vxlanDev, std::string & res)
     return swss::exec(cmd.str(), res);
 }
 
-VNetMgr::VNetMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tables) :
+VNetMgr::VNetMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tables,
+                 DBConnector *stateDb) :
         Orch(cfgDb, tables),
-        m_app_db(appDb),
-        m_appVnetRouteTable(appDb, APP_VNET_RT_TABLE_NAME),
+        m_appSwitchTable(appDb, APP_SWITCH_TABLE_NAME),
+        m_cfgVxlanTunnelTable(cfgDb, CFG_VXLAN_TUNNEL_TABLE_NAME),
         m_appVnetRouteTunnelTable(appDb, APP_VNET_RT_TUNNEL_TABLE_NAME),
-        m_appSwitchTable(appDb, APP_SWITCH_TABLE_NAME)
+        m_appVnetRouteTable(appDb, APP_VNET_RT_TABLE_NAME),
+        m_app_db(appDb)
 {
+    if (stateDb)
+    {
+        addExecutor(new Consumer(new SubscriberStateTable(stateDb, STATE_VXLAN_TABLE_NAME,
+                                                          TableConsumable::DEFAULT_POP_BATCH_SIZE, 0),
+                                 this, STATE_VXLAN_TABLE_NAME));
+    }
 }
 
 VNetMgr::~VNetMgr()
@@ -173,7 +225,11 @@ void VNetMgr::doTask(Consumer &consumer)
         auto t = it->second;
         const std::string & op = kfvOp(t);
 
-        if (op == SET_COMMAND)
+        if (table_name == STATE_VXLAN_TABLE_NAME)
+        {
+            task_result = doVxlanStateTask(t);
+        }
+        else if (op == SET_COMMAND)
         {
             if (table_name == CFG_VNET_TABLE_NAME)
             {
@@ -227,6 +283,19 @@ void VNetMgr::doTask(Consumer &consumer)
     }
 }
 
+bool VNetMgr::hasPendingTasks()
+{
+    for (auto & kv : m_consumerMap)
+    {
+        auto consumer = dynamic_cast<Consumer *>(kv.second.get());
+        if (consumer && !consumer->m_toSync.empty())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool VNetMgr::doVnetCreateTask(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
@@ -266,6 +335,10 @@ bool VNetMgr::doVnetDeleteTask(const KeyOpFieldsValuesTuple & t)
     }
     removeDmacBypass(it->second.m_vni);
     m_vnetCache.erase(it);
+    if (m_vnetCache.empty() && m_kernelRouteTunnelCache.empty())
+    {
+        teardownTxDevice();
+    }
     SWSS_LOG_INFO("Delete vnet %s", vnetName.c_str());
     return true;
 }
@@ -320,13 +393,28 @@ bool VNetMgr::doVnetRouteTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
     routeInfo.m_routeName = vnet_route_name;
     m_vnetRouteTunnelCache[vnet_route_name] = routeInfo;
 
+    string vnetRouteTunnelName = kfvKey(t);
+    replace(vnetRouteTunnelName.begin(), vnetRouteTunnelName.end(), config_db_key_delimiter, delimiter);
+
+    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(t);
+    values.erase(std::remove_if(values.begin(), values.end(),
+                [](const swss::FieldValueTuple & fv) { return fv.first == INSTALL_ON_KERNEL; }),
+                values.end());
+
+    auto published = m_appVnetRouteTunnelPublished.find(vnetRouteTunnelName);
+    if (published == m_appVnetRouteTunnelPublished.end() || published->second != values)
+    {
+        m_appVnetRouteTunnelTable.set(vnetRouteTunnelName, values);
+        m_appVnetRouteTunnelPublished[vnetRouteTunnelName] = values;
+    }
+
     try
     {
         if (routeInfo.m_installOnKernel)
         {
             if (!createKernelRoute(routeInfo))
             {
-                SWSS_LOG_ERROR("Failed to create kernel route %s", vnet_route_name.c_str());
+                SWSS_LOG_INFO("Kernel route %s not programmed yet, will retry", vnet_route_name.c_str());
                 return false;
             }
         }
@@ -341,15 +429,6 @@ bool VNetMgr::doVnetRouteTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
                        vnet_route_name.c_str(), e.what());
     }
 
-    string vnetRouteTunnelName = kfvKey(t);
-    replace(vnetRouteTunnelName.begin(), vnetRouteTunnelName.end(), config_db_key_delimiter, delimiter);
-
-    std::vector<swss::FieldValueTuple> values = kfvFieldsValues(t);
-    values.erase(std::remove_if(values.begin(), values.end(),
-                [](const swss::FieldValueTuple & fv) { return fv.first == INSTALL_ON_KERNEL; }),
-                values.end());
-
-    m_appVnetRouteTunnelTable.set(vnetRouteTunnelName, values);
     return true;
 }
 
@@ -376,61 +455,175 @@ bool VNetMgr::doVnetRouteTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
     std::string appKey = vnet_route_name;
     std::replace(appKey.begin(), appKey.end(), config_db_key_delimiter, delimiter);
     m_appVnetRouteTunnelTable.del(appKey);
+    m_appVnetRouteTunnelPublished.erase(appKey);
     return true;
 }
 
-bool VNetMgr::probeVxlanBridgePair(const VxlanKernelRouteInfo & info)
+bool VNetMgr::readRouterMac(std::string & routerMac)
+{
+    routerMac.clear();
+    std::string value;
+    if (m_appSwitchTable.hget("switch", "vxlan_router_mac", value))
+    {
+        routerMac = value;
+    }
+    return !routerMac.empty();
+}
+
+unsigned VNetMgr::readBaseVxlanPort()
+{
+    std::string value;
+    if (m_appSwitchTable.hget("switch", "vxlan_port", value) && !value.empty())
+    {
+        char *end = nullptr;
+        unsigned long port = strtoul(value.c_str(), &end, 10);
+        if (end && *end == '\0' && port > 0 && port < 65535)
+        {
+            return static_cast<unsigned>(port);
+        }
+        SWSS_LOG_WARN("Ignoring invalid SWITCH_TABLE vxlan_port '%s'", value.c_str());
+    }
+    return VNET_DEFAULT_VXLAN_PORT;
+}
+
+bool VNetMgr::readVtepSrcIp(const std::string & tunnel, std::string & srcIp)
+{
+    srcIp.clear();
+    std::string value;
+    if (m_cfgVxlanTunnelTable.hget(tunnel, SOURCE_IP, value))
+    {
+        srcIp = value;
+    }
+    return !srcIp.empty();
+}
+
+bool VNetMgr::installNftTable()
 {
     std::string res;
-    if (cmdShowLink(getVxlanDeviceName(info.m_vnetVni), res) != RET_SUCCESS)
+    if (cmdInstallNft(m_txVtep, m_txBasePort, res) != RET_SUCCESS)
     {
-        SWSS_LOG_NOTICE("Netdev %s not yet present; waiting for vxlanmgrd", getVxlanDeviceName(info.m_vnetVni).c_str());
+        SWSS_LOG_ERROR("Failed to install nft table %s (tx dport %u -> %u): %s",
+                       VNET_NFT_TABLE, m_txBasePort + 1, m_txBasePort, res.c_str());
         return false;
     }
-    if (cmdShowLink(bridgeDevNameFor(info.m_vnetVni), res) != RET_SUCCESS)
-    {
-        SWSS_LOG_NOTICE("Bridge %s not yet present; waiting for vxlanmgrd", bridgeDevNameFor(info.m_vnetVni).c_str());
-        return false;
-    }
+    SWSS_LOG_NOTICE("Installed nft table %s: %s udp dport %u -> %u",
+                    VNET_NFT_TABLE, m_txVtep.c_str(), m_txBasePort + 1, m_txBasePort);
     return true;
 }
 
-bool VNetMgr::readSwitchState(std::string & routerMac)
+bool VNetMgr::ensureTxDevice(const std::string & vtep, unsigned basePort)
 {
-    std::vector<swss::FieldValueTuple> values;
-    if (!m_appSwitchTable.get("switch", values))
-    {
-        return false;
-    }
-    routerMac.clear();
-    for (const auto & kv : values)
-    {
-        if (fvField(kv) == "vxlan_router_mac")
-        {
-            routerMac = fvValue(kv);
-        }
-    }
-    return true;
-}
-
-bool VNetMgr::installDmacBypassIfNeeded(const std::string & vnetVni)
-{
-    if (m_dmacBypassInstalledVnis.count(vnetVni))
+    if (m_txReady)
     {
         return true;
     }
-    std::string routerMac;
-    if (!readSwitchState(routerMac))
+
+    const unsigned txPort = basePort + 1;
+    std::string details, res;
+    bool present = linkExists(VNET_VXLAN_TX_DEV, &details);
+    if (present)
     {
-        SWSS_LOG_INFO("SWITCH_TABLE:switch not yet populated, deferring kernel route programming");
+        const std::string padded = details + " ";
+        bool matches = padded.find(" external ") != std::string::npos &&
+                       padded.find(" local " + vtep + " ") != std::string::npos &&
+                       padded.find(" dstport " + std::to_string(txPort) + " ") != std::string::npos;
+        if (!matches)
+        {
+            SWSS_LOG_NOTICE("Recreating %s for vtep %s dstport %u",
+                            VNET_VXLAN_TX_DEV, vtep.c_str(), txPort);
+            cmdDeleteTxDevice(res);
+            present = false;
+        }
+    }
+    if (!present)
+    {
+        if (cmdCreateTxDevice(vtep, txPort, res) != RET_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create %s: %s", VNET_VXLAN_TX_DEV, res.c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("Created %s (external, local %s, dstport %u)",
+                        VNET_VXLAN_TX_DEV, vtep.c_str(), txPort);
+    }
+
+    m_txVtep = vtep;
+    m_txBasePort = basePort;
+    if (!installNftTable())
+    {
         return false;
     }
-    if (routerMac.empty())
+    m_txReady = true;
+    return true;
+}
+
+void VNetMgr::teardownTxDevice()
+{
+    std::string res;
+    if (m_txReady || linkExists(VNET_VXLAN_TX_DEV))
     {
-        SWSS_LOG_INFO("DMAC bypass enabled but vxlan_router_mac not yet in SWITCH_TABLE, deferring");
+        cmdDeleteTxDevice(res);
+        SWSS_LOG_NOTICE("Deleted %s", VNET_VXLAN_TX_DEV);
+    }
+    cmdDeleteNft(res);
+    m_txReady = false;
+    m_txVtep.clear();
+    m_txBasePort = 0;
+    m_neighRefs.clear();
+}
+
+bool VNetMgr::neighRef(const std::string & mac)
+{
+    std::string res;
+    auto it = m_neighRefs.find(mac);
+    if (it != m_neighRefs.end())
+    {
+        it->second++;
+        return true;
+    }
+    if (cmdCreateNeighEntry(mac, res) != RET_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Neigh add %s for %s failed: %s",
+                       macToNexthop(mac).c_str(), mac.c_str(), res.c_str());
         return false;
+    }
+    m_neighRefs[mac] = 1;
+    return true;
+}
+
+void VNetMgr::neighUnref(const std::string & mac)
+{
+    auto it = m_neighRefs.find(mac);
+    if (it == m_neighRefs.end())
+    {
+        return;
+    }
+    if (--(it->second) <= 0)
+    {
+        std::string res;
+        cmdDeleteNeighIp(macToNexthop(mac), res);
+        m_neighRefs.erase(it);
+    }
+}
+
+bool VNetMgr::installDmacBypassIfNeeded(const std::string & vnetVni, bool force)
+{
+    if (!force && m_dmacBypassInstalledVnis.count(vnetVni))
+    {
+        return true;
     }
     const std::string vxlanDev = getVxlanDeviceName(vnetVni);
+    if (!linkExists(vxlanDev))
+    {
+        SWSS_LOG_INFO("%s not present yet, DMAC bypass waits for vxlanmgrd", vxlanDev.c_str());
+        return false;
+    }
+    std::string routerMac;
+    if (!readRouterMac(routerMac))
+    {
+        SWSS_LOG_WARN("vxlan_router_mac not set in SWITCH_TABLE, skipping DMAC bypass on %s",
+                      vxlanDev.c_str());
+        return false;
+    }
     std::string res;
     if (cmdInstallDmacBypass(vxlanDev, routerMac, res) != RET_SUCCESS)
     {
@@ -439,6 +632,30 @@ bool VNetMgr::installDmacBypassIfNeeded(const std::string & vnetVni)
     }
     m_dmacBypassInstalledVnis.insert(vnetVni);
     SWSS_LOG_NOTICE("Installed inner-DMAC bypass (tc pedit -> %s) on %s", routerMac.c_str(), vxlanDev.c_str());
+    return true;
+}
+
+bool VNetMgr::doVxlanStateTask(const KeyOpFieldsValuesTuple & t)
+{
+    const std::string & key = kfvKey(t);
+    if (key.compare(0, strlen(VXLAN_NAME_PREFIX), VXLAN_NAME_PREFIX) != 0)
+    {
+        return true;
+    }
+    const std::string vni = key.substr(strlen(VXLAN_NAME_PREFIX));
+    if (kfvOp(t) == DEL_COMMAND)
+    {
+        m_dmacBypassInstalledVnis.erase(vni);
+        return true;
+    }
+    for (const auto & kv : m_kernelRouteTunnelCache)
+    {
+        if (kv.second.m_vnetVni == vni)
+        {
+            installDmacBypassIfNeeded(vni, true);
+            break;
+        }
+    }
     return true;
 }
 
@@ -456,122 +673,101 @@ void VNetMgr::removeDmacBypass(const std::string & vnetVni)
     SWSS_LOG_NOTICE("Removed inner-DMAC bypass on %s", vxlanDev.c_str());
 }
 
-// Shared per-(vnet, MAC) refcount key.
-static inline std::string macRefKey(const std::string & vnet, const std::string & mac)
-{
-    return vnet + "|" + mac;
-}
-
 bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
 {
     SWSS_LOG_ENTER();
 
-    if (m_vnetCache.find(vxlanRouteInfo.m_vnet) == m_vnetCache.end())
+    auto vnetIt = m_vnetCache.find(vxlanRouteInfo.m_vnet);
+    if (vnetIt == m_vnetCache.end())
     {
         SWSS_LOG_INFO("Vnet %s hasn't been created yet, defer", vxlanRouteInfo.m_vnet.c_str());
         return false;
     }
-    const VnetInfo & vnetInfo = m_vnetCache[vxlanRouteInfo.m_vnet];
+    const VnetInfo & vnetInfo = vnetIt->second;
 
-    // Fall back to vnet's own VNI when unset.
-    std::string effectiveVni = vxlanRouteInfo.m_vni;
-    if (effectiveVni.empty())
+    std::string vtep;
+    if (!readVtepSrcIp(vnetInfo.m_vxlanTunnel, vtep))
     {
-        effectiveVni = vnetInfo.m_vni;
+        SWSS_LOG_INFO("VXLAN_TUNNEL %s src_ip not available yet, defer %s",
+                      vnetInfo.m_vxlanTunnel.c_str(), vxlanRouteInfo.m_routeName.c_str());
+        return false;
+    }
+
+    std::string mac = vxlanRouteInfo.m_macAddress;
+    if (mac.empty() && !readRouterMac(mac))
+    {
+        SWSS_LOG_INFO("Route %s has no mac_address and vxlan_router_mac is unset, defer",
+                      vxlanRouteInfo.m_routeName.c_str());
+        return false;
+    }
+    mac = normalizeMac(mac);
+    if (mac.empty())
+    {
+        SWSS_LOG_ERROR("Route %s has invalid mac_address %s, not installing in kernel",
+                       vxlanRouteInfo.m_routeName.c_str(), vxlanRouteInfo.m_macAddress.c_str());
+        return true;
     }
 
     VxlanKernelRouteInfo info;
     info.m_routeName = vxlanRouteInfo.m_routeName;
-    info.m_dstMac = vxlanRouteInfo.m_macAddress;
+    info.m_dstMac = mac;
     info.m_dstIp = vxlanRouteInfo.m_endpoint;
-    info.m_vni = effectiveVni;
+    info.m_srcIp = vtep;
+    info.m_vni = vxlanRouteInfo.m_vni.empty() ? vnetInfo.m_vni : vxlanRouteInfo.m_vni;
     info.m_vnetVni = vnetInfo.m_vni;
     info.m_vnet = vxlanRouteInfo.m_vnet;
     info.m_prefix = vxlanRouteInfo.m_prefix;
 
+    if (!linkExists(getVxlanDeviceName(info.m_vnetVni)))
+    {
+        SWSS_LOG_INFO("%s not present yet, defer kernel route %s",
+                      getVxlanDeviceName(info.m_vnetVni).c_str(), info.m_routeName.c_str());
+        return false;
+    }
+
+    if (!ensureTxDevice(vtep, readBaseVxlanPort()))
+    {
+        return false;
+    }
+
+    installDmacBypassIfNeeded(info.m_vnetVni);
+
     auto existing = m_kernelRouteTunnelCache.find(info.m_routeName);
-    bool isUpdate = (existing != m_kernelRouteTunnelCache.end());
-    if (isUpdate)
+    if (existing != m_kernelRouteTunnelCache.end())
     {
         const VxlanKernelRouteInfo & prev = existing->second;
-        if (prev.m_vnetVni == info.m_vnetVni &&
-            prev.m_vni == info.m_vni &&
+        if (prev.m_vni == info.m_vni &&
             prev.m_dstIp == info.m_dstIp &&
             prev.m_dstMac == info.m_dstMac &&
+            prev.m_srcIp == info.m_srcIp &&
+            prev.m_vnet == info.m_vnet &&
             prev.m_prefix == info.m_prefix)
         {
             return true;
         }
     }
 
-    if (!probeVxlanBridgePair(info))
+    if (!neighRef(info.m_dstMac))
     {
-        SWSS_LOG_INFO("Kernel route %s does not have parent vxlan and bridge ready, deferring",
-                      info.m_routeName.c_str());
         return false;
     }
-
-    if (!installDmacBypassIfNeeded(info.m_vnetVni))
-    {
-        SWSS_LOG_INFO("Kernel route %s deferred: vxlan_router_mac not yet available", info.m_routeName.c_str());
-        return false;
-    }
-
-    const std::string newKey = macRefKey(info.m_vnet, info.m_dstMac);
-    auto newRef = m_macRefs.find(newKey);
 
     std::string res;
-
-    if (isUpdate)
-    {
-        const VxlanKernelRouteInfo & prev = existing->second;
-        SWSS_LOG_NOTICE("Kernel route %s changed, delete+recreate", info.m_routeName.c_str());
-        cmdDeleteKernelRoute(prev, res);
-        cmdDeleteNeighEntry(prev, res);
-        cmdDeleteFdbEntry(prev, res);
-
-        const std::string oldKey = macRefKey(prev.m_vnet, prev.m_dstMac);
-        auto oldRef = m_macRefs.find(oldKey);
-        if (oldRef != m_macRefs.end() && --(oldRef->second.count) <= 0)
-        {
-            m_macRefs.erase(oldRef);
-        }
-
-        newRef = m_macRefs.find(newKey);
-    }
-
-    if (cmdCreateNeighEntry(info, res) != RET_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Neigh entry add for endpoint %s (%s) failed: %s",
-                       info.m_dstIp.c_str(), info.m_routeName.c_str(), res.c_str());
-        return false;
-    }
-    if (cmdCreateFdbEntry(info, res) != RET_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Fdb add for endpoint %s (%s) failed: %s",
-                       info.m_dstIp.c_str(), info.m_routeName.c_str(), res.c_str());
-        cmdDeleteNeighEntry(info, res);
-        return false;
-    }
     if (cmdCreateKernelRoute(info, res) != RET_SUCCESS)
     {
         SWSS_LOG_ERROR("Kernel route %s add failed: %s", info.m_routeName.c_str(), res.c_str());
-        cmdDeleteFdbEntry(info, res);
-        cmdDeleteNeighEntry(info, res);
+        neighUnref(info.m_dstMac);
         return false;
     }
 
-    if (newRef == m_macRefs.end())
+    if (existing != m_kernelRouteTunnelCache.end())
     {
-        m_macRefs[newKey] = {1, info.m_dstIp};
-    }
-    else
-    {
-        newRef->second.count += 1;
-        newRef->second.endpoint = info.m_dstIp; // Latest-update-wins.
+        neighUnref(existing->second.m_dstMac);
     }
     m_kernelRouteTunnelCache[info.m_routeName] = info;
-    SWSS_LOG_NOTICE("Create kernel route %s", info.m_routeName.c_str());
+    SWSS_LOG_NOTICE("Create kernel route %s vni %s dst %s mac %s",
+                    info.m_routeName.c_str(), info.m_vni.c_str(),
+                    info.m_dstIp.c_str(), info.m_dstMac.c_str());
     return true;
 }
 
@@ -586,17 +782,113 @@ bool VNetMgr::deleteKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
 
     const VxlanKernelRouteInfo info = it->second;
     std::string res;
-
-    cmdDeleteKernelRoute(info, res);
+    cmdDeleteKernelRoute(info.m_prefix, info.m_vnet, res);
     m_kernelRouteTunnelCache.erase(it);
-
-    const std::string refKey = macRefKey(info.m_vnet, info.m_dstMac);
-    auto refIt = m_macRefs.find(refKey);
-    if (refIt != m_macRefs.end() && --(refIt->second.count) <= 0)
-    {
-        m_macRefs.erase(refIt);
-        cmdDeleteNeighEntry(info, res);
-        cmdDeleteFdbEntry(info, res);
-    }
+    neighUnref(info.m_dstMac);
+    SWSS_LOG_NOTICE("Delete kernel route %s", info.m_routeName.c_str());
     return true;
 }
+
+void VNetMgr::reconcileKernelState()
+{
+    SWSS_LOG_ENTER();
+    std::string res;
+    if (!linkExists(VNET_VXLAN_TX_DEV))
+    {
+        return;
+    }
+
+    std::map<std::string, std::set<IpPrefix>> expected;
+    for (const auto & kv : m_kernelRouteTunnelCache)
+    {
+        try
+        {
+            expected[kv.second.m_vnet].insert(IpPrefix(kv.second.m_prefix));
+        }
+        catch (const std::exception &)
+        {
+        }
+    }
+
+    size_t removed = 0;
+    for (const auto & vnetKv : m_vnetCache)
+    {
+        const std::string & vnet = vnetKv.first;
+        for (const char *fam : {"-4", "-6"})
+        {
+            ostringstream cmd;
+            cmd << IP_CMD " " << fam << " -o route show vrf " << shellquote(vnet)
+                << " dev " VNET_VXLAN_TX_DEV;
+            std::string out;
+            if (swss::exec(cmd.str(), out) != RET_SUCCESS)
+            {
+                continue;
+            }
+            for (const auto & line : tokenize(out, '\n'))
+            {
+                std::string pfx = line.substr(0, line.find(' '));
+                if (pfx.empty())
+                {
+                    continue;
+                }
+                if (pfx == "default")
+                {
+                    pfx = (std::string(fam) == "-4") ? "0.0.0.0/0" : "::/0";
+                }
+                bool keep = false;
+                try
+                {
+                    keep = expected[vnet].count(IpPrefix(pfx)) > 0;
+                }
+                catch (const std::exception &)
+                {
+                }
+                if (!keep)
+                {
+                    SWSS_LOG_NOTICE("Removing stale kernel route %s in %s", pfx.c_str(), vnet.c_str());
+                    cmdDeleteKernelRoute(pfx, vnet, res);
+                    removed++;
+                }
+            }
+        }
+    }
+
+    std::set<std::string> expectedNeigh;
+    for (const auto & kv : m_neighRefs)
+    {
+        expectedNeigh.insert(macToNexthop(kv.first));
+    }
+    std::string out;
+    if (swss::exec(IP_CMD " -6 neigh show dev " VNET_VXLAN_TX_DEV " nud permanent", out) == RET_SUCCESS)
+    {
+        for (const auto & line : tokenize(out, '\n'))
+        {
+            std::string ip = line.substr(0, line.find(' '));
+            if (ip.empty())
+            {
+                continue;
+            }
+            std::string norm = ip;
+            try
+            {
+                norm = IpAddress(ip).to_string();
+            }
+            catch (const std::exception &)
+            {
+            }
+            if (!expectedNeigh.count(norm))
+            {
+                SWSS_LOG_NOTICE("Removing stale neighbour %s on %s", ip.c_str(), VNET_VXLAN_TX_DEV);
+                cmdDeleteNeighIp(ip, res);
+                removed++;
+            }
+        }
+    }
+
+    if (m_kernelRouteTunnelCache.empty() && m_vnetCache.empty())
+    {
+        teardownTxDevice();
+    }
+    SWSS_LOG_NOTICE("Kernel state reconciled, removed %zu stale entries", removed);
+}
+

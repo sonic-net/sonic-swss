@@ -5,6 +5,7 @@
 #include <iostream>
 #include <mutex>
 #include <algorithm>
+#include <chrono>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -20,6 +21,7 @@ using namespace swss;
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
+#define RECONCILE_TIMEOUT_SEC 30
 
 int main(int argc, char **argv)
 {
@@ -32,6 +34,7 @@ int main(int argc, char **argv)
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
 
         WarmStart::initialize("vnetmgrd", "swss");
         WarmStart::checkWarmStart("vnetmgrd", "swss");
@@ -46,7 +49,7 @@ int main(int argc, char **argv)
             CFG_VNET_RT_TABLE_NAME
         };
 
-        VNetMgr vnetmgr(&cfgDb, &appDb, cfg_vnet_tables);
+        VNetMgr vnetmgr(&cfgDb, &appDb, cfg_vnet_tables, &stateDb);
 
         std::vector<Orch *> cfgOrchList = {&vnetmgr};
 
@@ -57,6 +60,8 @@ int main(int argc, char **argv)
         }
 
         SWSS_LOG_NOTICE("starting main loop");
+        bool reconciled = false;
+        auto startTime = std::chrono::steady_clock::now();
         while (true)
         {
             Selectable *sel;
@@ -71,6 +76,17 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 vnetmgr.doTask();
+                if (!reconciled &&
+                    (!vnetmgr.hasPendingTasks() ||
+                     std::chrono::steady_clock::now() - startTime > std::chrono::seconds(RECONCILE_TIMEOUT_SEC)))
+                {
+                    vnetmgr.reconcileKernelState();
+                    if (WarmStart::isWarmStart())
+                    {
+                        WarmStart::setWarmStartState("vnetmgrd", WarmStart::RECONCILED);
+                    }
+                    reconciled = true;
+                }
                 continue;
             }
 
