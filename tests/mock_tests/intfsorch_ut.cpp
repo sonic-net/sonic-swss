@@ -67,6 +67,7 @@ namespace intfsorch_test
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
+        TunnelDecapOrch *m_tunnelDecapOrch = nullptr;
 
         //sai_router_interface_api_t *old_sai_rif_api_ptr;
 
@@ -207,12 +208,12 @@ namespace intfsorch_test
                 APP_TUNNEL_DECAP_TABLE_NAME,
                 APP_TUNNEL_DECAP_TERM_TABLE_NAME
             };
-            auto* tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
+            m_tunnelDecapOrch = new TunnelDecapOrch(m_app_db.get(), m_state_db.get(), m_config_db.get(), tunnel_tables);
             vector<string> mux_tables = {
                 CFG_MUX_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME
             };
-            auto* mux_orch = new MuxOrch(m_config_db.get(), mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
+            auto* mux_orch = new MuxOrch(m_config_db.get(), mux_tables, m_tunnelDecapOrch, gNeighOrch, gFdbOrch);
             gDirectory.set(mux_orch);
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
@@ -283,6 +284,18 @@ namespace intfsorch_test
 
         void TearDown() override
         {
+            auto *mux_orch = gDirectory.get<MuxOrch*>();
+            if (mux_orch)
+            {
+                mux_orch->detachObservers();
+            }
+            delete mux_orch;
+            delete m_tunnelDecapOrch;
+            m_tunnelDecapOrch = nullptr;
+            delete gDirectory.get<VNetRouteOrch*>();
+            delete gDirectory.get<VNetCfgRouteOrch*>();
+            delete gDirectory.get<VNetOrch*>();
+            delete gDirectory.get<FlexCounterOrch*>();
             gDirectory.m_values.clear();
 
             delete gCrmOrch;

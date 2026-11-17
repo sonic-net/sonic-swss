@@ -81,11 +81,10 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
     m_dpuStateDbHaSetTable = make_unique<Table>(m_dpuStateDbConnector.get(), STATE_DASH_HA_SET_STATE_TABLE_NAME);
     m_dpuStateDbHaScopeTable = make_unique<Table>(m_dpuStateDbConnector.get(), STATE_DASH_HA_SCOPE_STATE_TABLE_NAME);
 
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_haSetNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_haSetNotificationConsumer = new OwningNotificationConsumer("ASIC_DB", "NOTIFICATIONS");
     auto haSetNotificatier = new Notifier(m_haSetNotificationConsumer, this, "HA_SET_NOTIFICATIONS");
 
-    m_haScopeNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_haScopeNotificationConsumer = new OwningNotificationConsumer("ASIC_DB", "NOTIFICATIONS");
     auto haScopeNotificatier = new Notifier(m_haScopeNotificationConsumer, this, "HA_SCOPE_NOTIFICATIONS");
 
     Orch::addExecutor(haSetNotificatier);
