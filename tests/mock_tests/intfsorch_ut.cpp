@@ -599,6 +599,87 @@ namespace intfsorch_test
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, vrf_id);
     }
 
+    // Proxy ARP is disabled along with the old router interface, as on DEL, and
+    // set again only if the SET asks for it.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfRebindWithoutDelDisablesProxyArp)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        auto vrf_id = gVrfOrch->getVRFid("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"proxy_arp", "enabled"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").proxy_arp);
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        intfConsumer->addToSync(entries);
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, vrf_id);
+        ASSERT_FALSE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").proxy_arp);
+    }
+
+    // A sub port is removed along with its router interface, so the SET is
+    // retried, recreating the sub port and its router interface in the new VRF.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfRebindWithoutDelRecreatesSubPort)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        auto vrf_id = gVrfOrch->getVRFid("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        entries.clear();
+        entries.push_back({"Ethernet0.10", "SET", { {"vlan", "10"}, {"admin_status", "up"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id, gVirtualRouterId);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_EQ(port.m_type, Port::SUBPORT);
+
+        entries.clear();
+        entries.push_back({"Ethernet0.10", "SET", { {"vlan", "10"}, {"admin_status", "up"}, {"vrf_name", "Vrf-Blue"}}});
+        intfConsumer->addToSync(entries);
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // the first pass removes the router interface and the sub port, and
+        // keeps the SET
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(intfConsumer->m_toSync.size(), 1u);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Ethernet0.10"), 0u);
+        ASSERT_FALSE(gPortsOrch->getPort("Ethernet0.10", port));
+
+        // the retry recreates both, the router interface in Vrf-Blue
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(last_create_rif_vr_id, vrf_id);
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id, vrf_id);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_EQ(port.m_vr_id, vrf_id);
+    }
+
     TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)
     {
         std::deque<KeyOpFieldsValuesTuple> entries{
