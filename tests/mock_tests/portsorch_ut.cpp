@@ -761,6 +761,7 @@ namespace portsorch_test
         shared_ptr<swss::DBConnector> m_chassis_app_db;
         shared_ptr<swss::DBConnector> m_asic_db;
         FlexCounterOrch *m_flexCounterOrch = nullptr;
+        vector<table_name_with_pri_t> m_ports_tables;
 
         PortsOrchTest()
         {
@@ -777,6 +778,12 @@ namespace portsorch_test
                 "CHASSIS_APP_DB", 0);
             m_asic_db = make_shared<swss::DBConnector>(
                 "ASIC_DB", 0);
+        }
+
+        // Recreate gPortsOrch, e.g. to check its construction under warm start.
+        void createPortsOrch()
+        {
+            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), m_ports_tables, m_chassis_app_db.get());
         }
 
         virtual void SetUp() override
@@ -798,7 +805,7 @@ namespace portsorch_test
 
             const int portsorch_base_pri = 40;
 
-            vector<table_name_with_pri_t> ports_tables = {
+            m_ports_tables = {
                 { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
                 { APP_SEND_TO_INGRESS_PORT_TABLE_NAME, portsorch_base_pri + 5 },
                 { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
@@ -809,7 +816,7 @@ namespace portsorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
 
-            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            createPortsOrch();
 
             TableConnector appDbDfTable(m_app_db.get(), "EVPN_DF_TABLE");
             TableConnector confDbEvpnEsTable(m_config_db.get(), "EVPN_ETHERNET_SEGMENT");
@@ -3158,6 +3165,101 @@ namespace portsorch_test
         _unhook_sai_bridge_api();
     }
 
+    /*
+     * An earlier removeVlanMember() attempt removed the SAI member and its id
+     * from m_portVlanMember, then failed before updating vlan.m_members. The
+     * retry must finish the removal rather than hand SAI a stale member id.
+     */
+    TEST_F(PortsOrchTest, removeVlanMemberCompletesWhenMemberIdIsGone)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan71", { {"admin_status", "up"}, {"mtu", "9100"} });
+        vlanMemberTable.set(
+            string("Vlan71") + vlanMemberTable.getTableNameSeparator() + "Ethernet4",
+            { {"tagging_mode", "untagged"} }
+        );
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port, vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan71", vlan));
+        ASSERT_TRUE(gPortsOrch->isVlanMember(vlan, port));
+        ASSERT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 1u);
+
+        sai_object_id_t vlan_member_id;
+        ASSERT_TRUE(gPortsOrch->getVlanMember("Ethernet4", vlan, vlan_member_id));
+        ASSERT_EQ(sai_vlan_api->remove_vlan_member(vlan_member_id), SAI_STATUS_SUCCESS);
+        gPortsOrch->m_portVlanMember.erase("Ethernet4");
+
+        ASSERT_TRUE(gPortsOrch->removeVlanMember(vlan, port));
+
+        Port vlanAfter;
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan71", vlanAfter));
+        ASSERT_EQ(vlanAfter.m_members.find("Ethernet4"), vlanAfter.m_members.end());
+        ASSERT_EQ(gPortsOrch->getBridgePortReferenceCount(port), 0u);
+        ASSERT_EQ(gPortsOrch->m_portVlanMember.count("Ethernet4"), 0u);
+
+        Port portAfter;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", portAfter));
+        ASSERT_EQ(portAfter.m_port_vlan_id, DEFAULT_PORT_VLAN_ID);
+    }
+
+    /* A router port is never made a VLAN member, also when its bridge port already exists. */
+    TEST_F(PortsOrchTest, routerPortIsNotAddedToVlan)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        vlanTable.set("Vlan73", { {"admin_status", "up"}, {"mtu", "9100"} });
+        gPortsOrch->addExistingData(&vlanTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port, vlan;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet12", port));
+        ASSERT_TRUE(gPortsOrch->getPort("Vlan73", vlan));
+        ASSERT_TRUE(gPortsOrch->addBridgePort(port));
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+
+        port.m_rif_id = 1;
+        string mode = "untagged";
+        ASSERT_FALSE(gPortsOrch->addBridgePort(port));
+        ASSERT_FALSE(gPortsOrch->addVlanMember(vlan, port, mode));
+        ASSERT_FALSE(gPortsOrch->isVlanMember(vlan, port));
+        ASSERT_EQ(gPortsOrch->m_portVlanMember.count("Ethernet12"), 0u);
+
+        /* removeBridgePort() needs gStpOrch, which this fixture does not create */
+        ASSERT_EQ(sai_bridge_api->remove_bridge_port(port.m_bridge_port_id), SAI_STATUS_SUCCESS);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet12", port));
+        port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+        gPortsOrch->setPort("Ethernet12", port);
+    }
+
     TEST_F(PortsOrchTest, SupportedLinkEventDampingAlgorithmSuccess)
     {
         _hook_sai_port_api();
@@ -4261,6 +4363,221 @@ namespace portsorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             ASSERT_TRUE(attr.value.booldata);
         }
+    }
+
+    // Copy of the global SAI tables to spy on, restored on destruction.
+    struct SaiApiTableSwap
+    {
+        sai_vlan_api_t *origVlanApi;
+        sai_bridge_api_t *origBridgeApi;
+
+        SaiApiTableSwap() :
+            origVlanApi(sai_vlan_api),
+            origBridgeApi(sai_bridge_api)
+        {
+            sai_vlan_api = new sai_vlan_api_t(*origVlanApi);
+            sai_bridge_api = new sai_bridge_api_t(*origBridgeApi);
+        }
+
+        ~SaiApiTableSwap()
+        {
+            delete sai_vlan_api;
+            delete sai_bridge_api;
+
+            sai_vlan_api = origVlanApi;
+            sai_bridge_api = origBridgeApi;
+        }
+
+        SaiApiTableSwap(const SaiApiTableSwap&) = delete;
+        SaiApiTableSwap& operator=(const SaiApiTableSwap&) = delete;
+    };
+
+    // Sets WarmStart::m_enabled for the scope, restores it on exit.
+    struct WarmStartFlagGuard
+    {
+        bool m_previous = WarmStart::getInstance().m_enabled;
+
+        explicit WarmStartFlagGuard(bool enabled)
+        {
+            WarmStart::getInstance().m_enabled = enabled;
+        }
+
+        ~WarmStartFlagGuard()
+        {
+            WarmStart::getInstance().m_enabled = m_previous;
+        }
+    };
+
+    // Leftovers the tests make SAI report to the PortsOrch constructor.
+    static const uint32_t defaultVlanCleanupEntryCount = 2;
+
+    // Records the default VLAN and 1Q bridge cleanup done by the PortsOrch constructor.
+    struct DefaultVlanCleanupRecorder
+    {
+        // Declared first, so the spies below are destroyed before the tables.
+        SaiApiTableSwap apiSwap;
+
+        uint32_t vlanMemberListQueries = 0;
+        uint32_t vlanMembersReported = 0;
+        uint32_t vlanMembersRemoved = 0;
+        uint32_t bridgePortListQueries = 0;
+        uint32_t bridgePortsReported = 0;
+        uint32_t bridgePortsRemoved = 0;
+
+        // OIDs reported to the constructor, never passed to the mock switch.
+        vector<sai_object_id_t> vlanMemberOids = { 0x2100000000000001ULL, 0x2100000000000002ULL };
+        vector<sai_object_id_t> bridgePortOids = { 0x2600000000000001ULL, 0x2600000000000002ULL };
+
+        // SpyOn() returns differently typed spies.
+        vector<shared_ptr<void>> spies;
+
+        DefaultVlanCleanupRecorder()
+        {
+            auto vlanGetSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN>(&sai_vlan_api->get_vlan_attribute);
+            vlanGetSpy->callFake(
+                [this](sai_object_id_t vlanOid, uint32_t attrCount, sai_attribute_t *attrList) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < attrCount; i++)
+                    {
+                        if (attrList[i].id != SAI_VLAN_ATTR_MEMBER_LIST)
+                        {
+                            return SAI_STATUS_NOT_SUPPORTED;
+                        }
+
+                        uint32_t capacity = attrList[i].value.objlist.count;
+                        uint32_t reported = capacity < vlanMemberOids.size() ? capacity : static_cast<uint32_t>(vlanMemberOids.size());
+
+                        for (uint32_t j = 0; j < reported; j++)
+                        {
+                            attrList[i].value.objlist.list[j] = vlanMemberOids[j];
+                        }
+
+                        attrList[i].value.objlist.count = reported;
+
+                        vlanMemberListQueries++;
+                        vlanMembersReported += reported;
+                    }
+
+                    return SAI_STATUS_SUCCESS;
+                });
+            spies.push_back(vlanGetSpy);
+
+            auto vlanRemoveSpy = SpyOn<SAI_API_VLAN, SAI_OBJECT_TYPE_VLAN_MEMBER>(&sai_vlan_api->remove_vlan_member);
+            vlanRemoveSpy->callFake(
+                [this](sai_object_id_t vlanMemberOid) -> sai_status_t
+                {
+                    vlanMembersRemoved++;
+                    return SAI_STATUS_SUCCESS;
+                });
+            spies.push_back(vlanRemoveSpy);
+
+            auto bridgeGetSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE>(&sai_bridge_api->get_bridge_attribute);
+            bridgeGetSpy->callFake(
+                [this](sai_object_id_t bridgeOid, uint32_t attrCount, sai_attribute_t *attrList) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < attrCount; i++)
+                    {
+                        if (attrList[i].id != SAI_BRIDGE_ATTR_PORT_LIST)
+                        {
+                            return SAI_STATUS_NOT_SUPPORTED;
+                        }
+
+                        uint32_t capacity = attrList[i].value.objlist.count;
+                        uint32_t reported = capacity < bridgePortOids.size() ? capacity : static_cast<uint32_t>(bridgePortOids.size());
+
+                        for (uint32_t j = 0; j < reported; j++)
+                        {
+                            attrList[i].value.objlist.list[j] = bridgePortOids[j];
+                        }
+
+                        attrList[i].value.objlist.count = reported;
+
+                        bridgePortListQueries++;
+                        bridgePortsReported += reported;
+                    }
+
+                    return SAI_STATUS_SUCCESS;
+                });
+            spies.push_back(bridgeGetSpy);
+
+            auto bridgePortGetSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->get_bridge_port_attribute);
+            bridgePortGetSpy->callFake(
+                [](sai_object_id_t bridgePortOid, uint32_t attrCount, sai_attribute_t *attrList) -> sai_status_t
+                {
+                    for (uint32_t i = 0; i < attrCount; i++)
+                    {
+                        if (attrList[i].id != SAI_BRIDGE_PORT_ATTR_TYPE)
+                        {
+                            return SAI_STATUS_NOT_SUPPORTED;
+                        }
+
+                        // PortsOrch only removes port based bridge ports.
+                        attrList[i].value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+                    }
+
+                    return SAI_STATUS_SUCCESS;
+                });
+            spies.push_back(bridgePortGetSpy);
+
+            auto bridgeRemoveSpy = SpyOn<SAI_API_BRIDGE, SAI_OBJECT_TYPE_BRIDGE_PORT>(&sai_bridge_api->remove_bridge_port);
+            bridgeRemoveSpy->callFake(
+                [this](sai_object_id_t bridgePortOid) -> sai_status_t
+                {
+                    bridgePortsRemoved++;
+                    return SAI_STATUS_SUCCESS;
+                });
+            spies.push_back(bridgeRemoveSpy);
+        }
+    };
+
+    // Warm restart keeps the default VLAN members and bridge ports: removing
+    // them again fails in SAI and aborts PortsOrch construction.
+    TEST_F(PortsOrchTest, PortsOrchCtorSkipsDefaultVlanCleanupOnWarmBoot)
+    {
+        delete gPortsOrch;
+        gPortsOrch = nullptr;
+
+        DefaultVlanCleanupRecorder recorder;
+
+        {
+            WarmStartFlagGuard warmStart(true);
+
+            ASSERT_NO_THROW(createPortsOrch());
+        }
+
+        // The cleanup is skipped, SAI is not even queried.
+        ASSERT_EQ(recorder.vlanMemberListQueries, 0);
+        ASSERT_EQ(recorder.vlanMembersRemoved, 0);
+        ASSERT_EQ(recorder.bridgePortListQueries, 0);
+        ASSERT_EQ(recorder.bridgePortsRemoved, 0);
+
+        ASSERT_TRUE(gPortsOrch->m_isWarmRestoreStage);
+    }
+
+    // Cold boot still removes the ports from the default VLAN and 1Q bridge.
+    TEST_F(PortsOrchTest, PortsOrchCtorPerformsDefaultVlanCleanupOnColdBoot)
+    {
+        delete gPortsOrch;
+        gPortsOrch = nullptr;
+
+        DefaultVlanCleanupRecorder recorder;
+
+        {
+            WarmStartFlagGuard warmStart(false);
+
+            ASSERT_NO_THROW(createPortsOrch());
+        }
+
+        // Every reported leftover is removed.
+        ASSERT_EQ(recorder.vlanMemberListQueries, 1);
+        ASSERT_EQ(recorder.vlanMembersReported, defaultVlanCleanupEntryCount);
+        ASSERT_EQ(recorder.vlanMembersRemoved, recorder.vlanMembersReported);
+
+        ASSERT_EQ(recorder.bridgePortListQueries, 1);
+        ASSERT_EQ(recorder.bridgePortsReported, defaultVlanCleanupEntryCount);
+        ASSERT_EQ(recorder.bridgePortsRemoved, recorder.bridgePortsReported);
+
+        ASSERT_FALSE(gPortsOrch->m_isWarmRestoreStage);
     }
 
     TEST_F(PortsOrchTest, PortsWithNoPGsQueuesSchedulerGroups)

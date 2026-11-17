@@ -26,6 +26,7 @@ extern "C"
  *   sai_query_attribute_capability              (hftelorch.cpp, and icmporch.cpp
  *                                                via the shared SaiOffloadSession
  *                                                selective-counter capability check)
+ *   sai_object_type_get_availability            (mirrororch.cpp)
  *
  * sai_query_attribute_capability is a single wrapped symbol shared by both
  * orchs, so its __wrap_ dispatches by object_type: ICMP echo session queries are
@@ -174,5 +175,31 @@ namespace sai_enum_cap_ut
 
         EnumValuesCapabilityOverrideGuard(const EnumValuesCapabilityOverrideGuard&) = delete;
         EnumValuesCapabilityOverrideGuard& operator=(const EnumValuesCapabilityOverrideGuard&) = delete;
+    };
+}
+
+/*
+ * Generic, test-settable override for the shared --wrap of
+ * sai_object_type_get_availability. Return true to handle the query (filling
+ * *count and *status); return false to forward it to the real implementation.
+ */
+namespace sai_availability_ut
+{
+    using ObjectTypeAvailabilityOverride = std::function<bool(
+        sai_object_type_t object_type,
+        uint64_t *count,
+        sai_status_t *status)>;
+
+    void setObjectTypeAvailabilityOverride(ObjectTypeAvailabilityOverride fn);
+    void clearObjectTypeAvailabilityOverride();
+
+    /** RAII: clears the override on scope exit. */
+    struct ObjectTypeAvailabilityOverrideGuard
+    {
+        explicit ObjectTypeAvailabilityOverrideGuard(ObjectTypeAvailabilityOverride fn);
+        ~ObjectTypeAvailabilityOverrideGuard();
+
+        ObjectTypeAvailabilityOverrideGuard(const ObjectTypeAvailabilityOverrideGuard&) = delete;
+        ObjectTypeAvailabilityOverrideGuard& operator=(const ObjectTypeAvailabilityOverrideGuard&) = delete;
     };
 }
