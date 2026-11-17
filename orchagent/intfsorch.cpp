@@ -1037,11 +1037,18 @@ void IntfsOrch::doTask(Consumer &consumer)
                         setIntfProxyArp(alias, "disabled");
                     }
 
+                    /*
+                     * Like a blocked DEL, a blocked rebind holds off address
+                     * SETs, which would otherwise attach to the old router
+                     * interface and keep it from being removed.
+                     */
                     if (!removeIntf(alias, port.m_vr_id, nullptr))
                     {
+                        m_removingIntfses.insert(alias);
                         it++;
                         continue;
                     }
+                    m_removingIntfses.erase(alias);
 
                     /* A sub port is removed along with its router interface */
                     if (!gPortsOrch->getPort(alias, port))

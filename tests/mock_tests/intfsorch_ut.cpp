@@ -567,15 +567,28 @@ namespace intfsorch_test
         ASSERT_EQ(create_count, create_rif_count);
         ASSERT_EQ(intfConsumer->m_toSync.size(), 1u);
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, gVirtualRouterId);
+        ASSERT_TRUE(gIntfsOrch->isIntfChangeInProgress("Ethernet0"));
 
-        // once the reference is gone the router interface moves to Vrf-Blue
+        // an address SET must not attach to the old router interface, where it
+        // would block its removal
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", { {"scope", "global"}, {"family", "IPv4"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(intfConsumer->m_toSync.size(), 2u);
+        ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.empty());
+
+        // once the reference is gone the router interface moves to Vrf-Blue,
+        // and the address follows it
         gIntfsOrch->decreaseRouterIntfsRefCount("Ethernet0");
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(remove_count + 1, remove_rif_count);
         ASSERT_EQ(create_count + 1, create_rif_count);
         ASSERT_EQ(last_create_rif_vr_id, vrf_id);
         ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_FALSE(gIntfsOrch->isIntfChangeInProgress("Ethernet0"));
         ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, vrf_id);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.count(IpPrefix("10.0.0.1/24")), 1u);
         ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
 
         Port port;
