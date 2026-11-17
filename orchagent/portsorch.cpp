@@ -4247,7 +4247,8 @@ void PortsOrch::registerPort(Port &p)
 
     /* Get Port Serdes Id of this port*/
     sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
-    if (p.m_type == Port::Type::PHY) {
+    if (p.m_type == Port::Type::PHY &&
+        p.m_role != Port::Role::Rec && p.m_role != Port::Role::Inb) {
         port_serdes_id = getPortSerdesIdFromPortId(p.m_port_id);
     }
 
@@ -7381,15 +7382,15 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
-    {
-        return true;
-    }
-
     if (port.m_rif_id != 0)
     {
         SWSS_LOG_NOTICE("Cannot create bridge port, interface %s is a router port", port.m_alias.c_str());
         return false;
+    }
+
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        return true;
     }
 
     sai_attribute_t attr;
@@ -7765,6 +7766,13 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         return addVlanFloodGroups(vlan, port, end_point_ip);
     }
 
+    // The PHY and LAG callers' addBridgePort() refuses a router port first; this covers any other caller.
+    if (port.m_rif_id != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Cannot add %s to VLAN %s, it is a router port", port.m_alias.c_str(), vlan.m_alias.c_str());
+        return false;
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -7809,7 +7817,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
         /* TODO: Use proper attribute once its available in SAI */
         sai_attribute_t df_attr;
         df_attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
-        df_attr.value.booldata = gEvpnMhOrch->isInterfaceDF(port.m_alias, vlan.m_vlan_info.vlan_id);
+        df_attr.value.booldata = gEvpnMhOrch->isTunnelTermBumDropped(port.m_alias, vlan.m_vlan_info.vlan_id);
 
         sai_status_t df_status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &df_attr);
         if (isDfAttrUnsupported(df_status))
@@ -8151,8 +8159,38 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     sai_vlan_tagging_mode_t sai_tagging_mode;
     auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
 
-    /* Assert the port belongs to this VLAN */
-    assert (vlan_member != m_portVlanMember[port.m_alias].end());
+    if (vlan_member == m_portVlanMember[port.m_alias].end())
+    {
+        /* The SAI member is already gone (an earlier attempt removed it, then failed before
+         * updating vlan.m_members): finish the bookkeeping instead of removing a stale id. */
+        if (m_portVlanMember[port.m_alias].empty())
+        {
+            m_portVlanMember.erase(port.m_alias);
+        }
+        SWSS_LOG_WARN("No VLAN member id for %s in VLAN %s, completing the removal",
+                port.m_alias.c_str(), vlan.m_alias.c_str());
+
+        /* The earlier attempt may have failed on the PVID restore itself */
+        if (port.m_type != Port::TUNNEL && !port.m_rif_id &&
+            port.m_port_vlan_id == vlan.m_vlan_info.vlan_id &&
+            !setPortPvid(port, DEFAULT_PORT_VLAN_ID))
+        {
+            return false;
+        }
+
+        m_portList[port.m_alias] = port;
+        vlan.m_members.erase(port.m_alias);
+        m_portList[vlan.m_alias] = vlan;
+        if (m_bridge_port_ref_count[port.m_alias] > 0)
+        {
+            decreaseBridgePortRefCount(port);
+        }
+
+        VlanMemberUpdate update = { vlan, port, false };
+        notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
+        return true;
+    }
     sai_tagging_mode = vlan_member->second.vlan_mode;
     vlan_member_id = vlan_member->second.vlan_member_id;
 
@@ -9572,7 +9610,9 @@ void PortsOrch::clearPortPhyAttrCounterMap()
     for (const auto& it: m_portList)
     {
         // Clear counter stats only for PHY ports that were previously configured
-        if (it.second.m_type != Port::Type::PHY)
+        if (it.second.m_type != Port::Type::PHY ||
+            it.second.m_role == Port::Role::Rec ||
+            it.second.m_role == Port::Role::Inb)
         {
             continue;
         }
@@ -9698,7 +9738,9 @@ void PortsOrch::generatePortPhySerdesAttrCounterMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::Type::PHY)
+        if (it.second.m_type == Port::Type::PHY &&
+            it.second.m_role != Port::Role::Rec &&
+            it.second.m_role != Port::Role::Inb)
         {
             const char *port_name = it.second.m_alias.c_str();
             sai_object_id_t port_id = it.second.m_port_id;

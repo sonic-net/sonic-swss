@@ -13,7 +13,16 @@
 
 #include "../mock_table.h"
 #include "linkcache.h"
+#include "dbconnector.h"
+#include "producerstatetable.h"
+#include "subscriberstatetable.h"
+#include "netmsg.h"
+#include "warmRestartAssist.h"
+
+// Limit private-member access to NeighSync rather than its dependencies.
+#define private public
 #include "neighsyncd/neighsync.h"
+#undef private
 #include "redisutility.h"
 
 using namespace swss;
@@ -130,6 +139,7 @@ class NeighSyncTest : public ::testing::Test
     {
         Table peerSwitchTable(m_configDb.get(), CFG_PEER_SWITCH_TABLE_NAME);
         peerSwitchTable.set("peer_switch_hostname", {{"address_ipv4", "10.0.0.1"}});
+        m_sync->m_isDualToR = true;
     }
 
     bool failedNeighborExists(const std::string& ip, std::vector<FieldValueTuple>* fields = nullptr)
@@ -245,6 +255,53 @@ TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenDeleted)
     m_sync->onMsg(RTM_DELNEIGH, reinterpret_cast<struct nl_object *>(deleted.get()));
 
     EXPECT_FALSE(failedNeighborExists("2001:db8::5"));
+}
+
+TEST_F(NeighSyncTest, RemovesFailedNeighborEntryWhenDeletedBeforeConsumed)
+{
+    enableDualTor();
+    auto failed = createNeighbor(AF_INET6, "2001:db8::8", NUD_FAILED);
+    ASSERT_TRUE(failed.get() != nullptr);
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(failed.get()));
+
+    // Deleting a resolved neighbor reports NUD_FAILED immediately followed by
+    // RTM_DELNEIGH, before nbrmgrd consumes the published entry. The mock
+    // producer writes straight to the table, so hide the entry to model that.
+    Table failedNeighborTable(m_appDb.get(), APP_NEIGH_FAILED_TABLE_NAME);
+    failedNeighborTable.del("Vlan1000:2001:db8::8");
+    ASSERT_FALSE(failedNeighborExists("2001:db8::8"));
+    testing_db::resetOperationCounters();
+
+    auto deleted = createNeighbor(AF_INET6, "2001:db8::8", NUD_FAILED);
+    ASSERT_TRUE(deleted.get() != nullptr);
+    m_sync->onMsg(RTM_DELNEIGH, reinterpret_cast<struct nl_object *>(deleted.get()));
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_FAILED_TABLE_NAME), 1u);
+}
+
+TEST_F(NeighSyncTest, DoesNotRemoveMissingFailedNeighborEntryWhenResolved)
+{
+    enableDualTor();
+    testing_db::resetOperationCounters();
+
+    auto reachable = createNeighbor(AF_INET6, "2001:db8::9", NUD_REACHABLE);
+    ASSERT_TRUE(reachable.get() != nullptr);
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(reachable.get()));
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_FAILED_TABLE_NAME), 0u);
+}
+
+TEST_F(NeighSyncTest, DoesNotRemoveMissingFailedNeighborEntryOnNonVlanDelete)
+{
+    enableDualTor();
+    mockInterfaceName = "PortChannel101";
+    testing_db::resetOperationCounters();
+
+    auto deleted = createNeighbor(AF_INET6, "2001:db8:3::2", NUD_FAILED);
+    ASSERT_TRUE(deleted.get() != nullptr);
+    m_sync->onMsg(RTM_DELNEIGH, reinterpret_cast<struct nl_object *>(deleted.get()));
+
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_NEIGH_FAILED_TABLE_NAME), 0u);
 }
 
 TEST_F(NeighSyncTest, DoesNotPublishFailedIpv6NeighborWithoutDualTor)

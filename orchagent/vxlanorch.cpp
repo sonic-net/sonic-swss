@@ -144,6 +144,16 @@ create_tunnel_map(MAP_T map_t)
                                 static_cast<uint32_t>(tunnel_map_attrs.size()),
                                 tunnel_map_attrs.data()
                           );
+    if (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+    {
+        /* A switch may lack some map types (e.g. VLAN maps on an L3 VNI only
+         * device). The tunnel is created with the maps that exist, and an
+         * entry for a missing map is refused in create_tunnel_map_entry(). */
+        SWSS_LOG_WARN("Tunnel map type %s is not supported",
+                      sai_serialize_enum(attr.value.s32, &sai_metadata_enum_sai_tunnel_map_type_t).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_TUNNEL, status);
@@ -160,6 +170,11 @@ create_tunnel_map(MAP_T map_t)
 void
 remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        return;
+    }
+
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -183,6 +198,14 @@ static sai_object_id_t create_tunnel_map_entry(
     sai_attribute_t attr;
     sai_object_id_t tunnel_map_entry_id;
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
+
+    if (tunnel_map_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Can't create a tunnel map entry for vni %u: no %s tunnel map", vni,
+                       sai_serialize_enum(static_cast<int32_t>(tunnel_map_type(map_t)),
+                                          &sai_metadata_enum_sai_tunnel_map_type_t).c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
     attr.value.s32 = tunnel_map_type(map_t);
@@ -337,6 +360,14 @@ create_tunnel(
             SWSS_LOG_NOTICE("create_tunnel:encapmaplist[%d]=0x%" PRIx64 "",num_emap,emap_list[num_emap]);
             num_emap++;
         }
+    }
+
+    /* No decap or encap map is available when the switch supports none of the
+     * map types or every map create failed. Some SAIs reject such a tunnel. */
+    if (num_map == 0 && num_emap == 0)
+    {
+        SWSS_LOG_WARN("No tunnel maps to attach; not creating the tunnel");
+        return SAI_NULL_OBJECT_ID;
     }
 
     attr.id = SAI_TUNNEL_ATTR_ENCAP_MAPPERS;
@@ -2352,7 +2383,12 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
             uint8_t mapper_list = 0;
             TUNNELMAP_SET_VLAN(mapper_list);
             TUNNELMAP_SET_VRF(mapper_list);
-            tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            bool tunnel_created = tunnel_obj->createTunnelHw(mapper_list,
+                                                TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            if (!tunnel_created)
+            {
+                return false;
+            }
             if (!tunnel_orch->isDipTunnelsSupported())
             {
                 Port tunPort;
@@ -2649,16 +2685,10 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     // Extract DIP and tunnel
     auto remote_vtep = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN. A DEL carries no fields, so there is no VNI to read: the
+    // VLAN and the remote VTEP in the key identify the flood member.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = (sai_vlan_id_t)stoi(vlan_name.substr(4));
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 
@@ -2671,7 +2701,8 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     {
         SWSS_LOG_NOTICE("Remote VNI del: remote VTEP %s was never added to vid %d, releasing its tunnel",
                         remote_vtep.c_str(), vlan_id);
-        return tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+        // delTunnelUser() does not use the VNI.
+        return tunnel_orch->delTunnelUser(remote_vtep, 0, vlan_id, TUNNEL_USER_IMR);
     }
 
     Port vlanPort, tunnelPort;
@@ -2718,10 +2749,10 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
                    vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
                    tunnelPort.m_fdb_count );
 
-    ret = tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);
+    ret = tunnel_orch->delTunnelUser(remote_vtep, 0, vlan_id, TUNNEL_USER_IMR);
 
-    SWSS_LOG_INFO("remote_vtep=%s vni=%d vlanid=%d ",
-                   remote_vtep.c_str(), vni_id, vlan_id);
+    SWSS_LOG_INFO("remote_vtep=%s vlanid=%d ",
+                   remote_vtep.c_str(), vlan_id);
 
 
     return ret;
@@ -2834,16 +2865,10 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     // Extract end point ip
     auto end_point_ip = request.getKeyString(1);
 
-    // Extract VLAN and VNI
+    // Extract VLAN. A DEL carries no fields, so there is no VNI to read: the
+    // VLAN and the remote VTEP in the key identify the flood member.
     auto vlan_name = request.getKeyString(0);
     sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
-
-    auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= MAX_VNI_ID)
-    {
-        SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return true;
-    }
 
     // SAI Call to add tunnel to the VLAN flood domain
 

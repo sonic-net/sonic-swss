@@ -5,6 +5,12 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
+#include <arpa/inet.h>
+#include <csignal>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 using namespace swss;
 
 using ::testing::_;
@@ -69,3 +75,54 @@ TEST_F(FpmLinkTest, TwoNlMessagesInFpmMessage)
     m_fpm.processFpmMessage(reinterpret_cast<fpm_msg_hdr_t*>(static_cast<void*>(fpmMsgBuffer)));
 }
 
+
+static volatile sig_atomic_t gSigpipeRaised = 0;
+
+static void onSigpipe(int)
+{
+    gSigpipeRaised = 1;
+}
+
+/*
+ * A zebra that disconnects leaves fpmsyncd writing to a closed connection. That has to
+ * be a failed send, not a SIGPIPE that stops the daemon.
+ */
+TEST_F(FpmLinkTest, SendToClosedPeerFailsWithoutSigpipe)
+{
+    struct sigaction catcher{}, saved{};
+    catcher.sa_handler = onSigpipe;
+    ASSERT_EQ(sigaction(SIGPIPE, &catcher, &saved), 0);
+    gSigpipeRaised = 0;
+
+    int client = socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(client, 0);
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(FPM_DEFAULT_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    ASSERT_EQ(connect(client, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)), 0);
+    m_fpm.accept();
+    close(client);
+
+    struct nlmsghdr nl_hdr{};
+    nl_hdr.nlmsg_len = NLMSG_LENGTH(0);
+
+    /* The first send can still be queued, and the first one after the peer's reset fails
+     * with ECONNRESET; the sends after that are the ones that meet EPIPE. */
+    int failures = 0;
+    for (int i = 0; i < 100 && failures < 3; i++)
+    {
+        if (!m_fpm.send(&nl_hdr))
+        {
+            failures++;
+        }
+        else
+        {
+            usleep(10000);
+        }
+    }
+
+    sigaction(SIGPIPE, &saved, nullptr);
+    EXPECT_EQ(failures, 3);
+    EXPECT_EQ(gSigpipeRaised, 0);
+}

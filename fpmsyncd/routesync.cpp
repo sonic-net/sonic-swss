@@ -10,6 +10,7 @@
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 #include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
@@ -832,7 +833,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s", h->nlmsg_type,
                             nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || rmac.empty() || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
             {
                 return false;
             }
@@ -851,6 +852,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             for (;;) 
             {
                 uint16_t encap = 0;
+                /* A next hop without its own VNI or router MAC must not take the previous one's */
+                encap_value = 0;
+                rmac.clear();
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
                 {
                     break;
@@ -952,7 +956,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || rmac.empty() || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                     {
                         return false;
                     }
@@ -2549,6 +2553,8 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
         && (h->nlmsg_type != RTM_NEWTFILTER)
         && (h->nlmsg_type != RTM_DELTFILTER)
+        && (h->nlmsg_type != RTM_NEWNEIGH)
+        && (h->nlmsg_type != RTM_DELNEIGH)
         && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST))
     {
         return;
@@ -2626,6 +2632,13 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     case RTM_FPM_ADD_EVPN_ES_BACKUP_NHG:
     case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         onEvpnEsBackupNhgMsg(h, len);
+        return;
+    case RTM_NEWNEIGH:
+    case RTM_DELNEIGH:
+        if (m_macsync)
+        {
+            m_macsync->onMacMsg(h, len);
+        }
         return;
     default:
         break;

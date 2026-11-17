@@ -86,6 +86,10 @@ namespace
     // __wrap_sai_query_attribute_capability so any orch UT (e.g. the ACL
     // match-field gate) can inject a result regardless of object type.
     thread_local sai_cap_ut::AttrCapabilityOverride g_attr_cap_override;
+
+    // Generic object type availability override (sai_availability_ut), checked
+    // first in __wrap_sai_object_type_get_availability.
+    thread_local sai_availability_ut::ObjectTypeAvailabilityOverride g_availability_override;
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -113,6 +117,38 @@ extern "C"
             _In_ sai_object_type_t object_type,
             _In_ sai_attr_id_t attr_id,
             _Out_ sai_attr_capability_t *attr_capability);
+
+    sai_status_t __real_sai_object_type_get_availability(
+            _In_ sai_object_id_t switch_id,
+            _In_ sai_object_type_t object_type,
+            _In_ uint32_t attr_count,
+            _In_ const sai_attribute_t *attr_list,
+            _Out_ uint64_t *count);
+
+    sai_status_t __wrap_sai_object_type_get_availability(
+            _In_ sai_object_id_t switch_id,
+            _In_ sai_object_type_t object_type,
+            _In_ uint32_t attr_count,
+            _In_ const sai_attribute_t *attr_list,
+            _Out_ uint64_t *count)
+    {
+        if (g_availability_override)
+        {
+            uint64_t availCount = 0;
+            sai_status_t st = SAI_STATUS_SUCCESS;
+            if (g_availability_override(object_type, &availCount, &st))
+            {
+                if (count)
+                {
+                    *count = availCount;
+                }
+                return st;
+            }
+        }
+
+        return __real_sai_object_type_get_availability(
+                switch_id, object_type, attr_count, attr_list, count);
+    }
 
     const sai_attr_metadata_t* __wrap_sai_metadata_get_attr_metadata(
             _In_ sai_object_type_t object_type,
@@ -530,6 +566,30 @@ namespace sai_cap_ut
     void clearAttrCapabilityOverride()
     {
         g_attr_cap_override = nullptr;
+    }
+}
+
+namespace sai_availability_ut
+{
+    void setObjectTypeAvailabilityOverride(ObjectTypeAvailabilityOverride fn)
+    {
+        g_availability_override = std::move(fn);
+    }
+
+    void clearObjectTypeAvailabilityOverride()
+    {
+        g_availability_override = nullptr;
+    }
+
+    ObjectTypeAvailabilityOverrideGuard::ObjectTypeAvailabilityOverrideGuard(
+            ObjectTypeAvailabilityOverride fn)
+    {
+        setObjectTypeAvailabilityOverride(std::move(fn));
+    }
+
+    ObjectTypeAvailabilityOverrideGuard::~ObjectTypeAvailabilityOverrideGuard()
+    {
+        clearObjectTypeAvailabilityOverride();
     }
 }
 
