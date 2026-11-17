@@ -405,7 +405,8 @@ private:
         /* The phase the next call resumes; kIdle means no batch in flight.
          * kStaging resumes its scan of m_toSync (staged entries have left
          * it), kFlushing resumes gRouteBulker.flush_until(), and kResponding
-         * resumes at respondCursor. */
+         * resumes at respondCursor, or in the epilogue once every status is
+         * handled. */
         enum class Phase { kIdle, kStaging, kFlushing, kResponding };
         Phase phase = Phase::kIdle;
 
@@ -432,6 +433,12 @@ private:
         std::vector<NextHopGroupKey> srv6NhgReducedVec;
         std::set<NextHopKey> mplsNhReducedRefCnt;
 
+        /* Next entries of srv6NhgReducedVec for the epilogue's VPN SID pass
+         * and next hop pass. The next hop pass starts when the VPN SID pass
+         * has covered every group. */
+        size_t srv6VpnCursor = 0;
+        size_t srv6NexthopCursor = 0;
+
         NextHopGroupKey v4DefaultNhgKey;
         NextHopGroupKey v6DefaultNhgKey;
 
@@ -447,6 +454,8 @@ private:
             nhgReducedRefCnt.clear();
             srv6NhgReducedVec.clear();
             mplsNhReducedRefCnt.clear();
+            srv6VpnCursor = 0;
+            srv6NexthopCursor = 0;
             v4DefaultNhgKey = NextHopGroupKey();
             v6DefaultNhgKey = NextHopGroupKey();
         }
@@ -472,7 +481,8 @@ private:
      * default route, which ends the drain for this call.
      * toBulkTask and responseHandlerTask check `expired` after each entry and
      * return false when it is true; each call handles at least one entry
-     * first. The non-yielding drain passes kNeverExpired. */
+     * first. The epilogue checks it after each group or next hop it removes.
+     * The non-yielding drain passes kNeverExpired. */
     static const std::function<bool()> kNeverExpired;
 
     bool toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch,

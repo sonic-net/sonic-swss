@@ -1373,38 +1373,84 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
         }
     }
 
+    /* Batch epilogue. Its teardown loops check `expired` after each group or
+     * next hop, and a yield resumes them where they stopped: the NHG and
+     * MPLS loops erase what they handled, and the SRv6 loops keep cursors in
+     * the batch. */
+
     /* Remove next hop group if the reference count decreases to zero */
-    for (auto& it_nhg : batch.nhgReducedRefCnt)
+    while (!batch.nhgReducedRefCnt.empty())
     {
-        if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
+        auto it_nhg = batch.nhgReducedRefCnt.begin();
+        if (it_nhg->first.is_overlay_nexthop() && it_nhg->second != 0)
         {
-            removeOverlayNextHops(it_nhg.second, it_nhg.first);
+            removeOverlayNextHops(it_nhg->second, it_nhg->first);
         }
-        else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
+        else
         {
-            // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
-            removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
+            /* The label or VNET drain may have removed the group while the
+             * epilogue was yielded. */
+            auto nhg_it = m_syncdNextHopGroups.find(it_nhg->first);
+            if (nhg_it != m_syncdNextHopGroups.end() && nhg_it->second.ref_count == 0)
+            {
+                // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
+                removeNextHopGroup(it_nhg->first, nhg_it->second.is_default_route_nh_swap);
+            }
+        }
+        batch.nhgReducedRefCnt.erase(it_nhg);
+
+        if (!batch.nhgReducedRefCnt.empty() && expired())
+        {
+            return false;
         }
     }
-    batch.nhgReducedRefCnt.clear();
     // Failed single-MPLS creates may share a next hop with successful
     // routes in this bulk. Groups above may also have removed it already.
-    for (const auto& nexthop : batch.mplsNhReducedRefCnt)
+    while (!batch.mplsNhReducedRefCnt.empty())
     {
-        if (m_neighOrch->hasNextHop(nexthop) &&
-            m_neighOrch->getNextHopRefCount(nexthop) == 0)
+        auto it_nh = batch.mplsNhReducedRefCnt.begin();
+        if (m_neighOrch->hasNextHop(*it_nh) &&
+            m_neighOrch->getNextHopRefCount(*it_nh) == 0)
         {
-            m_neighOrch->removeMplsNextHop(nexthop);
+            m_neighOrch->removeMplsNextHop(*it_nh);
+        }
+        batch.mplsNhReducedRefCnt.erase(it_nh);
+
+        if (!batch.mplsNhReducedRefCnt.empty() && expired())
+        {
+            return false;
         }
     }
-    batch.mplsNhReducedRefCnt.clear();
     /* Reduce reference for srv6 next hop group */
     /* Later delete for increase refcnt early */
-    if (!batch.srv6NhgReducedVec.empty())
+    /* Two passes over the whole set, as in Srv6Orch::removeSrv6Nexthops():
+     * every group's VPN SIDs go before any group's next hops, because the
+     * next hop pass can free shared objects (tunnels, SID lists) that another
+     * group's VPN pass still uses. The vector does not change during the
+     * epilogue; only the status loop above adds to it. */
+    while (batch.srv6VpnCursor < batch.srv6NhgReducedVec.size())
     {
-        m_srv6Orch->removeSrv6Nexthops(batch.srv6NhgReducedVec);
-        batch.srv6NhgReducedVec.clear();
+        m_srv6Orch->removeSrv6VpnSids(batch.srv6NhgReducedVec[batch.srv6VpnCursor]);
+        batch.srv6VpnCursor++;
+
+        if (batch.srv6VpnCursor < batch.srv6NhgReducedVec.size() && expired())
+        {
+            return false;
+        }
     }
+    while (batch.srv6NexthopCursor < batch.srv6NhgReducedVec.size())
+    {
+        m_srv6Orch->removeSrv6GroupNexthops(batch.srv6NhgReducedVec[batch.srv6NexthopCursor]);
+        batch.srv6NexthopCursor++;
+
+        if (batch.srv6NexthopCursor < batch.srv6NhgReducedVec.size() && expired())
+        {
+            return false;
+        }
+    }
+    batch.srv6NhgReducedVec.clear();
+    batch.srv6VpnCursor = 0;
+    batch.srv6NexthopCursor = 0;
 
     // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
     // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
@@ -1517,8 +1563,9 @@ void RouteOrch::drainRoutes(ConsumerBase& consumer)
 
 /* Yielding drain (route programming HLD sections 7.4 and 7.5). Each call runs
  * the batch state machine until the quantum (m_drainQuantum, orchagent -Q)
- * expires, checking it after each staged entry, each bulk chunk flushed and
- * each status handled, and moving on to the next phase while time is left.
+ * expires, checking it after each staged entry, each bulk chunk flushed,
+ * each status handled and each group or next hop the epilogue removes, and
+ * moving on to the next phase while time is left.
  * When it stops with work left, it re-arms the consumer's selectable, so
  * select() serves other ready selectables of equal or higher priority before
  * the drain goes on; the daemon's sweep after each select also resumes it.

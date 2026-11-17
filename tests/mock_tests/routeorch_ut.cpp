@@ -2724,6 +2724,152 @@ namespace routeorch_test
         gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
     }
 
+    /* The batch epilogue yields too. Deleting two ECMP routes with distinct
+     * groups in one batch leaves two groups to remove; at quantum 0 the
+     * epilogue removes one group per call, so the batch stays in flight for
+     * one more call after the last status is handled. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainEpilogueYields)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        swss::ZmqRouteServer server("tcp://*:1292", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        /* Resolve 10.0.0.4 so the two routes get distinct groups (SetUp
+         * resolves only .2 and .3). */
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4",
+                          {{"neigh", "00:00:0a:00:00:04"}, {"family", "IPv4"}});
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        /* Program both routes in one call. */
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+        auto base_create = create_route_count;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.40.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        entries.push_back({"9.9.41.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.4"}}});
+        consumer.addToSync(entries);
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        /* Both routes go out in one bulk create, or the DEL batch below has
+         * nothing to tear down. */
+        ASSERT_EQ(base_create + 1, create_route_count);
+        ASSERT_TRUE(consumer.m_toSync.empty());
+
+        /* Delete both in one batch, one unit per call. */
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        entries.clear();
+        entries.push_back({"9.9.40.0/24", "DEL", {}});
+        entries.push_back({"9.9.41.0/24", "DEL", {}});
+        consumer.addToSync(entries);
+
+        /* Step until both statuses are handled. A batch that ends without
+         * stopping in the epilogue fails here. */
+        bool reachedMidEpilogue = false;
+        for (int i = 0; i < 16; i++)
+        {
+            zorch->doTask(consumer);
+            if (zorch->drainInFlight(APP_ROUTE_TABLE_NAME) &&
+                gRouteOrch->m_zmqDrainBatch.respondCursor == 2)
+            {
+                reachedMidEpilogue = true;
+                break;
+            }
+            ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME))
+                << "batch completed without pausing mid-epilogue";
+        }
+        ASSERT_TRUE(reachedMidEpilogue);
+
+        /* The epilogue removed one group and yielded with the other left.
+         * One more call removes it and ends the batch. */
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
+    /* Same as RouteOrch_YieldingDrainRespondYieldSurvivesForeignAccumulatorClear,
+     * with the label or VNET drain running while the epilogue is yielded. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainEpilogueSurvivesForeignAccumulatorClear)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        swss::ZmqRouteServer server("tcp://*:1293", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        /* Resolve 10.0.0.4 so the two routes get distinct groups (SetUp
+         * resolves only .2 and .3). */
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4",
+                          {{"neigh", "00:00:0a:00:00:04"}, {"family", "IPv4"}});
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        auto base_nhg_count = gRouteOrch->m_nextHopGroupCount;
+
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.62.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        entries.push_back({"9.9.63.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.4"}}});
+        consumer.addToSync(entries);
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(gRouteOrch->m_nextHopGroupCount, base_nhg_count + 2);
+
+        /* Delete both, one unit per call, and stop once both statuses are
+         * handled: the epilogue has then removed one group and yielded with
+         * the other left. */
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        entries.clear();
+        entries.push_back({"9.9.62.0/24", "DEL", {}});
+        entries.push_back({"9.9.63.0/24", "DEL", {}});
+        consumer.addToSync(entries);
+
+        bool reachedMidEpilogue = false;
+        for (int i = 0; i < 16; i++)
+        {
+            zorch->doTask(consumer);
+            if (zorch->drainInFlight(APP_ROUTE_TABLE_NAME) &&
+                gRouteOrch->m_zmqDrainBatch.respondCursor == 2)
+            {
+                reachedMidEpilogue = true;
+                break;
+            }
+            ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME))
+                << "batch completed without pausing mid-epilogue";
+        }
+        ASSERT_TRUE(reachedMidEpilogue);
+        ASSERT_FALSE(gRouteOrch->m_zmqDrainBatch.nhgReducedRefCnt.empty());
+
+        /* What a label or VNET drain does between quanta. */
+        gRouteOrch->m_bulkNhgReducedRefCnt.clear();
+        gRouteOrch->m_bulkSrv6NhgReducedVec.clear();
+
+        for (int i = 0; i < 8 && zorch->drainInFlight(APP_ROUTE_TABLE_NAME); i++)
+        {
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(gRouteOrch->m_nextHopGroupCount, base_nhg_count);
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
     /*
      * Routes the yielding drain has staged and not answered yet pin what they
      * were staged on. The helpers below drive the drain to a chosen point.
