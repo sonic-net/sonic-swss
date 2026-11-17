@@ -823,13 +823,6 @@ bool SflowOrch::isSflowSamplePacket(sai_object_id_t oid)
 bool SflowOrch::isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_attr_t attr_id,
                                            sai_object_id_t sample_id, const char* dir_name)
 {
-    auto mirrorOrch = gDirectory.get<MirrorOrch*>();
-    if (mirrorOrch && mirrorOrch->hasSampleBindings())
-    {
-        SWSS_LOG_WARN("Cannot bind sFlow while sampled mirror bindings or cleanup remain");
-        return false;
-    }
-
     // During warm restore the port still reports the pre-reboot samplepacket OID,
     // which is not in the rebuilt map; APPLY_VIEW reconciles it.
     if (m_isWarmRestoreStage)
@@ -1232,6 +1225,10 @@ void SflowOrch::doTask(Consumer &consumer)
         return;
     }
 
+    // hasSampleBindings() scans CONFIG_DB in every namespace, so check it once per batch.
+    auto mirrorOrch = gDirectory.get<MirrorOrch*>();
+    const bool sampleBindingsExist = m_sflowStatus && mirrorOrch && mirrorOrch->hasSampleBindings();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1250,8 +1247,7 @@ void SflowOrch::doTask(Consumer &consumer)
             {
                 return;
             }
-            auto mirrorOrch = gDirectory.get<MirrorOrch*>();
-            if (mirrorOrch && mirrorOrch->hasSampleBindings())
+            if (sampleBindingsExist)
             {
                 ++it;
                 continue;

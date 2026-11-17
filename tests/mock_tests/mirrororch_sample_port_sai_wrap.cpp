@@ -52,6 +52,11 @@ namespace
             {
                 return SAI_STATUS_FAILURE;
             }
+            if (attr->id == SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE
+                && mirror_sample_port_wrap_ut::g_fail_egress_samplepacket_enable_set)
+            {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
             auto &store = (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
                 ? g_ingress_samplepacket : g_egress_samplepacket;
             if (attr->value.oid == SAI_NULL_OBJECT_ID)
@@ -167,6 +172,7 @@ namespace mirror_sample_port_wrap_ut
 {
     bool g_fail_mirror_session_set = false;
     bool g_fail_samplepacket_enable_set = false;
+    bool g_fail_egress_samplepacket_enable_set = false;
     bool g_fail_samplepacket_create = false;
     bool g_fail_samplepacket_remove = false;
 
@@ -174,6 +180,7 @@ namespace mirror_sample_port_wrap_ut
     {
         g_fail_mirror_session_set = false;
         g_fail_samplepacket_enable_set = false;
+        g_fail_egress_samplepacket_enable_set = false;
         g_fail_samplepacket_create = false;
         g_fail_samplepacket_remove = false;
 
@@ -207,6 +214,7 @@ namespace mirror_sample_port_wrap_ut
     {
         g_fail_mirror_session_set = false;
         g_fail_samplepacket_enable_set = false;
+        g_fail_egress_samplepacket_enable_set = false;
         g_fail_samplepacket_create = false;
         g_fail_samplepacket_remove = false;
 

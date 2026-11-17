@@ -11,8 +11,11 @@
 #include "swssnet.h"
 #include "converter.h"
 #include "mirrororch.h"
+#include "sfloworch.h"
+#include "directory.h"
 #include "tokenize.h"
 #include "warm_restart.h"
+#include "timer.h"
 
 #define MIRROR_SESSION_STATUS               "status"
 #define MIRROR_SESSION_STATUS_ACTIVE        "active"
@@ -34,6 +37,7 @@
 #define MIRROR_SESSION_DIRECTION            "direction"
 #define MIRROR_SESSION_TYPE                 "type"
 #define PORT_MIRROR_SAMPLE_TABLE "PORT_MIRROR_SAMPLE"
+#define PORT_MIRROR_SAMPLE_RETRY_SEC 1
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -55,6 +59,7 @@ extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern string           gMySwitchType;
+extern Directory<Orch*> gDirectory;
 
 using namespace std::rel_ops;
 
@@ -125,6 +130,11 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
     }
 
     m_isWarmRestoreStage = WarmStart::isWarmStart();
+
+    // Retry sampled bindings that are waiting for a resource or failed SAI programming.
+    auto timer = new SelectableTimer(timespec { .tv_sec = PORT_MIRROR_SAMPLE_RETRY_SEC, .tv_nsec = 0 });
+    Orch::addExecutor(new ExecutableTimer(timer, this, "PORT_MIRROR_SAMPLE_RETRY"));
+    timer->start();
 }
 
 void MirrorOrch::onWarmBootEnd()
@@ -531,7 +541,10 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         {
             string referenced;
             if (m_sampleConfigTable.hget(binding, "mirror_session", referenced) && referenced == key)
+            {
+                if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
                 return task_invalid_entry;
+            }
         }
     }
     for (const auto& binding : m_sampleBindings)
@@ -540,6 +553,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             (entry.type != MIRROR_SESSION_ERSPAN || entry.sourceConfigured))
         {
             SWSS_LOG_ERROR("Export %s is referenced by a sampled binding", key.c_str());
+            if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
             return task_invalid_entry;
         }
     }
@@ -1181,8 +1195,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     for (auto& item : m_sampleBindings)
     {
         if (item.second.session != name) continue;
-        m_sampleSuspendedExports.insert(name);
-        if (!clearSampleBinding(item.first, item.second)) return false;
+        if (!clearSampleBinding(item.first, item.second)) { item.second.cleanupPending = true; return false; }
     }
 
     MirrorSessionUpdate update = { name, false };
@@ -1212,7 +1225,6 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 
     session.status = false;
     session.sessionId = SAI_NULL_OBJECT_ID;
-    m_sampleSuspendedExports.erase(name);
 
     // Store whole state into StateDB, since it is far from that frequent it's durable
     setSessionState(name, session);
@@ -1259,7 +1271,6 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 }
 
 
-// Sampled source bindings are independent of the export session lifecycle.
 bool MirrorOrch::hasSampleBindings()
 {
     vector<string> keys;
@@ -1478,14 +1489,15 @@ void MirrorOrch::syncSampleBindings()
         return;
     }
 
-    const bool sflowConfigured = hasSflowGlobal();
+    // sFlow can still own sample attributes until its per-port cleanup completes.
+    auto sflowOrch = gDirectory.get<SflowOrch*>();
+    const bool sflowConfigured = sflowOrch && sflowOrch->hasPortSessions();
     for (auto it = m_sampleBindings.begin(); it != m_sampleBindings.end();)
     {
         const auto& key = it->first;
         auto& binding = it->second;
         auto session = m_syncdMirrors.find(binding.session);
         bool ready = binding.enabled && !binding.deleting && !sflowConfigured &&
-                     !m_sampleSuspendedExports.count(binding.session) &&
                      session != m_syncdMirrors.end() && session->second.status &&
                      session->second.type == MIRROR_SESSION_ERSPAN && !session->second.sourceConfigured &&
                      session->second.src_port.empty();
@@ -1530,14 +1542,13 @@ void MirrorOrch::syncSampleBindings()
         bool clean = true;
         for (auto port : obsolete)
             if (!clearSampleAttachment(key, binding, port)) clean = false;
-        if (!clean) { ++it; continue; }
+        if (!clean) { binding.cleanupPending = true; ++it; continue; }
         if (desired.empty())
         {
             if (!clearSampleBinding(key, binding)) binding.cleanupPending = true;
             ++it;
             continue;
         }
-        // Reserve physical-port/direction ownership before programming anything.
         bool available = true;
         for (const auto& port : desired)
         {
@@ -1598,18 +1609,9 @@ void MirrorOrch::syncSampleBindings()
     }
 }
 
-void MirrorOrch::doTask()
+void MirrorOrch::doTask(SelectableTimer &timer)
 {
-    Orch::doTask();
     if (!m_portsOrch->allPortsReady()) return;
-    // Retry export deactivation if a previous member detach or SAI removal failed.
-    auto pending = m_sampleSuspendedExports;
-    for (const auto& name : pending)
-    {
-        auto session = m_syncdMirrors.find(name);
-        if (session != m_syncdMirrors.end() && session->second.status && deactivateSession(name, session->second))
-            updateSession(name, session->second);
-    }
     syncSampleBindings();
 }
 
@@ -1966,7 +1968,10 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
 
                 session.neighborInfo.portId = member.m_port_id;
                 // The destination MAC remains the same
-                updateSessionDstPort(name, session);
+                if (session.status)
+                {
+                    updateSessionDstPort(name, session);
+                }
             }
         }
     }

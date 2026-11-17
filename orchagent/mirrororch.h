@@ -16,7 +16,6 @@
 #include "table.h"
 
 #include <map>
-#include <set>
 #include <memory>
 #include <inttypes.h>
 
@@ -99,7 +98,7 @@ public:
     bool hasSampleBindings();
 
     using Orch::doTask;
-    void doTask() override;
+    void doTask(swss::SelectableTimer &timer) override;
 
 private:
     PortsOrch *m_portsOrch;
@@ -178,7 +177,6 @@ private:
     vector<std::unique_ptr<swss::DBConnector>> m_otherConfigDbs;
     map<string, SampleBinding> m_sampleBindings;
     map<std::pair<sai_object_id_t, bool>, string> m_sampleOwners;
-    std::set<string> m_sampleSuspendedExports;
     bool hasSflowGlobal();
     task_process_status createSampleBinding(const string&, const vector<FieldValueTuple>&);
     bool createSamplePacket(const string&, SampleBinding&);
