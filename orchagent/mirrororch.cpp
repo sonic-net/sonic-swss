@@ -579,7 +579,9 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
-    if (!isHwResourcesAvailable())
+    // A session restored by warm reboot still owns its HW resources, and the
+    // availability count includes them, so the check would reject it
+    if ((m_recoverySessionMap.find(key) == m_recoverySessionMap.end()) && !isHwResourcesAvailable())
     {
         SWSS_LOG_ERROR("Failed to create session %s: HW resources are not available", key.c_str());
         return task_process_status::task_failed;
