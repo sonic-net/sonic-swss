@@ -692,6 +692,9 @@ class DockerVirtualSwitch:
 
     def ctn_restart(self) -> None:
         self.ctn.restart()
+        _, output = subprocess.getstatusoutput(f"docker inspect --format '{{{{.State.Pid}}}}' {self.ctn.name}")
+        if output.strip().isdigit():
+            self.pid = int(output.strip())
 
     def restart(self) -> None:
         self.del_appl_db()
@@ -739,7 +742,7 @@ class DockerVirtualSwitch:
         if p.returncode:
             raise RuntimeError("Failed to unpack the log archive.")
 
-        ensure_system("chmod a+r -R log")
+        ensure_system(f"chmod a+r -R {log_dir}")
 
     def add_log_marker(self, file_name=None) -> str:
         marker = f"=== start marker {datetime.now().isoformat()} ==="
@@ -1977,16 +1980,17 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
-    if graceful_stop:
-        dvs.stop_swss()
-        dvs.stop_syncd()
+    if dvs is not None:
+        if graceful_stop:
+            dvs.stop_swss()
+            dvs.stop_syncd()
 
-    dvs.get_logs()
-    dvs.destroy()
+        dvs.get_logs()
+        dvs.destroy()
 
-    if dvs.persistent:
-        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
-        dvs.ctn_restart()
+        if dvs.persistent:
+            dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+            dvs.ctn_restart()
 
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
