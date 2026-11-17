@@ -179,6 +179,9 @@ private:
     void updatePortOperState(const PortOperStateUpdate&);
 
     bool addFdbEntry(const FdbEntry&, const string&, FdbData fdbData);
+    bool addFdbEntry(const FdbEntry&, const string&, FdbData, bool kernelL3LocalHandoff);
+    /* Only validated kernel pure-L3 peer leases may request a local handoff. */
+    map<FdbEntry, string> m_kernelL3PeerOwners;
     void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, FdbOrigin origin, const string portName="");
     void removeFdbEntryFromPortCache(const FdbEntry& entry, const Port& port);
 

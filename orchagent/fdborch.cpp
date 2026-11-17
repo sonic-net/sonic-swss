@@ -1197,9 +1197,23 @@ void FdbOrch::doTask(Consumer& consumer)
             string discard = "false";
             FdbDest dest_type = FdbDest::UNKNOWN;
             string dest_value;
+            string kernelL3Provenance, kernelL3Stage;
+            bool kernelL3Field = false, hasRemoteDestination = false;
 
             for (auto i : kfvFieldsValues(t))
             {
+                if (fvField(i) == "kernel_l3vni_sync")
+                {
+                    kernelL3Field = true;
+                    kernelL3Provenance = fvValue(i);
+                }
+                if (fvField(i) == "l3vni_neigh_sync")
+                {
+                    kernelL3Field = true;
+                    kernelL3Stage = fvValue(i);
+                }
+                if (fvField(i) == "remote_vtep" || fvField(i) == "nexthop_group")
+                    hasRemoteDestination = true;
                 if (fvField(i) == "port")
                 {
                     port = fvValue(i);
@@ -1312,10 +1326,66 @@ void FdbOrch::doTask(Consumer& consumer)
                 }
             }
 
+            FdbOrigin entryOrigin = origin;
+            bool kernelL3LocalHandoff = false;
+            if (kernelL3Field)
+            {
+                Port access;
+                bool local = kernelL3Stage == "local";
+                bool peer = kernelL3Stage == "peer";
+                bool valid = origin == FDB_ORIGIN_VXLAN_ADVERTIZED &&
+                    kernelL3Provenance == "true" && !hasRemoteDestination &&
+                    dest_type == FdbDest::IFNAME && vni == 0 &&
+                    ((peer && type == "static") || (local && type == "dynamic"));
+                if (valid && !m_portsOrch->getPort(dest_value, access))
+                {
+                    ++it;
+                    continue;
+                }
+                valid = valid && access.m_type == Port::LAG;
+                if (valid && (access.m_bridge_port_id == SAI_NULL_OBJECT_ID ||
+                              vlan.m_members.count(dest_value) == 0))
+                {
+                    // Keep valid input queued until its bridge attachment exists.
+                    ++it;
+                    continue;
+                }
+                auto existing = m_entries.find(entry);
+                if (valid && existing != m_entries.end())
+                {
+                    const auto &old = existing->second;
+                    auto owner = m_kernelL3PeerOwners.find(entry);
+                    bool owned = owner != m_kernelL3PeerOwners.end() &&
+                        old.origin == FDB_ORIGIN_VXLAN_ADVERTIZED &&
+                        old.dest_type == FdbDest::IFNAME && old.vni == 0 &&
+                        owner->second == old.dest_value;
+                    bool alreadyLocal = old.origin == FDB_ORIGIN_LEARN &&
+                        old.bridge_port_id == access.m_bridge_port_id;
+                    valid = old.origin != FDB_ORIGIN_MCLAG_ADVERTIZED &&
+                        old.origin != FDB_ORIGIN_PROVISIONED &&
+                        ((local && (owned || alreadyLocal) &&
+                          old.bridge_port_id == access.m_bridge_port_id) ||
+                         // A verified peer lease may move to another local ES.
+                         (peer && owned));
+                }
+                if (!valid)
+                {
+                    SWSS_LOG_WARN("Reject invalid kernel L3 neighbor-sync owner for %s", kfvKey(t).c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                /* With no cache entry this is a durable LOCAL replay: fdbsyncd
+                 * must have retained prior-peer provenance and revalidated its
+                 * kernel/STATE identity. A plain local event cannot mint it. */
+                kernelL3LocalHandoff = local;
+                if (local)
+                    entryOrigin = FDB_ORIGIN_LEARN;
+            }
+
             FdbData fdbData;
             fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
             fdbData.type = type;
-            fdbData.origin = origin;
+            fdbData.origin = entryOrigin;
             fdbData.dest_type = dest_type;
             fdbData.dest_value = dest_value;
             fdbData.esi = esi;
@@ -1325,8 +1395,12 @@ void FdbOrch::doTask(Consumer& consumer)
 
             // set entry port_name, which is used in mux fdb update logic
             entry.port_name = port;
-            if (addFdbEntry(entry, port, fdbData))
+            if (addFdbEntry(entry, port, fdbData, kernelL3LocalHandoff))
             {
+                if (kernelL3Field && kernelL3Stage == "peer")
+                    m_kernelL3PeerOwners[entry] = port;
+                else if (origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+                    m_kernelL3PeerOwners.erase(entry);
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
                     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
@@ -1358,6 +1432,8 @@ void FdbOrch::doTask(Consumer& consumer)
         {
             if (removeFdbEntry(entry, origin))
             {
+                if (origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+                    m_kernelL3PeerOwners.erase(entry);
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
                     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
@@ -1984,6 +2060,12 @@ bool FdbOrch::isDestinationSame(FdbData &oldFdbData, FdbData &newFdbData) {
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         FdbData fdbData)
 {
+    return addFdbEntry(entry, port_name, fdbData, false);
+}
+
+bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
+        FdbData fdbData, bool kernelL3LocalHandoff)
+{
     Port vlan;
     Port port;
     string end_point_ip = "";
@@ -2093,7 +2175,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                 return true;
             }
             else if ((oldType == "static") && (oldOrigin ==
-                        FDB_ORIGIN_VXLAN_ADVERTIZED) && (fdbData.type == "dynamic"))
+                        FDB_ORIGIN_VXLAN_ADVERTIZED) && (fdbData.type == "dynamic") &&
+                     !kernelL3LocalHandoff)
             {
                 /* old mac was static and received from remote, it can not be changed by dynamic locally provisioned Mac */
                 SWSS_LOG_INFO("Already existing static MAC:%s in Vlan:%d "

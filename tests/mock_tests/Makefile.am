@@ -395,7 +395,7 @@ tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 
 tests_fdbsyncd_SOURCES = fdbsyncd/fdbsyncd_ut.cpp \
                          fdbsyncd/fake_warmstarthelper.cpp \
-                         fdbsyncd/fake_warmstartassist.cpp \
+                         $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
                          fdbsyncd/fake_producerstatetable.cpp \
                          fdbsyncd/fake_subscriberstatetable.cpp \
                          mock_dbconnector.cpp \
