@@ -1345,6 +1345,14 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      * Third iteration: Drain remaining data that are out of order.
      */
 
+    /* These iterations run before the select loop exists, and
+     * warmRestoreValidation() below needs an empty backlog. A yielded route
+     * drain would not be resumed here, so RouteOrch drains to completion. */
+    if (gRouteOrch)
+    {
+        gRouteOrch->setWarmStartDrainToCompletion(true);
+    }
+
     for (auto it = 0; it < 3; it++)
     {
         SWSS_LOG_DEBUG("The current doTask iteration is %d", it);
@@ -1368,6 +1376,11 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // after the rest of the data has been processed.
     gMirrorOrch->doTask();
     gAclOrch->doTask();
+
+    if (gRouteOrch)
+    {
+        gRouteOrch->setWarmStartDrainToCompletion(false);
+    }
 
     // Configure response publisher after warm-boot completes.
     configureResponsePublisherForWarmBoot(/*warm_boot_start=*/false);

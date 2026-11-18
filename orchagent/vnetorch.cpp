@@ -2135,6 +2135,7 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
                                                     const NextHopGroupKey& nhg, const string& op)
 {
     auto& bulkNhgReducedRefCnt = gRouteOrch->getBulkNhgReducedRefCnt();
+    auto& bulkMplsNhReducedRefCnt = gRouteOrch->getBulkMplsNhReducedRefCnt();
 
     // Get vnet name from vrf id
     std::string vnet_name;
@@ -2162,6 +2163,7 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
         // Flush our private route bulker, so VNET routes are written to syncd and ASIC
         m_vnetRouteBulker.flush();
         bulkNhgReducedRefCnt.clear();
+        bulkMplsNhReducedRefCnt.clear();
 
         // Post add route via route orch
         if (gRouteOrch->addRoutePost(ctx, nhg))
@@ -2185,6 +2187,7 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
         // Flush our private route bulker, so VNET routes are written to syncd and ASIC
         m_vnetRouteBulker.flush();
         bulkNhgReducedRefCnt.clear();
+        bulkMplsNhReducedRefCnt.clear();
 
         // Post remove route via route orch
         if (gRouteOrch->removeRoutePost(ctx))
@@ -2205,6 +2208,15 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
         {
             gRouteOrch->removeNextHopGroup(it.first);
             SWSS_LOG_INFO("Next hop group %s has 0 references, removed via routeorch", it.first.to_string().c_str());
+        }
+    }
+
+    // Single-MPLS next hops whose create failed; RouteOrch's drain keeps its own set.
+    for (const auto& nexthop : bulkMplsNhReducedRefCnt)
+    {
+        if (gNeighOrch->hasNextHop(nexthop) && gNeighOrch->getNextHopRefCount(nexthop) == 0)
+        {
+            gNeighOrch->removeMplsNextHop(nexthop);
         }
     }
 

@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <time.h>
+#include <ctype.h>
 #include <random>
 #include <inttypes.h>
 #include <algorithm>
@@ -33,12 +34,47 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
+extern string gMySwitchSubType;
 extern bool gRouteStateAsyncPublish;
 extern bool gEnableFibSuppress;
+
+/* Time quantum of the yielding ZMQ route drain (route programming HLD
+ * section 7.5), in msec. Set from the orchagent -Q argument; 0 yields at
+ * every check. */
+long gRouteDrainQuantumMsec = 20;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
+
+const std::function<bool()> RouteOrch::kNeverExpired = []() { return false; };
+
+static bool isDualTorSubtype()
+{
+    string subtype = gMySwitchSubType;
+    for (char &c : subtype)
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    return subtype == "dualtor";
+}
+
+/* MUX_CABLE / PEER_SWITCH cover a box that has mux without subtype DualToR.
+ * Do not use MuxOrch::mux_cable_tb_: it is empty until handleMuxCfg, and
+ * RouteOrch runs before MuxOrch in the orch list. Call only after
+ * allPortsReady() so the tables are complete. */
+static bool hasMuxCableOrPeerSwitch()
+{
+    DBConnector cfgDb("CONFIG_DB", 0);
+    vector<string> keys;
+
+    Table muxCable(&cfgDb, CFG_MUX_CABLE_TABLE_NAME);
+    muxCable.getKeys(keys);
+    if (!keys.empty())
+        return true;
+
+    Table peerSwitch(&cfgDb, CFG_PEER_SWITCH_TABLE_NAME);
+    peerSwitch.getKeys(keys);
+    return !keys.empty();
+}
 
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqRouteServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
@@ -56,6 +92,9 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    m_drainQuantum = std::chrono::milliseconds(gRouteDrainQuantumMsec);
+    SWSS_LOG_NOTICE("Route drain quantum: %ld msec", gRouteDrainQuantumMsec);
 
     m_routeStatePublisher.setBuffered(true);
     m_routeStatePublisher.m_directDbWrite = true;
@@ -606,19 +645,32 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
     return true;
 }
 
-void RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch)
+bool RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                           const std::function<bool()>& expired)
 {
     SWSS_LOG_ENTER();
 
-    /* Resync DELs are merged into m_toSync when the scan ends, not during it. */
+    /* Resync DELs are merged into m_toSync when the scan ends: a yield can
+     * split the scan over several calls. */
     auto& resyncDels = batch.resyncDels;
 
     auto& toBulk = batch.toBulk;
     auto it = consumer.m_toSync.begin();
 
+    /* After a yield the scan restarts at begin(). Every entry it visits
+     * leaves m_toSync (staged into the batch, done, or deferred), so it still
+     * reaches the end. */
+    size_t processedThisQuantum = 0;
+
     // Add or remove routes with a route bulker
     while (it != consumer.m_toSync.end())
     {
+        if (processedThisQuantum > 0 && expired())
+        {
+            return false;
+        }
+        processedThisQuantum++;
+
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
@@ -1067,6 +1119,7 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch)
                     }
                     else
                     {
+                        pinStagedRoute(ctx);
                         batch.entries.push_back(std::move(t));
                         it = consumer.m_toSync.erase(it);
                     }
@@ -1093,6 +1146,7 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch)
                 }
                 else
                 {
+                    pinStagedRoute(ctx);
                     batch.entries.push_back(std::move(t));
                     it = consumer.m_toSync.erase(it);
                 }
@@ -1136,6 +1190,8 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch)
         consumer.addToSyncNoRecord(resyncDels);
         resyncDels.clear();
     }
+
+    return true;
 }
 
 void RouteOrch::flushTask()
@@ -1144,20 +1200,86 @@ void RouteOrch::flushTask()
     gRouteBulker.flush();
 }
 
+/* Take or drop one reference on a staged next hop, with the same helpers the
+ * Post functions use, so an owner refuses to delete it meanwhile. */
+void RouteOrch::pinStagedNextHop(const RouteBulkContext& ctx, bool pin)
+{
+    switch (ctx.staged)
+    {
+    case StagedNextHop::kNhgIndex:
+        if (pin)
+            incNhgRefCount(ctx.nhg_index, ctx.context_index);
+        else
+            decNhgRefCount(ctx.nhg_index, ctx.context_index);
+        break;
+    case StagedNextHop::kNextHops:
+    case StagedNextHop::kTempNextHop:
+    {
+        const NextHopGroupKey &nexthops =
+            ctx.staged == StagedNextHop::kNextHops ? ctx.nhg : ctx.tmp_next_hop;
+        if (pin)
+            increaseNextHopRefCount(nexthops);
+        else
+            decreaseNextHopRefCount(nexthops);
+        break;
+    }
+    case StagedNextHop::kNone:
+        break;
+    }
+}
+
+/* A route was staged into gRouteBulker for this drain batch: from now until
+ * its status is handled, other orchs may run between drain quanta. Pin what
+ * addRoutePost() will reference, chosen in the same order. A fine grained
+ * route's next hop belongs to FgNhgOrch and is not pinned. */
+void RouteOrch::pinStagedRoute(RouteBulkContext& ctx)
+{
+    if (ctx.object_statuses.empty() || !ctx.is_set ||
+        m_fgNhgOrch->isRouteFineGrained(ctx.vrf_id, ctx.ip_prefix, ctx.nhg))
+    {
+        return;
+    }
+
+    if (!ctx.nhg_index.empty())
+        ctx.staged = StagedNextHop::kNhgIndex;
+    else if (ctx.tmp_next_hop.getSize() > 0)
+        ctx.staged = StagedNextHop::kTempNextHop;
+    else
+        ctx.staged = StagedNextHop::kNextHops;
+    pinStagedNextHop(ctx, true);
+}
+
+void RouteOrch::releaseStagedPin(RouteBulkContext& ctx)
+{
+    pinStagedNextHop(ctx, false);
+    ctx.staged = StagedNextHop::kNone;
+}
+
 bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
-                                    std::deque<KeyOpFieldsValuesTuple>& retained)
+                                    std::deque<KeyOpFieldsValuesTuple>& retained,
+                                    const std::function<bool()>& expired,
+                                    bool& keepDraining)
 {
     SWSS_LOG_ENTER();
 
-    // Go through the bulker results
-    m_bulkNhgReducedRefCnt.clear();
-    m_bulkMplsNhReducedRefCnt.clear();
+    // Go through the bulker results. A yield resumes at respondCursor; the
+    // Post functions put teardowns in the batch, which keeps them across
+    // yields.
     NextHopGroupKey& v4_default_nhg_key = batch.v4DefaultNhgKey;
     NextHopGroupKey& v6_default_nhg_key = batch.v6DefaultNhgKey;
-    m_bulkSrv6NhgReducedVec.clear();
 
-    for (const auto& t : batch.entries)
+    size_t processedThisQuantum = 0;
+    while (batch.respondCursor < batch.entries.size())
     {
+        if (processedThisQuantum > 0 && expired())
+        {
+            return false;
+        }
+        processedThisQuantum++;
+
+        const auto& t = batch.entries[batch.respondCursor];
+        batch.respondCursor++;
+
         string key = kfvKey(t);
         string op = kfvOp(t);
         auto found = batch.toBulk.find(make_pair(key, op));
@@ -1167,7 +1289,7 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
             continue;
         }
 
-        const auto& ctx = found->second;
+        auto& ctx = found->second;
 
         // if retry_cst field is set, move this task to retry cache:
         // - add it to retry cache before executing addRoutePost/removeRoutePost
@@ -1187,6 +1309,10 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
             continue;
         }
 
+        /* The Post functions take the route's own references, so the staging
+         * pin goes first and they see the counts they always did. */
+        releaseStagedPin(ctx);
+
         const sai_object_id_t& vrf_id = ctx.vrf_id;
         const IpPrefix& ip_prefix = ctx.ip_prefix;
 
@@ -1203,7 +1329,7 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
             {
                 /* If any existing routes are updated to point to the
                  * above interfaces, remove them from the ASIC. */
-                if (!(removeRoutePost(ctx) || rc_inserted))
+                if (!(removeRoutePost(ctx, &batch) || rc_inserted))
                     retained.push_back(t);
                 continue;
             }
@@ -1212,7 +1338,7 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
 
             if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
             {
-                if (!(addRoutePost(ctx, nhg) || rc_inserted))
+                if (!(addRoutePost(ctx, nhg, &batch) || rc_inserted))
                     retained.push_back(t);
             }
             else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
@@ -1221,7 +1347,7 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
                      gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                      ctx.using_temp_nhg)
             {
-                if (!(addRoutePost(ctx, nhg) || rc_inserted))
+                if (!(addRoutePost(ctx, nhg, &batch) || rc_inserted))
                     retained.push_back(t);
 
 		    // Save the Default Route of Default VRF to be used for 
@@ -1242,13 +1368,13 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
         else if (op == DEL_COMMAND)
         {
             /* Cannot locate the route or remove succeed */
-            if (!(removeRoutePost(ctx) || rc_inserted))
+            if (!(removeRoutePost(ctx, &batch) || rc_inserted))
                 retained.push_back(t);
         }
     }
 
     /* Remove next hop group if the reference count decreases to zero */
-    for (auto& it_nhg : m_bulkNhgReducedRefCnt)
+    for (auto& it_nhg : batch.nhgReducedRefCnt)
     {
         if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
         {
@@ -1260,9 +1386,10 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
             removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
         }
     }
+    batch.nhgReducedRefCnt.clear();
     // Failed single-MPLS creates may share a next hop with successful
     // routes in this bulk. Groups above may also have removed it already.
-    for (const auto& nexthop : m_bulkMplsNhReducedRefCnt)
+    for (const auto& nexthop : batch.mplsNhReducedRefCnt)
     {
         if (m_neighOrch->hasNextHop(nexthop) &&
             m_neighOrch->getNextHopRefCount(nexthop) == 0)
@@ -1270,11 +1397,13 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
             m_neighOrch->removeMplsNextHop(nexthop);
         }
     }
+    batch.mplsNhReducedRefCnt.clear();
     /* Reduce reference for srv6 next hop group */
     /* Later delete for increase refcnt early */
-    if (!m_bulkSrv6NhgReducedVec.empty())
+    if (!batch.srv6NhgReducedVec.empty())
     {
-        m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
+        m_srv6Orch->removeSrv6Nexthops(batch.srv6NhgReducedVec);
+        batch.srv6NhgReducedVec.clear();
     }
 
     // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
@@ -1286,7 +1415,8 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
     /* No Update to Default Route so we can stop */
     if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
     {
-        return false;
+        keepDraining = false;
+        return true;
     }
 	/* Update to v4 Default Route so update the data structure */
     if (v4_default_nhg_key.getSize())
@@ -1298,6 +1428,7 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
     {
         updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
     }
+    keepDraining = true;
     return true;
 }
 
@@ -1305,7 +1436,9 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->allPortsReady())
+    /* A batch in flight is finished even if ports went not ready after it
+     * started: stopping here would leave ingress held by drainInFlight(). */
+    if (!gPortsOrch->allPortsReady() && !drainInFlight(consumer.getTableName()))
     {
         return;
     }
@@ -1318,11 +1451,21 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         return;
     }
 
-    /* Default handling is for APP_ROUTE_TABLE_NAME */
-    drainRoutes(consumer);
+    /* Default handling is for APP_ROUTE_TABLE_NAME. Only the ZMQ consumer
+     * yields; the label table above and the non-ZMQ consumer drain without
+     * yielding. */
+    auto *zmqConsumer = dynamic_cast<ZmqRouteConsumer *>(&consumer);
+    if (zmqConsumer != nullptr)
+    {
+        drainRoutes(*zmqConsumer);
+    }
+    else
+    {
+        drainRoutes(consumer);
+    }
 }
 
-/* Runs whole batches back to back. */
+/* Runs whole batches back to back, without yielding. */
 void RouteOrch::drainRoutes(ConsumerBase& consumer)
 {
     /* Entries to retry, and entries that were not ready, merge back into
@@ -1336,7 +1479,7 @@ void RouteOrch::drainRoutes(ConsumerBase& consumer)
     {
         RouteDrainBatch batch;
 
-        toBulkTask(consumer, batch);
+        toBulkTask(consumer, batch, kNeverExpired);
         for (auto& entry : batch.deferred)
         {
             deferred.push_back(std::move(entry));
@@ -1344,7 +1487,8 @@ void RouteOrch::drainRoutes(ConsumerBase& consumer)
         batch.deferred.clear();
         flushTask();
 
-        bool keepDraining = responseHandlerTask(consumer, batch, retained);
+        bool keepDraining = true;
+        responseHandlerTask(consumer, batch, retained, kNeverExpired, keepDraining);
 
         /* The scan staged nothing: m_toSync has no entry this call can
          * program. */
@@ -1368,6 +1512,152 @@ void RouteOrch::drainRoutes(ConsumerBase& consumer)
     if (!deferred.empty())
     {
         consumer.addToSyncNoRecord(deferred);
+    }
+}
+
+/* Yielding drain (route programming HLD sections 7.4 and 7.5). Each call runs
+ * the batch state machine until the quantum (m_drainQuantum, orchagent -Q)
+ * expires, checking it after each staged entry, each bulk chunk flushed and
+ * each status handled, and moving on to the next phase while time is left.
+ * When it stops with work left, it re-arms the consumer's selectable, so
+ * select() serves other ready selectables of equal or higher priority before
+ * the drain goes on; the daemon's sweep after each select also resumes it.
+ * One select iteration can therefore hold the main loop for about two quanta.
+ *
+ * While a batch is in flight, ZmqRouteConsumer::execute() does not merge
+ * m_ingress, so m_toSync changes only here and through retry cache promotion.
+ * Nothing outside RouteOrch stages into, flushes or clears gRouteBulker while
+ * a batch is in flight; VNetRouteOrch uses its own bulker. */
+void RouteOrch::drainRoutes(ZmqRouteConsumer& consumer)
+{
+    /* m_zmqDrainBatch belongs to the route table; drainInFlight() answers by
+     * table name. */
+    if (consumer.getTableName() != APP_ROUTE_TABLE_NAME)
+    {
+        SWSS_LOG_THROW("Yielding drain invoked for table %s; only %s owns m_zmqDrainBatch",
+                       consumer.getTableName().c_str(), APP_ROUTE_TABLE_NAME);
+    }
+
+    if (!m_muxDrainKnown)
+    {
+        /* Ports are ready before any drain runs, so the mux tables are
+         * complete by now (see hasMuxCableOrPeerSwitch()). */
+        m_muxDrainToCompletion = isDualTorSubtype() || hasMuxCableOrPeerSwitch();
+        m_muxDrainKnown = true;
+        if (m_muxDrainToCompletion)
+        {
+            SWSS_LOG_NOTICE("Mux is configured: route drains run to completion, without a quantum");
+        }
+    }
+
+    /* Warm restore runs before the select loop exists, so nothing would
+     * resume a yielded drain there. */
+    std::function<bool()> expired;
+    if (m_warmStartDrainToCompletion || m_muxDrainToCompletion)
+    {
+        expired = kNeverExpired;
+    }
+    else
+    {
+        const auto deadline = m_drainNow() + m_drainQuantum;
+        expired = [this, deadline]() {
+            return m_drainNow() >= deadline;
+        };
+    }
+
+    while (true)
+    {
+        switch (m_zmqDrainBatch.phase)
+        {
+        case RouteDrainBatch::Phase::kIdle:
+        {
+            if (consumer.m_toSync.empty())
+            {
+                return;
+            }
+            m_zmqDrainBatch.phase = RouteDrainBatch::Phase::kStaging;
+            break;
+        }
+        case RouteDrainBatch::Phase::kStaging:
+        {
+            if (!toBulkTask(consumer, m_zmqDrainBatch, expired))
+            {
+                consumer.notifyPending();
+                return;
+            }
+            m_zmqDrainBatch.phase = RouteDrainBatch::Phase::kFlushing;
+            break;
+        }
+        case RouteDrainBatch::Phase::kFlushing:
+        {
+            if (!gRouteBulker.flush_until(expired))
+            {
+                consumer.notifyPending();
+                return;
+            }
+            m_zmqDrainBatch.phase = RouteDrainBatch::Phase::kResponding;
+            break;
+        }
+        case RouteDrainBatch::Phase::kResponding:
+        {
+            bool keepDraining = true;
+            if (!responseHandlerTask(consumer, m_zmqDrainBatch,
+                                     m_zmqDrainBatch.retained, expired,
+                                     keepDraining))
+            {
+                consumer.notifyPending();
+                return;
+            }
+
+            bool progressed = !m_zmqDrainBatch.entries.empty();
+            std::deque<KeyOpFieldsValuesTuple> retained;
+            retained.swap(m_zmqDrainBatch.retained);
+            std::deque<KeyOpFieldsValuesTuple> deferred;
+            deferred.swap(m_zmqDrainBatch.deferred);
+            m_zmqDrainBatch.clear();
+
+            if (!retained.empty())
+            {
+                consumer.addToSyncNoRecord(retained);
+            }
+            if (!deferred.empty())
+            {
+                consumer.addToSyncNoRecord(deferred);
+            }
+
+            /* The batch is done and execute() merges m_ingress again. Re-arm
+             * when ingress is pending, since its notification may have been
+             * used by an execute() that could not merge, or when m_toSync has
+             * more work and this batch staged something and updated a
+             * default route. */
+            bool moreWork = keepDraining && progressed &&
+                            !consumer.m_toSync.empty();
+            if (consumer.ingressPending() || moreWork)
+            {
+                consumer.notifyPending();
+            }
+
+            /* Go on to the next batch in this call only when nothing was
+             * merged back: an entry that keeps failing, or stays not ready,
+             * is tried once per call. */
+            if (!moreWork || !retained.empty() || !deferred.empty())
+            {
+                return;
+            }
+            break;
+        }
+        }
+
+        if (expired())
+        {
+            /* Out of time between phases. A batch that just left kIdle has
+             * not re-armed the selectable yet. */
+            if (m_zmqDrainBatch.phase != RouteDrainBatch::Phase::kIdle)
+            {
+                consumer.notifyPending();
+            }
+            return;
+        }
     }
 }
 
@@ -2558,9 +2848,14 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
     return false;
 }
 
-bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                             RouteDrainBatch *sink)
 {
     SWSS_LOG_ENTER();
+
+    auto& nhgReducedRefCnt = sink ? sink->nhgReducedRefCnt : m_bulkNhgReducedRefCnt;
+    auto& srv6NhgReducedVec = sink ? sink->srv6NhgReducedVec : m_bulkSrv6NhgReducedVec;
+    auto& mplsNhReducedRefCnt = sink ? sink->mplsNhReducedRefCnt : m_bulkMplsNhReducedRefCnt;
 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2638,7 +2933,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             // Previous added an temporary route
             auto& tmp_next_hop = ctx.tmp_next_hop;
             if (tmp_next_hop.getSize() > 0) {
-                addRoutePost(ctx, tmp_next_hop);
+                addRoutePost(ctx, tmp_next_hop, sink);
             }
             return false;
         }
@@ -2684,7 +2979,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 if (it_route->second.nhg_key.getSize() > 1
                     && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
                 {
-                    m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                    nhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
                 }
             }
             SWSS_LOG_INFO("FG Post set route %s with next hop(s) %s",
@@ -2709,23 +3004,23 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     // srv6Nexthops acquires VPN/aggregation references on
                     // every attempt, even when the next hops already exist.
                     // Keep one release per attempt, not one per group.
-                    m_bulkSrv6NhgReducedVec.emplace_back(nextHops);
+                    srv6NhgReducedVec.emplace_back(nextHops);
                 }
                 if (nextHops.getSize() > 1)
                 {
                     // Group removal also releases overlay/MPLS members.
-                    m_bulkNhgReducedRefCnt.emplace(nextHops, 0);
+                    nhgReducedRefCnt.emplace(nextHops, 0);
                 }
                 else if (nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
                 {
-                    m_bulkNhgReducedRefCnt.emplace(nextHops, vrf_id);
+                    nhgReducedRefCnt.emplace(nextHops, vrf_id);
                 }
                 else if (nextHops.getSize() == 1)
                 {
                     const auto& nexthop = *nextHops.getNextHops().begin();
                     if (nexthop.isMplsNextHop())
                     {
-                        m_bulkMplsNhReducedRefCnt.insert(nexthop);
+                        mplsNhReducedRefCnt.insert(nexthop);
                     }
                 }
             }
@@ -2827,14 +3122,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             auto ol_nextHops = it_route->second.nhg_key;
             if (ol_nextHops.is_srv6_nexthop())
             {
-                m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
+                srv6NhgReducedVec.emplace_back(ol_nextHops);
             }
             if (ol_nextHops.getSize() > 1)
             {
                 if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
                 {
                     SWSS_LOG_NOTICE("Update Nexthop Group %s", ol_nextHops.to_string().c_str());
-                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                    nhgReducedRefCnt.emplace(ol_nextHops, 0);
                 }
                 if (mux_orch->isMuxNexthops(ol_nextHops))
                 {
@@ -2856,7 +3151,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
                 {
                     SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                    nhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
                 }
             }
             else if (ol_nextHops.getSize() == 1 && !ol_nextHops.is_srv6_nexthop())
@@ -3042,9 +3337,12 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx,
     return false;
 }
 
-bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
+bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx, RouteDrainBatch *sink)
 {
     SWSS_LOG_ENTER();
+
+    auto& nhgReducedRefCnt = sink ? sink->nhgReducedRefCnt : m_bulkNhgReducedRefCnt;
+    auto& srv6NhgReducedVec = sink ? sink->srv6NhgReducedVec : m_bulkSrv6NhgReducedVec;
 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -3148,7 +3446,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
         if (ol_nextHops.is_srv6_nexthop())
         {
-            m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
+            srv6NhgReducedVec.emplace_back(ol_nextHops);
         }
         
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
@@ -3157,7 +3455,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
             {
                 SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                nhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
             }
             if (mux_orch->isMuxNexthops(ol_nextHops))
             {
@@ -3179,7 +3477,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
             {
                 SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                nhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
             }
         }
         /*
@@ -3477,6 +3775,11 @@ const NhgBase &RouteOrch::getNhg(const std::string &nhg_index)
     }
     catch (const std::out_of_range& e)
     {
+        /* Without CbfNhgOrch the index does not resolve. */
+        if (gCbfNhgOrch == nullptr)
+        {
+            throw;
+        }
         return gCbfNhgOrch->getNhg(nhg_index);
     }
 }

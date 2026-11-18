@@ -4,6 +4,11 @@
 #define protected public
 #include "orch.h"
 #undef protected
+/* Reach RouteOrch's drain state and its bulker; must precede
+ * mock_orchagent_main.h, which includes routeorch.h. */
+#define private public
+#include "routeorch.h"
+#undef private
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "swssnet.h"
@@ -11,6 +16,12 @@
 #include "mock_response_publisher.h"
 #include "mock_sai_api.h"
 #include "bulker.h"
+#include "select.h"
+#include "zmqclient.h"
+#include "zmqproducerstatetable.h"
+
+#include <chrono>
+#include <thread>
 
 extern string gMySwitchType;
 extern bool gEnableFibSuppress;
@@ -2028,6 +2039,509 @@ namespace routeorch_test
         ASSERT_FALSE(gNhgOrch->hasNhg(index));
     }
 
+    /* Restores the drain quantum, clock and warm start flag on scope exit, so
+     * a test body aborted by an ASSERT cannot leak them into later tests. */
+    struct DrainClockGuard
+    {
+        std::chrono::milliseconds quantum;
+        std::function<std::chrono::steady_clock::time_point()> now;
+        bool warmStartDrainToCompletion;
+        DrainClockGuard()
+            : quantum(gRouteOrch->m_drainQuantum), now(gRouteOrch->m_drainNow),
+              warmStartDrainToCompletion(gRouteOrch->m_warmStartDrainToCompletion) {}
+        ~DrainClockGuard()
+        {
+            gRouteOrch->m_drainQuantum = quantum;
+            gRouteOrch->m_drainNow = now;
+            gRouteOrch->m_warmStartDrainToCompletion = warmStartDrainToCompletion;
+        }
+    };
+
+    /* With time left in the quantum, a small batch runs all phases -- stage,
+     * flush, handle responses -- in one doTask call, leaving nothing in
+     * flight and nothing re-armed. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainSmallBatchSingleInvocation)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        /* A long quantum, so a CI scheduling stall cannot fake an expiry. */
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+        /* Never bound: no mqPollThread, no real traffic needed. */
+        swss::ZmqRouteServer server("tcp://*:1281", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        swss::Select sel;
+        sel.addSelectable(&consumer);
+        swss::Selectable *out = nullptr;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        zorch->doTask(consumer);
+        ASSERT_TRUE(consumer.m_toSync.empty());
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(base_create + 1, create_route_count);
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::TIMEOUT);
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.9.0/24")));
+    }
+
+    /* Quantum 0 yields at every check: each call advances one unit of work
+     * (phase change, staged entry, bulk chunk, handled status) and re-arms
+     * the selectable. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainQuantumZeroStepsUnits)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        swss::ZmqRouteServer server("tcp://*:1288", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        swss::Select sel;
+        sel.addSelectable(&consumer);
+        swss::Selectable *out = nullptr;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        /* Call 1: kIdle -> kStaging only. */
+        zorch->doTask(consumer);
+        ASSERT_FALSE(consumer.m_toSync.empty());
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::OBJECT);
+
+        /* Call 2: stages the only entry; the scan ends. */
+        zorch->doTask(consumer);
+        ASSERT_TRUE(consumer.m_toSync.empty());
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(base_create, create_route_count);
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::OBJECT);
+
+        /* Call 3: flushes the batch to SAI. */
+        zorch->doTask(consumer);
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(base_create + 1, create_route_count);
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::OBJECT);
+
+        /* Call 4: handles the status, runs the epilogue and ends the batch.
+         * Nothing is pending, so nothing is re-armed. */
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::TIMEOUT);
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.9.0/24")));
+    }
+
+    /* Warm restore drains to completion whatever the quantum: with quantum 0,
+     * one doTask stages, flushes and ends the whole backlog, because
+     * warmRestoreAndSyncUp() has no select loop to resume a yielded drain. */
+    TEST_F(RouteOrchTest, RouteOrch_WarmStartDrainsToCompletionIgnoringQuantum)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        gRouteOrch->setWarmStartDrainToCompletion(true);
+
+        swss::ZmqRouteServer server("tcp://*:1291", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        swss::Select sel;
+        sel.addSelectable(&consumer);
+        swss::Selectable *out = nullptr;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        entries.push_back({"9.9.10.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        entries.push_back({"9.9.11.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        zorch->doTask(consumer);
+        ASSERT_TRUE(consumer.m_toSync.empty());
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        /* One batch, one bulk create call. */
+        ASSERT_EQ(base_create + 1, create_route_count);
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::TIMEOUT);
+
+        gRouteOrch->setWarmStartDrainToCompletion(false);
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.9.0/24")));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.10.0/24")));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.11.0/24")));
+    }
+
+    /* A quantum that expires mid-scan pauses staging, and the next call
+     * stages into the same batch: one flush, one response pass, one
+     * epilogue. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainStagingResumesSameBatch)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        swss::ZmqRouteServer server("tcp://*:1289", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.9.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        entries.push_back({"9.9.10.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        entries.push_back({"9.9.11.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        /* kIdle -> kStaging. */
+        zorch->doTask(consumer);
+        /* One staged entry per call; the batch grows across quanta. */
+        for (size_t staged = 1; staged <= 3; staged++)
+        {
+            zorch->doTask(consumer);
+            ASSERT_EQ(consumer.m_toSync.size(), 3 - staged);
+            ASSERT_EQ(gRouteOrch->m_zmqDrainBatch.entries.size(), staged);
+            ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+            ASSERT_EQ(base_create, create_route_count);
+        }
+
+        /* One call flushes all three in one bulk call. */
+        zorch->doTask(consumer);
+        ASSERT_EQ(base_create + 1, create_route_count);
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        /* One handled status per call; the epilogue runs once, with the
+         * last one. */
+        for (size_t responded = 1; responded <= 3; responded++)
+        {
+            ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+            ASSERT_EQ(gRouteOrch->m_zmqDrainBatch.respondCursor, responded - 1);
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.9.0/24")));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.10.0/24")));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.11.0/24")));
+    }
+
+    /* Expiry through the injectable clock: with a 20ms quantum and a clock
+     * that advances 11ms per reading, the deadline is read at T, the check
+     * after kIdle at T+11 and the check after the first staged entry at T+22,
+     * so the first call stops with exactly one entry staged. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainClockDrivenExpiry)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        auto fakeNow = std::make_shared<std::chrono::steady_clock::time_point>(
+            std::chrono::steady_clock::time_point{});
+        gRouteOrch->m_drainNow = [fakeNow]() {
+            auto t = *fakeNow;
+            *fakeNow += std::chrono::milliseconds(11);
+            return t;
+        };
+
+        swss::ZmqRouteServer server("tcp://*:1290", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        for (int i = 0; i < 5; i++)
+        {
+            entries.push_back({"9.9." + std::to_string(20 + i) + ".0/24", "SET",
+                               {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        }
+        consumer.addToSync(entries);
+
+        zorch->doTask(consumer);
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(gRouteOrch->m_zmqDrainBatch.entries.size(), 1u);
+        ASSERT_EQ(consumer.m_toSync.size(), 4u);
+
+        for (int i = 0; i < 32 && zorch->drainInFlight(APP_ROUTE_TABLE_NAME); i++)
+        {
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_TRUE(consumer.m_toSync.empty());
+
+        gRouteOrch->m_drainNow = []() { return std::chrono::steady_clock::now(); };
+        for (int i = 0; i < 5; i++)
+        {
+            ASSERT_TRUE(gRouteOrch->removeRoutePrefix(
+                IpPrefix("9.9." + std::to_string(20 + i) + ".0/24")));
+        }
+    }
+
+    /* While a batch is in flight, execute() does not merge m_ingress into
+     * m_toSync. When the batch ends with ingress pending, the drain re-arms
+     * the selectable, so data whose notification an execute() used while it
+     * could not merge is not left behind. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainGatesIngressUntilBatchDone)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        swss::ZmqRouteServer server("tcp://*:1282", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+        server.bind();
+
+        swss::ZmqClient client("tcp://localhost:1282", 0);
+        swss::ZmqProducerStateTable producer(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                             client, /*dbPersistence=*/false);
+
+        /* One unit per call, so the batch stays in flight across several
+         * execute() calls. */
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+
+        /* Start a batch (kIdle -> kStaging). */
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.8.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+        zorch->doTask(consumer);
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        /* A route that arrives over ZMQ mid-batch stays in m_ingress. */
+        producer.set("9.9.7.0/24", {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}});
+        for (int i = 0; i < 100 && !consumer.ingressPending(); ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        ASSERT_TRUE(consumer.ingressPending());
+
+        /* execute() stages the batch entry and merges nothing. */
+        consumer.execute();
+        ASSERT_TRUE(consumer.ingressPending());
+        ASSERT_TRUE(consumer.m_toSync.empty());
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        /* execute() flushes; still in flight, still not merging. */
+        consumer.execute();
+        ASSERT_TRUE(consumer.ingressPending());
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        /* execute() ends the batch, which re-arms the selectable because
+         * ingress is pending. */
+        consumer.execute();
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_TRUE(consumer.ingressPending());
+
+        swss::Select sel;
+        sel.addSelectable(&consumer);
+        swss::Selectable *out = nullptr;
+        ASSERT_EQ(sel.select(&out, 0), swss::Select::OBJECT);
+
+        /* With no batch in flight, execute() merges ingress and starts the
+         * next batch. */
+        consumer.execute();
+        ASSERT_FALSE(consumer.ingressPending());
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        for (int i = 0; i < 8 && zorch->drainInFlight(APP_ROUTE_TABLE_NAME); i++)
+        {
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.8.0/24")));
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("9.9.7.0/24")));
+    }
+
+    /* The DELs a resync marker generates merge into m_toSync when the same
+     * scan ends, so a batch left in flight does not lose them. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainResyncStagesDels)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        swss::ZmqRouteServer server("tcp://*:1283", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.6.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        entries.clear();
+        entries.push_back({"resync", "SET", {}});
+        consumer.addToSync(entries);
+        zorch->doTask(consumer);
+
+        bool delStaged = false;
+        for (const auto &kv : consumer.m_toSync)
+        {
+            if (kv.first == "9.9.6.0/24" && kfvOp(kv.second) == DEL_COMMAND)
+            {
+                delStaged = true;
+            }
+        }
+        ASSERT_TRUE(delStaged);
+
+        /* Complete the resync and replay the DEL. */
+        entries.clear();
+        entries.push_back({"resync", "DEL", {}});
+        consumer.addToSync(entries);
+        for (int i = 0;
+             i < 8 && (!consumer.m_toSync.empty() ||
+                       zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+             ++i)
+        {
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_TRUE(consumer.m_toSync.empty());
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
+    /* A backlog of entries that are all not ready must not stall the
+     * yielding drain. The scan restarts at m_toSync.begin() after each
+     * yield; entries skipped in place would be walked again every quantum
+     * and the scan, with ingress held, would never end. They are moved out
+     * of m_toSync instead and come back when the batch ends. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainDeferredSkipsTerminate)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+        auto fakeNow = std::make_shared<std::chrono::steady_clock::time_point>(
+            std::chrono::steady_clock::time_point{});
+        gRouteOrch->m_drainNow = [fakeNow]() {
+            auto t = *fakeNow;
+            *fakeNow += std::chrono::milliseconds(11);
+            return t;
+        };
+
+        swss::ZmqRouteServer server("tcp://*:1284", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        /* Seven routes, none ready: six in a VRF that does not exist, and
+         * one on a next hop group index that has not been created. */
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        for (int i = 0; i < 6; i++)
+        {
+            entries.push_back({"VrfMissing:9.9.3" + std::to_string(i) + ".0/24", "SET",
+                               {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        }
+        entries.push_back({"9.9.36.0/24", "SET",
+                           {{"nexthop_group", "nhg_not_created_yet"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        /* The quantum expires after the first entry, which is deferred, not
+         * staged. */
+        zorch->doTask(consumer);
+        ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_TRUE(gRouteOrch->m_zmqDrainBatch.entries.empty());
+        ASSERT_EQ(gRouteOrch->m_zmqDrainBatch.deferred.size(), 1u);
+        ASSERT_EQ(consumer.m_toSync.size(), 6u);
+
+        for (int i = 0; i < 32 && zorch->drainInFlight(APP_ROUTE_TABLE_NAME); i++)
+        {
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+
+        /* Nothing programmed, nothing lost: all seven are back in m_toSync,
+         * and no context of theirs is left behind. */
+        ASSERT_EQ(base_create, create_route_count);
+        ASSERT_EQ(consumer.m_toSync.size(), 7u);
+        ASSERT_TRUE(gRouteOrch->m_zmqDrainBatch.deferred.empty());
+        ASSERT_TRUE(gRouteOrch->m_zmqDrainBatch.toBulk.empty());
+
+        gRouteOrch->m_drainNow = []() { return std::chrono::steady_clock::now(); };
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
+    /* A deferred route programs once what it waits for appears: a route in a
+     * VRF that does not exist yet is deferred, and after the VRF is created
+     * and the interface bound, the next drain programs it. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainDeferredVrfRouteProgramsLater)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+
+        swss::ZmqRouteServer server("tcp://*:1285", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"VrfBlue:9.9.40.0/24", "SET", {{"protocol", "kernel"},
+                                                          {"nexthop", "0.0.0.0"},
+                                                          {"ifname", "Ethernet12"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(base_create, create_route_count);
+        ASSERT_EQ(consumer.m_toSync.size(), 1u);
+
+        entries.clear();
+        entries.push_back({"VrfBlue", "SET", {{"vni", "500300"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        entries.clear();
+        entries.push_back({"Ethernet12", "SET", {{"vrf_name", "VrfBlue"}}});
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_TRUE(consumer.m_toSync.empty());
+        ASSERT_EQ(base_create + 1, create_route_count);
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
     /* clear() resets a context for a fresh attempt at the same route: key
      * and is_set stay, every per-attempt field resets. */
     TEST(RouteBulkContextClear, PreservesIdentityResetsScratch)
@@ -2048,6 +2562,7 @@ namespace routeorch_test
         ctx.vrf_group_flag = true;
         ctx.protocol = "bgp";
         ctx.fallback_to_default_route = true;
+        ctx.staged = StagedNextHop::kNextHops;
 
         ctx.clear();
 
@@ -2069,6 +2584,7 @@ namespace routeorch_test
         EXPECT_FALSE(ctx.vrf_group_flag);
         EXPECT_TRUE(ctx.protocol.empty());
         EXPECT_FALSE(ctx.fallback_to_default_route);
+        EXPECT_EQ(ctx.staged, StagedNextHop::kNone);
     }
 
     TEST(RouteBulkContextClear, LabelContextResetsScratch)
@@ -2089,5 +2605,530 @@ namespace routeorch_test
         EXPECT_EQ(ctx.pop_count, 0);
         EXPECT_FALSE(ctx.excp_intfs_flag);
         EXPECT_FALSE(ctx.using_temp_nhg);
+    }
+
+    /* A second m_toSync entry for a (key, op) whose context this batch has
+     * already staged must not reset that context, since the bulker holds
+     * pointers into its statuses. It is deferred to the next drain. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainDuplicateOfInFlightEntryDeferred)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+
+        swss::ZmqRouteServer server("tcp://*:1286", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        /* A batch in kStaging that already staged this key. */
+        auto& batch = gRouteOrch->m_zmqDrainBatch;
+        auto rc = batch.toBulk.emplace(std::piecewise_construct,
+                std::forward_as_tuple("9.9.50.0/24", "SET"),
+                std::forward_as_tuple("9.9.50.0/24", true));
+        rc.first->second.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        batch.phase = RouteOrch::RouteDrainBatch::Phase::kStaging;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.50.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        consumer.addToSync(entries);
+
+        auto base_create = create_route_count;
+
+        /* The duplicate is deferred and the batch ends; the planted context
+         * has no batch entry, so nothing is programmed from it. */
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(base_create, create_route_count);
+        ASSERT_EQ(consumer.m_toSync.size(), 1u);
+
+        consumer.m_toSync.clear();
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
+    /* Teardowns a yielded batch has collected live in the batch. A label or
+     * VNET drain running between quanta clears the shared
+     * m_bulkNhgReducedRefCnt / m_bulkSrv6NhgReducedVec for its own pass; if
+     * the batch kept its teardowns there, the cleared groups would never be
+     * removed. */
+    TEST_F(RouteOrchTest, RouteOrch_YieldingDrainRespondYieldSurvivesForeignAccumulatorClear)
+    {
+        auto *zorch = static_cast<ZmqRouteOrch *>(gRouteOrch);
+        DrainClockGuard drainStateGuard;
+        swss::ZmqRouteServer server("tcp://*:1287", "", /*lazyBind=*/true);
+        ZmqRouteConsumer consumer(
+            new swss::ZmqRouteConsumerStateTable(m_app_db.get(), APP_ROUTE_TABLE_NAME,
+                                                 server, 5, /*dbPersistence=*/false),
+            zorch, APP_ROUTE_TABLE_NAME);
+
+        /* Resolve 10.0.0.4 so the two routes get distinct groups (SetUp
+         * resolves only .2 and .3). */
+        Table neighborTable(m_app_db.get(), APP_NEIGH_TABLE_NAME);
+        neighborTable.set("Ethernet0:10.0.0.4",
+                          {{"neigh", "00:00:0a:00:00:04"}, {"family", "IPv4"}});
+        gNeighOrch->addExistingData(&neighborTable);
+        static_cast<Orch *>(gNeighOrch)->doTask();
+
+        auto base_nhg_count = gRouteOrch->m_nextHopGroupCount;
+
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"9.9.60.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.3"}}});
+        entries.push_back({"9.9.61.0/24", "SET",
+                           {{"ifname", "Ethernet0,Ethernet0"},
+                            {"nexthop", "10.0.0.2,10.0.0.4"}}});
+        consumer.addToSync(entries);
+        zorch->doTask(consumer);
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(gRouteOrch->m_nextHopGroupCount, base_nhg_count + 2);
+
+        /* Delete both, one unit per call, and stop once the first status is
+         * handled: the first group's teardown is then pending. */
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        entries.clear();
+        entries.push_back({"9.9.60.0/24", "DEL", {}});
+        entries.push_back({"9.9.61.0/24", "DEL", {}});
+        consumer.addToSync(entries);
+
+        bool reachedMidResponse = false;
+        for (int i = 0; i < 16; i++)
+        {
+            zorch->doTask(consumer);
+            ASSERT_TRUE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME))
+                << "batch completed without pausing between responses";
+            if (gRouteOrch->m_zmqDrainBatch.phase == RouteOrch::RouteDrainBatch::Phase::kResponding &&
+                gRouteOrch->m_zmqDrainBatch.respondCursor == 1)
+            {
+                reachedMidResponse = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(reachedMidResponse);
+        ASSERT_FALSE(gRouteOrch->m_zmqDrainBatch.nhgReducedRefCnt.empty());
+
+        /* What a label or VNET drain does between quanta. */
+        gRouteOrch->m_bulkNhgReducedRefCnt.clear();
+        gRouteOrch->m_bulkSrv6NhgReducedVec.clear();
+
+        for (int i = 0; i < 8 && zorch->drainInFlight(APP_ROUTE_TABLE_NAME); i++)
+        {
+            zorch->doTask(consumer);
+        }
+        ASSERT_FALSE(zorch->drainInFlight(APP_ROUTE_TABLE_NAME));
+        ASSERT_EQ(gRouteOrch->m_nextHopGroupCount, base_nhg_count);
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(20);
+    }
+
+    /*
+     * Routes the yielding drain has staged and not answered yet pin what they
+     * were staged on. The helpers below drive the drain to a chosen point.
+     */
+    namespace inflight
+    {
+        using Phase = RouteOrch::RouteDrainBatch::Phase;
+
+        const NextHopKey nh2("10.0.0.2@Ethernet0");
+        const NextHopKey nh3("10.0.0.3@Ethernet0");
+
+        struct Zmq
+        {
+            swss::ZmqRouteServer server;
+            ZmqRouteConsumer consumer;
+
+            Zmq(swss::DBConnector *db, int port)
+                : server("tcp://*:" + std::to_string(port), "", /*lazyBind=*/true),
+                  consumer(new swss::ZmqRouteConsumerStateTable(db, APP_ROUTE_TABLE_NAME, server, 5,
+                                                                /*dbPersistence=*/false),
+                           static_cast<ZmqRouteOrch *>(gRouteOrch), APP_ROUTE_TABLE_NAME)
+            {
+            }
+
+            void add(const std::vector<KeyOpFieldsValuesTuple> &kofvs)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries(kofvs.begin(), kofvs.end());
+                consumer.addToSync(entries);
+            }
+
+            void step()
+            {
+                static_cast<ZmqRouteOrch *>(gRouteOrch)->doTask(consumer);
+            }
+
+            bool stepUntil(const std::function<bool()> &done, int max = 200)
+            {
+                for (int i = 0; i < max && !done(); i++)
+                {
+                    step();
+                }
+                return done();
+            }
+
+            /* Runs the batch in flight, and any work it leaves, to the end. */
+            void finish()
+            {
+                gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+                for (int i = 0; i < 20 && (consumer.hasPendingTasks() ||
+                                           gRouteOrch->drainInFlight(APP_ROUTE_TABLE_NAME)); i++)
+                {
+                    step();
+                }
+            }
+        };
+
+        RouteOrch::RouteDrainBatch &batch()
+        {
+            return gRouteOrch->m_zmqDrainBatch;
+        }
+
+        /* Every route of the batch staged, none flushed. */
+        bool staged()
+        {
+            return batch().phase == Phase::kFlushing;
+        }
+
+        /* Every route of the batch flushed, none answered. */
+        bool flushed()
+        {
+            return batch().phase == Phase::kResponding && batch().respondCursor == 0 &&
+                   !batch().entries.empty();
+        }
+
+        /* The context of the SET of `prefix` in the batch in flight. */
+        RouteBulkContext *stagedContext(const IpPrefix &prefix)
+        {
+            for (auto &it : batch().toBulk)
+            {
+                if (it.second.is_set && it.second.ip_prefix == prefix)
+                {
+                    return &it.second;
+                }
+            }
+            return nullptr;
+        }
+
+        void feedNhg(const KeyOpFieldsValuesTuple &entry)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gNhgOrch->getExecutor(APP_NEXTHOP_GROUP_TABLE_NAME));
+            ASSERT_NE(consumer, nullptr);
+            std::deque<KeyOpFieldsValuesTuple> entries{entry};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gNhgOrch)->doTask();
+        }
+
+        void setNhg(const string &index, const string &nexthops, const string &ifnames)
+        {
+            feedNhg({index, "SET", {{"nexthop", nexthops}, {"ifname", ifnames}}});
+        }
+
+        sai_object_id_t nhgId(const string &index)
+        {
+            return gNhgOrch->getNhg(index).getId();
+        }
+
+        /* NhgOrchCommon keeps its groups protected; a member pointer taken in
+         * a derived class reaches them. */
+        struct NhgPeek : NhgOrch
+        {
+            static unsigned refs(NhgOrch *orch, const string &index)
+            {
+                return (orch->*(&NhgPeek::m_syncdNextHopGroups)).at(index).ref_count;
+            }
+        };
+
+        unsigned nhgRefs(const string &index)
+        {
+            return NhgPeek::refs(gNhgOrch, index);
+        }
+
+        const RouteNhg *recorded(const IpPrefix &prefix)
+        {
+            auto table = gRouteOrch->m_syncdRoutes.find(gVirtualRouterId);
+            if (table == gRouteOrch->m_syncdRoutes.end())
+            {
+                return nullptr;
+            }
+            auto route = table->second.find(prefix);
+            return route == table->second.end() ? nullptr : &route->second;
+        }
+
+        sai_object_id_t routeNextHopIdOf(const IpPrefix &prefix)
+        {
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = gVirtualRouterId;
+            route_entry.switch_id = gSwitchId;
+            swss::copy(route_entry.destination, prefix);
+            sai_attribute_t attr;
+            attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            attr.value.oid = SAI_NULL_OBJECT_ID;
+            if (sai_route_api->get_route_entry_attribute(&route_entry, 1, &attr) != SAI_STATUS_SUCCESS)
+            {
+                return SAI_NULL_OBJECT_ID;
+            }
+            return attr.value.oid;
+        }
+
+        IpPrefix prefixOf(const sai_route_entry_t &entry)
+        {
+            IpAddress ip(entry.destination.addr.ip4);
+            int len = __builtin_popcount(entry.destination.mask.ip4);
+            return IpPrefix(ip.to_string() + "/" + std::to_string(len));
+        }
+
+        /* One bulk route remove of this prefix fails with `status`; every
+         * other entry of that call goes to SAI. */
+        IpPrefix fail_prefix;
+        sai_status_t fail_remove_status = SAI_STATUS_SUCCESS;
+        sai_bulk_remove_route_entry_fn saved_bulk_remove = nullptr;
+
+        sai_status_t failOnceBulkRemove(uint32_t count, const sai_route_entry_t *entries,
+                                        sai_bulk_op_error_mode_t mode, sai_status_t *statuses)
+        {
+            std::vector<sai_route_entry_t> pass_entries;
+            std::vector<uint32_t> pass_index;
+            bool failed = false;
+            for (uint32_t i = 0; i < count; i++)
+            {
+                if (fail_remove_status != SAI_STATUS_SUCCESS && prefixOf(entries[i]) == fail_prefix)
+                {
+                    statuses[i] = fail_remove_status;
+                    failed = true;
+                    continue;
+                }
+                pass_entries.push_back(entries[i]);
+                pass_index.push_back(i);
+            }
+            if (failed)
+            {
+                fail_remove_status = SAI_STATUS_SUCCESS;
+            }
+            if (!pass_entries.empty())
+            {
+                std::vector<sai_status_t> pass_statuses(pass_entries.size());
+                saved_bulk_remove(static_cast<uint32_t>(pass_entries.size()), pass_entries.data(), mode,
+                                  pass_statuses.data());
+                for (size_t i = 0; i < pass_index.size(); i++)
+                {
+                    statuses[pass_index[i]] = pass_statuses[i];
+                }
+            }
+            return failed ? SAI_STATUS_FAILURE : SAI_STATUS_SUCCESS;
+        }
+
+        struct FailRemoveOnce
+        {
+            FailRemoveOnce(const IpPrefix &prefix, sai_status_t status)
+            {
+                fail_prefix = prefix;
+                fail_remove_status = status;
+                /* The drain's bulker copied the API's functions when it was
+                 * built, so the failure goes into its copy. */
+                saved_bulk_remove = gRouteOrch->gRouteBulker.remove_entries;
+                gRouteOrch->gRouteBulker.remove_entries = failOnceBulkRemove;
+            }
+            ~FailRemoveOnce()
+            {
+                gRouteOrch->gRouteBulker.remove_entries = saved_bulk_remove;
+                fail_remove_status = SAI_STATUS_SUCCESS;
+            }
+        };
+    }
+
+    /* A group DEL arriving while a route on it is staged or flushed waits for
+     * the route; the route ends on the group's ID. */
+    TEST_F(RouteOrchTest, InFlightGroupDelWaitsForTheStagedRoute)
+    {
+        using namespace inflight;
+        DrainClockGuard clock;
+        Zmq z(m_app_db.get(), 1301);
+        const string x = "nhg_inflight_x", y = "nhg_inflight_y";
+        const IpPrefix prefix("40.1.0.0/24");
+
+        for (bool update : {false, true})
+        {
+            for (bool at_flush : {false, true})
+            {
+                SCOPED_TRACE(string(update ? "update" : "create") + (at_flush ? ", flushed" : ", staged"));
+                setNhg(x, "10.0.0.2", "Ethernet0");
+                setNhg(y, "10.0.0.3", "Ethernet0");
+                if (update)
+                {
+                    z.add({{prefix.to_string(), "SET", {{"nexthop_group", y}}}});
+                    z.finish();
+                    ASSERT_EQ(routeNextHopIdOf(prefix), nhgId(y));
+                }
+
+                gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+                z.add({{prefix.to_string(), "SET", {{"nexthop_group", x}}}});
+                ASSERT_TRUE(z.stepUntil(at_flush ? flushed : staged));
+                EXPECT_EQ(nhgRefs(x), 1u) << "the staged route pins its group";
+
+                feedNhg({x, "DEL", {}});
+                ASSERT_TRUE(gNhgOrch->hasNhg(x)) << "a pinned group was deleted";
+
+                z.finish();
+                ASSERT_NE(recorded(prefix), nullptr);
+                EXPECT_EQ(recorded(prefix)->nhg_index, x);
+                EXPECT_EQ(routeNextHopIdOf(prefix), nhgId(x));
+                EXPECT_EQ(nhgRefs(x), 1u) << "the pin was not given back";
+
+                z.add({{prefix.to_string(), "DEL", {}}});
+                z.finish();
+                static_cast<Orch *>(gNhgOrch)->doTask();
+                EXPECT_FALSE(gNhgOrch->hasNhg(x)) << "the refused DEL did not complete";
+                feedNhg({y, "DEL", {}});
+                EXPECT_FALSE(gNhgOrch->hasNhg(y));
+            }
+        }
+    }
+
+    /* A DEL fails and a SET of the same prefix to the same group follows in
+     * the batch, so the recorded route equals the staged one and
+     * addRoutePost() is skipped. The staging pin is still given back. */
+    TEST_F(RouteOrchTest, InFlightPinIsReleasedWhenPostIsSkipped)
+    {
+        using namespace inflight;
+        const string x = "nhg_inflight_x";
+        const IpPrefix prefix("40.7.0.0/24");
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+
+        setNhg(x, "10.0.0.2", "Ethernet0");
+        std::deque<KeyOpFieldsValuesTuple> entries{{prefix.to_string(), "SET", {{"nexthop_group", x}}}};
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_EQ(nhgRefs(x), 1u);
+
+        {
+            FailRemoveOnce fail(prefix, SAI_STATUS_OBJECT_IN_USE);
+            entries = {{prefix.to_string(), "DEL", {}}, {prefix.to_string(), "SET", {{"nexthop_group", x}}}};
+            consumer->addToSync(entries);
+            static_cast<Orch *>(gRouteOrch)->doTask();
+        }
+
+        ASSERT_NE(recorded(prefix), nullptr);
+        EXPECT_EQ(recorded(prefix)->nhg_index, x);
+        EXPECT_EQ(nhgRefs(x), 1u) << "the staging pin was not given back";
+
+        entries = {{prefix.to_string(), "DEL", {}}};
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        EXPECT_EQ(recorded(prefix), nullptr);
+        EXPECT_EQ(nhgRefs(x), 0u);
+        feedNhg({x, "DEL", {}});
+        EXPECT_FALSE(gNhgOrch->hasNhg(x));
+    }
+
+    /* With the group table full, the route goes on a temporary next hop.
+     * That next hop is pinned and given back, not the group. */
+    TEST_F(RouteOrchTest, InFlightTemporaryRoutePinsItsNextHop)
+    {
+        using namespace inflight;
+        DrainClockGuard clock;
+        Zmq z(m_app_db.get(), 1308);
+        const IpPrefix prefix("40.8.0.0/24");
+        const NextHopGroupKey members("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+        const int nh2_refs = gNeighOrch->getNextHopRefCount(nh2);
+        const int nh3_refs = gNeighOrch->getNextHopRefCount(nh3);
+
+        struct MaxGuard
+        {
+            unsigned max = gRouteOrch->m_maxNextHopGroupCount;
+            ~MaxGuard() { gRouteOrch->m_maxNextHopGroupCount = max; }
+        } max_guard;
+        gRouteOrch->m_maxNextHopGroupCount = gRouteOrch->m_nextHopGroupCount + NhgOrch::getSyncedNhgCount();
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        z.add({{prefix.to_string(), "SET", {{"nexthop", "10.0.0.2,10.0.0.3"}, {"ifname", "Ethernet0,Ethernet0"}}}});
+        ASSERT_TRUE(z.stepUntil(staged));
+
+        RouteBulkContext *ctx = stagedContext(prefix);
+        ASSERT_NE(ctx, nullptr);
+        EXPECT_EQ(ctx->staged, StagedNextHop::kTempNextHop);
+        ASSERT_EQ(ctx->tmp_next_hop.getSize(), 1u);
+        const NextHopKey tmp = *ctx->tmp_next_hop.getNextHops().begin();
+        const NextHopKey other = tmp == nh2 ? nh3 : nh2;
+        const int tmp_refs = tmp == nh2 ? nh2_refs : nh3_refs;
+        const int other_refs = tmp == nh2 ? nh3_refs : nh2_refs;
+        EXPECT_FALSE(gRouteOrch->hasNextHopGroup(members));
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(tmp), tmp_refs + 1) << "the temporary next hop is not pinned";
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(other), other_refs);
+
+        gRouteOrch->m_drainQuantum = std::chrono::hours(1);
+        ASSERT_TRUE(z.stepUntil([]() { return !gRouteOrch->drainInFlight(APP_ROUTE_TABLE_NAME); }));
+        EXPECT_EQ(routeNextHopIdOf(prefix), gNeighOrch->getNextHopId(tmp));
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(tmp), tmp_refs + 1) << "only the route's own reference stays";
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(other), other_refs);
+
+        z.add({{prefix.to_string(), "DEL", {}}});
+        z.finish();
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh2), nh2_refs);
+        EXPECT_EQ(gNeighOrch->getNextHopRefCount(nh3), nh3_refs);
+    }
+
+    /* A RouteOrch group created for a staged route has no reference but the
+     * pin. Removing unused groups, as the label drain's epilogue does between
+     * quanta, must keep it. */
+    TEST_F(RouteOrchTest, InFlightGroupRemovalKeepsTheStagedRoutesGroup)
+    {
+        using namespace inflight;
+        DrainClockGuard clock;
+        Zmq z(m_app_db.get(), 1309);
+        const IpPrefix prefix("40.9.0.0/24");
+        const NextHopGroupKey members("10.0.0.2@Ethernet0,10.0.0.3@Ethernet0");
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        z.add({{prefix.to_string(), "SET", {{"nexthop", "10.0.0.2,10.0.0.3"}, {"ifname", "Ethernet0,Ethernet0"}}}});
+        ASSERT_TRUE(z.stepUntil(staged));
+        ASSERT_TRUE(gRouteOrch->hasNextHopGroup(members));
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.at(members).ref_count, 1) << "the staged route pins its group";
+
+        gRouteOrch->removeNextHopGroup(members);
+        ASSERT_TRUE(gRouteOrch->hasNextHopGroup(members)) << "a pinned group was removed";
+
+        z.finish();
+        EXPECT_EQ(routeNextHopIdOf(prefix), gRouteOrch->m_syncdNextHopGroups.at(members).next_hop_group_id);
+        EXPECT_EQ(gRouteOrch->m_syncdNextHopGroups.at(members).ref_count, 1);
+
+        z.add({{prefix.to_string(), "DEL", {}}});
+        z.finish();
+        EXPECT_FALSE(gRouteOrch->hasNextHopGroup(members));
+    }
+
+    /* A box with mux runs the yielding drain with no quantum. */
+    TEST_F(RouteOrchTest, InFlightMuxBoxDrainsToCompletion)
+    {
+        using namespace inflight;
+        DrainClockGuard clock;
+        Table mux_table(m_config_db.get(), CFG_MUX_CABLE_TABLE_NAME);
+        mux_table.set("Ethernet4", {{"server_ipv4", "192.168.0.2/32"}, {"state", "auto"}});
+        Zmq z(m_app_db.get(), 1311);
+
+        gRouteOrch->m_drainQuantum = std::chrono::milliseconds(0);
+        vector<IpPrefix> prefixes = {IpPrefix("40.11.1.0/24"), IpPrefix("40.11.2.0/24"), IpPrefix("40.11.3.0/24")};
+        for (const auto &prefix : prefixes)
+        {
+            z.add({{prefix.to_string(), "SET", {{"nexthop", "10.0.0.2"}, {"ifname", "Ethernet0"}}}});
+        }
+        z.step();
+        EXPECT_TRUE(gRouteOrch->m_muxDrainToCompletion);
+        EXPECT_FALSE(gRouteOrch->drainInFlight(APP_ROUTE_TABLE_NAME)) << "the drain yielded on a mux box";
+        EXPECT_TRUE(z.consumer.m_toSync.empty());
+        for (const auto &prefix : prefixes)
+        {
+            EXPECT_EQ(routeNextHopIdOf(prefix), gNeighOrch->getNextHopId(nh2));
+        }
+
+        for (const auto &prefix : prefixes)
+        {
+            z.add({{prefix.to_string(), "DEL", {}}});
+        }
+        z.finish();
+        mux_table.del("Ethernet4");
     }
 }
