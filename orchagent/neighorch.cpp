@@ -24,6 +24,7 @@ extern int32_t gVoqMySwitchId;
 extern BfdOrch *gBfdOrch;
 extern size_t gMaxBulkSize;
 extern string gMyHostName;
+extern bool gNeighborNexthopOnDemand;
 
 extern bool isChassisDbInUse();
 
@@ -39,6 +40,9 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
         m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    // Gate is read once at boot; a swss restart is needed to change it.
+    m_delayedNextHopCreation = gNeighborNexthopOnDemand;
 
     m_fdbOrch->attach(this);
 
@@ -68,6 +72,11 @@ NeighOrch::~NeighOrch()
     {
         m_fdbOrch->detach(this);
     }
+}
+
+bool NeighOrch::isDelayedNextHopCreation() const
+{
+    return m_delayedNextHopCreation;
 }
 
 /**

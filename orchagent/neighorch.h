@@ -76,6 +76,7 @@ public:
 
     bool hasNextHop(const NextHopKey&);
     bool isNeighborResolved(const NextHopKey&);
+    bool isDelayedNextHopCreation() const;
     bool addNextHop(NeighborContext& ctx);
     bool removeMplsNextHop(const NextHopKey&);
 
@@ -130,6 +131,10 @@ private:
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
+
+    // Boot-time gate: defer a resolved neighbor's next-hop creation until a
+    // route or group references it. Default false, read once at construction.
+    bool m_delayedNextHopCreation = false;
 
     std::set<NextHopKey> m_neighborToResolve;
 
