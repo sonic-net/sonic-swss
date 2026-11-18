@@ -56,6 +56,7 @@ const request_description_t vnet_request_description = {
         { "advertise_prefix",   REQ_T_BOOL},
         { "overlay_dmac",       REQ_T_MAC_ADDRESS},
         { "decap_tunnel_list",  REQ_T_SET },
+        { "evpn_enabled",       REQ_T_BOOL },
 
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes

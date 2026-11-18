@@ -2341,6 +2341,28 @@ namespace vnetorch_test
                   m_rt.removedNexthops.end());
     }
 
+    TEST_F(VNetOrchTest, VnetEvpnEnabledAttributeAccepted)
+    {
+        EXPECT_CALL(*mock_sai_virtual_router_api, create_virtual_router)
+            .Times(1)
+            .WillOnce(Invoke(m_vrMock.get(), &VirtualRouterSaiMock::handleCreate));
+
+        setVxlanTunnel("tunnel_v4", "10.1.0.32");
+
+        vector<FieldValueTuple> fvs = {{"vxlan_tunnel", "tunnel_v4"}, {"vni", "10003"},
+                                       {"peer_list", ""}, {"evpn_enabled", "true"}};
+        Table tbl(m_app_db.get(), APP_VNET_TABLE_NAME);
+        tbl.set("Vnet_evpn", fvs);
+        m_vnetOrch->addExistingData(&tbl);
+        static_cast<Orch *>(m_vnetOrch)->doTask();
+
+        EXPECT_NE(m_vrMock->created_oid, SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(m_vnetOrch->isVnetExists("Vnet_evpn"));
+
+        delVnet("Vnet_evpn");
+        EXPECT_FALSE(m_vnetOrch->isVnetExists("Vnet_evpn"));
+    }
+
     TEST_F(VNetOrchTest, VnetDecapTunnelListMissingTunnelFailsAdd)
     {
         EXPECT_CALL(*mock_sai_virtual_router_api, create_virtual_router)

@@ -496,6 +496,11 @@ bool VNetOrch::addOperation(const Request& request)
         {
             decap_tunnel_list = request.getAttrSet("decap_tunnel_list");
         }
+        else if (name == "evpn_enabled")
+        {
+            // Consumed by bgpcfgd to generate the FRR EVPN Type-5 config; no SAI attribute
+            continue;
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
