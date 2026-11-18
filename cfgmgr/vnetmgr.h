@@ -67,6 +67,14 @@ public:
         bool m_installed;
     } SmacRewriteRule;
 
+    typedef struct VxlanSwitchTableConfig
+    {
+        std::string m_routerMac;
+        unsigned m_basePort = VNET_DEFAULT_VXLAN_PORT;
+        unsigned m_srcPortMin = 0;
+        unsigned m_srcPortMax = 0;
+    } VxlanSwitchTableConfig;
+
 private:
     void doTask(Consumer &consumer);
     bool doVnetCreateTask(const KeyOpFieldsValuesTuple & t);
@@ -80,11 +88,10 @@ private:
     bool createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo);
     bool deleteKernelRoute(const std::string & vnet, const std::string & prefix);
 
-    bool readRouterMac(std::string & routerMac);
-    unsigned readBaseVxlanPort();
+    bool getSwitchTableVxlanConfig();
     bool readVtepSrcIp(const std::string & tunnel, std::string & srcIp);
 
-    bool ensureTxDevice(const std::string & vtep, unsigned basePort);
+    bool ensureTxDevice(const std::string & vtep);
     void teardownTxDevice();
     bool installNftTable();
 
@@ -117,9 +124,10 @@ private:
     std::map<std::string, std::string> m_smacRuleVni;
     uint32_t m_nextSmacHandle = 1;
 
+    VxlanSwitchTableConfig m_switchVxlanCfg;
+
     bool m_txReady = false;
     std::string m_txVtep;
-    unsigned m_txBasePort = 0;
 };
 
 } // namespace swss

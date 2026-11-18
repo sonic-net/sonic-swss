@@ -66,6 +66,7 @@ static int vnet_cb(const std::string &rawCmd, std::string &stdout)
         g_links[VNET_VXLAN_TX_DEV] = g_nextIfindex++;
         std::string params = cmd.substr(cmd.find("type vxlan"));
         g_txDetails = params.substr(0, params.find(" &&")) + " ";
+        if (g_txDetails.find(" srcport ") == std::string::npos) g_txDetails += "srcport 0 0 ";
         return 0;
     }
     if (cmd.find("link del dev " VNET_VXLAN_TX_DEV) != std::string::npos)
@@ -264,6 +265,46 @@ TEST_F(VNetMgrTest, TxDevicePortFollowsSwitchVxlanPort)
     ASSERT_TRUE(issued("udp dport 13331 udp dport set 13330;"));
 }
 
+TEST_F(VNetMgrTest, TxDeviceSrcPortRangeFollowsSwitchSportMask)
+{
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_sport", "32775"}, {"vxlan_mask", "4"}});
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("type vxlan external dstport 4790 srcport 32768 32784 local 10.1.0.1"));
+}
+
+TEST_F(VNetMgrTest, TxDeviceSrcPortMaskZeroPinsSinglePort)
+{
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_sport", "50000"}, {"vxlan_mask", "0"}});
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("dstport 4790 srcport 50000 50001 local"));
+}
+
+TEST_F(VNetMgrTest, TxDeviceInvalidSrcPortConfigUsesKernelDefault)
+{
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_sport", "32768"}, {"vxlan_mask", "17"}});
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("type vxlan external dstport 4790 local 10.1.0.1"));
+    ASSERT_FALSE(issued("srcport"));
+}
+
+TEST_F(VNetMgrTest, ExistingTxDeviceWithStaleSrcPortRangeIsRecreated)
+{
+    g_links[VNET_VXLAN_TX_DEV] = 55;
+    g_txDetails = "vxlan external id 0 local 10.1.0.1 srcport 0 0 dstport 4790 nolearning ";
+    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_sport", "32768"}, {"vxlan_mask", "4"}});
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("link del dev VxlanOutbSvd"));
+    ASSERT_TRUE(issued("dstport 4790 srcport 32768 32784 local 10.1.0.1"));
+}
+
 TEST_F(VNetMgrTest, RouteVniDefaultsToVnetVni)
 {
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
@@ -455,23 +496,31 @@ TEST_F(VNetMgrTest, ExistingMismatchedTxDeviceIsRecreated)
     ASSERT_TRUE(issued("link add VxlanOutbSvd type vxlan external dstport 4790 local 10.1.0.1"));
 }
 
-TEST_F(VNetMgrTest, DmacBypassInstalledOncePerVniAndNotBlocking)
+TEST_F(VNetMgrTest, KernelRouteWaitsForRouterMacThenSwitchConfigIsCached)
 {
-    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).hdel("switch", "vxlan_router_mac");
+    swss::Table switchTable(m_app_db.get(), APP_SWITCH_TABLE_NAME);
+    switchTable.hdel("switch", "vxlan_router_mac");
+    switchTable.set("switch", {{"vxlan_port", "13330"}});
     VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
     createVnet(mgr, "Vnet1", "1000");
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
-    ASSERT_TRUE(issued(R1));
-    ASSERT_FALSE(issued("tc qdisc replace"));
+    ASSERT_FALSE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_FALSE(issued("link add"));
+    ASSERT_FALSE(issued(R1));
 
-    swss::Table(m_app_db.get(), APP_SWITCH_TABLE_NAME).set("switch", {{"vxlan_router_mac", "aa:bb:cc:dd:ee:ff"}});
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.2.2/32", "10.0.0.3", "02:00:00:00:00:02")));
+    switchTable.set("switch", {{"vxlan_router_mac", "aa:bb:cc:dd:ee:ff"}});
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("type vxlan external dstport 13331 local 10.1.0.1"));
+    ASSERT_TRUE(issued(R1));
     ASSERT_TRUE(issued("tc qdisc replace dev Vxlan1000 clsact"));
     ASSERT_TRUE(issued("tc filter add dev Vxlan1000 ingress pref 1 handle 1 matchall action pedit ex munge eth dst set aa:bb:cc:dd:ee:ff"));
 
+    switchTable.set("switch", {{"vxlan_router_mac", "11:22:33:44:55:66"}, {"vxlan_port", "5000"}});
     mockCallArgs.clear();
-    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.3.3/32", "10.0.0.4", "02:00:00:00:00:03")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.3.3/32", "10.0.0.4", "")));
     ASSERT_FALSE(issued("tc qdisc replace"));
+    ASSERT_TRUE(issued("lladdr aa:bb:cc:dd:ee:ff"));
+    ASSERT_EQ(mgr.m_switchVxlanCfg.m_routerMac, "aa:bb:cc:dd:ee:ff");
+    ASSERT_EQ(mgr.m_switchVxlanCfg.m_basePort, 13330u);
 }
 
 TEST_F(VNetMgrTest, KernelRouteDeferredUntilVxlanNetdevButAppDbPublishedOnce)

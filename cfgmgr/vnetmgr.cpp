@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string>
 #include <cstdio>
@@ -84,12 +85,17 @@ static bool linkExists(const std::string & dev, std::string * details = nullptr)
     return true;
 }
 
-static int cmdCreateTxDevice(const std::string & vtep, unsigned port, std::string & res)
+static int cmdCreateTxDevice(const std::string & vtep, unsigned port,
+                             unsigned srcPortMin, unsigned srcPortMax, std::string & res)
 {
     ostringstream cmd;
     cmd << IP_CMD " link add " VNET_VXLAN_TX_DEV " type vxlan external"
-        << " dstport " << port
-        << " local " << shellquote(vtep)
+        << " dstport " << port;
+    if (srcPortMax > srcPortMin)
+    {
+        cmd << " srcport " << srcPortMin << " " << srcPortMax;
+    }
+    cmd << " local " << shellquote(vtep)
         << " nolearning && "
         << IP_CMD " link set dev " VNET_VXLAN_TX_DEV " up";
     return swss::exec(cmd.str(), res);
@@ -496,31 +502,96 @@ bool VNetMgr::doVnetRouteTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
     return true;
 }
 
-bool VNetMgr::readRouterMac(std::string & routerMac)
+static unsigned parseBaseVxlanPort(const std::string & value)
 {
-    routerMac.clear();
-    std::string value;
-    if (m_appSwitchTable.hget("switch", "vxlan_router_mac", value))
+    if (value.empty())
     {
-        routerMac = value;
+        return VNET_DEFAULT_VXLAN_PORT;
     }
-    return !routerMac.empty();
+    char *end = nullptr;
+    unsigned long port = strtoul(value.c_str(), &end, 10);
+    if (isdigit(static_cast<unsigned char>(value[0])) && *end == '\0' && port > 0 && port < 65535)
+    {
+        return static_cast<unsigned>(port);
+    }
+    SWSS_LOG_WARN("Ignoring invalid SWITCH_TABLE vxlan_port '%s', using %u", value.c_str(), VNET_DEFAULT_VXLAN_PORT);
+    return VNET_DEFAULT_VXLAN_PORT;
 }
 
-unsigned VNetMgr::readBaseVxlanPort()
+static void parseSrcPortRange(const std::string & sport, const std::string & mask,
+                              unsigned & srcPortMin, unsigned & srcPortMax)
 {
-    std::string value;
-    if (m_appSwitchTable.hget("switch", "vxlan_port", value) && !value.empty())
+    srcPortMin = srcPortMax = 0;
+    if (sport.empty() || mask.empty())
     {
-        char *end = nullptr;
-        unsigned long port = strtoul(value.c_str(), &end, 10);
-        if (end && *end == '\0' && port > 0 && port < 65535)
-        {
-            return static_cast<unsigned>(port);
-        }
-        SWSS_LOG_WARN("Ignoring invalid SWITCH_TABLE vxlan_port '%s'", value.c_str());
+        return;
     }
-    return VNET_DEFAULT_VXLAN_PORT;
+
+    char *sportEnd = nullptr, *maskEnd = nullptr;
+    unsigned long sportUL = strtoul(sport.c_str(), &sportEnd, 10);
+    unsigned long maskUL = strtoul(mask.c_str(), &maskEnd, 10);
+    if (!isdigit(static_cast<unsigned char>(sport[0])) || *sportEnd != '\0' || sportUL > 0xFFFF ||
+        !isdigit(static_cast<unsigned char>(mask[0])) || *maskEnd != '\0' || maskUL > 16)
+    {
+        SWSS_LOG_WARN("Ignoring invalid SWITCH_TABLE vxlan_sport '%s' / vxlan_mask '%s'",
+                      sport.c_str(), mask.c_str());
+        return;
+    }
+
+    const unsigned span = (1u << maskUL) - 1u;
+    const unsigned lo = static_cast<unsigned>(sportUL) & ~span;
+    const unsigned hi = lo | span;
+    if (hi == lo && hi == 0xFFFF)
+    {
+        SWSS_LOG_WARN("VXLAN source port 65535 cannot be pinned on %s, using kernel default",
+                      VNET_VXLAN_TX_DEV);
+        return;
+    }
+    srcPortMin = lo;
+    // kernel srcport max is exclusive
+    srcPortMax = std::min(hi + 1u, 0xFFFFu);
+}
+
+bool VNetMgr::getSwitchTableVxlanConfig()
+{
+    std::vector<FieldValueTuple> fvs;
+    if (!m_appSwitchTable.get("switch", fvs))
+    {
+        return false;
+    }
+
+    std::string routerMac, port, sport, mask;
+    for (const auto & fv : fvs)
+    {
+        if (fvField(fv) == "vxlan_router_mac")
+        {
+            routerMac = fvValue(fv);
+        }
+        else if (fvField(fv) == "vxlan_port")
+        {
+            port = fvValue(fv);
+        }
+        else if (fvField(fv) == "vxlan_sport")
+        {
+            sport = fvValue(fv);
+        }
+        else if (fvField(fv) == "vxlan_mask")
+        {
+            mask = fvValue(fv);
+        }
+    }
+    if (routerMac.empty())
+    {
+        return false;
+    }
+
+    m_switchVxlanCfg.m_routerMac = routerMac;
+    m_switchVxlanCfg.m_basePort = parseBaseVxlanPort(port);
+    parseSrcPortRange(sport, mask, m_switchVxlanCfg.m_srcPortMin, m_switchVxlanCfg.m_srcPortMax);
+    SWSS_LOG_NOTICE("SWITCH_TABLE vxlan config: router mac %s, port %u, srcport %u %u",
+                    routerMac.c_str(), m_switchVxlanCfg.m_basePort,
+                    m_switchVxlanCfg.m_srcPortMin, m_switchVxlanCfg.m_srcPortMax);
+    return true;
 }
 
 bool VNetMgr::readVtepSrcIp(const std::string & tunnel, std::string & srcIp)
@@ -536,26 +607,31 @@ bool VNetMgr::readVtepSrcIp(const std::string & tunnel, std::string & srcIp)
 
 bool VNetMgr::installNftTable()
 {
+    const unsigned basePort = m_switchVxlanCfg.m_basePort;
     std::string res;
-    if (cmdInstallNft(m_txVtep, m_txBasePort, res) != RET_SUCCESS)
+    if (cmdInstallNft(m_txVtep, basePort, res) != RET_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to install nft table %s (tx dport %u -> %u): %s",
-                       VNET_NFT_TABLE, m_txBasePort + 1, m_txBasePort, res.c_str());
+                       VNET_NFT_TABLE, basePort + 1, basePort, res.c_str());
         return false;
     }
     SWSS_LOG_NOTICE("Installed nft table %s: %s udp dport %u -> %u",
-                    VNET_NFT_TABLE, m_txVtep.c_str(), m_txBasePort + 1, m_txBasePort);
+                    VNET_NFT_TABLE, m_txVtep.c_str(), basePort + 1, basePort);
     return true;
 }
 
-bool VNetMgr::ensureTxDevice(const std::string & vtep, unsigned basePort)
+bool VNetMgr::ensureTxDevice(const std::string & vtep)
 {
     if (m_txReady)
     {
         return true;
     }
 
-    const unsigned txPort = basePort + 1;
+    const unsigned txPort = m_switchVxlanCfg.m_basePort + 1;
+    const unsigned srcPortMin = m_switchVxlanCfg.m_srcPortMin;
+    const unsigned srcPortMax = m_switchVxlanCfg.m_srcPortMax;
+    const std::string srcPortStr = " srcport " + std::to_string(srcPortMin) + " " +
+                                   std::to_string(srcPortMax) + " ";
     std::string details, res;
     bool present = linkExists(VNET_VXLAN_TX_DEV, &details);
     if (present)
@@ -563,11 +639,12 @@ bool VNetMgr::ensureTxDevice(const std::string & vtep, unsigned basePort)
         const std::string padded = details + " ";
         bool matches = padded.find(" external ") != std::string::npos &&
                        padded.find(" local " + vtep + " ") != std::string::npos &&
-                       padded.find(" dstport " + std::to_string(txPort) + " ") != std::string::npos;
+                       padded.find(" dstport " + std::to_string(txPort) + " ") != std::string::npos &&
+                       padded.find(srcPortStr) != std::string::npos;
         if (!matches)
         {
-            SWSS_LOG_NOTICE("Recreating %s for vtep %s dstport %u",
-                            VNET_VXLAN_TX_DEV, vtep.c_str(), txPort);
+            SWSS_LOG_NOTICE("Recreating %s for vtep %s dstport %u srcport %u %u",
+                            VNET_VXLAN_TX_DEV, vtep.c_str(), txPort, srcPortMin, srcPortMax);
             cmdDeleteTxDevice(res);
             present = false;
         }
@@ -578,17 +655,16 @@ bool VNetMgr::ensureTxDevice(const std::string & vtep, unsigned basePort)
     }
     if (!present)
     {
-        if (cmdCreateTxDevice(vtep, txPort, res) != RET_SUCCESS)
+        if (cmdCreateTxDevice(vtep, txPort, srcPortMin, srcPortMax, res) != RET_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create %s: %s", VNET_VXLAN_TX_DEV, res.c_str());
             return false;
         }
-        SWSS_LOG_NOTICE("Created %s (external, local %s, dstport %u)",
-                        VNET_VXLAN_TX_DEV, vtep.c_str(), txPort);
+        SWSS_LOG_NOTICE("Created %s (external, local %s, dstport %u, srcport %u %u)",
+                        VNET_VXLAN_TX_DEV, vtep.c_str(), txPort, srcPortMin, srcPortMax);
     }
 
     m_txVtep = vtep;
-    m_txBasePort = basePort;
     if (!installNftTable())
     {
         return false;
@@ -608,7 +684,6 @@ void VNetMgr::teardownTxDevice()
     cmdDeleteNft(res);
     m_txReady = false;
     m_txVtep.clear();
-    m_txBasePort = 0;
     m_neighRefs.clear();
     for (auto & bucket : m_smacRewriteRules)
     {
@@ -665,11 +740,10 @@ bool VNetMgr::installDmacBypassIfNeeded(const std::string & vnetVni, bool force)
         SWSS_LOG_INFO("%s not present yet, DMAC bypass waits for vxlanmgrd", vxlanDev.c_str());
         return false;
     }
-    std::string routerMac;
-    if (!readRouterMac(routerMac))
+    const std::string & routerMac = m_switchVxlanCfg.m_routerMac;
+    if (routerMac.empty())
     {
-        SWSS_LOG_WARN("vxlan_router_mac not set in SWITCH_TABLE, skipping DMAC bypass on %s",
-                      vxlanDev.c_str());
+        SWSS_LOG_INFO("vxlan_router_mac not loaded yet, skipping DMAC bypass on %s", vxlanDev.c_str());
         return false;
     }
     std::string res;
@@ -737,13 +811,15 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
         return false;
     }
 
-    std::string mac = vxlanRouteInfo.m_macAddress;
-    if (mac.empty() && !readRouterMac(mac))
+    if (m_switchVxlanCfg.m_routerMac.empty() && !getSwitchTableVxlanConfig())
     {
-        SWSS_LOG_INFO("Route %s has no mac_address and vxlan_router_mac is unset, defer",
+        SWSS_LOG_INFO("SWITCH_TABLE vxlan config (vxlan_router_mac) not ready, defer %s",
                       vxlanRouteInfo.m_routeName.c_str());
         return false;
     }
+
+    std::string mac = vxlanRouteInfo.m_macAddress.empty() ? m_switchVxlanCfg.m_routerMac
+                                                          : vxlanRouteInfo.m_macAddress;
     mac = normalizeMac(mac);
     if (mac.empty())
     {
@@ -769,7 +845,7 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
         return false;
     }
 
-    if (!ensureTxDevice(vtep, readBaseVxlanPort()))
+    if (!ensureTxDevice(vtep))
     {
         return false;
     }
