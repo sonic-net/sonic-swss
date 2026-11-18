@@ -3,6 +3,8 @@
 
 #include <vector>
 #include <memory>
+#include <set>
+#include <map>
 #include "aclorch.h"
 #include "table.h"
 
@@ -47,6 +49,17 @@ class PfcWdActionHandler
         }
 
         virtual bool isValid(void) const { return true; }
+
+        // Called by PfcWdSwOrch when a handler that deferred its programming
+        // turns out to have failed once the batch was flushed. Only handlers
+        // that defer work override this.
+        virtual void markInvalid(void) { }
+
+        // Called once after a whole batch of storm/restore events has been
+        // handled, so handlers that defer switch programming can apply it.
+        // Returns the OIDs of the queues whose programming failed. The default
+        // is a no-op for handlers that program nothing shared.
+        static std::set<sai_object_id_t> flush(void) { return std::set<sai_object_id_t>(); }
 
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
         void initCounters(void);
@@ -100,9 +113,31 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         static void clear();
 
         bool isValid(void) const override { return !m_rolledBack; }
+        void markInvalid(void) override;
+
+        // Bring each changed queue index's ingress drop rule in line with the
+        // ports its live handlers mitigate: one SAI call per queue index,
+        // instead of one per (port, queue). A failed write leaves the rule as
+        // it was. Only removals are retried by the next flush: a port that
+        // could not be added is dropped from the desired ports and not tried
+        // again, so its queue keeps only the egress drop until the storm ends,
+        // as before batching. Returns the OIDs of the queues whose port could
+        // not be added, so the caller can mark those handlers invalid.
+        static std::set<sai_object_id_t> flush(void);
+
     private:
         // class shared dict: ACL table name -> ACL table
         static std::map<std::string, AclTable> m_aclTables;
+
+        // Ports the ingress drop rule must carry: queue index -> port -> OID of
+        // the queue whose live handler mitigates that port.
+        static std::map<uint8_t, std::map<sai_object_id_t, sai_object_id_t>> m_desiredInPorts;
+
+        // Queue indexes whose rule may not match m_desiredInPorts yet.
+        static std::set<uint8_t> m_dirtyQueueIds;
+
+        // Consecutive failed flushes per queue index, to rate-limit the log.
+        static std::map<uint8_t, uint32_t> m_failedFlushes;
 
         bool shared_egress_acl_table = false;
 
@@ -112,10 +147,15 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strEgressTable;
         string m_strRule;
         string m_strEgressRule;
-        bool createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
-        bool createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t port);
-        void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
-        void removeIngressBinding(sai_object_id_t port);
+
+        static bool flushQueueId(uint8_t queueId, std::set<sai_object_id_t> &failedQueues);
+        static bool useSharedEgressAclTable(void);
+        static string ingressRuleName(uint8_t queueId);
+        static string egressTableName(uint8_t queueId);
+        static bool ensureAclTable(sai_object_id_t port, const string &strTable, bool ingress);
+        static bool createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
+        static bool createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId,
+                const string &strTable, const vector<sai_object_id_t> &ports);
 };
 
 class PfcWdDlrHandler: public PfcWdActionHandler
