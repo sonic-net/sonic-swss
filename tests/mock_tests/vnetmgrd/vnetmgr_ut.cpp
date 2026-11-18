@@ -377,7 +377,7 @@ TEST_F(VNetMgrTest, EndpointChangeIsHitlessReplace)
     ASSERT_FALSE(issued(" route del "));
     ASSERT_FALSE(issued(" neigh "));
     ASSERT_EQ(mgr.m_neighRefs["02:00:00:00:00:01"], 1);
-    ASSERT_EQ(mgr.m_kernelRouteTunnelCache["Vnet1|192.168.5.0/24"].m_dstIp, "10.0.0.3");
+    ASSERT_EQ(mgr.m_kernelRouteTunnelCache["Vnet1"]["192.168.5.0/24"].m_dstIp, "10.0.0.3");
 }
 
 TEST_F(VNetMgrTest, MacChangeSwapsNeigh)
@@ -700,6 +700,146 @@ TEST_F(VNetMgrTest, RouteTunnelMalformedPrefixStillPublished)
     ASSERT_TRUE(popAppDbEntry(m_app_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME,
                               "Vnet1:192.168.1.1/abc", op, fvs));
     ASSERT_EQ(op, DEL_COMMAND);
+}
+
+static KeyOpFieldsValuesTuple smacRule(const std::string &key, const std::string &ip,
+                                       const std::string &mac, const std::string &vni,
+                                       const std::string &prio = "1000")
+{
+    return makeTuple(key, SET_COMMAND,
+        {{"INNER_SRC_IP", ip}, {"INNER_SRC_MAC_REWRITE_ACTION", mac},
+         {"PRIORITY", prio}, {"TUNNEL_VNI", vni}});
+}
+
+static const char *SMAC_V4 = "tc filter add dev VxlanOutbSvd egress pref 63534 protocol ip handle 1 flower "
+                             "enc_key_id 1000 src_ip 10.6.0.4/32 action pedit ex munge eth src set 00:22:48:03:45:8b";
+
+TEST_F(VNetMgrTest, SmacRewriteWaitsForKernelRouteInVnet)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8B", "1000")));
+    ASSERT_FALSE(issued("filter add dev VxlanOutbSvd"));
+
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("tc qdisc replace dev VxlanOutbSvd clsact"));
+    ASSERT_TRUE(issued(SMAC_V4));
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.2.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_FALSE(issued("filter add dev VxlanOutbSvd"));
+}
+
+TEST_F(VNetMgrTest, SmacRewriteIgnoresOtherVniAndNonRewriteRules)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8b", "2000")));
+    ASSERT_TRUE(mgr.doAclRuleTask(makeTuple("DATAACL|r2", SET_COMMAND,
+        {{"SRC_IP", "10.0.0.0/8"}, {"PACKET_ACTION", "DROP"}})));
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r3", "10.6.0.4/32", "zz:22", "1000")));
+    ASSERT_FALSE(issued("filter add dev VxlanOutbSvd"));
+    ASSERT_EQ(mgr.m_smacRuleVni.size(), 1u);
+}
+
+TEST_F(VNetMgrTest, SmacRewriteV6UsesOddPrefAndIpv6Protocol)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r6", "fc00:1::100/128", "00:22:48:03:45:8c", "1000")));
+    ASSERT_TRUE(issued("filter add dev VxlanOutbSvd egress pref 63535 protocol ipv6 handle 1 flower "
+                       "enc_key_id 1000 src_ip fc00:1::100/128 action pedit ex munge eth src set 00:22:48:03:45:8c"));
+}
+
+TEST_F(VNetMgrTest, SmacRewriteRemovedOnRuleDelUpdateAndLastRouteDelete)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8b", "1000")));
+    ASSERT_TRUE(issued(SMAC_V4));
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8b", "1000")));
+    ASSERT_TRUE(mockCallArgs.empty());
+
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:99", "1000")));
+    ASSERT_TRUE(issued("tc filter del dev VxlanOutbSvd egress pref 63534 protocol ip handle 1 flower"));
+    ASSERT_TRUE(issued("handle 1 flower enc_key_id 1000 src_ip 10.6.0.4/32 action pedit ex munge eth src set 00:22:48:03:45:99"));
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {})));
+    ASSERT_TRUE(issued("tc filter del dev VxlanOutbSvd egress pref 63534 protocol ip handle 1 flower"));
+    ASSERT_FALSE(mgr.m_smacRewriteRules["1000"]["T|r1"].m_installed);
+
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.m_smacRewriteRules["1000"]["T|r1"].m_installed);
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doAclRuleTask(makeTuple("T|r1", DEL_COMMAND, {})));
+    ASSERT_TRUE(issued("tc filter del dev VxlanOutbSvd egress pref 63534 protocol ip handle 1 flower"));
+    ASSERT_TRUE(mgr.m_smacRewriteRules.empty());
+    ASSERT_TRUE(mgr.m_smacRuleVni.empty());
+}
+
+TEST_F(VNetMgrTest, SmacRewriteRemovedOnlyWhenLastRouteOfVniGoes)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8b", "1000")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.2.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_EQ(mgr.m_kernelRouteTunnelCache["Vnet1"].size(), 2u);
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {})));
+    ASSERT_FALSE(issued("tc filter del dev VxlanOutbSvd"));
+    ASSERT_TRUE(mgr.m_smacRewriteRules["1000"]["T|r1"].m_installed);
+
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.2.1/32", DEL_COMMAND, {})));
+    ASSERT_TRUE(issued("tc filter del dev VxlanOutbSvd egress pref 63534 protocol ip handle 1 flower"));
+    ASSERT_TRUE(mgr.m_kernelRouteTunnelCache.empty());
+}
+
+TEST_F(VNetMgrTest, SmacRewriteRuleVniChangeMovesBucket)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8b", "1000")));
+    ASSERT_TRUE(issued(SMAC_V4));
+
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doAclRuleTask(smacRule("T|r1", "10.6.0.4/32", "00:22:48:03:45:8b", "2000")));
+    ASSERT_TRUE(issued("tc filter del dev VxlanOutbSvd egress pref 63534 protocol ip handle 1 flower"));
+    ASSERT_FALSE(issued("filter add dev VxlanOutbSvd"));
+    ASSERT_EQ(mgr.m_smacRewriteRules.count("1000"), 0u);
+    ASSERT_EQ(mgr.m_smacRuleVni["T|r1"], "2000");
+    ASSERT_FALSE(mgr.m_smacRewriteRules["2000"]["T|r1"].m_installed);
+}
+
+TEST_F(VNetMgrTest, RouteDeleteAfterVnetDeleteStillRemovesKernelRoute)
+{
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(mgr.doVnetDeleteTask(makeTuple("Vnet1", DEL_COMMAND, {})));
+    mockCallArgs.clear();
+    ASSERT_TRUE(mgr.doVnetRouteTunnelDeleteTask(makeTuple("Vnet1|192.168.1.1/32", DEL_COMMAND, {})));
+    ASSERT_TRUE(issued("route del 192.168.1.1/32 dev VxlanOutbSvd vrf Vnet1"));
+    ASSERT_TRUE(mgr.m_kernelRouteTunnelCache.empty());
+}
+
+TEST_F(VNetMgrTest, AdoptedTxDeviceFlushesStaleSmacFilters)
+{
+    g_links[VNET_VXLAN_TX_DEV] = 55;
+    g_txDetails = "vxlan external id 0 local 10.1.0.1 srcport 0 0 dstport 4790 nolearning ";
+    VNetMgr mgr(m_cfg_db.get(), m_app_db.get(), m_tables);
+    createVnet(mgr, "Vnet1", "1000");
+    ASSERT_TRUE(mgr.doVnetRouteTunnelCreateTask(route("Vnet1|192.168.1.1/32", "10.0.0.2", "02:00:00:00:00:01")));
+    ASSERT_TRUE(issued("tc qdisc del dev VxlanOutbSvd clsact"));
 }
 
 } // namespace vnetmgr_ut

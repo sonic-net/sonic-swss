@@ -46,7 +46,8 @@ int main(int argc, char **argv)
         vector<std::string> cfg_vnet_tables = {
             CFG_VNET_TABLE_NAME,
             CFG_VNET_RT_TUNNEL_TABLE_NAME,
-            CFG_VNET_RT_TABLE_NAME
+            CFG_VNET_RT_TABLE_NAME,
+            CFG_ACL_RULE_TABLE_NAME
         };
 
         VNetMgr vnetmgr(&cfgDb, &appDb, cfg_vnet_tables, &stateDb);

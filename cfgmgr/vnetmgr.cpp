@@ -25,6 +25,11 @@
 #define VNET "vnet"
 #define SOURCE_IP "src_ip"
 #define VXLAN_NAME_PREFIX "Vxlan"
+#define ACL_INNER_SRC_IP "INNER_SRC_IP"
+#define ACL_INNER_SRC_MAC_REWRITE "INNER_SRC_MAC_REWRITE_ACTION"
+#define ACL_TUNNEL_VNI "TUNNEL_VNI"
+#define ACL_PRIORITY "PRIORITY"
+#define SMAC_MAX_PRIORITY 32766
 #define RET_SUCCESS 0
 
 using namespace std;
@@ -192,6 +197,34 @@ static int cmdRemoveDmacBypass(const std::string & vxlanDev, std::string & res)
     return swss::exec(cmd.str(), res);
 }
 
+static std::string smacFilterSpec(const swss::VNetMgr::SmacRewriteRule & rule)
+{
+    ostringstream spec;
+    spec << " dev " VNET_VXLAN_TX_DEV " egress pref " << rule.m_pref
+         << " protocol " << (isV6(rule.m_srcPrefix) ? "ipv6" : "ip")
+         << " handle " << rule.m_handle << " flower";
+    return spec.str();
+}
+
+static int cmdInstallSmacRewrite(const swss::VNetMgr::SmacRewriteRule & rule, std::string & res)
+{
+    int r = swss::exec(TC_CMD " qdisc replace dev " VNET_VXLAN_TX_DEV " clsact", res);
+    if (r != RET_SUCCESS) return r;
+    ostringstream cmd;
+    cmd << TC_CMD " filter add" << smacFilterSpec(rule)
+        << " enc_key_id " << shellquote(rule.m_vni)
+        << " src_ip " << shellquote(rule.m_srcPrefix)
+        << " action pedit ex munge eth src set " << shellquote(rule.m_mac);
+    return swss::exec(cmd.str(), res);
+}
+
+static int cmdRemoveSmacRewrite(const swss::VNetMgr::SmacRewriteRule & rule, std::string & res)
+{
+    ostringstream cmd;
+    cmd << TC_CMD " filter del" << smacFilterSpec(rule);
+    return swss::exec(cmd.str(), res);
+}
+
 VNetMgr::VNetMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tables,
                  DBConnector *stateDb) :
         Orch(cfgDb, tables),
@@ -228,6 +261,10 @@ void VNetMgr::doTask(Consumer &consumer)
         if (table_name == STATE_VXLAN_TABLE_NAME)
         {
             task_result = doVxlanStateTask(t);
+        }
+        else if (table_name == CFG_ACL_RULE_TABLE_NAME)
+        {
+            task_result = doAclRuleTask(t);
         }
         else if (op == SET_COMMAND)
         {
@@ -391,7 +428,6 @@ bool VNetMgr::doVnetRouteTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
                     routeInfo.m_vni.c_str());
 
     routeInfo.m_routeName = vnet_route_name;
-    m_vnetRouteTunnelCache[vnet_route_name] = routeInfo;
 
     string vnetRouteTunnelName = kfvKey(t);
     replace(vnetRouteTunnelName.begin(), vnetRouteTunnelName.end(), config_db_key_delimiter, delimiter);
@@ -420,7 +456,7 @@ bool VNetMgr::doVnetRouteTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
         }
         else
         {
-            deleteKernelRoute(routeInfo);
+            deleteKernelRoute(routeInfo.m_vnet, routeInfo.m_prefix);
         }
     }
     catch (const std::exception & e)
@@ -436,26 +472,27 @@ bool VNetMgr::doVnetRouteTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
     const std::string & vnet_route_name = kfvKey(t);
-    auto it = m_vnetRouteTunnelCache.find(vnet_route_name);
-    if (it == m_vnetRouteTunnelCache.end())
+    std::string appKey = vnet_route_name;
+    std::replace(appKey.begin(), appKey.end(), config_db_key_delimiter, delimiter);
+    auto published = m_appVnetRouteTunnelPublished.find(appKey);
+    if (published == m_appVnetRouteTunnelPublished.end())
     {
         SWSS_LOG_WARN("Vxlan route tunnel %s hasn't been created", vnet_route_name.c_str());
         return true;
     }
+    size_t delimiter_pos = vnet_route_name.find_first_of(config_db_key_delimiter);
     try
     {
-        deleteKernelRoute(it->second);
+        deleteKernelRoute(vnet_route_name.substr(0, delimiter_pos),
+                          vnet_route_name.substr(delimiter_pos + 1));
     }
     catch (const std::exception & e)
     {
         SWSS_LOG_ERROR("Kernel uninstall for vnet route %s failed: %s",
                        vnet_route_name.c_str(), e.what());
     }
-    m_vnetRouteTunnelCache.erase(it);
-    std::string appKey = vnet_route_name;
-    std::replace(appKey.begin(), appKey.end(), config_db_key_delimiter, delimiter);
     m_appVnetRouteTunnelTable.del(appKey);
-    m_appVnetRouteTunnelPublished.erase(appKey);
+    m_appVnetRouteTunnelPublished.erase(published);
     return true;
 }
 
@@ -534,6 +571,10 @@ bool VNetMgr::ensureTxDevice(const std::string & vtep, unsigned basePort)
             cmdDeleteTxDevice(res);
             present = false;
         }
+        else
+        {
+            swss::exec(TC_CMD " qdisc del dev " VNET_VXLAN_TX_DEV " clsact", res);
+        }
     }
     if (!present)
     {
@@ -569,6 +610,13 @@ void VNetMgr::teardownTxDevice()
     m_txVtep.clear();
     m_txBasePort = 0;
     m_neighRefs.clear();
+    for (auto & bucket : m_smacRewriteRules)
+    {
+        for (auto & kv : bucket.second)
+        {
+            kv.second.m_installed = false;
+        }
+    }
 }
 
 bool VNetMgr::neighRef(const std::string & mac)
@@ -648,13 +696,9 @@ bool VNetMgr::doVxlanStateTask(const KeyOpFieldsValuesTuple & t)
         m_dmacBypassInstalledVnis.erase(vni);
         return true;
     }
-    for (const auto & kv : m_kernelRouteTunnelCache)
+    if (isVniKernelRouted(vni))
     {
-        if (kv.second.m_vnetVni == vni)
-        {
-            installDmacBypassIfNeeded(vni, true);
-            break;
-        }
+        installDmacBypassIfNeeded(vni, true);
     }
     return true;
 }
@@ -732,18 +776,24 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
 
     installDmacBypassIfNeeded(info.m_vnetVni);
 
-    auto existing = m_kernelRouteTunnelCache.find(info.m_routeName);
-    if (existing != m_kernelRouteTunnelCache.end())
+    std::string prevDstMac, prevVnetVni;
+    auto kvnetIt = m_kernelRouteTunnelCache.find(info.m_vnet);
+    if (kvnetIt != m_kernelRouteTunnelCache.end())
     {
-        const VxlanKernelRouteInfo & prev = existing->second;
-        if (prev.m_vni == info.m_vni &&
-            prev.m_dstIp == info.m_dstIp &&
-            prev.m_dstMac == info.m_dstMac &&
-            prev.m_srcIp == info.m_srcIp &&
-            prev.m_vnet == info.m_vnet &&
-            prev.m_prefix == info.m_prefix)
+        auto existing = kvnetIt->second.find(info.m_prefix);
+        if (existing != kvnetIt->second.end())
         {
-            return true;
+            const VxlanKernelRouteInfo & prev = existing->second;
+            if (prev.m_vni == info.m_vni &&
+                prev.m_vnetVni == info.m_vnetVni &&
+                prev.m_dstIp == info.m_dstIp &&
+                prev.m_dstMac == info.m_dstMac &&
+                prev.m_srcIp == info.m_srcIp)
+            {
+                return true;
+            }
+            prevDstMac = prev.m_dstMac;
+            prevVnetVni = prev.m_vnetVni;
         }
     }
 
@@ -760,22 +810,36 @@ bool VNetMgr::createKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
         return false;
     }
 
-    if (existing != m_kernelRouteTunnelCache.end())
+    if (!prevDstMac.empty())
     {
-        neighUnref(existing->second.m_dstMac);
+        neighUnref(prevDstMac);
     }
-    m_kernelRouteTunnelCache[info.m_routeName] = info;
+    const bool vniWasRouted = isVniKernelRouted(info.m_vnetVni);
+    m_kernelRouteTunnelCache[info.m_vnet][info.m_prefix] = info;
     SWSS_LOG_NOTICE("Create kernel route %s vni %s dst %s mac %s",
                     info.m_routeName.c_str(), info.m_vni.c_str(),
                     info.m_dstIp.c_str(), info.m_dstMac.c_str());
+    if (!vniWasRouted)
+    {
+        installSmacRewrites(info.m_vnetVni);
+    }
+    if (!prevVnetVni.empty() && prevVnetVni != info.m_vnetVni && !isVniKernelRouted(prevVnetVni))
+    {
+        removeSmacRewrites(prevVnetVni);
+    }
     return true;
 }
 
-bool VNetMgr::deleteKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
+bool VNetMgr::deleteKernelRoute(const std::string & vnet, const std::string & prefix)
 {
     SWSS_LOG_ENTER();
-    auto it = m_kernelRouteTunnelCache.find(vxlanRouteInfo.m_routeName);
-    if (it == m_kernelRouteTunnelCache.end())
+    auto vnetIt = m_kernelRouteTunnelCache.find(vnet);
+    if (vnetIt == m_kernelRouteTunnelCache.end())
+    {
+        return true;
+    }
+    auto it = vnetIt->second.find(prefix);
+    if (it == vnetIt->second.end())
     {
         return true;
     }
@@ -783,9 +847,178 @@ bool VNetMgr::deleteKernelRoute(const VxlanRouteTunnelInfo & vxlanRouteInfo)
     const VxlanKernelRouteInfo info = it->second;
     std::string res;
     cmdDeleteKernelRoute(info.m_prefix, info.m_vnet, res);
-    m_kernelRouteTunnelCache.erase(it);
+    vnetIt->second.erase(it);
+    if (vnetIt->second.empty())
+    {
+        m_kernelRouteTunnelCache.erase(vnetIt);
+    }
     neighUnref(info.m_dstMac);
     SWSS_LOG_NOTICE("Delete kernel route %s", info.m_routeName.c_str());
+    if (!isVniKernelRouted(info.m_vnetVni))
+    {
+        removeSmacRewrites(info.m_vnetVni);
+    }
+    return true;
+}
+
+bool VNetMgr::isVniKernelRouted(const std::string & vni)
+{
+    // All routes of a vnet carry the vnet's vni, so checking one route per vnet is enough.
+    for (const auto & kv : m_kernelRouteTunnelCache)
+    {
+        if (!kv.second.empty() && kv.second.begin()->second.m_vnetVni == vni)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool VNetMgr::installSmacRewrite(SmacRewriteRule & rule)
+{
+    std::string res;
+    if (cmdInstallSmacRewrite(rule, res) != RET_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Inner smac rewrite vni %s src %s -> %s failed: %s",
+                       rule.m_vni.c_str(), rule.m_srcPrefix.c_str(), rule.m_mac.c_str(), res.c_str());
+        return false;
+    }
+    rule.m_installed = true;
+    SWSS_LOG_NOTICE("Installed inner smac rewrite vni %s src %s -> %s on %s",
+                    rule.m_vni.c_str(), rule.m_srcPrefix.c_str(), rule.m_mac.c_str(), VNET_VXLAN_TX_DEV);
+    return true;
+}
+
+void VNetMgr::removeSmacRewrite(SmacRewriteRule & rule)
+{
+    if (!rule.m_installed)
+    {
+        return;
+    }
+    std::string res;
+    cmdRemoveSmacRewrite(rule, res);
+    rule.m_installed = false;
+    SWSS_LOG_NOTICE("Removed inner smac rewrite vni %s src %s",
+                    rule.m_vni.c_str(), rule.m_srcPrefix.c_str());
+}
+
+void VNetMgr::installSmacRewrites(const std::string & vni)
+{
+    auto bucket = m_smacRewriteRules.find(vni);
+    if (!m_txReady || bucket == m_smacRewriteRules.end())
+    {
+        return;
+    }
+    for (auto & kv : bucket->second)
+    {
+        if (!kv.second.m_installed)
+        {
+            installSmacRewrite(kv.second);
+        }
+    }
+}
+
+void VNetMgr::removeSmacRewrites(const std::string & vni)
+{
+    auto bucket = m_smacRewriteRules.find(vni);
+    if (bucket == m_smacRewriteRules.end())
+    {
+        return;
+    }
+    for (auto & kv : bucket->second)
+    {
+        removeSmacRewrite(kv.second);
+    }
+}
+
+bool VNetMgr::doAclRuleTask(const KeyOpFieldsValuesTuple & t)
+{
+    SWSS_LOG_ENTER();
+
+    const std::string & key = kfvKey(t);
+
+    SmacRewriteRule rule{};
+    std::string mac, srcIp, vni, priority;
+    if (kfvOp(t) == SET_COMMAND)
+    {
+        for (const auto & fv : kfvFieldsValues(t))
+        {
+            if (fvField(fv) == ACL_INNER_SRC_MAC_REWRITE) mac = fvValue(fv);
+            else if (fvField(fv) == ACL_INNER_SRC_IP) srcIp = fvValue(fv);
+            else if (fvField(fv) == ACL_TUNNEL_VNI) vni = fvValue(fv);
+            else if (fvField(fv) == ACL_PRIORITY) priority = fvValue(fv);
+        }
+    }
+
+    bool valid = !mac.empty();
+    if (valid)
+    {
+        char *end = nullptr;
+        unsigned long vniNum = strtoul(vni.c_str(), &end, 10);
+        unsigned long prio = priority.empty() ? 0 : strtoul(priority.c_str(), nullptr, 10);
+        rule.m_mac = normalizeMac(mac);
+        rule.m_vni = std::to_string(vniNum);
+        try
+        {
+            rule.m_srcPrefix = IpPrefix(srcIp).to_string();
+        }
+        catch (const std::exception &)
+        {
+        }
+        if (rule.m_mac.empty() || rule.m_srcPrefix.empty() || vni.empty() || !end || *end != '\0' ||
+            vniNum == 0 || vniNum > 0xFFFFFF)
+        {
+            SWSS_LOG_ERROR("ACL rule %s has invalid inner smac rewrite fields (ip '%s' mac '%s' vni '%s')",
+                           key.c_str(), srcIp.c_str(), mac.c_str(), vni.c_str());
+            valid = false;
+        }
+        else
+        {
+            prio = std::min<unsigned long>(prio, SMAC_MAX_PRIORITY);
+            rule.m_pref = static_cast<unsigned>(2 * (SMAC_MAX_PRIORITY + 1 - prio)) +
+                          (isV6(rule.m_srcPrefix) ? 1 : 0);
+        }
+    }
+
+    auto prevVni = m_smacRuleVni.find(key);
+    if (prevVni != m_smacRuleVni.end())
+    {
+        auto bucket = m_smacRewriteRules.find(prevVni->second);
+        SmacRewriteRule & prev = bucket->second.at(key);
+        if (valid && prev.m_vni == rule.m_vni && prev.m_srcPrefix == rule.m_srcPrefix &&
+            prev.m_mac == rule.m_mac && prev.m_pref == rule.m_pref)
+        {
+            return true;
+        }
+        rule.m_handle = prev.m_handle;
+        removeSmacRewrite(prev);
+        bucket->second.erase(key);
+        if (bucket->second.empty())
+        {
+            m_smacRewriteRules.erase(bucket);
+        }
+        m_smacRuleVni.erase(prevVni);
+    }
+    else
+    {
+        rule.m_handle = m_nextSmacHandle++;
+    }
+
+    if (!valid)
+    {
+        return true;
+    }
+
+    rule.m_installed = false;
+    SmacRewriteRule & stored = m_smacRewriteRules[rule.m_vni][key];
+    stored = rule;
+    m_smacRuleVni[key] = rule.m_vni;
+    SWSS_LOG_INFO("Inner smac rewrite rule %s: vni %s src %s mac %s pref %u",
+                  key.c_str(), rule.m_vni.c_str(), rule.m_srcPrefix.c_str(), rule.m_mac.c_str(), rule.m_pref);
+    if (m_txReady && isVniKernelRouted(rule.m_vni))
+    {
+        installSmacRewrite(stored);
+    }
     return true;
 }
 
@@ -799,14 +1032,17 @@ void VNetMgr::reconcileKernelState()
     }
 
     std::map<std::string, std::set<IpPrefix>> expected;
-    for (const auto & kv : m_kernelRouteTunnelCache)
+    for (const auto & vnetKv : m_kernelRouteTunnelCache)
     {
-        try
+        for (const auto & kv : vnetKv.second)
         {
-            expected[kv.second.m_vnet].insert(IpPrefix(kv.second.m_prefix));
-        }
-        catch (const std::exception &)
-        {
+            try
+            {
+                expected[vnetKv.first].insert(IpPrefix(kv.first));
+            }
+            catch (const std::exception &)
+            {
+            }
         }
     }
 
