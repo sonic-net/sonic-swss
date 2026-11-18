@@ -209,4 +209,113 @@ namespace wrhelper_test
         EXPECT_EQ(testing_db::getProducerDelCount("SRV6_MY_SID_TABLE"), 3u);
         EXPECT_EQ(wrHelper->getState(), WarmStart::RECONCILED);
     }
+
+    /*
+     * reconcile() resolves each key into one of six outcomes. testReconciliation above
+     * only exercises "updated"; this covers the other five. The two delete outcomes and
+     * the "discarded" one all end with the key absent, so getDelCallCount() is what
+     * separates a real delete from a suppressed one.
+     */
+    TEST_F(WRHelperTest, testReconciliationOutcomes)
+    {
+        /* getDelCallCount() is keyed by the real db id, so take it from the connector
+         * rather than assuming APPL_DB is 0. */
+        const int APPL_DB_ID = m_app_db->getDbId();
+
+        wrHelper->setState(WarmStart::INITIALIZED);
+
+        /* Old-life entries */
+        m_routeTable->set("10.0.0.0/24",                    /* -> stale deleted */
+                        {
+                            {"ifname", "eth1"},
+                            {"nexthop", "2.0.0.1"}
+                        });
+        m_routeTable->set("10.1.0.0/24",                    /* -> deleted */
+                        {
+                            {"ifname", "eth1"},
+                            {"nexthop", "2.0.0.2"}
+                        });
+        m_routeTable->set("10.2.0.0/24",                    /* -> unchanged */
+                        {
+                            {"ifname", "eth1"},
+                            {"nexthop", "2.0.0.3"}
+                        });
+
+        ASSERT_TRUE(wrHelper->runRestoration());
+        ASSERT_EQ(wrHelper->getState(), WarmStart::RESTORED);
+
+        /*
+         * 10.0.0.0/24 is deliberately absent from the refresh map: the routing stack
+         * did not re-advertise it, so it must be deleted as stale.
+         */
+
+        /* An explicit withdraw for a route that does exist in AppDB */
+        wrHelper->insertRefreshMap({
+                                    "10.1.0.0/24",
+                                    "DEL",
+                                    {}
+                                });
+
+        /* Field-for-field identical to what was restored -> no AppDB write needed */
+        wrHelper->insertRefreshMap({
+                                    "10.2.0.0/24",
+                                    "SET",
+                                    {
+                                        {"ifname", "eth1"},
+                                        {"nexthop", "2.0.0.3"}
+                                    }
+                                });
+
+        /* Never seen before -> created */
+        wrHelper->insertRefreshMap({
+                                    "10.3.0.0/24",
+                                    "SET",
+                                    {
+                                        {"ifname", "eth2"},
+                                        {"nexthop", "2.0.0.4"}
+                                    }
+                                });
+
+        /*
+         * A withdraw for a route AppDB never had. Pushing this down would delete an
+         * entry that does not exist, so reconcile() must swallow it.
+         */
+        wrHelper->insertRefreshMap({
+                                    "10.4.0.0/24",
+                                    "DEL",
+                                    {}
+                                });
+
+        wrHelper->reconcile();
+        ASSERT_EQ(wrHelper->getState(), WarmStart::RECONCILED);
+
+        std::string val;
+        std::vector<FieldValueTuple> fvs;
+
+        /* stale deleted: gone, and gone because del() was called */
+        ASSERT_FALSE(m_routeTable->get("10.0.0.0/24", fvs));
+        ASSERT_EQ(testing_db::getDelCallCount(APPL_DB_ID, "ROUTE_TABLE", "10.0.0.0/24"), 1);
+
+        /* deleted: same, via the explicit DEL op */
+        ASSERT_FALSE(m_routeTable->get("10.1.0.0/24", fvs));
+        ASSERT_EQ(testing_db::getDelCallCount(APPL_DB_ID, "ROUTE_TABLE", "10.1.0.0/24"), 1);
+
+        /* unchanged: still there, untouched, and never deleted */
+        ASSERT_TRUE(m_routeTable->hget("10.2.0.0/24", "nexthop", val));
+        ASSERT_EQ(val, "2.0.0.3");
+        ASSERT_EQ(testing_db::getDelCallCount(APPL_DB_ID, "ROUTE_TABLE", "10.2.0.0/24"), 0);
+
+        /* created: pushed down with the new values */
+        ASSERT_TRUE(m_routeTable->hget("10.3.0.0/24", "nexthop", val));
+        ASSERT_EQ(val, "2.0.0.4");
+        ASSERT_TRUE(m_routeTable->hget("10.3.0.0/24", "ifname", val));
+        ASSERT_EQ(val, "eth2");
+
+        /*
+         * discarded: absent like the deleted ones, but reached that way without a
+         * del() ever being issued. This is the only assertion that tells the two apart.
+         */
+        ASSERT_FALSE(m_routeTable->get("10.4.0.0/24", fvs));
+        ASSERT_EQ(testing_db::getDelCallCount(APPL_DB_ID, "ROUTE_TABLE", "10.4.0.0/24"), 0);
+    }
 }
