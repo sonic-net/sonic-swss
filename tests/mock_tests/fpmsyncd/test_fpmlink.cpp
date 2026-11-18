@@ -7,6 +7,7 @@
 
 #include <arpa/inet.h>
 #include <csignal>
+#include <memory>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -125,4 +126,37 @@ TEST_F(FpmLinkTest, SendToClosedPeerFailsWithoutSigpipe)
     sigaction(SIGPIPE, &saved, nullptr);
     EXPECT_EQ(failures, 3);
     EXPECT_EQ(gSigpipeRaised, 0);
+}
+
+/* Destroying the FpmLink must close the accepted socket, so the peer reads EOF. */
+TEST(FpmLinkConnectionTest, DestructorClosesAcceptedSocket)
+{
+    DBConnector db("APPL_DB", 0);
+    RedisPipeline pipeline(&db, 1);
+    RouteSync routeSync(&pipeline);
+
+    auto fpm = std::make_unique<FpmLink>(&routeSync);
+
+    int clientSock = socket(AF_INET, SOCK_STREAM, 0);
+    ASSERT_GE(clientSock, 0);
+
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(FPM_DEFAULT_PORT);
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    ASSERT_EQ(::connect(clientSock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+
+    fpm->accept();
+    fpm.reset();
+
+    timeval tv{2, 0};
+    ASSERT_EQ(setsockopt(clientSock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)), 0);
+
+    char buf[16];
+    ssize_t n = ::recv(clientSock, buf, sizeof(buf), 0);
+    EXPECT_EQ(n, 0) << "expected EOF once ~FpmLink() closed the accepted socket "
+                        "(a non-zero/negative result means the fd was leaked open)";
+
+    close(clientSock);
 }
