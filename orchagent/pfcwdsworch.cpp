@@ -307,8 +307,16 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
             }
         }
 
-        // Create internal entry
-        m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
+        // Create internal entry, or update the action of an existing one.
+        // A SET on an already registered port (action change without a stop)
+        // lands here too; std::map::emplace leaves an existing element untouched,
+        // so the queue would keep running the old action on the next storm.
+        // A handler that is already active stays until the queue restores.
+        auto ret = m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
+        if (!ret.second)
+        {
+            ret.first->second.action = action;
+        }
 
         // Initialize PFC WD related counters
         PfcWdActionHandler::initWdCounters(
