@@ -170,6 +170,20 @@ namespace portphyattr_test
             sai_port_api = old_sai_port_api;
         }
 
+        // Registers a synthetic gearbox interface/phy pair so getGearboxPhy()
+        // resolves for a port carrying the given index.
+        void addGearboxInterface(int index, int phy_id)
+        {
+            gearbox_interface_t iface{};
+            iface.index = index;
+            iface.phy_id = phy_id;
+            gPortsOrch->m_gearboxInterfaceMap[index] = iface;
+
+            gearbox_phy_t phy{};
+            phy.phy_id = phy_id;
+            gPortsOrch->m_gearboxPhyMap[phy_id] = phy;
+        }
+
         static void SetUpTestCase()
         {
             // Initialize the SAI virtual switch environment for unit testing
@@ -446,5 +460,69 @@ namespace portphyattr_test
         EXPECT_GT(g_serdes_id_queried_port_ids.count(fp_oid), 0u)
             << "removePortSerdesAttribute did not issue SAI GET on FP port "
             << fp_port.m_alias;
+    }
+
+    // A gearbox-connected port's ASIC-side OID does not implement PHY-attr
+    // GETs (the external PHY does); PORT_PHY_ATTR must skip such ports via
+    // getGearboxPhy() while still polling ordinary PHY ports.
+    TEST_F(PortAttrTest, GearboxConnectedPortSkippedInGenerateCounterMap)
+    {
+        ASSERT_FALSE(gPortsOrch->m_supported_phy_attrs.empty());
+
+        Port fp_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", fp_port));
+
+        addGearboxInterface(9001, 1);
+        Port gb_port("Ethernet-GB0", Port::Type::PHY);
+        gb_port.m_port_id = 0xFEED3001;
+        gb_port.m_role = Port::Role::Ext;
+        gb_port.m_index = 9001;
+        gPortsOrch->m_portList["Ethernet-GB0"] = gb_port;
+        ASSERT_NE(gPortsOrch->getGearboxPhy(gb_port), nullptr);
+
+        g_phy_attr_queried_port_ids.clear();
+        gPortsOrch->generatePortPhyAttrCounterMap();
+
+        EXPECT_EQ(g_phy_attr_queried_port_ids.count(gb_port.m_port_id), 0u)
+            << "Gearbox port's ASIC-side OID was probed for PHY attrs";
+        EXPECT_GT(g_phy_attr_queried_port_ids.count(fp_port.m_port_id), 0u)
+            << "Non-gearbox front-panel port was not probed";
+    }
+
+    // Mirror of the above for PortsOrch::registerPort(), used when a port is
+    // added after PORT_PHY_ATTR is already enabled.
+    TEST_F(PortAttrTest, GearboxConnectedPortSkippedInRegisterPort)
+    {
+        ASSERT_FALSE(gPortsOrch->m_supported_phy_attrs.empty());
+
+        auto consumer = dynamic_cast<Consumer *>(m_flexCounterOrch->getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"PORT_PHY_ATTR", "SET", {{"FLEX_COUNTER_STATUS", "enable"}, {"POLL_INTERVAL", "1000"}}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(m_flexCounterOrch)->doTask(*consumer);
+        ASSERT_TRUE(m_flexCounterOrch->getPortPhyAttrCounterState());
+
+        addGearboxInterface(9101, 2);
+        Port gb_port("Ethernet-GB1", Port::Type::PHY);
+        gb_port.m_port_id = 0xFEED3101;
+        gb_port.m_role = Port::Role::Ext;
+        gb_port.m_index = 9101;
+        ASSERT_NE(gPortsOrch->getGearboxPhy(gb_port), nullptr);
+
+        // Same role/type, no gearbox interface for this index.
+        Port plain_port("Ethernet-GB2", Port::Type::PHY);
+        plain_port.m_port_id = 0xFEED3102;
+        plain_port.m_role = Port::Role::Ext;
+        plain_port.m_index = 9102;
+
+        g_phy_attr_queried_port_ids.clear();
+        gPortsOrch->registerPort(gb_port);
+        gPortsOrch->registerPort(plain_port);
+
+        EXPECT_EQ(g_phy_attr_queried_port_ids.count(gb_port.m_port_id), 0u)
+            << "registerPort() probed PHY attrs on a gearbox port's ASIC-side OID";
+        EXPECT_GT(g_phy_attr_queried_port_ids.count(plain_port.m_port_id), 0u)
+            << "registerPort() did not probe PHY attrs on a non-gearbox port";
     }
 } // namespace portphyattr_test
