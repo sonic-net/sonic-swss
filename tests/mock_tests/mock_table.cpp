@@ -16,10 +16,17 @@ namespace testing_db
     std::map<int, TablesT> gDB;
     std::map<std::string, std::size_t> gProducerSetCounts;
     std::map<std::string, std::size_t> gProducerDelCounts;
+    void (*gTableOpHook)(const std::string &, const std::string &, bool) = nullptr;
+
+    void setTableOpHook(void (*hook)(const std::string &, const std::string &, bool))
+    {
+        gTableOpHook = hook;
+    }
 
     void reset()
     {
         gDB.clear();
+        gTableOpHook = nullptr;
         resetOperationCounters();
     }
 
@@ -117,6 +124,8 @@ namespace swss
         {
             merge_values(iter->second, values);
         }
+        if (gTableOpHook)
+            gTableOpHook(getTableName(), key, false);
     }
 
     void Table::hset(const std::string &key, const std::string &field, const std::string &value,
@@ -140,6 +149,8 @@ namespace swss
 
     void Table::del(const std::string &key, const std::string& /* op */, const std::string& /*prefix*/)
     {
+        if (gTableOpHook)
+            gTableOpHook(getTableName(), key, true);
         auto table = gDB[m_pipe->getDbId()].find(getTableName());
         if (table != gDB[m_pipe->getDbId()].end()){
             table->second.erase(key);

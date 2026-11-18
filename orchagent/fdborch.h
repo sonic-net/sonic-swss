@@ -73,6 +73,8 @@ struct FdbData
     sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
     string type;
     FdbOrigin origin = FDB_ORIGIN_INVALID;
+    /* Set when a dynamic_local entry is installed. */
+    bool is_mclag_dynamic_local = false;
     /**
       {"dynamic", FDB_ORIGIN_LEARN} => dynamically learnt
       {"dynamic", FDB_ORIGIN_PROVISIONED} => provisioned dynamic with swssconfig in APPDB
@@ -162,6 +164,10 @@ private:
     NotificationConsumer* m_fdbNotificationConsumer;
     shared_ptr<DBConnector> m_notificationsDb;
     std::unique_ptr<MacMoveGuard> m_macMoveGuard;
+
+    void writeLocalFdbStateRow(const string &key, const string &port,
+                              const string &type);
+    void cancelPendingMclagRefill(const FdbEntry &entry, const Port &vlan);
 
     map<FdbDest, string> destTypeToString =
         { { FdbDest::UNKNOWN, "Unknown" },
