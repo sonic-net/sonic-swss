@@ -17,6 +17,7 @@
 #undef private
 #include "mock_orch_test.h"
 #include "mirrororch_sample_port_sai_wrap.h"
+#include "mock_sai_capability_wrap.h"
 #include <arpa/inet.h>
 #include <cstring>
 
@@ -1192,6 +1193,67 @@ namespace mirrororch_test
         // Clean up for real now that the fault is disabled.
         mirror_sample_port_wrap_ut::g_fail_samplepacket_remove = false;
         sai_samplepacket_api->remove_samplepacket(created);
+    }
+
+    class MirrorOrchHwResourcesTest : public MirrorOrchTest
+    {
+    protected:
+        static bool noMirrorSessionAvailable(sai_object_type_t objectType, uint64_t *count,
+                                             sai_status_t *status)
+        {
+            if (objectType != SAI_OBJECT_TYPE_MIRROR_SESSION)
+            {
+                return false;
+            }
+
+            *count = 0;
+            *status = SAI_STATUS_SUCCESS;
+            return true;
+        }
+
+        vector<FieldValueTuple> erspanSession() const
+        {
+            vector<FieldValueTuple> data;
+            data.emplace_back("type", "ERSPAN");
+            data.emplace_back("src_ip", "10.0.0.1");
+            data.emplace_back("dst_ip", "10.0.0.2");
+            return data;
+        }
+
+        void eraseCreatedSession(const string& key)
+        {
+            gMirrorOrch->m_syncdMirrors.erase(key);
+            swss::Table(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME).del(key);
+        }
+
+        void PreTearDown() override
+        {
+            gMirrorOrch->m_recoverySessionMap.clear();
+        }
+    };
+
+    TEST_F(MirrorOrchHwResourcesTest, CreateEntryRejectsNewSessionWhenNoHwResources)
+    {
+        sai_availability_ut::ObjectTypeAvailabilityOverrideGuard guard(noMirrorSessionAvailable);
+
+        // A session not in the recovery map must still be rejected when no HW resources are free
+        ASSERT_EQ(gMirrorOrch->createEntry("new_session", erspanSession()),
+                  task_process_status::task_failed);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("new_session"), 0u);
+    }
+
+    TEST_F(MirrorOrchHwResourcesTest, CreateEntryAcceptsRecoveredSessionWhenNoHwResources)
+    {
+        sai_availability_ut::ObjectTypeAvailabilityOverrideGuard guard(noMirrorSessionAvailable);
+
+        // Recovered sessions are the ones bake() found active before warm reboot
+        gMirrorOrch->m_recoverySessionMap.emplace("recovered_session", "Ethernet0|10.0.0.3");
+
+        ASSERT_EQ(gMirrorOrch->createEntry("recovered_session", erspanSession()),
+                  task_process_status::task_success);
+        ASSERT_EQ(gMirrorOrch->m_syncdMirrors.count("recovered_session"), 1u);
+
+        eraseCreatedSession("recovered_session");
     }
 
 }
