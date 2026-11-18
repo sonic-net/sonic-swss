@@ -218,6 +218,11 @@ public:
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
     size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
 
+    /* Same merge and retry cache handling as addToSync(entries), but nothing
+     * is written to swss.rec. For entries a consumer took out of m_toSync and
+     * gives back, which were recorded when they first arrived. */
+    size_t addToSyncNoRecord(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+
     /**
      * @brief Add the failed task and its constraint to the consumer's RetryCache
      * @param task - the task that has failed due to the unmet constraint

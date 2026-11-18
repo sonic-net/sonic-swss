@@ -173,16 +173,24 @@ struct RouteBulkContext
     RouteBulkContext(const RouteBulkContext&) = delete;
     RouteBulkContext(RouteBulkContext&&) = delete;
 
+    /* Reset every per-attempt field for a fresh attempt at the same route.
+     * key and is_set are kept: publishRouteState() reads key after parsing. */
     void clear()
     {
         object_statuses.clear();
         tmp_next_hop.clear();
         nhg.clear();
+        nhg_index.clear();
+        context_index.clear();
         ipv.clear();
+        alsv.clear();
+        vni_labelv.clear();
+        rmacv.clear();
         vrf_id = SAI_NULL_OBJECT_ID;
+        ip_prefix = IpPrefix();
         excp_intfs_flag = false;
         using_temp_nhg = false;
-        key.clear();
+        vrf_group_flag = false;
         protocol.clear();
         fallback_to_default_route = false;
         retry_cst = DUMMY_CONSTRAINT;
@@ -216,8 +224,11 @@ struct LabelRouteBulkContext
         object_statuses.clear();
         tmp_next_hop.clear();
         nhg.clear();
+        nhg_index.clear();
         excp_intfs_flag = false;
+        using_temp_nhg = false;
         vrf_id = SAI_NULL_OBJECT_ID;
+        pop_count = 0;
     }
 };
 
@@ -341,19 +352,40 @@ private:
     /* Bulk contexts for one drain batch, keyed by (table key, op). */
     using RouteBulkContextMap = std::map<std::pair<std::string, std::string>, RouteBulkContext>;
 
-    /* The three phases of one route drain batch.
-     * toBulkTask consumes m_toSync entries from `it` onward, staging SAI
-     * operations into toBulk and gRouteBulker; it advances `it` to one past
-     * the last entry it visited. flushTask ships the staged operations to
-     * syncd. responseHandlerTask walks [m_toSync.begin(), batchEnd) matching
-     * entries against toBulk, consumes the per-entry SAI statuses via
-     * addRoutePost/removeRoutePost, and runs the batch epilogue (NHG, MPLS
-     * next hop and SRv6 refcount cleanup, route state publisher flush,
-     * default-route swap bookkeeping); it returns false when draining should
-     * stop for this invocation. */
-    void toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteBulkContextMap& toBulk);
+    /* One drain batch. toBulkTask moves the entries it stages out of m_toSync
+     * into `entries`, so the batch does not hold iterators into m_toSync,
+     * while retry cache promotion can still add to m_toSync. */
+    struct RouteDrainBatch
+    {
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        RouteBulkContextMap toBulk;
+
+        /* Resync DELs, merged into m_toSync when the scan ends. */
+        std::deque<swss::KeyOpFieldsValuesTuple> resyncDels;
+        /* Entries the scan found not ready (resync in progress, VRF, L3 VNI
+         * or next hop group index not there yet). They move out of m_toSync
+         * and merge back when the drain ends. */
+        std::deque<swss::KeyOpFieldsValuesTuple> deferred;
+
+        NextHopGroupKey v4DefaultNhgKey;
+        NextHopGroupKey v6DefaultNhgKey;
+    };
+
+    /* Runs whole batches back to back. */
+    void drainRoutes(ConsumerBase& consumer);
+
+    /* The phases of one batch (route programming HLD section 7.3).
+     * toBulkTask scans m_toSync: entries it stages into gRouteBulker move
+     * into the batch, entries that are done are erased, and entries that are
+     * not ready move to batch.deferred. flushTask ships the staged operations
+     * to syncd. responseHandlerTask handles each entry's SAI status through
+     * addRoutePost/removeRoutePost, adds entries to retry to `retained`, and
+     * runs the batch epilogue; it returns false when the batch updated no
+     * default route, which ends the drain for this call. */
+    void toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch);
     void flushTask();
-    bool responseHandlerTask(ConsumerBase& consumer, const SyncMap::iterator& batchEnd, RouteBulkContextMap& toBulk);
+    bool responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                             std::deque<swss::KeyOpFieldsValuesTuple>& retained);
 
     const NhgBase &getNhg(const std::string& nhg_index);
 

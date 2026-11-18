@@ -606,9 +606,15 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
     return true;
 }
 
-void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteBulkContextMap& toBulk)
+void RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch)
 {
     SWSS_LOG_ENTER();
+
+    /* Resync DELs are merged into m_toSync when the scan ends, not during it. */
+    auto& resyncDels = batch.resyncDels;
+
+    auto& toBulk = batch.toBulk;
+    auto it = consumer.m_toSync.begin();
 
     // Add or remove routes with a route bulker
     while (it != consumer.m_toSync.end())
@@ -626,6 +632,20 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
         auto& ctx = rc.first->second;
         if (!inserted)
         {
+            /* Every entry this batch visited has left m_toSync, so a second
+             * entry for the same (key, op) is not expected. */
+            SWSS_LOG_WARN("Duplicate route task for key %s op %s met an existing "
+                          "bulk context (in flight: %s)",
+                          key.c_str(), op.c_str(),
+                          ctx.object_statuses.empty() ? "no" : "yes");
+            if (!ctx.object_statuses.empty())
+            {
+                /* The bulker holds pointers into this context's statuses, so
+                 * it must not be reset. Leave the duplicate for a later drain. */
+                batch.deferred.push_back(std::move(it->second));
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             ctx.clear();
         }
 
@@ -655,9 +675,7 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
                     for (auto i : j.second)
                     {
                         vector<FieldValueTuple> v;
-                        key = vrf + i.first.to_string();
-                        auto x = KeyOpFieldsValuesTuple(key, DEL_COMMAND, v);
-                        consumer.addToSync(x);
+                        resyncDels.emplace_back(vrf + i.first.to_string(), DEL_COMMAND, v);
                     }
                 }
                 m_resync = true;
@@ -668,13 +686,16 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
                 m_resync = false;
             }
 
+            toBulk.erase(rc.first);
             it = consumer.m_toSync.erase(it);
             continue;
         }
 
         if (m_resync)
         {
-            it++;
+            toBulk.erase(rc.first);
+            batch.deferred.push_back(std::move(it->second));
+            it = consumer.m_toSync.erase(it);
             continue;
         }
 
@@ -688,7 +709,9 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
 
             if (!m_vrfOrch->isVRFexists(vrf_name))
             {
-                it++;
+                toBulk.erase(rc.first);
+                batch.deferred.push_back(std::move(it->second));
+                it = consumer.m_toSync.erase(it);
                 continue;
             }
             vrf_id = m_vrfOrch->getVRFid(vrf_name);
@@ -857,7 +880,9 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
 
                 if (!l3Vni)
                 {
-                    it++;
+                    toBulk.erase(rc.first);
+                    batch.deferred.push_back(std::move(it->second));
+                    it = consumer.m_toSync.erase(it);
                     continue;
                 }
 
@@ -895,7 +920,10 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
                     if (removeRoute(ctx))
                         it = consumer.m_toSync.erase(it);
                     else
-                        it++;
+                    {
+                        batch.entries.push_back(std::move(t));
+                        it = consumer.m_toSync.erase(it);
+                    }
 
                     /* Publish route state to advertise routes to Loopback interface */
                     publishRouteState(ctx);
@@ -988,7 +1016,9 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
                 catch (const std::out_of_range& e)
                 {
                     SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
-                    ++it;
+                    toBulk.erase(rc.first);
+                    batch.deferred.push_back(std::move(it->second));
+                    it = consumer.m_toSync.erase(it);
                     continue;
                 }
             }
@@ -1036,7 +1066,10 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
                         it = consumer.m_toSync.erase(it);
                     }
                     else
-                        it++;
+                    {
+                        batch.entries.push_back(std::move(t));
+                        it = consumer.m_toSync.erase(it);
+                    }
                 }
             }
             /*
@@ -1059,7 +1092,10 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
                     it = consumer.m_toSync.erase(it);
                 }
                 else
-                    it++;
+                {
+                    batch.entries.push_back(std::move(t));
+                    it = consumer.m_toSync.erase(it);
+                }
             }
             else
             {
@@ -1082,13 +1118,23 @@ void RouteOrch::toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteB
             if (removeRoute(ctx))
                 it = consumer.m_toSync.erase(it);
             else
-                it++;
+            {
+                batch.entries.push_back(std::move(t));
+                it = consumer.m_toSync.erase(it);
+            }
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            toBulk.erase(rc.first);
             it = consumer.m_toSync.erase(it);
         }
+    }
+
+    if (!resyncDels.empty())
+    {
+        consumer.addToSyncNoRecord(resyncDels);
+        resyncDels.clear();
     }
 }
 
@@ -1098,28 +1144,26 @@ void RouteOrch::flushTask()
     gRouteBulker.flush();
 }
 
-bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, const SyncMap::iterator& batchEnd, RouteBulkContextMap& toBulk)
+bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                                    std::deque<KeyOpFieldsValuesTuple>& retained)
 {
     SWSS_LOG_ENTER();
 
     // Go through the bulker results
-    auto it_prev = consumer.m_toSync.begin();
     m_bulkNhgReducedRefCnt.clear();
     m_bulkMplsNhReducedRefCnt.clear();
-    NextHopGroupKey v4_default_nhg_key;
-    NextHopGroupKey v6_default_nhg_key;
+    NextHopGroupKey& v4_default_nhg_key = batch.v4DefaultNhgKey;
+    NextHopGroupKey& v6_default_nhg_key = batch.v6DefaultNhgKey;
     m_bulkSrv6NhgReducedVec.clear();
 
-    while (it_prev != batchEnd)
+    for (const auto& t : batch.entries)
     {
-        KeyOpFieldsValuesTuple t = it_prev->second;
-
         string key = kfvKey(t);
         string op = kfvOp(t);
-        auto found = toBulk.find(make_pair(key, op));
-        if (found == toBulk.end())
+        auto found = batch.toBulk.find(make_pair(key, op));
+        if (found == batch.toBulk.end())
         {
-            it_prev++;
+            retained.push_back(t);
             continue;
         }
 
@@ -1128,18 +1172,18 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, const SyncMap::itera
         // if retry_cst field is set, move this task to retry cache:
         // - add it to retry cache before executing addRoutePost/removeRoutePost
         //      - since these functions could modify retrycache status
-        // - delete it from m_toSync after addRoutePost/removeRoutePost to avoid duplicates
+        // - leave it out of `retained` to avoid duplicates
         bool rc_inserted = false;
         if (ctx.retry_cst != DUMMY_CONSTRAINT)
-            rc_inserted = consumer.addToRetry(it_prev->second, ctx.retry_cst);
+            rc_inserted = consumer.addToRetry(t, ctx.retry_cst);
 
         const auto& object_statuses = ctx.object_statuses;
         if (object_statuses.empty())
         {
-            if (rc_inserted)
-                it_prev = consumer.m_toSync.erase(it_prev);
-            else
-                it_prev++;
+            // Something went wrong before the route bulker; retry on a later
+            // drain unless the retry cache owns it now
+            if (!rc_inserted)
+                retained.push_back(t);
             continue;
         }
 
@@ -1159,10 +1203,8 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, const SyncMap::itera
             {
                 /* If any existing routes are updated to point to the
                  * above interfaces, remove them from the ASIC. */
-                if (removeRoutePost(ctx) || rc_inserted)
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                else
-                    it_prev++;
+                if (!(removeRoutePost(ctx) || rc_inserted))
+                    retained.push_back(t);
                 continue;
             }
 
@@ -1170,10 +1212,8 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, const SyncMap::itera
 
             if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
             {
-                if (addRoutePost(ctx, nhg) || rc_inserted)
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                else
-                    it_prev++;
+                if (!(addRoutePost(ctx, nhg) || rc_inserted))
+                    retained.push_back(t);
             }
             else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                      m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
@@ -1181,10 +1221,8 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, const SyncMap::itera
                      gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                      ctx.using_temp_nhg)
             {
-                if (addRoutePost(ctx, nhg) || rc_inserted)
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                else
-                    it_prev++;
+                if (!(addRoutePost(ctx, nhg) || rc_inserted))
+                    retained.push_back(t);
 
 		    // Save the Default Route of Default VRF to be used for 
 		    // enabling fallback to it as needed
@@ -1204,10 +1242,8 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, const SyncMap::itera
         else if (op == DEL_COMMAND)
         {
             /* Cannot locate the route or remove succeed */
-            if (removeRoutePost(ctx) || rc_inserted)
-                it_prev = consumer.m_toSync.erase(it_prev);
-            else
-                it_prev++;
+            if (!(removeRoutePost(ctx) || rc_inserted))
+                retained.push_back(t);
         }
     }
 
@@ -1283,21 +1319,55 @@ void RouteOrch::doTask(ConsumerBase& consumer)
     }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME */
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        // Route bulk results will be stored in a map
-        RouteBulkContextMap toBulk;
+    drainRoutes(consumer);
+}
 
-        toBulkTask(consumer, it, toBulk);
+/* Runs whole batches back to back. */
+void RouteOrch::drainRoutes(ConsumerBase& consumer)
+{
+    /* Entries to retry, and entries that were not ready, merge back into
+     * m_toSync after the loop: merged after each batch, the next scan would
+     * pick them up again in this call and spin on an entry that keeps failing
+     * the same way. The next doTask() retries them. */
+    std::deque<KeyOpFieldsValuesTuple> retained;
+    std::deque<KeyOpFieldsValuesTuple> deferred;
+
+    while (!consumer.m_toSync.empty())
+    {
+        RouteDrainBatch batch;
+
+        toBulkTask(consumer, batch);
+        for (auto& entry : batch.deferred)
+        {
+            deferred.push_back(std::move(entry));
+        }
+        batch.deferred.clear();
         flushTask();
+
+        bool keepDraining = responseHandlerTask(consumer, batch, retained);
+
+        /* The scan staged nothing: m_toSync has no entry this call can
+         * program. */
+        if (batch.entries.empty())
+        {
+            break;
+        }
 
         /* A batch that touches no default route ends the drain for this
          * invocation; entries left in m_toSync wait for the next doTask. */
-        if (!responseHandlerTask(consumer, it, toBulk))
+        if (!keepDraining)
         {
-            return;
+            break;
         }
+    }
+
+    if (!retained.empty())
+    {
+        consumer.addToSyncNoRecord(retained);
+    }
+    if (!deferred.empty())
+    {
+        consumer.addToSyncNoRecord(deferred);
     }
 }
 
