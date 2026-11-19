@@ -1657,8 +1657,9 @@ void FdbOrch::handleNotification(NotificationConsumer& consumer, const KeyOpFiel
  *     3. Port is shut down (via SUBJECT_TYPE_
  */
 void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
-                              sai_object_id_t vlan_oid)
+                              sai_object_id_t vlan_oid, sai_status_t *flushStatus)
 {
+    if (flushStatus) *flushStatus = SAI_STATUS_INVALID_PARAMETER;
     vector<sai_attribute_t>    attrs;
     sai_attribute_t            attr;
     sai_status_t               rv = SAI_STATUS_SUCCESS;
@@ -1700,6 +1701,7 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     SWSS_LOG_INFO("Flushing FDB bridge_port_oid: 0x%" PRIx64 ", and bvid_oid:0x%" PRIx64 ".", bridge_port_oid, vlan_oid);
 
     rv = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (flushStatus) *flushStatus = rv;
     if (SAI_STATUS_SUCCESS != rv)
     {
         SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);

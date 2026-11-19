@@ -77,6 +77,7 @@ public:
 
     // Remove the Isolation group from all linked ports
     isolation_group_status_t unbind(Port &port, bool do_fwd_ref=false);
+    bool prepareBridgePortRemoval(Port &port);
 
     // Set Isolation group binding to the input. May involve bind
     isolation_group_status_t setBindPorts(string ports);
