@@ -756,6 +756,7 @@ void PfcWdBaseOrch::recordStormDetected(const string& portAlias, uint8_t queueIn
         m_stormHistoryTable->set(key, {
             {PFC_WD_STORM_HISTORY_LAST_STORM, to_string(n)},
             {stormField(n, PFC_WD_STORM_HISTORY_DETECTED), now},
+            {stormField(n, PFC_WD_STORM_HISTORY_MECHANISM), recoveryMechanism()},
         });
 
         if (n > PFC_WD_STORM_HISTORY_DEPTH)
@@ -764,7 +765,8 @@ void PfcWdBaseOrch::recordStormDetected(const string& portAlias, uint8_t queueIn
             for (const char* suffix : {PFC_WD_STORM_HISTORY_DETECTED, PFC_WD_STORM_HISTORY_RESTORED,
                                        PFC_WD_STORM_HISTORY_DURATION_MS, PFC_WD_STORM_HISTORY_TX_PACKETS,
                                        PFC_WD_STORM_HISTORY_TX_DROPPED, PFC_WD_STORM_HISTORY_RX_PACKETS,
-                                       PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_INTERRUPTED})
+                                       PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_MECHANISM,
+                                       PFC_WD_STORM_HISTORY_INTERRUPTED})
             {
                 m_stormHistoryTable->hdel(key, stormField(old, suffix));
             }

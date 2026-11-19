@@ -363,6 +363,7 @@ class TestPfcwdFunc(object):
                 assert state["detection_count"] == "1"
                 assert state["restoration_count"] == "0"
                 assert epoch_us.match(history["storm_1_detected"])
+                assert history["storm_1_mechanism"] == "SOFTWARE"
                 assert state["last_detection_time"] == history["storm_1_detected"]
 
             # stop storm; storm 1 is closed with restore time, duration and packet counts

@@ -1133,6 +1133,9 @@ void PfcWdHwOrch::initializeQueueStats(const Port& port, const set<uint8_t>& los
         }
         stats.operational = true;
         updateQueueStats(queueIdStr, stats);
+
+        // Close its history entry too
+        interruptStorm(port.m_alias, tc);
     }
 }
 
