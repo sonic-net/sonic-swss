@@ -45,6 +45,59 @@ L2NhgOrch::~L2NhgOrch()
     }
 }
 
+bool L2NhgOrch::isBridgePortNhgSupported()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_bridgePortNhgCapChecked)
+    {
+        return m_bridgePortNhgSupported;
+    }
+    m_bridgePortNhgCapChecked = true;
+
+    /*
+     * The virtual switch creates bridge port groups but does not list the type in
+     * its NHG TYPE capability, so its answer cannot be used as the gate.
+     */
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == VS_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT assumed supported on the virtual switch");
+        return m_bridgePortNhgSupported;
+    }
+
+    const auto *meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                      SAI_NEXT_HOP_GROUP_ATTR_TYPE);
+    if (!meta || !meta->isenum)
+    {
+        SWSS_LOG_NOTICE("No enum metadata for SAI_NEXT_HOP_GROUP_ATTR_TYPE");
+        return m_bridgePortNhgSupported;
+    }
+
+    vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                                     SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                                     SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                                                                     &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        /* Unknown: the first create is still sent, and a refusal turns the groups off. */
+        SWSS_LOG_NOTICE("Failed to query NHG type capabilities, rv: %d", status);
+        return m_bridgePortNhgSupported;
+    }
+
+    m_bridgePortNhgSupported = find(values.list, values.list + values.count,
+                                    SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT) != values.list + values.count;
+    SWSS_LOG_NOTICE("SAI_NEXT_HOP_GROUP_TYPE_BRIDGE_PORT is %s",
+                    m_bridgePortNhgSupported ? "supported" :
+                    "not supported: L2 next hop groups are not programmed, MACs behind them flood");
+    return m_bridgePortNhgSupported;
+}
+
 sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
 {
     SWSS_LOG_ENTER();
@@ -72,6 +125,17 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
                                                                         gSwitchId,
                                                                         (uint32_t)nhg_attrs.size(),
                                                                         nhg_attrs.data());
+    /* TYPE is the only attribute: refusing it before any group exists means the platform has none. */
+    if (!m_bridgePortNhgCreated &&
+        (status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+         SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+         SAI_STATUS_IS_INVALID_ATTR_VALUE(status)))
+    {
+        m_bridgePortNhgSupported = false;
+        SWSS_LOG_WARN("L2 Next Hop Group of type Bridge port is not supported (rc: %d): L2 next hop "
+                      "groups are not programmed, MACs behind them stay unresolved and flood", status);
+        return SAI_NULL_OBJECT_ID;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create an L2 Next Hop Group of type Bridge port: rc: %d", status);
@@ -83,6 +147,7 @@ sai_object_id_t L2NhgOrch::createSaiNextHopGroup()
         return SAI_NULL_OBJECT_ID;
     }
 
+    m_bridgePortNhgCreated = true;
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     return nhg_oid;
 }
@@ -118,6 +183,17 @@ bool L2NhgOrch::deleteL2NextHopGroup(string nhg_id)
         auto nhg_port_name = getNextHopGroupPortName(nhg_id);
         if (gPortsOrch->getPort(nhg_port_name, nhgPort))
         {
+            /*
+             * Remote MACs whose VXLAN_FDB_TABLE delete is consumed after this one still
+             * reference the bridge port: retry once FdbOrch has removed them.
+             */
+            if (nhgPort.m_fdb_count != 0)
+            {
+                SWSS_LOG_INFO("L2 next hop group %s still has %u FDB entries, deferring its removal",
+                              nhg_id.c_str(), nhgPort.m_fdb_count);
+                return false;
+            }
+
             status = gPortsOrch->removeBridgePort(nhgPort);
             if (!status)
             {
@@ -741,12 +817,16 @@ bool L2NhgOrch::updateL2Nhg(string& key, KeyOpFieldsValuesTuple& t, Consumer& co
                 m_nhg_vtep[nhg_id].source_vtep = source_vtep;
             }
         }
+        else if (!isBridgePortNhgSupported())
+        {
+            SWSS_LOG_INFO("updateL2Nhg: skipping L2 next hop group %s, not supported", nhg_id.c_str());
+        }
         else
         {
             //Adding L2 Next hop members to the next hop group
             if (!addL2NextHopGroupEntry(nhg_id, nh_value, source_vtep))
             {
-                return false;
+                return !m_bridgePortNhgSupported;
             }
         }
     }
@@ -788,7 +868,7 @@ bool L2NhgOrch::deleteL2Nhg(string& key, Consumer& consumer)
         }
 
     }
-    else
+    else if (isBridgePortNhgSupported())
     {
         SWSS_LOG_ERROR("Can't delete L2NHG '%s': does not exist", nh_id.c_str());
     }
@@ -823,6 +903,15 @@ void L2NhgOrch::doL2NhgTask(Consumer &consumer)
 
         if (!status)
         {
+            /* A SET queued behind a DEL that has to wait replaces it: the group stays and is updated. */
+            auto next = std::next(it);
+            if (op == DEL_COMMAND && next != consumer.m_toSync.end() && next->first == it->first &&
+                kfvOp(next->second) == SET_COMMAND)
+            {
+                SWSS_LOG_INFO("L2 next hop group %s set again before its delete completed, keeping it", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             it++;
             continue;
         }

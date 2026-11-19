@@ -23,17 +23,6 @@ public:
     void drain() override;
 };
 
-class ZmqRouteConsumer : public ZmqConsumer
-{
-public:
-    ZmqRouteConsumer(swss::ZmqConsumerStateTable *select, Orch *orch, const std::string &name)
-        : ZmqConsumer(select, orch, name)
-    {
-    }
-
-    void execute() override;
-};
-
 class ZmqOrch : public Orch
 {
 public:
@@ -48,16 +37,6 @@ protected:
     // ZmqConsumer; they skip the base table-iterating constructors and call
     // their own addConsumer().
     ZmqOrch() = default;
-
-private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
-};
-
-class ZmqRouteOrch : public ZmqOrch
-{
-public:
-    ZmqRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer, bool dbPersistence = true);
-    ZmqRouteOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);
 
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer, bool dbPersistence = true);

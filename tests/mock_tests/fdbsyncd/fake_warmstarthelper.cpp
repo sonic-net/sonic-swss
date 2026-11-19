@@ -1,7 +1,5 @@
 #include "warmRestartHelper.h"
 
-static swss::DBConnector gDb("APPL_DB", 0);
-
 namespace swss {
 
 WarmStartHelper::WarmStartHelper(RedisPipeline *pipeline,
@@ -9,7 +7,7 @@ WarmStartHelper::WarmStartHelper(RedisPipeline *pipeline,
                                  const std::string &syncTableName,
                                  const std::string &dockerName,
                                  const std::string &appName) :
-    m_restorationTable(&gDb, "")
+    m_syncTableName(syncTableName)
 {
 }
 
@@ -46,12 +44,23 @@ uint32_t WarmStartHelper::getRestartTimer() const
     return 0;
 }
 
+void WarmStartHelper::registerTable(RedisPipeline *pipeline,
+                                    ProducerStateTable *syncTable,
+                                    const std::string &syncTableName)
+{
+}
+
 bool WarmStartHelper::runRestoration()
 {
     return false;
 }
 
 void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
+{
+}
+
+void WarmStartHelper::insertRefreshMap(const std::string &syncTableName,
+                                       const KeyOpFieldsValuesTuple &kfv)
 {
 }
 

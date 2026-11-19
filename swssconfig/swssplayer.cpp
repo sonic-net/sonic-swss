@@ -13,7 +13,7 @@ using namespace std;
 using namespace swss;
 
 static int line_index = 0;
-static DBConnector db("APPL_DB", 0, true);
+static DBConnector db("APPL_DB", 0);
 
 void usage()
 {

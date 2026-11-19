@@ -15,6 +15,7 @@
 #include "directory.h"
 #include "saihelper.h"
 #include "policerorch.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -33,6 +34,7 @@ extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern SwitchOrch *gSwitchOrch;
+extern AclOrch *gAclOrch;
 extern PolicerOrch *gPolicerOrch;
 extern string gMySwitchType;
 extern Directory<Orch*> gDirectory;
@@ -765,9 +767,50 @@ AclTableTypeBuilder& AclTableTypeBuilder::withBindPointType(sai_acl_bind_point_t
     return *this;
 }
 
+/*
+ * Returns true if the platform/SAI implements the given ACL table match field.
+ *
+ * Uses sai_query_attribute_capability() for SAI_OBJECT_TYPE_ACL_TABLE. If the
+ * capability query itself is not implemented (SAI_STATUS_NOT_IMPLEMENTED /
+ * SAI_STATUS_NOT_SUPPORTED) we preserve the historical behavior and assume the
+ * field is supported, so platforms that do not implement the query are
+ * unaffected. Any other (genuine) query failure treats the field as unsupported.
+ */
+static bool isAclTableMatchFieldSupported(sai_acl_table_attr_t matchField)
+{
+    sai_attr_capability_t capability = {};
+    sai_status_t status = sai_query_attribute_capability(
+        gSwitchId, SAI_OBJECT_TYPE_ACL_TABLE, matchField, &capability);
+
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        return capability.create_implemented;
+    }
+
+    // Preserve historical behavior only when the capability query itself is unsupported.
+    if (status == SAI_STATUS_NOT_IMPLEMENTED || status == SAI_STATUS_NOT_SUPPORTED)
+    {
+        SWSS_LOG_INFO("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                      "assuming match field is supported", matchField, status);
+        return true;
+    }
+
+    SWSS_LOG_WARN("sai_query_attribute_capability(ACL_TABLE, %d) returned %d; "
+                  "treating match field as unsupported", matchField, status);
+    return false;
+}
+
 AclTableTypeBuilder& AclTableTypeBuilder::withMatch(shared_ptr<AclTableMatchInterface> match)
 {
-    m_tableType.m_matches.emplace(match->getId(), match);
+    auto matchField = match->getId();
+    if (!isAclTableMatchFieldSupported(matchField))
+    {
+        const auto *meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_TABLE, matchField);
+        SWSS_LOG_NOTICE("Skipping ACL table match field %s: not supported by the platform",
+                        meta ? meta->attridname : std::to_string(static_cast<int>(matchField)).c_str());
+        return *this;
+    }
+    m_tableType.m_matches.emplace(matchField, match);
     return *this;
 }
 
@@ -3734,7 +3777,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     string platform = getenv("platform") ? getenv("platform") : "";
     string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
     if (platform == BRCM_PLATFORM_SUBSTRING ||
-            platform == CISCO_8000_PLATFORM_SUBSTRING ||
+            isCiscoPlatform(platform) ||
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PRST_PLATFORM_SUBSTRING ||
@@ -3742,7 +3785,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
             platform == CLX_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+            platform == VPP_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
         {
@@ -3761,7 +3805,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
     if ( platform == MRVL_PRST_PLATFORM_SUBSTRING ||
 	    platform == MRVL_TL_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+            platform == VPP_PLATFORM_SUBSTRING)
     {
 	m_L3V4V6Capability =
         {
@@ -3793,7 +3838,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
-        platform == CISCO_8000_PLATFORM_SUBSTRING ||
+        isCiscoPlatform(platform) ||
         platform == MRVL_PRST_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
         platform == CLX_PLATFORM_SUBSTRING ||
@@ -4462,6 +4507,7 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
 {
     SWSS_LOG_ENTER();
 
+    m_isWarmRestoreStage = WarmStart::isWarmStart();
     init(connectors, portOrch, mirrorOrch, neighOrch, routeOrch);
 
     /* Initialize retry caches for rule consumers so that resource-exhaustion
@@ -4486,6 +4532,8 @@ AclOrch::~AclOrch()
     }
 
     deleteDTelWatchListTables();
+
+    gAclOrch = nullptr;
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -6284,7 +6332,7 @@ sai_object_id_t AclOrch::getTableById(string table_id)
         return SAI_NULL_OBJECT_ID;
     }
 
-    for (auto it : m_AclTables)
+    for (const auto& it : m_AclTables)
     {
         if (it.second.id == table_id)
         {
@@ -6447,7 +6495,12 @@ void AclOrch::registerFlexCounter(const AclRule& rule)
         serializedCounterStatAttrs.insert(sai_serialize_attr_id(*meta));
     }
 
-    m_flex_counter_manager.setCounterIdList(rule.getCounterOid(), CounterType::ACL_COUNTER, serializedCounterStatAttrs);
+    // During warm restore syncd has no VID->RID mapping for new ACL counters
+    // until APPLY_VIEW; onWarmBootEnd() registers them for polling instead.
+    if (!m_isWarmRestoreStage)
+    {
+        m_flex_counter_manager.setCounterIdList(rule.getCounterOid(), CounterType::ACL_COUNTER, serializedCounterStatAttrs);
+    }
     m_countersDb.hset(COUNTERS_ACL_COUNTER_RULE_MAP, ruleIdentifier, counterOidStr);
 }
 
@@ -6456,6 +6509,23 @@ void AclOrch::deregisterFlexCounter(const AclRule& rule)
     auto ruleIdentifier = generateAclRuleIdentifierInCountersDb(rule);
     m_countersDb.hdel(COUNTERS_ACL_COUNTER_RULE_MAP, ruleIdentifier);
     m_flex_counter_manager.clearCounterIdList(rule.getCounterOid());
+}
+
+void AclOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
+    for (const auto& table : m_AclTables)
+    {
+        for (const auto& rule : table.second.rules)
+        {
+            if (rule.second->hasCounter())
+            {
+                registerFlexCounter(*rule.second);
+            }
+        }
+    }
 }
 
 string AclOrch::generateAclRuleIdentifierInCountersDb(const AclRule& rule) const

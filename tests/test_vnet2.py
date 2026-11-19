@@ -477,6 +477,302 @@ class TestVnet2Orch(object):
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
 
+    '''
+    Test VNET route replay idempotency.
+        A config reload or an fpmsyncd resync re-delivers VNET routes that are
+        already programmed. Replaying a subnet route must converge onto the
+        existing SAI entry instead of failing the create, and a repeated delete
+        must be a no-op.
+    '''
+    def test_vnet_orch_route_replay_is_idempotent(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_replay'
+        vnet_name = 'VnetReplay'
+        ifname = 'Ethernet20'
+        subnet = '10.10.0.8/31'
+
+        self.setup_db(dvs)
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '32.32.32.32')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '5032', "")
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '5032')
+
+        create_phy_interface(dvs, ifname, vnet_name, subnet)
+        vnet_obj.check_router_interface(dvs, ifname, vnet_name)
+        self.set_admin_status(ifname, "up")
+
+        marker = dvs.add_log_marker()
+
+        # The first SET programs the subnet route through add_route().
+        create_vnet_local_routes(dvs, subnet, vnet_name, ifname)
+        assert count_asic_routes(dvs, subnet) == 1, \
+            "subnet route was not programmed"
+
+        # Replay it the way a resync does. Going straight to APPL_DB means the
+        # producer always enqueues the SET, so the replay is guaranteed to reach
+        # VNetRouteOrch instead of relying on CONFIG_DB re-firing an event for an
+        # unchanged entry. doRouteTask() does not dedup, so add_route() runs
+        # again and SAI returns SAI_STATUS_ITEM_ALREADY_EXISTS. Before the fix
+        # that logged "SAI failed to create route" and failed the task.
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        for _ in range(2):
+            create_entry_pst(
+                app_db, "VNET_ROUTE_TABLE", ':',
+                "%s:%s" % (vnet_name, subnet),
+                [("ifname", ifname), ("nexthop", "")]
+            )
+            time.sleep(1)
+
+        assert syslog_match_count(dvs, marker, "SAI failed to create route") == 0, \
+            "route replay re-created an existing SAI route"
+        assert count_asic_routes(dvs, subnet) == 1, \
+            "route replay duplicated the SAI route entry"
+
+        # fpmsyncd sends DEL to both VNET route tables when the previous route
+        # type is unknown, so a repeated delete has to be harmless. Before the
+        # fix the second one logged "Failed to find route" and asserted.
+        delete_vnet_local_routes(dvs, subnet, vnet_name)
+        delete_vnet_local_routes(dvs, subnet, vnet_name)
+
+        assert syslog_match_count(dvs, marker, "Failed to find route") == 0, \
+            "duplicate delete reported a missing route as an error"
+        assert orchagent_is_running(dvs), \
+            "orchagent died or hung while handling duplicate route events"
+
+        self.set_admin_status(ifname, "down")
+        delete_phy_interface(dvs, ifname, subnet)
+        vnet_obj.check_del_router_interface(dvs, ifname)
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+
+    def test_vnet_orch_conflicting_subnet_route_keeps_owner_next_hop(self, dvs, testlog):
+        """A prefix RouteOrch already programmed is borrowed, not repointed.
+
+        scope=default puts the VNET in the same virtual router RouteOrch uses.
+        RouteOrch's route goes through a gateway, so a VNET subnet route for the
+        same prefix conflicts with it. The gateway must stay in place through
+        the VNET SET and DEL, and only RouteOrch's withdrawal removes the entry.
+        """
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = "tunnel_adopt"
+        vnet_name = "VnetAdopt"
+        underlay = "Ethernet0"
+        vnet_if = "Ethernet20"
+        vnet_ip = "30.30.30.1/24"
+        prefix = "107.100.1.1/32"
+
+        self.setup_db(dvs)
+        try:
+            vnet_obj.fetch_exist_entries(dvs)
+
+            self.create_l3_intf(underlay, "")
+            self.add_ip_address(underlay, "20.20.20.1/24")
+            self.set_admin_status(underlay, "down")
+            time.sleep(1)
+            self.set_admin_status(underlay, "up")
+            dvs.servers[0].runcmd("ip address add 20.20.20.5/24 dev eth0")
+            dvs.servers[0].runcmd("ip route add default via 20.20.20.1")
+
+            create_vxlan_tunnel(dvs, tunnel_name, "33.33.33.33")
+            create_vnet_entry(dvs, vnet_name, tunnel_name, "5033", "", scope="default")
+            vnet_obj.check_default_vnet_entry(dvs, vnet_name)
+
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route %s 20.20.20.5\"" % prefix)
+            owned = wait_asic_routes(dvs, prefix, 1)
+            vr, original_nh = owned[0]
+
+            # The RIF is created in the default VR, which is the VR of the route
+            # RouteOrch just installed. Pin the mapper to that VR: earlier cases in
+            # this module may have left other virtual routers behind, and
+            # check_default_vnet_entry picks an arbitrary one.
+            vnet_obj.vr_map[vnet_name]["ing"] = vr
+            vnet_obj.vr_map[vnet_name]["egr"] = vr
+            # check_router_interface counts ASIC routes since the last snapshot and
+            # expects exactly the new interface ip2me route. The underlay address
+            # and the RouteOrch prefix above are already programmed, so resnapshot
+            # before the interface is created.
+            vnet_obj.fetch_exist_entries(dvs)
+            rifs_before = set(vnet_obj.rifs)
+            create_phy_interface(dvs, vnet_if, vnet_name, vnet_ip)
+            vnet_obj.check_router_interface(dvs, vnet_if, vnet_name)
+            self.set_admin_status(vnet_if, "up")
+            created = set(vnet_obj.rifs) - rifs_before
+            assert len(created) == 1, "expected one new RIF for %s" % vnet_if
+            rif = created.pop()
+            assert original_nh != rif
+
+            marker = dvs.add_log_marker()
+            create_vnet_local_routes(dvs, prefix, vnet_name, vnet_if)
+
+            ok, _ = wait_for_result(lambda: (
+                syslog_match_count(dvs, marker, "is programmed by another orch") > 0, None))
+            assert ok, "VNET subnet route never reached the conflicting SAI entry"
+            assert asic_routes_for(dvs, prefix) == [(vr, original_nh)], (
+                "the VNET subnet route repointed RouteOrch's %s entry" % prefix)
+            assert syslog_match_count(dvs, marker, "SAI failed to create route") == 0, (
+                "the conflicting create failed the VNET task")
+
+            delete_vnet_local_routes(dvs, prefix, vnet_name)
+            # The handler logs the DEL at INFO, which syslog does not keep.
+            # Watch the ASIC entry for a few seconds: it has to keep the gateway.
+            deadline = time.time() + 5
+            survived = None
+            while time.time() < deadline:
+                survived = asic_routes_for(dvs, prefix)
+                assert survived == [(vr, original_nh)], (
+                    "deleting the VNET route removed or repointed %s; "
+                    "RouteOrch still owns that SAI entry, saw %s" % (prefix, survived))
+                time.sleep(0.5)
+            assert syslog_match_count(dvs, marker, "SAI Failed to remove route") == 0
+            assert orchagent_is_running(dvs)
+
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s 20.20.20.5\"" % prefix)
+            wait_asic_routes(dvs, prefix, 0)
+            self.set_admin_status(vnet_if, "down")
+            delete_phy_interface(dvs, vnet_if, vnet_ip)
+            vnet_obj.check_del_router_interface(dvs, vnet_if)
+        finally:
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route %s 20.20.20.5\"" % prefix)
+            self.set_admin_status(vnet_if, "down")
+            delete_phy_interface(dvs, vnet_if, vnet_ip)
+            delete_vnet_entry(dvs, vnet_name)
+            delete_vxlan_tunnel(dvs, tunnel_name)
+            self.remove_ip_address(underlay, "20.20.20.1/24")
+            self.cdb.delete_entry("INTERFACE", underlay)
+            dvs.servers[0].runcmd("ip route del default via 20.20.20.1 || true")
+            dvs.servers[0].runcmd("ip address flush dev eth0 || true")
+
+    def test_vnet_orch_subnet_route_moves_between_interfaces(self, dvs, testlog):
+        """A SET that changes a subnet route's interface moves its RIF reference.
+
+        A 0.0.0.0 next hop makes VNetVrfObject hold a reference on the RIF. When
+        the route moves to another interface the old RIF has to drop it, or
+        IntfsOrch can never remove that RIF.
+        """
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = "tunnel_move"
+        vnet_name = "VnetMove"
+        first_if, first_ip = "Ethernet20", "10.40.0.0/31"
+        second_if, second_ip = "Ethernet24", "10.40.0.2/31"
+        prefix = "10.41.0.0/24"
+
+        self.setup_db(dvs)
+        try:
+            vnet_obj.fetch_exist_entries(dvs)
+
+            create_vxlan_tunnel(dvs, tunnel_name, "34.34.34.34")
+            create_vnet_entry(dvs, vnet_name, tunnel_name, "5034", "")
+            vnet_obj.check_vnet_entry(dvs, vnet_name)
+            vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, "5034")
+
+            # check_router_interface counts every ASIC route since its snapshot,
+            # and the previous port coming up adds an IPv6 link-local ip2me route
+            # at an arbitrary time, so wait for the new RIF itself instead.
+            rifs = {}
+            for ifname, ip in ((first_if, first_ip), (second_if, second_ip)):
+                rifs_before = set(get_exist_entries(dvs, vnet_obj.ASIC_RIF_TABLE))
+                create_phy_interface(dvs, ifname, vnet_name, ip)
+                ok, created = wait_for_result(lambda: (
+                    len(set(get_exist_entries(dvs, vnet_obj.ASIC_RIF_TABLE)) - rifs_before) == 1,
+                    set(get_exist_entries(dvs, vnet_obj.ASIC_RIF_TABLE)) - rifs_before))
+                assert ok, "expected one new RIF for %s, saw %s" % (ifname, created)
+                rifs[ifname] = created.pop()
+                vnet_obj.rifs.add(rifs[ifname])
+                self.set_admin_status(ifname, "up")
+
+            def wait_route_on(ifname):
+                ok, routes = wait_for_result(lambda: (
+                    [nh for _, nh in asic_routes_for(dvs, prefix)] == [rifs[ifname]],
+                    asic_routes_for(dvs, prefix)))
+                assert ok, "%s did not point at %s, saw %s" % (prefix, ifname, routes)
+
+            create_vnet_local_routes(dvs, prefix, vnet_name, first_if, nexthop="0.0.0.0")
+            wait_route_on(first_if)
+
+            create_vnet_local_routes(dvs, prefix, vnet_name, second_if, nexthop="0.0.0.0")
+            wait_route_on(second_if)
+
+            # The first RIF is removable only once the moved route released it.
+            self.set_admin_status(first_if, "down")
+            delete_phy_interface(dvs, first_if, first_ip)
+            vnet_obj.check_del_router_interface(dvs, first_if)
+
+            delete_vnet_local_routes(dvs, prefix, vnet_name)
+            wait_asic_routes(dvs, prefix, 0)
+
+            self.set_admin_status(second_if, "down")
+            delete_phy_interface(dvs, second_if, second_ip)
+            vnet_obj.check_del_router_interface(dvs, second_if)
+            assert orchagent_is_running(dvs)
+        finally:
+            delete_vnet_local_routes(dvs, prefix, vnet_name)
+            for ifname, ip in ((first_if, first_ip), (second_if, second_ip)):
+                self.set_admin_status(ifname, "down")
+                delete_phy_interface(dvs, ifname, ip)
+            delete_vnet_entry(dvs, vnet_name)
+            delete_vxlan_tunnel(dvs, tunnel_name)
+
+
+def syslog_match_count(dvs, marker, pattern):
+    """Number of lines matching pattern in the syslog written since marker."""
+    (_, out) = dvs.runcmd(
+        ["sh", "-c",
+         "awk '/%s/,ENDFILE {print;}' /var/log/syslog | grep -c '%s' || true"
+         % (marker, pattern)]
+    )
+    return int(out.strip() or 0)
+
+
+def orchagent_is_running(dvs):
+    (_, out) = dvs.runcmd(["sh", "-c", "supervisorctl status orchagent || true"])
+    return "RUNNING" in out
+
+
+
+def asic_routes_for(dvs, prefix):
+    """(virtual router, next hop) of every ASIC route for prefix."""
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    found = []
+    for key in tbl.getKeys():
+        try:
+            parsed = json.loads(key)
+        except ValueError:
+            continue
+        if parsed.get("dest") != prefix:
+            continue
+        status, fvs = tbl.get(key)
+        nexthop = dict(fvs).get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID") if status else None
+        found.append((parsed.get("vr"), nexthop))
+    return sorted(found)
+
+
+def wait_asic_routes(dvs, prefix, count):
+    ok, routes = wait_for_result(
+        lambda: (len(asic_routes_for(dvs, prefix)) == count, asic_routes_for(dvs, prefix)))
+    assert ok, "expected %d ASIC route(s) for %s, last saw %s" % (count, prefix, routes)
+    return routes
+
+
+def count_asic_routes(dvs, prefix):
+    """Number of ASIC_DB route entries whose destination is prefix."""
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    total = 0
+    for key in tbl.getKeys():
+        try:
+            if json.loads(key)["dest"] == prefix:
+                total += 1
+        except (ValueError, KeyError):
+            continue
+    return total
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

@@ -59,6 +59,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_bufferCompletelyInitialized(false),
         m_bufferProfileApplDbWritten(false),
         m_mmuSizeNumber(0),
+        m_shpDisablePendingByRatio(false),
         m_saiSyncPollIntervalSec(1)
 {
     SWSS_LOG_ENTER();
@@ -1594,7 +1595,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size)
+task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size)
 {
     // The lossless profiles need to be refreshed only if system is switched between SHP and non-SHP
     bool need_refresh_profiles = false;
@@ -1654,7 +1655,9 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
     {
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles due to shared headroom pool state updated");
 
+        m_shpProfilesToCheck.clear();
         vector<string> profilesToCheck;
+        bool profile_update_failed = false;
         for (auto it = m_bufferProfileLookup.begin(); it != m_bufferProfileLookup.end(); ++it)
         {
             auto &name = it->first;
@@ -1667,17 +1670,36 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
             SWSS_LOG_INFO("Updating profile %s with speed %s cable length %s mtu %s gearbox model %s",
                           name.c_str(),
                           profile.speed.c_str(), profile.cable_length.c_str(), profile.port_mtu.c_str(), profile.gearbox_model.c_str());
+            // Keep the published values in case the recalculated headroom is rejected.
+            const auto oldXon = profile.xon;
+            const auto oldXoff = profile.xoff;
+            const auto oldSize = profile.size;
+            const auto oldXonOffset = profile.xon_offset;
             // recalculate the headroom size
             calculateHeadroomSize(profile);
             m_bufferProfileApplDbWritten = false;
             if (task_process_status::task_success != doUpdateBufferProfileForSize(profile, false))
             {
+                profile.xon = oldXon;
+                profile.xoff = oldXoff;
+                profile.size = oldSize;
+                profile.xon_offset = oldXonOffset;
                 SWSS_LOG_ERROR("Failed to update buffer profile %s when toggle shared headroom pool. See previous message for detail. Please adjust the configuration manually", name.c_str());
+                // The profile was not written to APPL_DB, so it will not be tracked in
+                // m_shpProfilesToCheck below. It is still in SHP form in SAI, so publishing
+                // pool xoff=0 once the tracked profiles sync would be rejected by SAI. Remember
+                // the failure so it can abort the ratio-driven SHP disable further down.
+                profile_update_failed = true;
             }
             // Record profiles that need SAI sync check
             // Only check when profile is actually written to APPL_DB
-            // Skip check if invoked by handleDefaultLossLessBufferParam (enable_state_updated_by_ratio is true)
-            if (m_portInitDone && !enable_state_updated_by_ratio && m_bufferProfileApplDbWritten)
+            // For ratio-driven SHP disable we MUST also track profiles: pool xoff=0 is
+            // published below and must not reach SAI before all profiles are in non-SHP
+            // form (xoff_th <= reserved_size). Without this guard, set_pool_xoff_size_attr
+            // is rejected with SAI_STATUS_FAILURE when any profile is still SHP-form.
+            bool disabling_shp_by_ratio = enable_state_updated_by_ratio && !shp_enabled_by_ratio;
+            if (m_portInitDone && m_bufferProfileApplDbWritten &&
+                (!enable_state_updated_by_ratio || disabling_shp_by_ratio))
             {
                 profilesToCheck.push_back(name);
             }
@@ -1686,9 +1708,12 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
 
         // Save profiles that need SAI sync check to member variable
         // The caller is responsible for checking SAI sync status
-        if (!profilesToCheck.empty())
+        m_shpProfilesToCheck = profilesToCheck;
+
+        if (profile_update_failed && enable_state_updated_by_ratio && !shp_enabled_by_ratio)
         {
-            m_shpProfilesToCheck = profilesToCheck;
+            SWSS_LOG_ERROR("SHP disable aborted: at least one buffer profile failed to be refreshed, pool xoff=0 not published");
+            return task_process_status::task_failed;
         }
     }
 
@@ -1700,8 +1725,18 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
     }
     else if (!shp_enabled_by_ratio && enable_state_updated_by_ratio)
     {
-        // shared headroom pool is enabled by ratio and will be disabled
-        // need to program APPL_DB because nobody else will take care of it
+        // SHP disabled by ratio: check that all profiles reached non-SHP form in SAI
+        // (xoff_th <= reserved_size) before setting pool xoff=0, otherwise SAI
+        // rejects the pool SET while any profile still has xoff_th > reserved_size.
+        if (!m_shpProfilesToCheck.empty())
+        {
+            auto status = checkPendingProfilesSyncStatus();
+            if (status != task_process_status::task_success)
+            {
+                SWSS_LOG_NOTICE("SHP disable deferred: profiles are still pending in SAI, pool xoff=0 not published");
+                return status;
+            }
+        }
         ingressLosslessPool.xoff = "0";
         if (isNonZero(ingressLosslessPool.total_size))
             updateBufferPoolToDb(INGRESS_LOSSLESS_PG_POOL_NAME, ingressLosslessPool);
@@ -1711,6 +1746,8 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
     {
         checkSharedBufferPoolSize();
     }
+
+    return task_process_status::task_success;
 }
 
 // Main flows
@@ -2016,11 +2053,12 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
         return task_process_status::task_failed;
     }
 
-    if (newRatio != m_overSubscribeRatio)
+    const bool ratioUpdated = newRatio != m_overSubscribeRatio;
+    if (ratioUpdated || m_shpDisablePendingByRatio)
     {
         bool isSHPEnabled = isNonZero(m_overSubscribeRatio);
         bool willSHPBeEnabled = isNonZero(newRatio);
-        if (m_portInitDone && (!isSHPEnabled) && willSHPBeEnabled)
+        if (ratioUpdated && m_portInitDone && (!isSHPEnabled) && willSHPBeEnabled)
         {
             // Keep the ratio enable event out of m_toSync; stale SET fields
             // can outlive the user's later delete-field intent.
@@ -2030,10 +2068,27 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
                 return status;
             }
         }
-        SWSS_LOG_INFO("Recalculate shared buffer pool size due to over subscribe ratio has been updated from %s to %s",
-                      m_overSubscribeRatio.c_str(), newRatio.c_str());
-        m_overSubscribeRatio = newRatio;
-        refreshSharedHeadroomPool(isSHPEnabled != willSHPBeEnabled, false);
+
+        if (ratioUpdated)
+        {
+            SWSS_LOG_INFO("Recalculate shared buffer pool size due to over subscribe ratio has been updated from %s to %s",
+                          m_overSubscribeRatio.c_str(), newRatio.c_str());
+            m_overSubscribeRatio = newRatio;
+        }
+
+        const bool retryingRatioDisable = m_shpDisablePendingByRatio && !willSHPBeEnabled;
+        const bool enableStateUpdated = isSHPEnabled != willSHPBeEnabled || retryingRatioDisable;
+        auto status = refreshSharedHeadroomPool(enableStateUpdated, false);
+        if (status != task_process_status::task_success)
+        {
+            if (status == task_process_status::task_need_retry && !willSHPBeEnabled)
+            {
+                m_shpDisablePendingByRatio = true;
+            }
+            return status;
+        }
+
+        m_shpDisablePendingByRatio = false;
     }
 
     return task_process_status::task_success;
@@ -2633,7 +2688,9 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
                 }
 
                 m_configuredSharedHeadroomPoolSize = newSHPSize;
-                refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+                auto rc = refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
+                if (rc != task_process_status::task_success)
+                    return rc;
 
                 // Check if there are profiles waiting for SAI sync
                 if (!m_shpProfilesToCheck.empty())

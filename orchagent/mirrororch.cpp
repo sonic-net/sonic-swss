@@ -11,6 +11,7 @@
 #include "converter.h"
 #include "mirrororch.h"
 #include "tokenize.h"
+#include "warm_restart.h"
 
 #define MIRROR_SESSION_STATUS               "status"
 #define MIRROR_SESSION_STATUS_ACTIVE        "active"
@@ -113,6 +114,15 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
     {
         m_maxNumTC = attr.value.u8;
     }
+
+    m_isWarmRestoreStage = WarmStart::isWarmStart();
+}
+
+void MirrorOrch::onWarmBootEnd()
+{
+    SWSS_LOG_ENTER();
+
+    m_isWarmRestoreStage = false;
 }
 
 bool MirrorOrch::bake()
@@ -569,7 +579,9 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
-    if (!isHwResourcesAvailable())
+    // A session restored by warm reboot still owns its HW resources, and the
+    // availability count includes them, so the check would reject it
+    if ((m_recoverySessionMap.find(key) == m_recoverySessionMap.end()) && !isHwResourcesAvailable())
     {
         SWSS_LOG_ERROR("Failed to create session %s: HW resources are not available", key.c_str());
         return task_process_status::task_failed;
@@ -1382,8 +1394,9 @@ bool MirrorOrch::setUnsetSampledMirrorOnPhyPort(sai_object_id_t phy_port_id,
         mirror_attr.value.objlist.count = 0;
     }
 
-    // Check for samplepacket conflict before binding
-    if (set)
+    // Check for samplepacket conflict before binding. During warm restore the port
+    // still reports the pre-reboot samplepacket OID; APPLY_VIEW reconciles it.
+    if (set && !m_isWarmRestoreStage)
     {
         sai_attribute_t check_attr;
         check_attr.id = samplepacketEnableAttrId;

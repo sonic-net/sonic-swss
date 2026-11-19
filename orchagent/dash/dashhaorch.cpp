@@ -770,7 +770,8 @@ void DashHaOrch::updateHaScopeStateForSwitchOwner(const std::string &key, const 
             ha_state = SAI_DASH_HA_STATE_DEAD;
             break;
         case dash::types::HA_ROLE_SWITCHING_TO_ACTIVE:
-            return;
+            ha_state = SAI_DASH_HA_STATE_INITIALIZING_TO_ACTIVE;
+            break;
         default:
             ha_state = SAI_DASH_HA_STATE_DEAD;
     }

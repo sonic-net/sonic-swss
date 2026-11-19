@@ -130,6 +130,7 @@ public:
                 DBConnector* configDb);
 
     ~FdbOrch();
+    void detachObservers() override;
 
     bool bake() override;
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t, const sai_fdb_entry_type_t &);

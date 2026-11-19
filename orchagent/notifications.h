@@ -8,6 +8,8 @@ extern "C" {
 void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data);
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data);
 void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data);
+void on_queue_pfc_deadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data);
+
 void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification_data_t *data);
 void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data);
 void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data);

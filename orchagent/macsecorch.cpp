@@ -38,7 +38,9 @@ extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
 constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
+constexpr bool DEFAULT_ENABLE_REPLAY_PROTECT = true;
 constexpr bool DEFAULT_SCI_IN_SECTAG = false;
+constexpr uint32_t DEFAULT_REPLAY_WINDOW = 0;
 constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
 bool saiAclFieldSciMatchSupported = true;
 
@@ -1115,29 +1117,6 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
         }
         else
         {
-            // wpa_supplicant's macsec_sonic create_transmit_sa() writes the
-            // full SA payload (sak/salt/ssci/auth_key/next_pn) to
-            // MACSEC_EGRESS_SA_TABLE. After a dirty macsec docker restart with
-            // surviving orchagent state, the SA pre-exists with the prior
-            // cycle's SAK programmed in hardware.
-            //
-            // Detect re-key by the presence of "sak" in this SET and do
-            // delete+recreate using THIS sa_attr's key material -- mirroring
-            // the ingress re-key path in taskUpdateIngressSA.
-            MACsecSAK probe_sak = {{0}, false};
-            if (get_value(sa_attr, "sak", probe_sak))
-            {
-                auto del_status = deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_EGRESS);
-                if (del_status != task_success)
-                {
-                    SWSS_LOG_WARN(
-                        "[macsec-rekey] egress SA %s: delete step failed during re-key",
-                        port_sci_an.c_str());
-                    return del_status;
-                }
-                return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_EGRESS);
-            }
-
             // The MACsec SA has enabled, update SA's attributes
             sai_uint64_t pn;
 
@@ -1198,27 +1177,6 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
         {
             if (has_active_field)
             {
-                // wpa_supplicant's macsec_sonic driver installs a new ingress SA
-                // in two stages: stage-1 writes active=false + full key material
-                // (sak/salt/ssci/auth_key/lowest_acceptable_pn); stage-2 writes
-                // active=true only. After a macsec docker restart with surviving
-                // orchagent state, the SA already exists.
-                //
-                // Detect the re-key case by the presence of "sak" in this SET
-                // and do delete+recreate atomically using the SAK from THIS sa_attr.
-                MACsecSAK probe_sak = {{0}, false};
-                if (get_value(sa_attr, "sak", probe_sak))
-                {
-                    auto del_status = deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
-                    if (del_status != task_success)
-                    {
-                        SWSS_LOG_WARN(
-                            "[macsec-rekey] ingress SA %s: delete step failed during re-key",
-                            port_sci_an.c_str());
-                        return del_status;
-                    }
-                    return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_INGRESS);
-                }
                 // Delete MACsec SA explicitly by set active to false
                 return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
             }
@@ -1467,6 +1425,8 @@ bool MACsecOrch::createMACsecPort(
 
     macsec_port.m_enable_encrypt = DEFAULT_ENABLE_ENCRYPT;
     macsec_port.m_sci_in_sectag = DEFAULT_SCI_IN_SECTAG;
+    macsec_port.m_enable_replay_protect = DEFAULT_ENABLE_REPLAY_PROTECT;
+    macsec_port.m_replay_window = DEFAULT_REPLAY_WINDOW;
     macsec_port.m_cipher_suite = DEFAULT_CIPHER_SUITE;
     macsec_port.m_enable = false;
 
@@ -1643,6 +1603,41 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
     if (get_value(port_attr, "send_sci", alpha_boolean))
     {
         macsec_port.m_sci_in_sectag = alpha_boolean.operator bool();
+    }
+    bool replay_updated = false;
+    if (get_value(port_attr, "enable_replay_protect", alpha_boolean))
+    {
+        macsec_port.m_enable_replay_protect = alpha_boolean.operator bool();
+        replay_updated = true;
+    }
+    uint32_t replay_window = 0;
+    if (get_value(port_attr, "replay_window", replay_window))
+    {
+        macsec_port.m_replay_window = replay_window;
+        replay_updated = true;
+    }
+    if (replay_updated)
+    {
+        for (auto sc = macsec_port.m_ingress_scs.begin(); sc != macsec_port.m_ingress_scs.end(); ++sc)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE;
+            attr.value.booldata = macsec_port.m_enable_replay_protect;
+            if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, sc->second.m_sc_id, attr))
+            {
+                SWSS_LOG_WARN("Cannot update MACsec SC 0x%" PRIx64 " replay protection enable",
+                              sc->second.m_sc_id);
+                return false;
+            }
+            attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW;
+            attr.value.u32 = macsec_port.m_replay_window;
+            if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, sc->second.m_sc_id, attr))
+            {
+                SWSS_LOG_WARN("Cannot update MACsec SC 0x%" PRIx64 " replay protection window",
+                              sc->second.m_sc_id);
+                return false;
+            }
+        }
     }
     std::string cipher_suite;
     if (get_value(port_attr, "cipher_suite", cipher_suite))
@@ -1944,7 +1939,7 @@ task_process_status MACsecOrch::updateMACsecSC(
     }
     else if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        if (!setEncodingAN(*ctx.get_macsec_sc(), sc_attr, direction, port_sci))
+        if (!setEncodingAN(*ctx.get_macsec_sc(), sc_attr, direction))
         {
             return task_failed;
         }
@@ -1956,8 +1951,7 @@ task_process_status MACsecOrch::updateMACsecSC(
 bool MACsecOrch::setEncodingAN(
     MACsecSC &sc,
     const TaskArgs &sc_attr,
-    sai_macsec_direction_t direction,
-    const std::string &port_sci)
+    sai_macsec_direction_t direction)
 {
     SWSS_LOG_ENTER();
 
@@ -1979,44 +1973,12 @@ bool MACsecOrch::setEncodingAN(
         return true;
     }
 
-    macsec_an_t old_an = sc.m_encoding_an;
+    // Only the in-memory encoding AN moves. The previous AN's SA stays until
+    // wpa_supplicant retires it (CP RETIRE, 3 s after the switch); orchagent
+    // never removes an SA it was not told to remove. State left behind by a
+    // supplicant that died is cleared by macsecmgrd before a new session
+    // starts, not inferred here.
     sc.m_encoding_an = new_an;
-
-    // The "one egress SA per SC" invariant depends on wpa_supplicant calling
-    // delete_transmit_sa() for the prior AN after enable_transmit_sa() on the
-    // new one. A dirty `docker restart macsec` kills wpa between those two
-    // steps, so the prior AN's SA leaks. The fresh wpa negotiates a new SAK
-    // on a different AN and we re-enter this function with new_an != old_an
-    // while the prior AN's SA is still in sc.m_sa_ids and in SAI. With two
-    // installed SAs and ENCODING_AN not actually programmed in SAI, the HW
-    // picks the wrong one (driver default) and the peer drops every frame.
-    //
-    // Sweep any non-current ANs out of SAI, FLEX_COUNTER_DB, COUNTERS_DB, and
-    // STATE_DB.  Collect stale ANs first so that deleteMACsecSA's internal
-    // m_sa_ids.erase() doesn't invalidate the iterator mid-loop.
-    std::vector<macsec_an_t> stale_ans;
-    for (const auto &kv : sc.m_sa_ids)
-    {
-        if (kv.first != new_an)
-            stale_ans.push_back(kv.first);
-    }
-    for (const auto stale_an : stale_ans)
-    {
-        SWSS_LOG_NOTICE(
-            "[macsec-rekey] egress SC encoding_an %u -> %u: purging stale "
-            "SA at AN=%u (oid:0x%" PRIx64 ")",
-            old_an, new_an, stale_an, sc.m_sa_ids.at(stale_an));
-
-        const std::string port_sci_an = swss::join(':', port_sci, stale_an);
-        auto del_status = deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_EGRESS);
-        if (del_status != task_success)
-        {
-            SWSS_LOG_WARN(
-                "[macsec-rekey] failed to delete stale egress SA at AN=%u",
-                stale_an);
-        }
-    }
-
     return true;
 }
 
@@ -2086,7 +2048,9 @@ bool MACsecOrch::createMACsecSC(
             sci,
             macsec_port.m_enable_encrypt,
             macsec_port.m_sci_in_sectag,
-            macsec_port.m_cipher_suite))
+            macsec_port.m_cipher_suite,
+            macsec_port.m_enable_replay_protect,
+            macsec_port.m_replay_window))
     {
         SWSS_LOG_WARN("Create MACsec SC %s fail.", port_sci.c_str());
         return false;
@@ -2145,7 +2109,9 @@ bool MACsecOrch::createMACsecSC(
     sai_uint64_t sci,
     bool encryption_enable,
     bool send_sci,
-    sai_macsec_cipher_suite_t cipher_suite)
+    sai_macsec_cipher_suite_t cipher_suite,
+    bool enable_replay_protect,
+    uint32_t replay_window)
 {
     SWSS_LOG_ENTER();
 
@@ -2170,6 +2136,15 @@ bool MACsecOrch::createMACsecSC(
     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
     attr.value.s32 = cipher_suite;
     attrs.push_back(attr);
+    if (direction == SAI_MACSEC_DIRECTION_INGRESS)
+    {
+        attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE;
+        attr.value.booldata = enable_replay_protect;
+        attrs.push_back(attr);
+        attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW;
+        attr.value.u32 = replay_window;
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_macsec_api->create_macsec_sc(
                                 &sc_id,
@@ -2330,31 +2305,8 @@ task_process_status MACsecOrch::createMACsecSA(
 
     if (ctx.get_macsec_sa() != nullptr)
     {
-        // Defense-in-depth for dirty macsec docker restart: if a SET arrives
-        // for an existing SA carrying a SAK, treat it as a re-key. We do not
-        // store the SAK in orchagent memory (and SAI_MACSEC_SA_ATTR_SAK is
-        // create-only), so we cannot diff; recreate unconditionally when SAK
-        // is present. Without this, stale SAKs from a previous MKA cycle stay
-        // programmed in hardware after the macsec docker restarts, and ICV
-        // validation fails for every received frame.
-        MACsecSAK probe_sak = {{0}, false};
-        if (!get_value(sa_attr, "sak", probe_sak))
-        {
-            return task_success;
-        }
-        auto del_status = deleteMACsecSA(port_sci_an, direction);
-        if (del_status != task_success)
-        {
-            SWSS_LOG_WARN(
-                "[macsec-rekey] %s SA %s: delete step failed during re-key",
-                (direction == SAI_MACSEC_DIRECTION_EGRESS) ? "egress" : "ingress",
-                port_sci_an.c_str());
-            return del_status;
-        }
-        // Recurse: with the old SA gone from MACsecSC::m_sa_ids, ctx.get_macsec_sa()
-        // returns nullptr on this call and execution falls through to the create
-        // path with the new key material from sa_attr.
-        return createMACsecSA(port_sci_an, sa_attr, direction);
+        SWSS_LOG_NOTICE("The MACsec SA %s has been created.", port_sci_an.c_str());
+        return task_success;
     }
 
     if (ctx.get_macsec_sc() == nullptr)
@@ -2514,35 +2466,6 @@ task_process_status MACsecOrch::deleteMACsecSA(
 
     if (ctx.get_macsec_sa() == nullptr)
     {
-        // SA may have been pre-emptively swept from m_sa_ids by setEncodingAN
-        // (SAI object already removed) without cleaning up STATE_DB or counters.
-        // Do both here so the DEL task leaves no stale entries.
-
-        // STATE_DB cleanup.
-        if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-        {
-            m_state_macsec_egress_sa.del(swss::join('|', port_name, sci, an));
-        }
-        else
-        {
-            m_state_macsec_ingress_sa.del(swss::join('|', port_name, sci, an));
-        }
-
-        // Counter cleanup: recover the OID from the COUNTERS_DB name→OID map
-        // (written by installCounter) and tear down the flex-counter entries.
-        std::string oid_str;
-        if (MACsecCountersMap(ctx).hget("", port_sci_an, oid_str))
-        {
-            sai_object_id_t swept_oid = SAI_NULL_OBJECT_ID;
-            sai_deserialize_object_id(oid_str, swept_oid);
-            if (swept_oid != SAI_NULL_OBJECT_ID)
-            {
-                MACsecSaAttrStatManager(ctx).clearCounterIdList(swept_oid);
-                MACsecSaStatManager(ctx).clearCounterIdList(swept_oid);
-            }
-        }
-        MACsecCountersMap(ctx).hdel("", port_sci_an);
-
         SWSS_LOG_INFO("MACsec SA %s has been deleted.", port_sci_an.c_str());
         return task_success;
     }

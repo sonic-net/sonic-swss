@@ -174,7 +174,6 @@ class WcmpManagerTest : public ::testing::Test
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_acl_, remove_acl_table_group(_)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         delete gP4Orch;
-        delete copp_orch_;
         gMockResponsePublisher.reset();
     }
 
@@ -197,7 +196,6 @@ class WcmpManagerTest : public ::testing::Test
             set_next_hop_group_member_attribute;
 
         sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
-        sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
         sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
         sai_switch_api->set_switch_attribute = mock_set_switch_attribute;
         sai_acl_api->create_acl_table_group = create_acl_table_group;
@@ -208,12 +206,11 @@ class WcmpManagerTest : public ::testing::Test
     {
         // init copp orch
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
+        EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _))
+            .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
         std::vector<std::string> p4_tables{APP_P4RT_TABLE_NAME};
-        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
         gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
     }
 
@@ -255,36 +252,37 @@ class WcmpManagerTest : public ::testing::Test
       return wcmp_group_manager_->updateWcmpGroups(entries);
     }
 
-    void HandlePortStatusChangeNotification(const std::string &op, const std::string &data)
-    {
-        gP4Orch->handlePortStatusChangeNotification(op, data);
+    void HandlePortStatusUpdate(const std::string& alias,
+                                const sai_port_oper_status_t& status) {
+        gP4Orch->handlePortStatusUpdate(alias, status);
     }
 
     void UpdateWatchPort(const std::string& port, bool prune) {
-      wcmp_group_manager_->updateWatchPort(port, prune);
+      wcmp_group_manager_->updateWatchPort(
+        port, prune ? SAI_PORT_OPER_STATUS_DOWN : SAI_PORT_OPER_STATUS_UP);
     }
 
     void ProcessWatchPortEvent() { wcmp_group_manager_->processWatchPortEvent(); }
 
     void PruneNextHops(const std::string &port)
     {
-      wcmp_group_manager_->updateWatchPort(port, true);
-      wcmp_group_manager_->processWatchPortEvent();
+      UpdateWatchPort(port, /*prune=*/true);
+      ProcessWatchPortEvent();
     }
 
     void RestorePrunedNextHops(const std::string &port)
     {
-      wcmp_group_manager_->updateWatchPort(port, false);
-      wcmp_group_manager_->processWatchPortEvent();
+      UpdateWatchPort(port, /*prune=*/false);
+      ProcessWatchPortEvent();
     }
 
     bool VerifyWcmpGroupMemberInPortMap(std::shared_ptr<P4WcmpGroupMemberEntry> gm, bool expected_member_present,
                                         long unsigned int expected_set_size)
     {
-        auto it = wcmp_group_manager_->port_name_to_wcmp_group_member_map.find(gm->watch_port);
-        if (it != wcmp_group_manager_->port_name_to_wcmp_group_member_map.end())
+        auto it = wcmp_group_manager_->m_port_name_to_wcmp_group_member_map.find(gm->watch_port);
+        if (it != wcmp_group_manager_->m_port_name_to_wcmp_group_member_map.end())
         {
-            auto &s = wcmp_group_manager_->port_name_to_wcmp_group_member_map[gm->watch_port];
+            auto &s = wcmp_group_manager_->m_port_name_to_wcmp_group_member_map[gm->watch_port];
             if (s.size() != expected_set_size)
                 return false;
             return expected_member_present ? (s.count(gm) > 0) : (s.count(gm) == 0);
@@ -330,7 +328,6 @@ class WcmpManagerTest : public ::testing::Test
     StrictMock<MockSaiAcl> mock_sai_acl_;
     P4OidMapper *p4_oid_mapper_;
     WcmpManager *wcmp_group_manager_;
-    CoppOrch *copp_orch_;
 };
 
 P4WcmpGroupEntry WcmpManagerTest::getDefaultWcmpGroupEntryForTest()
@@ -2022,10 +2019,6 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
 
     // Send port down signal
     // Verify that the next hop member associated with the port is pruned.
-    std::string op = "port_state_change";
-    std::string data = "[{\"port_id\":\"oid:0x56789abcdff\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
-
     std::vector<sai_object_id_t> member_oids{};
     std::vector<uint32_t> member_weights{};
     std::vector<sai_attribute_t> attrs;
@@ -2051,7 +2044,8 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
 
-    HandlePortStatusChangeNotification(op, data);
+    HandlePortStatusUpdate("Invalid_Port", SAI_PORT_OPER_STATUS_DOWN);  // No-Op
+    HandlePortStatusUpdate(port_name, SAI_PORT_OPER_STATUS_DOWN);
     ProcessWatchPortEvent();
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
@@ -2070,10 +2064,6 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
     // Send port up signal.
     // Verify that the pruned next hop member associated with the port is
     // restored.
-    std::string op = "port_state_change";
-    std::string data = "[{\"port_id\":\"oid:0x112233\",\"port_state\":\"SAI_PORT_OPER_"
-                       "STATUS_UP\",\"port_error_status\":\"0\"}]";
-
     std::vector<sai_object_id_t> member_oids{kNexthopOid1};
     std::vector<uint32_t> member_weights{2};
     std::vector<sai_attribute_t> attrs;
@@ -2099,7 +2089,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
             DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()),
                   Return(SAI_STATUS_SUCCESS)));
 
-    HandlePortStatusChangeNotification(op, data);
+    HandlePortStatusUpdate(port_name, SAI_PORT_OPER_STATUS_UP);
     ProcessWatchPortEvent();
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
@@ -2119,11 +2109,7 @@ TEST_F(WcmpManagerTest,
 
     // Send port down signal.
     // Verify that the pruned next hop member is not pruned again.
-    std::string op = "port_state_change";
-    std::string data =
-        "[{\"port_id\":\"oid:0x56789abcfff\",\"port_state\":\"SAI_PORT_OPER_"
-        "STATUS_DOWN\",\"port_error_status\":\"0\"}]";
-    HandlePortStatusChangeNotification(op, data);
+    HandlePortStatusUpdate(port_name, SAI_PORT_OPER_STATUS_DOWN);
     ProcessWatchPortEvent();
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0],
                                                true, 1));

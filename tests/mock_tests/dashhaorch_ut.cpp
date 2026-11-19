@@ -1255,6 +1255,25 @@ namespace dashhaorch_ut
         RemoveHaSet();
     }
 
+    TEST_F(DashHaOrchTestSwitchOwner, SwitchOwnerSwitchingToActiveInitializesStateAndProcessesBfdSessions)
+    {
+        CreateSwitchOwnerDpuScopeHaSet();
+        CreateHaScope();
+
+        CreateSoftwareBfdSession();
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 0);
+
+        SetHaScopeHaRole("switching_to_active");
+
+        auto& scope_entry = m_dashHaOrch->getHaScopeEntries().find("HA_SET_1")->second;
+        EXPECT_EQ(scope_entry.ha_state, SAI_DASH_HA_STATE_INITIALIZING_TO_ACTIVE);
+        EXPECT_EQ(to_sai(scope_entry.metadata.ha_role()), SAI_DASH_HA_ROLE_SWITCHING_TO_ACTIVE);
+        EXPECT_EQ(m_mockBfdOrch->createSoftwareBfdSession_invoked_times, 1);
+
+        RemoveHaScope();
+        RemoveHaSet();
+    }
+
     TEST_F(DashHaOrchTest, DpuOwnerSetRoleDoesNotUpdateState)
     {
         // DPU owner (default CreateHaSet uses "dpu" owner)
