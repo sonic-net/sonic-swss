@@ -1765,7 +1765,7 @@ namespace vxlanorch_test
         void tunnelDel() { apply(m_VxlanTunnelOrch, APP_VXLAN_TUNNEL_TABLE_NAME, {"vtep1", DEL_COMMAND, {}}); }
         void retryNvo() { static_cast<Orch *>(m_nvoOrch)->doTask(); }
         // The bridge port removal retry interval has passed.
-        void expireBridgePortRetry() { m_nvoOrch->m_bridgePortRetryAt = {}; }
+        void expireBridgePortRetry() { vtep()->bridge_port_retry_at_ = {}; }
 
         bool nvoHeld() { return !consumerOf(m_nvoOrch, APP_VXLAN_EVPN_NVO_TABLE_NAME)->m_toSync.empty(); }
         bool mapHeld() { return !consumerOf(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME)->m_toSync.empty(); }
@@ -2762,9 +2762,17 @@ namespace vxlanorch_test
         EXPECT_EQ(vtep()->vlan_vrf_vni_count, 0u);
         EXPECT_TRUE(vtep()->del_tnl_hw_pending);
 
+        // The refused removal is retried on an interval shared by both DELs, not on every pass.
         g_removeBridgePortInUseCalls = 0;
         retryTunnel();
-        EXPECT_GT(g_removeBridgePortInUseCalls, 0);
+        static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+        retryTunnel();
+        EXPECT_EQ(g_removeBridgePortInUseCalls, 0);
+        expireBridgePortRetry();
+        retryTunnel();
+        static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+        EXPECT_EQ(g_removeBridgePortInUseCalls, 1);
+        EXPECT_TRUE(mapHeld());
         EXPECT_TRUE(tunnelHeld());
         ASSERT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
         EXPECT_TRUE(vtep()->del_tnl_hw_pending);
@@ -2772,6 +2780,7 @@ namespace vxlanorch_test
 
         sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
         g_savedRemoveBridgePort = nullptr;
+        expireBridgePortRetry();
         retryTunnel();
         EXPECT_FALSE(tunnelHeld());
         EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
@@ -2781,6 +2790,113 @@ namespace vxlanorch_test
         EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
         static_cast<Orch *>(m_tunnelMapOrch)->doTask();
         EXPECT_FALSE(mapHeld());
+    }
+
+    // P2MP, the NVO already released the tunnel and the SAI refuses the bridge port on the last map DEL. The same
+    // tunnel, NVO and map are configured again before the SAI lets it go: the hw delete is still finished once the
+    // SAI accepts, and the map goes on the tunnel.
+    TEST_F(EvpnNvoDelP2mpTest, StaleTunnelDeleteKeepsTheRetryOfARefusedBridgePort)
+    {
+        nvoDel();
+        ASSERT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
+        tunnelDel();
+        ASSERT_TRUE(tunnelHeld());
+
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        mapDel();
+        ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+
+        tunnelSet("10.1.1.1");
+        nvoSet();
+        mapSet();
+        EXPECT_TRUE(mapHeld());
+
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+        expireBridgePortRetry();
+        for (int i = 0; i < 3; i++)
+        {
+            retryTunnel();
+            retryNvo();
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+        }
+        EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+        EXPECT_FALSE(mapHeld());
+        EXPECT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+        EXPECT_TRUE(vtep()->isActive());
+        EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+    }
+
+    // As above with the NVO still on the tunnel: the tunnel row comes back before the SAI lets the bridge port
+    // go, and the hw delete and the map still finish.
+    TEST_F(EvpnNvoDelP2mpTest, StaleTunnelDeleteWithTheNvoKeepsTheRetryOfARefusedBridgePort)
+    {
+        tunnelDel();
+        ASSERT_TRUE(tunnelHeld());
+
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        mapDel();
+        ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+        ASSERT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+
+        tunnelSet("10.1.1.1");
+        mapSet();
+        EXPECT_TRUE(mapHeld());
+
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+        expireBridgePortRetry();
+        for (int i = 0; i < 3; i++)
+        {
+            retryTunnel();
+            retryNvo();
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+        }
+        EXPECT_FALSE(vtep()->del_tnl_hw_pending);
+        EXPECT_FALSE(mapHeld());
+        EXPECT_TRUE(m_tunnelMapOrch->isTunnelMapExists(m_mapKey));
+        EXPECT_TRUE(vtep()->isActive());
+        EXPECT_EQ(m_nvoOrch->getEVPNVtep(), vtep());
+    }
+
+    // P2MP: the NVO DEL and the tunnel DEL are both held on a bridge port the SAI refuses. They share the
+    // tunnel's retry interval, so the removal is tried once per interval, not once per DEL.
+    TEST_F(EvpnNvoDelP2mpTest, NvoAndTunnelDeletesShareTheBridgePortRetryInterval)
+    {
+        setRemoteVni();
+        mapDel();
+        ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+
+        g_savedRemoveBridgePort = sai_bridge_api->remove_bridge_port;
+        sai_bridge_api->remove_bridge_port = stubRemoveBridgePortInUse;
+        delRemoteVni();
+        ASSERT_TRUE(vtep()->del_tnl_hw_pending);
+
+        g_removeBridgePortInUseCalls = 0;
+        nvoDel();
+        tunnelDel();
+        EXPECT_TRUE(nvoHeld());
+        EXPECT_TRUE(tunnelHeld());
+        retryNvo();
+        retryTunnel();
+        EXPECT_EQ(g_removeBridgePortInUseCalls, 1);
+
+        expireBridgePortRetry();
+        retryTunnel();
+        retryNvo();
+        EXPECT_EQ(g_removeBridgePortInUseCalls, 2);
+
+        sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
+        g_savedRemoveBridgePort = nullptr;
+        expireBridgePortRetry();
+        retryNvo();
+        retryTunnel();
+        EXPECT_FALSE(nvoHeld());
+        EXPECT_FALSE(tunnelHeld());
+        EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+        EXPECT_EQ(m_nvoOrch->getEVPNVtep(), nullptr);
     }
 
     TEST_F(EvpnNvoDelP2mpTest, NvoDelBeforeLastMapWaitsForTunnelPortRelease)
