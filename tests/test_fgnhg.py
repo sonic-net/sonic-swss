@@ -374,7 +374,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     ip_to_if_map = {}
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+    logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
@@ -730,7 +730,7 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+    logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
@@ -981,7 +981,7 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+    logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
@@ -1216,7 +1216,7 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+    logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)

@@ -2133,7 +2133,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         state_db = dvs.get_state_db()
         config_db = dvs.get_config_db()
 
-        logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
+        logfvs = config_db.get_entry("LOGGER", "orchagent")
         logfvs["LOGLEVEL"] = "INFO"
         config_db.update_entry("LOGGER", "orchagent", logfvs)
 
