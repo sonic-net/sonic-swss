@@ -216,6 +216,9 @@ public:
     // Finishes a held SIP tunnel hw delete once nothing references the tunnel; false while the
     // P2MP source tunnel port's bridge port cannot be removed.
     bool finishPendingSIPDelete();
+    // finishPendingSIPDelete() for a held DEL retried on every pass: after a refused bridge port it tries again
+    // only once the retry interval has passed, and returns false meanwhile. True means not refused, not done.
+    bool retryPendingSIPDelete();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
     void updateRemoteEndPointRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
@@ -253,6 +256,8 @@ private:
     VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)
     uint8_t encap_dedicated_mappers_ = 0;
     uint8_t decap_dedicated_mappers_ = 0;
+    // The earliest retry of a refused bridge port removal: each attempt flushes its FDB and logs the failure.
+    std::chrono::steady_clock::time_point bridge_port_retry_at_;
 };
 
 const request_description_t vxlan_tunnel_request_description = {
@@ -612,6 +617,4 @@ private:
     std::string m_pendingVtep;
     // Held DELs and the reason last logged, so each retry logs only a new reason.
     std::map<std::string, std::string> m_heldDeletes;
-    // The earliest retry of a source tunnel bridge port removal that the SAI refused.
-    std::chrono::steady_clock::time_point m_bridgePortRetryAt;
 };

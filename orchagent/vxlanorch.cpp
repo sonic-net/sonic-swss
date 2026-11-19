@@ -1000,6 +1000,7 @@ void VxlanTunnel::deletePendingSIPTunnel()
        TUNNELMAP_SET_VRF(mapper_list);
        deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
        del_tnl_hw_pending = false;
+       bridge_port_retry_at_ = {};
        SWSS_LOG_INFO("Removing SIP Tunnel HW which is pending");
    }
 
@@ -1026,6 +1027,28 @@ bool VxlanTunnel::finishPendingSIPDelete()
     }
     deletePendingSIPTunnel();
     return true;
+}
+
+static const auto BRIDGE_PORT_RETRY_INTERVAL = std::chrono::seconds(10);
+
+bool VxlanTunnel::retryPendingSIPDelete()
+{
+    if (!del_tnl_hw_pending || isTunnelReferenced())
+    {
+        return true;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    if (now < bridge_port_retry_at_)
+    {
+        return false;
+    }
+    if (finishPendingSIPDelete())
+    {
+        return true;
+    }
+    bridge_port_retry_at_ = now + BRIDGE_PORT_RETRY_INTERVAL;
+    return false;
 }
 
 int VxlanTunnel::getDipTunnelCnt()
@@ -1842,10 +1865,12 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
     bool nvo_uses_it = evpn_orch && evpn_orch->getEVPNVtep() == vtep_ptr;
     string held;
-    // Without the NVO nothing else retries a hw delete left pending by a refused bridge port.
-    if (vtep_ptr->del_tnl_hw_pending && !nvo_uses_it && vtep_ptr->vlan_vrf_vni_count == 0)
+    // A hw delete left pending by a refused bridge port may have no other retry left than this DEL, so the DEL
+    // is not dropped as stale while the bridge port is refused.
+    bool bridge_port_refused = false;
+    if (vtep_ptr->del_tnl_hw_pending && vtep_ptr->vlan_vrf_vni_count == 0)
     {
-        vtep_ptr->finishPendingSIPDelete();
+        bridge_port_refused = !vtep_ptr->retryPendingSIPDelete();
     }
     if (vtep_ptr->del_tnl_hw_pending)
     {
@@ -1863,7 +1888,8 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
 
     // As for the NVO: a held DEL is retried ahead of a later SET of the same tunnel. A row back with the
     // tunnel's attributes means it is wanted again: the DEL is stale, and the SET finds the tunnel as it is.
-    if ((!held.empty() || m_heldDeletes.count(tunnel_name)) && isTunnelRowBack(tunnel_name, *vtep_ptr))
+    if (!bridge_port_refused && (!held.empty() || m_heldDeletes.count(tunnel_name)) &&
+        isTunnelRowBack(tunnel_name, *vtep_ptr))
     {
         SWSS_LOG_NOTICE("Vxlan tunnel '%s' was re-created, stale delete dropped", tunnel_name.c_str());
         m_heldDeletes.erase(tunnel_name);
@@ -3125,8 +3151,6 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
 
 //------------------- EVPN_NVO Table --------------------------//
 
-static const auto NVO_BRIDGE_PORT_RETRY_INTERVAL = std::chrono::seconds(10);
-
 bool EvpnNvoOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -3240,16 +3264,9 @@ std::string EvpnNvoOrch::finishPendingHwDelete()
         return "hw delete is pending and the source VTEP is still in use";
     }
 
-    // The last user is already gone. A bridge port the SAI still holds is retried on an interval:
-    // each attempt flushes its FDB and logs the failure.
-    auto now = std::chrono::steady_clock::now();
-    if (now >= m_bridgePortRetryAt)
+    if (source_vtep_ptr->retryPendingSIPDelete())
     {
-        if (source_vtep_ptr->finishPendingSIPDelete())
-        {
-            return "";
-        }
-        m_bridgePortRetryAt = now + NVO_BRIDGE_PORT_RETRY_INTERVAL;
+        return "";
     }
     return "remove bridge port failed for the source VTEP, retrying";
 }
@@ -3258,7 +3275,6 @@ void EvpnNvoOrch::unbind()
 {
     source_vtep_ptr = NULL;
     m_pendingVtep.clear();
-    m_bridgePortRetryAt = {};
 }
 
 bool EvpnNvoOrch::releaseForTunnelDelete()
