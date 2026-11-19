@@ -189,6 +189,9 @@ protected:
     // Mark the queue's open storm interrupted: handling ended without a restore.
     void interruptStorm(const string& portAlias, uint8_t queueIndex);
 
+    // Recovery mechanism recorded with each storm
+    virtual const char* recoveryMechanism() const { return PFC_WD_RECOVERY_SOFTWARE; }
+
     // Helper to convert counter IDs to string set for FlexCounter
     template <typename T>
     static unordered_set<string> counterIdsToStr(const vector<T> ids, string (*convert)(T))

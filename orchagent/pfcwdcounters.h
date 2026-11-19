@@ -45,6 +45,8 @@
 #define PFC_WD_STORM_HISTORY_TX_DROPPED            "tx_dropped"
 #define PFC_WD_STORM_HISTORY_RX_PACKETS            "rx_packets"
 #define PFC_WD_STORM_HISTORY_RX_DROPPED            "rx_dropped"
+// Recovery mechanism, set at detection
+#define PFC_WD_STORM_HISTORY_MECHANISM             "mechanism"
 // Set instead of restored when the storm's handling ended without a restoration
 #define PFC_WD_STORM_HISTORY_INTERRUPTED           "interrupted"
 

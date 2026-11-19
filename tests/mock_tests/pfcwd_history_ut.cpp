@@ -224,6 +224,7 @@ namespace pfcwd_history_test
         EXPECT_TRUE(regex_match(get(sf(1, PFC_WD_STORM_HISTORY_DETECTED)), kEpochUs));
         EXPECT_EQ(state(PFC_WD_QUEUE_STATE_LAST_DETECTION_TIME), get(sf(1, PFC_WD_STORM_HISTORY_DETECTED)));
         EXPECT_FALSE(has(sf(1, PFC_WD_STORM_HISTORY_RESTORED)));
+        EXPECT_EQ(get(sf(1, PFC_WD_STORM_HISTORY_MECHANISM)), PFC_WD_RECOVERY_HARDWARE);
         EXPECT_FALSE(has(PFC_WD_QUEUE_STATE_STATUS));
     }
 
@@ -267,7 +268,8 @@ namespace pfcwd_history_test
         for (const char* suffix : {PFC_WD_STORM_HISTORY_DETECTED, PFC_WD_STORM_HISTORY_RESTORED,
                                    PFC_WD_STORM_HISTORY_DURATION_MS, PFC_WD_STORM_HISTORY_TX_PACKETS,
                                    PFC_WD_STORM_HISTORY_TX_DROPPED, PFC_WD_STORM_HISTORY_RX_PACKETS,
-                                   PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_INTERRUPTED})
+                                   PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_MECHANISM,
+                                   PFC_WD_STORM_HISTORY_INTERRUPTED})
         {
             seed(sf(1, suffix), "1");
             seed(sf(2, suffix), "2");
@@ -280,7 +282,8 @@ namespace pfcwd_history_test
         for (const char* suffix : {PFC_WD_STORM_HISTORY_DETECTED, PFC_WD_STORM_HISTORY_RESTORED,
                                    PFC_WD_STORM_HISTORY_DURATION_MS, PFC_WD_STORM_HISTORY_TX_PACKETS,
                                    PFC_WD_STORM_HISTORY_TX_DROPPED, PFC_WD_STORM_HISTORY_RX_PACKETS,
-                                   PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_INTERRUPTED})
+                                   PFC_WD_STORM_HISTORY_RX_DROPPED, PFC_WD_STORM_HISTORY_MECHANISM,
+                                   PFC_WD_STORM_HISTORY_INTERRUPTED})
         {
             EXPECT_FALSE(has(sf(1, suffix))) << suffix;
             EXPECT_EQ(get(sf(2, suffix)), "2") << suffix;
@@ -401,7 +404,7 @@ namespace pfcwd_history_test
 
         vector<FieldValueTuple> fvs;
         ASSERT_TRUE(m_history->get(kKey, fvs));
-        EXPECT_EQ(fvs.size(), 1u + 7u * PFC_WD_STORM_HISTORY_DEPTH);
+        EXPECT_EQ(fvs.size(), 1u + 8u * PFC_WD_STORM_HISTORY_DEPTH);
     }
 
     // Counter updates alone write no storm records.
@@ -549,6 +552,32 @@ namespace pfcwd_history_test
         EXPECT_EQ(state(PFC_WD_QUEUE_STATE_STATUS), PFC_WD_QUEUE_STATE_STATUS_DETECTED);
     }
 
+    // The hardware watchdog closes a storm left open across a warm restart,
+    // since its RECOVERED may have been lost; the next detection is a new storm.
+    TEST_F(PfcWdHistoryTest, WarmStartQueueInit_InterruptsRetainedStorm)
+    {
+        detect();
+        delete m_orch;
+        WarmStart::getInstance().m_enabled = true;
+        m_orch = newOrch();
+        ASSERT_FALSE(has(sf(1, PFC_WD_STORM_HISTORY_INTERRUPTED)));
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(kAlias, port));
+        m_orch->initializeQueueStats(port, {kIdx});
+        EXPECT_TRUE(has(sf(1, PFC_WD_STORM_HISTORY_INTERRUPTED)));
+
+        detect();
+        EXPECT_EQ(get(PFC_WD_STORM_HISTORY_LAST_STORM), "2");
+        EXPECT_TRUE(has(sf(2, PFC_WD_STORM_HISTORY_DETECTED)));
+        EXPECT_EQ(state(PFC_WD_QUEUE_STATE_DETECTION_COUNT), "2");
+
+        restore();
+        EXPECT_TRUE(has(sf(2, PFC_WD_STORM_HISTORY_RESTORED)));
+        EXPECT_FALSE(has(sf(1, PFC_WD_STORM_HISTORY_RESTORED)));
+        m_counters_table->del(sai_serialize_object_id(port.m_queue_ids[kIdx]));
+    }
+
     TEST_F(PfcWdHistoryTest, DeleteEntry_ClearsPortStorms)
     {
         for (const string key : {"Ethernet0|3", "Ethernet4|3"})
@@ -592,6 +621,7 @@ namespace pfcwd_history_test
     {
         ASSERT_TRUE(m_sw->startWdActionOnQueue("storm", kQueue));
         EXPECT_EQ(get(PFC_WD_STORM_HISTORY_LAST_STORM), "1");
+        EXPECT_EQ(get(sf(1, PFC_WD_STORM_HISTORY_MECHANISM)), PFC_WD_RECOVERY_SOFTWARE);
         EXPECT_EQ(state(PFC_WD_QUEUE_STATE_STATUS), PFC_WD_QUEUE_STATE_STATUS_DETECTED);
 
         ASSERT_TRUE(m_sw->startWdActionOnQueue("restore", kQueue));
