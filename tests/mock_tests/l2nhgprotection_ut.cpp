@@ -1513,6 +1513,7 @@ protected:
     void PostSetUp() override
     {
         BpProtectionAttachmentTest::PostSetUp();
+        gPortsOrch->m_bridgePortRemovalNow = [this] { return protection->m_now(); };
         bridgeCreates = bridgeRemoves = bridgeFlushes = 0; bridgeAllocation = 0xabc;
         bridgeFlushedVlans.clear();
         savedFdb = *sai_fdb_api; savedHost = *sai_hostif_api;

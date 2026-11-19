@@ -6,7 +6,9 @@
 #undef protected
 
 #include "ut_helper.h"
+#define private public
 #include "mock_orchagent_main.h"
+#undef private
 #include "mock_table.h"
 #include "bulker.h"
 #include "common/vxlan_ut_helpers.h"
@@ -16,6 +18,8 @@ namespace vuh = vxlan_ut_helpers;
 #include "gtest/gtest.h"
 
 #include "shlorch.h"
+#include "stporch.h"
+#include "isolationgrouporch.h"
 
 #define VXLAN_REMOTE_2 "EVPN_2.2.2.2"
 #define VXLAN_REMOTE_3 "EVPN_3.3.3.3"
@@ -1144,4 +1148,233 @@ namespace shlorch_test
 
         simulate_sai_failure = false; // Reset for other tests
     }
+    static vector<string> retirementOrder;
+    static bool refuseRetirement = false;
+    static bool refuseIsolationRemoval = false;
+    static bool refuseAdminDown = false;
+    static bool refuseHostTag = false;
+    sai_status_t recordRetirementMemberRemoval(sai_object_id_t oid)
+    {
+        retirementOrder.push_back("member_remove");
+        return refuseIsolationRemoval ? SAI_STATUS_FAILURE : _ut_stub_sai_remove_isolation_group_member(oid);
+    }
+    sai_status_t recordRetirementMemberCreation(sai_object_id_t *oid, sai_object_id_t sid,
+        uint32_t count, const sai_attribute_t *attrs)
+    {
+        retirementOrder.push_back("member_create");
+        return _ut_stub_sai_create_isolation_group_member(oid, sid, count, attrs);
+    }
+    sai_status_t recordBridgeRetirement(sai_object_id_t)
+    {
+        retirementOrder.push_back("bridge_remove");
+        return refuseRetirement ? SAI_STATUS_OBJECT_IN_USE : SAI_STATUS_SUCCESS;
+    }
+
+    TEST_F(ShlOrchTest, BridgeRetirementReleasesIsolationFirstAndRestoresOnFailure)
+    {
+        Table table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        table.set("Vlan10:Ethernet4", {{"vteps", VTEP_REMOTE_IP_2}});
+        alloc_index = 0; oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        gShlOrch->addExistingData(&table); static_cast<Orch *>(gShlOrch)->doTask();
+        auto group = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(group, nullptr); ASSERT_EQ(group->getMemberPorts().size(), 1u);
+        Port port; ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(gStpOrch, nullptr);
+        vector<string> stpTables{"STP_TABLE", "STP_VLAN_INSTANCE_TABLE", "STP_PORT_STATE_TABLE",
+            "STP_FASTAGEING_FLUSH_TABLE", "STP_INST_PORT_FLUSH_TABLE"};
+        gStpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), stpTables);
+        const auto savedBridge = ut_sai_bridge_api;
+        const auto savedIsolation = ut_sai_isolation_group_api;
+        const auto savedHostif = *sai_hostif_api;
+        ut_sai_bridge_api.set_bridge_port_attribute = [](sai_object_id_t, const sai_attribute_t *attr) -> sai_status_t {
+            return refuseAdminDown && attr->id == SAI_BRIDGE_PORT_ATTR_ADMIN_STATE ? SAI_STATUS_INSUFFICIENT_RESOURCES : SAI_STATUS_SUCCESS;
+        };
+        ut_sai_bridge_api.remove_bridge_port = recordBridgeRetirement;
+        sai_hostif_api->set_hostif_attribute = [](sai_object_id_t, const sai_attribute_t*) -> sai_status_t {
+            return refuseHostTag ? SAI_STATUS_INSUFFICIENT_RESOURCES : SAI_STATUS_SUCCESS;
+        };
+        ut_sai_isolation_group_api.remove_isolation_group_member = recordRetirementMemberRemoval;
+        ut_sai_isolation_group_api.create_isolation_group_member = recordRetirementMemberCreation;
+
+        uint64_t retirementNow = 0;
+        gPortsOrch->m_bridgePortRemovalNow = [&] { return retirementNow; };
+        refuseIsolationRemoval = true; refuseRetirement = true; retirementOrder.clear();
+        const bool memberFailure = gPortsOrch->removeBridgePort(port);
+        const auto memberFailureOrder = retirementOrder;
+        const auto membersAfterMemberFailure = group->getMemberPorts().size();
+
+        retirementNow += 5000;
+        refuseIsolationRemoval = false; refuseAdminDown = true; retirementOrder.clear();
+        const bool adminFailure = gPortsOrch->removeBridgePort(port);
+        const auto adminFailureOrder = retirementOrder;
+        retirementNow += 5000;
+        refuseAdminDown = false; refuseHostTag = true; retirementOrder.clear();
+        const bool hostFailure = gPortsOrch->removeBridgePort(port);
+        const auto hostFailureOrder = retirementOrder;
+        retirementNow += 5000;
+        refuseHostTag = false; retirementOrder.clear();
+        const bool bridgeFailure = gPortsOrch->removeBridgePort(port);
+        const auto bridgeFailureOrder = retirementOrder;
+        const auto membersAfterBridgeFailure = group->getMemberPorts().size();
+
+        retirementNow += 5000;
+        refuseRetirement = false; retirementOrder.clear();
+        const bool success = gPortsOrch->removeBridgePort(port);
+        const auto successOrder = retirementOrder;
+        const auto membersAfterSuccess = group->getMemberPorts().size();
+
+        ut_sai_bridge_api = savedBridge; ut_sai_isolation_group_api = savedIsolation;
+        *sai_hostif_api = savedHostif; delete gStpOrch; gStpOrch = nullptr;
+        gPortsOrch->m_bridgePortRemovalNow = PortsOrch::bridgePortRemovalClock;
+        refuseIsolationRemoval = false; refuseRetirement = false;
+        EXPECT_FALSE(memberFailure);
+        EXPECT_EQ(memberFailureOrder, (vector<string>{"member_remove"}));
+        EXPECT_EQ(membersAfterMemberFailure, 1u);
+        EXPECT_FALSE(adminFailure); EXPECT_FALSE(hostFailure);
+        EXPECT_EQ(adminFailureOrder, (vector<string>{"member_remove", "member_create"}));
+        EXPECT_EQ(hostFailureOrder, (vector<string>{"member_remove", "member_create"}));
+        EXPECT_FALSE(bridgeFailure);
+        EXPECT_EQ(bridgeFailureOrder, (vector<string>{"member_remove", "bridge_remove", "member_create"}));
+        EXPECT_EQ(membersAfterBridgeFailure, 1u);
+        EXPECT_TRUE(success);
+        EXPECT_EQ(successOrder, (vector<string>{"member_remove", "bridge_remove"}));
+        EXPECT_EQ(membersAfterSuccess, 0u);
+
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        consumer->addToSync(KeyOpFieldsValuesTuple{"Vlan10:Ethernet4", DEL_COMMAND, {}});
+        static_cast<Orch *>(gShlOrch)->doTask();
+    }
+
+    sai_status_t recordIsolationBinding(sai_object_id_t oid, const sai_attribute_t *attr)
+    {
+        EXPECT_NE(oid, SAI_NULL_OBJECT_ID);
+        retirementOrder.push_back(attr->value.oid ? "binding_set" : "binding_clear");
+        return _ut_stub_sai_set_bridge_port_attribute(oid, attr);
+    }
+
+    TEST_F(ShlOrchTest, IsolationBindingIsClearedBeforeRemovalAndFailedClearVetoes)
+    {
+        Port port; ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", port));
+        ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        vector<TableConnector> connectors{{m_app_db.get(), APP_ISOLATION_GROUP_TABLE_NAME}};
+        IsoGrpOrch isolation(connectors);
+        alloc_index = 0; oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        const auto status = isolation.addIsolationGroup("BppRemoval", ISOLATION_GROUP_TYPE_BRIDGE_PORT,
+            "", "Ethernet4", "");
+        EXPECT_EQ(status, ISO_GRP_STATUS_SUCCESS);
+        if (status == ISO_GRP_STATUS_SUCCESS)
+        {
+            const auto savedSet = ut_sai_bridge_api.set_bridge_port_attribute;
+            ut_sai_bridge_api.set_bridge_port_attribute = recordIsolationBinding;
+            retirementOrder.clear(); simulate_bridge_failure = true;
+            BridgePortRemovalUpdate first{port};
+            isolation.update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &first);
+            EXPECT_FALSE(first.ready);
+            simulate_bridge_failure = false;
+            BridgePortRemovalUpdate retry{port};
+            isolation.update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &retry);
+            EXPECT_TRUE(retry.ready);
+            // A real retry must have unbound, not merely reported ready.
+            simulate_bridge_failure = true;
+            PortUpdate restore{port, true};
+            isolation.update(SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED, &restore);
+            simulate_bridge_failure = false;
+            isolation.update(SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED, &restore);
+            simulate_bridge_failure = true;
+            BridgePortRemovalUpdate failedRestore{port};
+            isolation.update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &failedRestore);
+            EXPECT_FALSE(failedRestore.ready);
+            EXPECT_EQ(retirementOrder, (vector<string>{"binding_clear", "binding_clear",
+                "binding_set", "binding_set", "binding_clear"}));
+            simulate_bridge_failure = false;
+            ut_sai_bridge_api.set_bridge_port_attribute = savedSet;
+            EXPECT_EQ(isolation.delIsolationGroup("BppRemoval"), ISO_GRP_STATUS_SUCCESS);
+        }
+        gPortsOrch->detach(&isolation);
+    }
+
+    TEST_F(ShlOrchTest, TunnelIsolationUsesLivePortAndRestoresBindingsAfterFailure)
+    {
+        Table table(m_app_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+        table.set("Vlan10:Ethernet4", {{"vteps", VTEP_REMOTE_IP_2}});
+        alloc_index = 0; oid_values[0] = isolation_group_ids[VTEP_REMOTE_IP_2];
+        gShlOrch->addExistingData(&table); static_cast<Orch *>(gShlOrch)->doTask();
+        auto group = gShlOrch->getIsolationGroup(VTEP_REMOTE_IP_2);
+        ASSERT_NE(group, nullptr); ASSERT_EQ(group->getBindPorts().size(), 1u);
+        Port tunnel; ASSERT_TRUE(gPortsOrch->getPort(group->getBindPorts().front(), tunnel));
+        const auto savedSet = ut_sai_bridge_api.set_bridge_port_attribute;
+        ut_sai_bridge_api.set_bridge_port_attribute = recordIsolationBinding;
+        retirementOrder.clear();
+        PortUpdate removal{tunnel, false}, restore{tunnel, true};
+        gShlOrch->update(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, &removal);
+        EXPECT_TRUE(group->getBindPorts().empty());
+        gShlOrch->update(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, &restore);
+        EXPECT_EQ(group->getBindPorts().size(), 1u);
+        simulate_bridge_failure = true;
+        BridgePortRemovalUpdate failed{tunnel};
+        gShlOrch->update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &failed);
+        EXPECT_FALSE(failed.ready); EXPECT_EQ(group->getBindPorts().size(), 1u);
+        simulate_bridge_failure = false;
+        BridgePortRemovalUpdate prepared{tunnel};
+        gShlOrch->update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &prepared);
+        EXPECT_TRUE(prepared.ready); EXPECT_TRUE(group->getBindPorts().empty());
+        simulate_bridge_failure = true;
+        gShlOrch->update(SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED, &restore);
+        EXPECT_TRUE(group->getBindPorts().empty());
+        simulate_bridge_failure = false;
+        gShlOrch->update(SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED, &restore);
+        EXPECT_EQ(group->getBindPorts().size(), 1u);
+        EXPECT_EQ(retirementOrder, (vector<string>{"binding_clear", "binding_set", "binding_clear",
+            "binding_clear", "binding_set", "binding_set"}));
+        ut_sai_bridge_api.set_bridge_port_attribute = savedSet;
+        auto consumer = dynamic_cast<Consumer *>(gShlOrch->getExecutor(APP_EVPN_SPLIT_HORIZON_TABLE_NAME));
+        consumer->addToSync(KeyOpFieldsValuesTuple{"Vlan10:Ethernet4", DEL_COMMAND, {}});
+        static_cast<Orch *>(gShlOrch)->doTask();
+    }
+
+    TEST_F(ShlOrchTest, IsolationMemberRestoreRetriesAndPortTypedGroupsStayUntouched)
+    {
+        Port member, physical;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", member));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet5", physical));
+        const auto savedApi = ut_sai_isolation_group_api;
+        ut_sai_isolation_group_api.create_isolation_group = [](sai_object_id_t *oid,
+            sai_object_id_t, uint32_t, const sai_attribute_t *attrs) -> sai_status_t {
+            *oid = 0xfeed0000 + static_cast<sai_object_id_t>(attrs[0].value.s32);
+            return SAI_STATUS_SUCCESS;
+        };
+        vector<TableConnector> connectors{{m_app_db.get(), APP_ISOLATION_GROUP_TABLE_NAME}};
+        IsoGrpOrch isolation(connectors);
+        EXPECT_EQ(isolation.addIsolationGroup("BridgeMembers", ISOLATION_GROUP_TYPE_BRIDGE_PORT,
+            "", "", "Ethernet4"), ISO_GRP_STATUS_SUCCESS);
+        EXPECT_EQ(isolation.addIsolationGroup("PortMembers", ISOLATION_GROUP_TYPE_PORT,
+            "", "", "Ethernet5"), ISO_GRP_STATUS_SUCCESS);
+        ut_sai_isolation_group_api.remove_isolation_group_member = recordRetirementMemberRemoval;
+        ut_sai_isolation_group_api.create_isolation_group_member = recordRetirementMemberCreation;
+        retirementOrder.clear();
+        BridgePortRemovalUpdate portTyped{physical};
+        isolation.update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &portTyped);
+        EXPECT_TRUE(portTyped.ready); EXPECT_TRUE(retirementOrder.empty());
+        refuseIsolationRemoval = true;
+        BridgePortRemovalUpdate failed{member};
+        isolation.update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &failed);
+        EXPECT_FALSE(failed.ready);
+        refuseIsolationRemoval = false;
+        BridgePortRemovalUpdate prepared{member};
+        isolation.update(SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE, &prepared);
+        EXPECT_TRUE(prepared.ready);
+        PortUpdate restore{member, true};
+        simulate_sai_failure = true;
+        isolation.update(SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED, &restore);
+        simulate_sai_failure = false;
+        isolation.update(SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED, &restore);
+        EXPECT_EQ(retirementOrder, (vector<string>{"member_remove", "member_remove",
+            "member_create", "member_create"}));
+        gPortsOrch->detach(&isolation);
+        EXPECT_EQ(isolation.delIsolationGroup("BridgeMembers"), ISO_GRP_STATUS_SUCCESS);
+        EXPECT_EQ(isolation.delIsolationGroup("PortMembers"), ISO_GRP_STATUS_SUCCESS);
+        ut_sai_isolation_group_api = savedApi;
+    }
+
 }
