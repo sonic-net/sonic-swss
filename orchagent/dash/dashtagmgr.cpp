@@ -83,8 +83,8 @@ task_process_status DashTagMgr::remove(const string& tag_id)
 
     if (!tag_it->second.m_groups.empty())
     {
-        SWSS_LOG_WARN("Prefix tag %s is still in use by ACL rule(s)", tag_id.c_str());
-        return task_need_retry;
+        SWSS_LOG_ERROR("Prefix tag %s is still in use by ACL rule(s)", tag_id.c_str());
+        return task_failed;
     }
 
     m_tag_table.erase(tag_it);

@@ -218,8 +218,10 @@ public:
     int getDipTunnelCnt();
     bool createDynamicDIPTunnel(const string dip, tunnel_user_t usr);
     bool deleteDynamicDIPTunnel(const string dip, tunnel_user_t usr, bool update_refcnt = true);
+    void cleanupDynamicDIPTunnel(const std::string remote_vtep);
     bool isTunnelReferenced(void);
     void updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc);
+    void eraseRemoteEndPoint(const std::string remote_vtep);
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 
@@ -269,6 +271,7 @@ class VxlanTunnelOrch : public Orch2
 {
 public:
     VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName);
+    ~VxlanTunnelOrch() override;
 
     bool isTunnelExists(const std::string& tunnelName) const
     {
@@ -448,12 +451,12 @@ public:
 };
 
 struct vrf_map_entry_t {
-    sai_object_id_t encap_id;
-    sai_object_id_t decap_id;
-    bool isL2Vni;
+    sai_object_id_t encap_id = SAI_NULL_OBJECT_ID;
+    sai_object_id_t decap_id = SAI_NULL_OBJECT_ID;
+    bool isL2Vni = false;
     std::string vniVlanMapName;
-    uint32_t vlan_id;
-    uint32_t vni_id;
+    uint32_t vlan_id = 0;
+    uint32_t vni_id = 0;
 };
 
 typedef std::map<string, vrf_map_entry_t> VxlanVrfTable;
@@ -507,6 +510,12 @@ private:
     virtual bool delOperation(const Request& request);
 
     EvpnRemoteVniRequest request_;
+
+    // (vid, remote VTEP) entries holding a tunnel user reference whose VLAN member
+    // add has not succeeded yet.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_pendingVlanMembers;
+    // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
 };
 
 class EvpnRemoteVnip2mpOrch : public Orch2
@@ -520,6 +529,9 @@ private:
     virtual bool delOperation(const Request& request);
 
     EvpnRemoteVniRequest request_;
+
+    // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
 };
 
 //------------- EVPN_NVO Table -------------------------

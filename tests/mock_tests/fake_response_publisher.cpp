@@ -39,16 +39,47 @@ void ResponsePublisher::publish(
     }
 }
 
+void ResponsePublisher::publishAsync(
+    const std::string& table, const std::string& key,
+    const std::vector<swss::FieldValueTuple>& intent_attrs, const ReturnCode& status, bool replace)
+{
+    // Fake has no state update thread; mirror synchronous publish() path.
+    publish(table, key, intent_attrs, status, replace);
+}
+
+void ResponsePublisher::publishAsyncBatch()
+{
+    // No pending batch: publishAsync already called publish() above.
+}
+
 void ResponsePublisher::writeToDB(
     const std::string& table, const std::string& key,
     const std::vector<swss::FieldValueTuple>& values, const std::string& op,
     bool replace) {}
 
-void ResponsePublisher::setEnableDbWriteAndNotify(bool enable_db_write_and_notify)
+
+void ResponsePublisher::setWarmbootStateOnFailure(
+    const std::string& app_name, bool set_on_fail)
 {
     if (gMockResponsePublisher)
     {
-        gMockResponsePublisher->setEnableDbWriteAndNotify(enable_db_write_and_notify);
+        gMockResponsePublisher->setWarmbootStateOnFailure(app_name, set_on_fail);
+    }
+}
+
+void ResponsePublisher::setEnableDbWrite(bool enable)
+{
+    if (gMockResponsePublisher)
+    {
+        gMockResponsePublisher->setEnableDbWrite(enable);
+    }
+}
+
+void ResponsePublisher::setEnableNotify(bool enable)
+{
+    if (gMockResponsePublisher)
+    {
+        gMockResponsePublisher->setEnableNotify(enable);
     }
 }
 

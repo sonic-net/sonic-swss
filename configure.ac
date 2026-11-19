@@ -108,6 +108,7 @@ CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
 CFLAGS_COMMON+=" -Wno-error=missing-field-initializers"
 CFLAGS_COMMON+=" -Wno-error=overloaded-virtual"
+CFLAGS_COMMON+=" -Wno-psabi"
 
 # Code testing coverage with gcov
 AC_MSG_CHECKING(whether to build with gcov testing)
@@ -118,7 +119,7 @@ if test "x$enable_gcov" = "xyes"; then
         AC_MSG_ERROR(not compiling with gcc, which is required for gcov testing)
     fi
 
-    CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
+    CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage -DGCOV_ENABLED"
     AC_SUBST(CFLAGS_COMMON)
 
     LDFLAGS+=" -fprofile-arcs -lgcov"

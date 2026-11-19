@@ -1,15 +1,16 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
+use ahash::{HashMap, HashMapExt};
 use log::{debug, error, info, warn};
 use swss_common::{CxxString, DbConnector};
 use tokio::{select, sync::mpsc::Receiver, time::interval};
 
-use crate::message::saistats::SAIStatsMessage;
-use crate::utilities::{record_comm_stats, ChannelLabel};
+use crate::message::saistats::SAIStatsBatchMessage;
 use crate::sai::{
     SaiBufferPoolStat, SaiIngressPriorityGroupStat, SaiObjectType, SaiPortStat, SaiQueueStat,
 };
+use crate::utilities::{record_comm_stats, ChannelLabel};
 
 /// Unix socket path for Redis connection
 #[allow(dead_code)] // Used in new() method but Rust may not detect it in all build configurations
@@ -21,14 +22,14 @@ const COUNTERS_DB_ID: i32 = 2;
 /// Unique key for identifying a counter in our local cache
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CounterKey {
-    pub object_name: String,
+    pub object_name: Arc<str>,
     pub type_id: u32,
     pub stat_id: u32,
 }
 
 #[allow(dead_code)] // Methods used in tests and may be used by external code
 impl CounterKey {
-    pub fn new(object_name: String, type_id: u32, stat_id: u32) -> Self {
+    pub fn new(object_name: Arc<str>, type_id: u32, stat_id: u32) -> Self {
         Self {
             object_name,
             type_id,
@@ -44,6 +45,8 @@ pub struct CounterValue {
     pub counter: u64,
     pub updated: bool,
     pub last_written_value: Option<u64>,
+    /// Pre-resolved template stat name. Owned/manual inputs use the same view API.
+    pub stat_name: Option<&'static str>,
 }
 
 #[allow(dead_code)] // Methods used throughout the code but may not be detected in all configurations
@@ -53,6 +56,7 @@ impl CounterValue {
             counter,
             updated: true,
             last_written_value: None,
+            stat_name: None,
         }
     }
 
@@ -109,7 +113,7 @@ impl Default for CounterDBConfig {
 #[allow(dead_code)] // Main struct and fields used throughout but may not be detected in all configurations
 pub struct CounterDBActor {
     /// Channel for receiving SAI statistics messages
-    stats_receiver: Receiver<SAIStatsMessage>,
+    stats_receiver: Receiver<SAIStatsBatchMessage>,
     /// Configuration for writing behavior (includes timer)
     config: CounterDBConfig,
     /// Local cache of counter values
@@ -119,7 +123,7 @@ pub struct CounterDBActor {
     /// Cache for object name to OID mappings (table_name:object_name -> OID)
     /// Key format: "COUNTERS_PORT_NAME_MAP:Ethernet0" -> "oid:0x1000000000001"
     oid_cache: HashMap<String, String>,
-    /// Total messages received
+    /// Total records received
     total_messages_received: u64,
     /// Total writes performed
     writes_performed: u64,
@@ -138,7 +142,7 @@ impl CounterDBActor {
     ///
     /// Result containing a new CounterDBActor instance or an error
     pub fn new(
-        stats_receiver: Receiver<SAIStatsMessage>,
+        stats_receiver: Receiver<SAIStatsBatchMessage>,
         config: CounterDBConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Connect to CounterDB
@@ -206,36 +210,40 @@ impl CounterDBActor {
     /// Handles a received SAI statistics message.
     ///
     /// Updates the local counter cache with new values and marks them as updated.
-    async fn handle_stats_message(&mut self, msg: SAIStatsMessage) {
-        self.total_messages_received += 1;
+    async fn handle_stats_message(&mut self, batch: SAIStatsBatchMessage) {
+        for msg in batch.iter() {
+            self.total_messages_received += 1;
 
-        debug!(
-            "Received SAI stats message with {} counters at time {}",
-            msg.stats.len(),
-            msg.observation_time
-        );
+            debug!(
+                "Received SAI stats message with {} counters at time {}",
+                msg.stats.len(),
+                msg.observation_time
+            );
 
-        for stat in &msg.stats {
-            let key = CounterKey::new(stat.object_name.clone(), stat.type_id, stat.stat_id);
+            for stat in msg.stats {
+                let key =
+                    CounterKey::new(Arc::clone(&stat.object_name), stat.type_id, stat.stat_id);
 
-            match self.counter_cache.get_mut(&key) {
-                Some(counter_value) => {
-                    // Update existing counter only if value changed
-                    counter_value.update(stat.counter);
-                }
-                None => {
-                    // Insert new counter
-                    self.counter_cache
-                        .insert(key, CounterValue::new(stat.counter));
+                match self.counter_cache.get_mut(&key) {
+                    Some(counter_value) => {
+                        // Update existing counter only if value changed
+                        counter_value.update(stat.counter);
+                    }
+                    None => {
+                        // Insert new counter
+                        let mut value=CounterValue::new(stat.counter);
+                        value.stat_name=stat.stat_name();
+                        self.counter_cache.insert(key,value);
+                    }
                 }
             }
-        }
 
-        debug!(
-            "Updated {} counters in cache (total cached: {})",
-            msg.stats.len(),
-            self.counter_cache.len()
-        );
+            debug!(
+                "Updated {} counters in cache (total cached: {})",
+                msg.stats.len(),
+                self.counter_cache.len()
+            );
+        }
     }
 
     /// Writes all updated counters to CounterDB.
@@ -309,11 +317,14 @@ impl CounterDBActor {
 
         // Get the OID for this object name from the name map (with caching)
         let oid = self
-            .get_oid_from_name_map(&name_map_table, &key.object_name)
+            .get_oid_from_name_map(&name_map_table, key.object_name.as_ref())
             .await?;
 
         // Get the stat name from stat_id
-        let stat_name = self.get_stat_name(key.stat_id, &object_type)?;
+        let stat_name = match value.stat_name {
+            Some(name)=>std::borrow::Cow::Borrowed(name),
+            None=>std::borrow::Cow::Owned(self.get_stat_name(key.stat_id,&object_type)?),
+        };
 
         // Write to COUNTERS table using hset to update only the specific stat field
         // The correct Redis key format is: COUNTERS:oid (e.g., COUNTERS:oid:0x1000000000013)
@@ -323,7 +334,7 @@ impl CounterDBActor {
 
         // Use hset to set only this specific stat field, preserving other fields
         self.counters_db
-            .hset(&counters_key, &stat_name, &counter_value)
+            .hset(&counters_key, stat_name.as_ref(), &counter_value)
             .map_err(|e| format!("Failed to hset {}:{}: {}", counters_key, stat_name, e))?;
 
         debug!(
@@ -466,15 +477,15 @@ impl CounterDBActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::saistats::{SAIStat, SAIStats};
+    use crate::message::saistats::{SAIStat, SAIStats, SAIStatsBatch};
     use crate::sai::saitypes::SaiObjectType;
     use std::sync::Arc;
     use tokio::sync::mpsc;
 
     #[test]
     fn test_counter_key_creation() {
-        let key = CounterKey::new("Ethernet0".to_string(), 1, 0);
-        assert_eq!(key.object_name, "Ethernet0");
+        let key = CounterKey::new("Ethernet0".into(), 1, 0);
+        assert_eq!(key.object_name.as_ref(), "Ethernet0");
         assert_eq!(key.type_id, 1);
         assert_eq!(key.stat_id, 0);
     }
@@ -513,7 +524,7 @@ mod tests {
     #[test]
     fn test_get_counter_name_map_table() {
         // Create a test actor instance to test the real method
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<SAIStatsBatchMessage>(1);
         let config = CounterDBConfig::default();
 
         // Test with a real actor instance
@@ -546,7 +557,7 @@ mod tests {
     #[test]
     fn test_get_stat_name() {
         // Create a test actor instance to test the real method
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<SAIStatsBatchMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -608,7 +619,7 @@ mod tests {
     #[test]
     fn test_convert_object_name_for_lookup() {
         // Create a test actor instance to test the real method
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<SAIStatsBatchMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -636,7 +647,7 @@ mod tests {
     #[tokio::test]
     async fn test_counter_db_actor_integration() {
         // This test uses real Redis connection
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(10);
+        let (_tx, rx) = mpsc::channel::<SAIStatsBatchMessage>(10);
         let config = CounterDBConfig::default();
 
         // Try to create a real CounterDBActor
@@ -644,14 +655,14 @@ mod tests {
             Ok(mut actor) => {
                 // Create a test SAI stats message
                 let stats = vec![SAIStat {
-                    object_name: "Ethernet0".to_string(),
+                    object_name: "Ethernet0".into(),
                     type_id: SaiObjectType::Port.to_u32(),
                     stat_id: 0, // IF_IN_OCTETS
                     counter: 1000,
                 }];
 
                 let sai_stats = SAIStats::new(12345, stats);
-                let msg = Arc::new(sai_stats);
+                let msg = Arc::new(SAIStatsBatch::from_stats(sai_stats));
 
                 // Test message handling
                 actor.handle_stats_message(msg.clone()).await;
@@ -659,7 +670,7 @@ mod tests {
                 assert_eq!(actor.counter_cache.len(), 1);
 
                 // Verify the counter is marked as changed
-                let key = CounterKey::new("Ethernet0".to_string(), SaiObjectType::Port.to_u32(), 0);
+                let key = CounterKey::new("Ethernet0".into(), SaiObjectType::Port.to_u32(), 0);
                 let cached_value = actor.counter_cache.get(&key).unwrap();
                 assert!(cached_value.has_changed());
                 assert_eq!(cached_value.counter, 1000);
@@ -687,19 +698,34 @@ mod tests {
 
                 // Send a different value
                 let stats2 = vec![SAIStat {
-                    object_name: "Ethernet0".to_string(),
+                    object_name: "Ethernet0".into(),
                     type_id: SaiObjectType::Port.to_u32(),
                     stat_id: 0,
                     counter: 2000, // Changed value
                 }];
                 let sai_stats2 = SAIStats::new(12346, stats2);
-                let msg2 = Arc::new(sai_stats2);
+                let mut batch2 = SAIStatsBatch::from_stats(sai_stats2);
+                batch2.push_record(
+                    12347,
+                    [SAIStat::new(
+                        "Ethernet0",
+                        SaiObjectType::Port.to_u32(),
+                        0,
+                        3000,
+                    )],
+                );
+                let msg2 = Arc::new(batch2);
 
                 actor.handle_stats_message(msg2).await;
-                assert_eq!(actor.total_messages_received, 4);
+                assert_eq!(actor.total_messages_received, 5);
                 let cached_value = actor.counter_cache.get(&key).unwrap();
                 assert!(cached_value.has_changed()); // Value changed
-                assert_eq!(cached_value.counter, 2000);
+                assert_eq!(cached_value.counter, 3000);
+                let mut shared=SAIStatsBatch::default();
+                shared.push_shared_record(12348,Arc::from(vec![crate::message::saistats::SAIStatMetadata::new("Ethernet0",1,0)]),[4000]);
+                actor.handle_stats_message(Arc::new(shared)).await;
+                assert_eq!(actor.total_messages_received,6);
+                assert_eq!(actor.counter_cache[&key].counter,4000);
             }
             Err(e) => {
                 // This is acceptable in CI environments where Redis might not be running
@@ -712,7 +738,7 @@ mod tests {
     async fn test_write_counter_uses_hset() {
         // Test that write_counter_to_db uses hset instead of set
         // This preserves existing fields in the Redis hash
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<SAIStatsBatchMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -725,7 +751,7 @@ mod tests {
                     .insert(cache_key.to_string(), test_oid.to_string());
 
                 // Create a test counter
-                let key = CounterKey::new("Ethernet0".to_string(), SaiObjectType::Port.to_u32(), 0);
+                let key = CounterKey::new("Ethernet0".into(), SaiObjectType::Port.to_u32(), 0);
                 let value = CounterValue::new(1000);
 
                 // Test the write operation
@@ -750,7 +776,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_counter_redis_key_format() {
         // Test the actual write_counter_to_db method with mocked Redis connection
-        let (_tx, rx) = mpsc::channel::<SAIStatsMessage>(1);
+        let (_tx, rx) = mpsc::channel::<SAIStatsBatchMessage>(1);
         let config = CounterDBConfig::default();
 
         match CounterDBActor::new(rx, config) {
@@ -763,7 +789,7 @@ mod tests {
                     .insert(cache_key.to_string(), test_oid.to_string());
 
                 // Create a test counter
-                let key = CounterKey::new("Ethernet0".to_string(), SaiObjectType::Port.to_u32(), 0);
+                let key = CounterKey::new("Ethernet0".into(), SaiObjectType::Port.to_u32(), 0);
                 let value = CounterValue::new(1000);
 
                 // Test the write operation

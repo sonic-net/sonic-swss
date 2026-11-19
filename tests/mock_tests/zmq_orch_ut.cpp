@@ -58,7 +58,7 @@ TEST(ZmqOrchTest, CreateZmqRouteOrchWithTableNames)
 TEST(ZmqOrchTest, ZmqRouteConsumerExecuteEmpty)
 {
     string zmq_server_address = "tcp://127.0.0.1:18100";
-    auto zmq_server = swss::create_zmq_server(zmq_server_address);
+    auto zmq_server = swss::create_zmq_route_server(zmq_server_address);
 
     auto app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
 
@@ -68,11 +68,11 @@ TEST(ZmqOrchTest, ZmqRouteConsumerExecuteEmpty)
     vector<table_name_with_pri_t> empty_tables;
     auto host_orch = make_shared<ZmqRouteOrch>(app_db.get(), empty_tables, nullptr);
 
-    // Construct ZmqConsumerStateTable with dbPersistence=false so no
+    // Construct ZmqRouteConsumerStateTable with dbPersistence=false so no
     // AsyncDBUpdater / Redis activity happens.
-    auto* cst = new swss::ZmqConsumerStateTable(
+    auto* cst = new swss::ZmqRouteConsumerStateTable(
         app_db.get(), "ROUTE_TABLE_E", *zmq_server,
-        /*popBatchSize=*/128, /*pri=*/1, /*dbPersistence=*/false);
+        /*pri=*/1, /*dbPersistence=*/false);
     auto* consumer = new ZmqRouteConsumer(cst, host_orch.get(), "ROUTE_TABLE_E");
 
     // With no messages received, pops() returns empty, addToSync returns 0,
@@ -179,4 +179,41 @@ TEST(ZmqOrchTest, GetFeatureStatusException)
     config_db.hset("DEVICE_METADATA|localhost", HGET_THROW_EXCEPTION_FIELD_NAME, "true");
     enabled = swss::get_feature_status(HGET_THROW_EXCEPTION_FIELD_NAME, false);
     EXPECT_FALSE(enabled);
+}
+
+TEST(ZmqOrchTest, GetRoutePerfZmqEnabled)
+{
+    DBConnector config_db("CONFIG_DB", 0);
+
+    // Test: enabled
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "enabled");
+    EXPECT_TRUE(swss::get_route_perf_zmq_enabled());
+
+    // Test: disabled
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "disabled");
+    EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
+
+    // Test: missing key → default false
+    config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
+    EXPECT_FALSE(swss::get_route_perf_zmq_enabled());
+}
+
+TEST(ZmqOrchTest, CreateRoutePerfZmqClient)
+{
+    DBConnector config_db("CONFIG_DB", 0);
+
+    // When enabled: returns a non-null ZmqClient
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "enabled");
+    auto client = swss::create_route_perf_zmq_client();
+    EXPECT_NE(client, nullptr);
+
+    // When disabled: returns nullptr
+    config_db.hset(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY, SYSTEM_DEFAULTS_STATUS_FIELD, "disabled");
+    client = swss::create_route_perf_zmq_client();
+    EXPECT_EQ(client, nullptr);
+
+    // When key missing: returns nullptr
+    config_db.del(SYSTEM_DEFAULTS_SWSS_ZMQ_KEY);
+    client = swss::create_route_perf_zmq_client();
+    EXPECT_EQ(client, nullptr);
 }

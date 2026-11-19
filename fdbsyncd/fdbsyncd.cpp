@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <chrono>
+#include <linux/rtnetlink.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -23,9 +24,11 @@ int main(int argc, char **argv)
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);
 
-    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEIGH, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEXTHOP, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEXTHOP, &sync);
 
     while (1)
     {
@@ -73,7 +76,8 @@ int main(int argc, char **argv)
 
             netlink.registerGroup(RTNLGRP_LINK);
             netlink.registerGroup(RTNLGRP_NEIGH);
-            SWSS_LOG_NOTICE("Listens to link and neigh messages...");
+            netlink.registerGroup(RTNLGRP_NEXTHOP);
+            SWSS_LOG_NOTICE("Listens to link, neigh and nexthop messages...");
             netlink.dumpRequest(RTM_GETLINK);
             s.addSelectable(&netlink);
             ret = s.select(&temps, 1);
@@ -82,11 +86,19 @@ int main(int argc, char **argv)
                 SWSS_LOG_ERROR("Error in RTM_GETLINK dump");
             }
 
+            netlink.dumpRequest(RTM_GETNEXTHOP);
+            ret = s.select(&temps, 1);
+            if (ret == Select::ERROR)
+            {
+                SWSS_LOG_ERROR("Error in RTM_GETNEXTHOP dump");
+            }
+
             netlink.dumpRequest(RTM_GETNEIGH);
 
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());
             s.addSelectable(sync.getCfgEvpnNvoTable());
+            s.addSelectable(sync.getStateFdbSyncTable());
             while (true)
             {
                 s.select(&temps);
@@ -102,6 +114,10 @@ int main(int argc, char **argv)
                 else if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
                     sync.processCfgEvpnNvo();
+                }
+                else if (temps == (Selectable *)sync.getStateFdbSyncTable())
+                {
+                    sync.processStateFdbSync();
                 }
                 else if (temps == &replayCheckTimer)
                 {
@@ -144,6 +160,7 @@ int main(int argc, char **argv)
                             sync.getRestartAssist()->stopReconcileTimer(s);
                             sync.getRestartAssist()->reconcile();
                             SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete");
+                            sync.applyPendingMacSyncMode();
                         }
                     }
                 }

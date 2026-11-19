@@ -129,7 +129,7 @@ def is_intf_up(intf, db):
 #  2, need check interface state twice due to the split map
 
 def read_neigh_table_to_maps():
-    db = swsscommon.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(use_unix_socket_path=True)
     db.connect(db.APPL_DB, False)
 
     intf_neigh_map = {}
@@ -219,7 +219,7 @@ def build_arp_ns_pkt(family, smac, src_ip, dst_ip):
 
 # Set the statedb "NEIGH_RESTORE_TABLE|Flags", so neighsyncd can start reconciliation
 def set_statedb_neigh_restore_done():
-    db = swsscommon.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(use_unix_socket_path=True)
     db.connect(db.STATE_DB, False)
     db.set(db.STATE_DB, 'NEIGH_RESTORE_TABLE|Flags', 'restored', 'true')
     db.close(db.STATE_DB)
@@ -240,7 +240,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     ipclass = IPRoute()
     start_time = time.monotonic()
     is_intf_up.counter = 0
-    db = swsscommon.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(use_unix_socket_path=True)
     db.connect(db.STATE_DB, False)
     while (time.monotonic() - start_time) < timeout:
         for intf, family_neigh_map in list(intf_neigh_map.items()):
@@ -250,25 +250,40 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
                 intf_idx = ipclass.link_lookup(ifname=intf)[0]
                 # create socket per intf to send packets
                 s = conf.L2socket(iface=intf)
+                retry_intf = False
+                try:
+                    # Only two families: 'IPv4' and 'IPv6'
+                    for family in ip_family.keys():
+                        # if ip address assigned and if we have neighs in this family, restore them
+                        src_ip = first_ip_on_intf(intf, family)
+                        if src_ip and (family in family_neigh_map):
+                            neigh_list = family_neigh_map[family]
+                            for dst_ip, dmac in neigh_list:
+                                # use netlink to set neighbor entries
+                                set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac)
 
-                # Only two families: 'IPv4' and 'IPv6'
-                for family in ip_family.keys():
-                    # if ip address assigned and if we have neighs in this family, restore them
-                    src_ip = first_ip_on_intf(intf, family)
-                    if src_ip and (family in family_neigh_map):
-                        neigh_list = family_neigh_map[family]
-                        for dst_ip, dmac in neigh_list:
-                            # use netlink to set neighbor entries
-                            set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac)
+                                log_info('Sending Neigh with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
+                                family, intf_idx, dst_ip, dmac))
+                                # sending arp/ns packet to update kernel neigh info
+                                try:
+                                    s.send(build_arp_ns_pkt(family, src_mac, src_ip, dst_ip))
+                                except OSError as e:
+                                    if e.errno == errno.ENETDOWN:
+                                        log_warning('Interface {} went down while restoring {} neighbor {}; retrying'.format(
+                                        intf, family, dst_ip))
+                                        retry_intf = True
+                                        break
+                                    raise
+                            if retry_intf:
+                                break
+                            # delete this family on the intf
+                            del intf_neigh_map[intf][family]
+                finally:
+                    # close the pkt socket
+                    s.close()
 
-                            log_info('Sending Neigh with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
-                            family, intf_idx, dst_ip, dmac))
-                            # sending arp/ns packet to update kernel neigh info
-                            s.send(build_arp_ns_pkt(family, src_mac, src_ip, dst_ip))
-                        # delete this family on the intf
-                        del intf_neigh_map[intf][family]
-                # close the pkt socket
-                s.close()
+                if retry_intf:
+                    continue
 
                 # if all families are deleted, remove the key
                 if len(intf_neigh_map[intf]) == 0:

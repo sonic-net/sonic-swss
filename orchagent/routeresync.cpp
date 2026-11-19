@@ -21,8 +21,8 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
     DBConnector db("APPL_DB", 0);
 
-    // When the feature ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED is enabled, route events must be sent to orchagent via the ZMQ channel.
-    std::shared_ptr<ZmqClient> zmqClient = create_local_zmq_client(ORCH_NORTHBOND_ROUTE_ZMQ_ENABLED, false);
+    // When route_performance zmq is enabled, route events must be sent to orchagent via the ZMQ channel.
+    std::shared_ptr<ZmqClient> zmqClient = create_route_perf_zmq_client();
     std::shared_ptr<ProducerStateTable> r = createProducerStateTable(&db, APP_ROUTE_TABLE_NAME, zmqClient);
 
     if (argc != 2)

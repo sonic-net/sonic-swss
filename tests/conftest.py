@@ -493,15 +493,12 @@ class DockerVirtualSwitch:
             return
         try:
             # Generate the gcda files
-            self.runcmd('killall5 -15')
+            self.stop_swss()
+            self.runcmd('supervisorctl stop all')
             time.sleep(1)
 
-            # Stop the services to reduce the CPU comsuption
-            if self.cleanup:
-                self.runcmd('supervisorctl stop all')
-
             # Generate the converage info by lcov and copy to the host
-            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info && lcov --add-tracefile /tmp/coverage.info -o /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
+            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov --demangle-cpp -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info && lcov --add-tracefile /tmp/coverage.info -o /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
             subprocess.getstatusoutput(cmd)
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; find . -name *.gcda -type f   -exec tar -rf /tmp/gcda.tar {{}} \\;'"
             subprocess.getstatusoutput(cmd)
@@ -642,7 +639,7 @@ class DockerVirtualSwitch:
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
             if not self.switch_mode or (self.switch_mode and self.switch_mode != SINGLE_ASIC_VOQ_FS):
                 self.get_state_db()
-                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS)
+                self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS, polling_config=PollingConfig(polling_interval=0.01, timeout=40, strict=True))
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
@@ -1967,7 +1964,8 @@ def manage_dvs(request) -> str:
 
         else:
             # First generate GCDA files for GCov
-            dvs.runcmd('killall5 -15')
+            dvs.stop_swss()
+            dvs.runcmd("supervisorctl stop all")
             # If not re-creating the DVS, restart container
             # between modules to ensure a consistent start state
             dvs.net_cleanup()

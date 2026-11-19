@@ -1,0 +1,137 @@
+#include "zmqrouteorch.h"
+
+using namespace swss;
+using namespace std;
+
+extern int gBatchSize;
+extern size_t gMaxBulkSize;
+
+ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name)
+    : ConsumerBase(select, orch, name)
+{
+    // mqPollThread delivers bursts of tuples through this callback. Stage them
+    // in the plain m_ingress map under m_ingressMutex rather than merging into
+    // m_toSync here; the merge into m_toSync happens on the orch main thread in
+    // execute(). The eventfd is fired once the staged batch reaches
+    // gMaxBulkSize (so the main loop has a real batch to drain); otherwise
+    // mqPollThread fires it once per burst after the burst quiesces.
+    select->setIngressCallback(
+        [this, select](const std::vector<std::shared_ptr<KeyOpFieldsValuesTuple>> &kcos) {
+            std::lock_guard<std::mutex> lk(m_ingressMutex);
+            for (const auto &kco : kcos)
+            {
+                // Plain last-writer-wins staging by key. The SyncMap merge into
+                // m_toSync is applied later by execute()'s addToSync().
+                m_ingress[kfvKey(*kco)] = *kco;
+            }
+            if (m_ingress.size() >= gMaxBulkSize)
+            {
+                select->notifyPending();
+            }
+        });
+}
+
+void ZmqRouteConsumer::execute()
+{
+    SWSS_LOG_ENTER();
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    {
+        // Move the staged tuples out of m_ingress under the lock, mirroring
+        // ZmqConsumer::execute()'s pops() + addToSync(entries). The lock is
+        // dropped before addToSync() below: m_toSync is owned by this (main)
+        // thread alone, so the merge needs no lock, and releasing early keeps
+        // mqPollThread free to stage the next burst while the merge runs.
+        std::lock_guard<std::mutex> lk(m_ingressMutex);
+        for (auto &kv : m_ingress)
+        {
+            entries.push_back(std::move(kv.second));
+        }
+        m_ingress.clear();
+    }
+    addToSync(entries);
+
+    // m_toSync is mutated only by this (main) thread, so drain() — which reads
+    // m_toSync and hands it to doTask — does not need to hold m_ingressMutex.
+    // Releasing the lock before drain() also keeps mqPollThread free to stage
+    // further tuples into m_ingress while doTask is running.
+    drain();
+}
+
+void ZmqRouteConsumer::dumpPendingTasks(std::vector<std::string> &ts)
+{
+    // Tuples staged in m_ingress by the mqPollThread callback are pending work
+    // just like m_toSync entries; report both so pending-task introspection
+    // (e.g. warm-reboot restore validation via OrchDaemon::getTaskToSync) sees
+    // tuples that have arrived but have not yet been drained by execute().
+    {
+        std::lock_guard<std::mutex> lk(m_ingressMutex);
+        for (auto &kv : m_ingress)
+        {
+            ts.push_back(dumpTuple(kv.second));
+        }
+    }
+    ConsumerBase::dumpPendingTasks(ts);
+}
+
+void ZmqRouteConsumer::drain()
+{
+    // TODO: doTask() currently walks the whole of m_toSync in one go. Per the
+    // route programming HLD -- doc/orchagent/orchagent_route_redesign.md
+    // sections 7.4 and 7.5 (sonic-net/SONiC#2328) -- this becomes a yieldable
+    // walk bounded by a time quantum, so the main loop returns to execute()
+    // and keeps draining m_ingress (and hence the ZMQ socket) instead of
+    // stalling ingress behind one large batch.
+    if (!m_toSync.empty())
+        (static_cast<ZmqRouteOrch*>(m_orch))->doTask(*this);
+}
+
+
+ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<string> &tableNames, swss::ZmqRouteServer *zmqServer)
+: Orch()
+{
+    for (const auto& it : tableNames)
+    {
+        addConsumer(db, it, default_orch_pri, zmqServer);
+    }
+}
+
+
+ZmqRouteOrch::ZmqRouteOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqRouteServer *zmqServer)
+{
+    for (const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second, zmqServer);
+    }
+}
+
+void ZmqRouteOrch::addConsumer(DBConnector *db, string tableName, int pri, swss::ZmqRouteServer *zmqServer)
+{
+    if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
+    {
+        if (zmqServer != nullptr)
+        {
+            SWSS_LOG_DEBUG("ZmqRouteConsumer initialize for: %s", tableName.c_str());
+            addExecutor(
+                new ZmqRouteConsumer(
+                  new swss::ZmqRouteConsumerStateTable(
+                    db, tableName, *zmqServer, pri, /* dbPersistence= */false),
+                this, tableName));
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Consumer initialize for: %s", tableName.c_str());
+            addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("ZmqRouteOrch does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
+    }
+}
+
+void ZmqRouteOrch::doTask(Consumer &consumer)
+{
+    // When ZMQ disabled, forward data from Consumer
+    doTask(static_cast<ConsumerBase &>(consumer));
+}

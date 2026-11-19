@@ -19,6 +19,6 @@ natsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-natsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+natsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 
