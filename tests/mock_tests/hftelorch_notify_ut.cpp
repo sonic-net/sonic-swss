@@ -11,6 +11,7 @@
 #include <functional>
 #include <type_traits>
 #include <cstring>
+#include <sai_serialize.h>
 
 #define private public
 #define protected public
@@ -241,6 +242,94 @@ namespace hftelorch_notify_test
     {
         CounterNameMapUpdater updater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP);
         ASSERT_NO_THROW(updater.setCounterNameMap("Ethernet0", 0x1000000000001ULL));
+    }
+
+    struct LocallyNotifyCreateFailureTest : public LocallyNotifyTest
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+        static sai_object_id_t next_oid;
+
+        static sai_status_t mock_create(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            *oid = next_oid++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_create_table_full(
+            sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            return SAI_STATUS_TABLE_FULL;
+        }
+
+        static sai_status_t mock_remove(sai_object_id_t)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_set(sai_object_id_t, const sai_attribute_t *)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            LocallyNotifyTest::SetUp();
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.create_tam_telemetry = mock_create;
+            ut_api.remove_tam_telemetry = mock_remove;
+            ut_api.create_tam_report = mock_create;
+            ut_api.remove_tam_report = mock_remove;
+            ut_api.create_tam_tel_type = mock_create_table_full;
+            ut_api.remove_tam_tel_type = mock_remove;
+            ut_api.set_tam_attribute = mock_set;
+            ut_api.set_tam_telemetry_attribute = mock_set;
+            sai_tam_api = &ut_api;
+            next_oid = 0x1000;
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+            LocallyNotifyTest::TearDown();
+        }
+    };
+
+    sai_object_id_t LocallyNotifyCreateFailureTest::next_oid;
+
+    /* A failed HFT CREATE must not stop the caller from publishing the
+     * counter name map. */
+    TEST_F(LocallyNotifyCreateFailureTest, FailedTelTypeCreateStillPublishesCounterName)
+    {
+        const sai_object_id_t port_oid = 0x1000000000001ULL;
+        vector<sai_object_id_t> telemetry_list;
+        auto profile = make_shared<HFTelProfile>(
+            "profile", 0x10, telemetry_list, 0x20, stub.p->m_counter_name_cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        profile->setObjectNames("PORT", {"Ethernet0"});
+        profile->setStatsIDs("PORT", {"IF_IN_OCTETS"});
+        stub.p->m_type_profile_mapping[SAI_OBJECT_TYPE_PORT].insert(profile);
+
+        CounterNameMapUpdater updater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP);
+        EXPECT_NO_THROW(updater.setCounterNameMap("Ethernet0", port_oid));
+
+        swss::DBConnector counters_db("COUNTERS_DB", 0, true);
+        swss::Table name_map(&counters_db, COUNTERS_PORT_NAME_MAP);
+        string value;
+        EXPECT_TRUE(name_map.hget("", "Ethernet0", value));
+        EXPECT_EQ(value, sai_serialize_object_id(port_oid));
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_objs.empty());
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_list.empty());
+
+        stub.p->m_type_profile_mapping.clear();
+        profile.reset();
+        EXPECT_TRUE(telemetry_list.empty());
     }
 
     /* CounterNameMapUpdater::delCounterNameMap with gHFTOrch non-null.
