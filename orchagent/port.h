@@ -213,6 +213,12 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
+    /* PHY port admin state is overridden by parent LAG admin-down */
+    bool                m_lag_forced_admin_down = false;
+    /* Admin state is held down by an internal orchagent client (the MAC move
+     * guard, the STP BPDU guard), independent of the APP_DB configured admin
+     * state. Only consulted for a LAG today. */
+    bool                m_forced_admin_down = false;
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_nexthop_group_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;

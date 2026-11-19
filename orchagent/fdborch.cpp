@@ -1053,6 +1053,15 @@ void FdbOrch::update(SubjectType type, void *cntx)
             updatePortOperState(*update);
             break;
         }
+        case SUBJECT_TYPE_PORT_CHANGE:
+        {
+            PortUpdate *update = reinterpret_cast<PortUpdate *>(cntx);
+            if (!update->add && m_macMoveGuard)
+            {
+                m_macMoveGuard->onPortRemoved(update->port.m_alias);
+            }
+            break;
+        }
         default:
             break;
     }

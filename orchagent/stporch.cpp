@@ -1,8 +1,12 @@
 #include <tuple>
+#include <sstream>
 #include "portsorch.h"
 #include "logger.h"
 #include "fdborch.h"
 #include "stporch.h"
+
+constexpr const char *StpOrch::BPDU_GUARD_STATE_KEY;
+constexpr const char *StpOrch::BPDU_GUARD_PORTS_FIELD;
 
 extern sai_stp_api_t *sai_stp_api;
 extern sai_vlan_api_t *sai_vlan_api;
@@ -65,12 +69,20 @@ sai_object_id_t StpOrch::addStpInstance(sai_uint16_t stp_instance)
     attr.value.u32 = 0;
 
     sai_status_t status = sai_stp_api->create_stp(&stp_oid, gSwitchId, 0, &attr);
+    if (status == SAI_STATUS_TABLE_FULL || status == SAI_STATUS_INSUFFICIENT_RESOURCES)
+    {
+        SWSS_LOG_ERROR("Failed to create STP instance %u status %u, holding it until an instance is removed",
+                       stp_instance, status);
+        m_stpInstancesRefused.insert(stp_instance);
+        return SAI_NULL_OBJECT_ID;
+    }
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create STP instance %u status %u", stp_instance, status);
         return SAI_NULL_OBJECT_ID;
     }
 
+    m_stpInstancesRefused.erase(stp_instance);
     m_stpInstToOid[stp_instance] = stp_oid;
     SWSS_LOG_INFO("Added STP instance:%hu oid:%" PRIx64 "", stp_instance, stp_oid);
     return stp_oid;
@@ -109,6 +121,13 @@ bool StpOrch::removeStpInstance(sai_uint16_t stp_instance)
 
     m_stpInstToOid.erase(stp_instance);
     SWSS_LOG_INFO("Removed STP instance:%hu oid:%" PRIx64 "", stp_instance, stp_oid);
+
+    if (!m_stpInstancesRefused.empty())
+    {
+        SWSS_LOG_NOTICE("STP instance removed, retrying the %zu the hardware refused",
+                        m_stpInstancesRefused.size());
+        m_stpInstancesRefused.clear();
+    }
     return true;
 }
 
@@ -407,6 +426,11 @@ void StpOrch::doStpTask(Consumer &consumer)
             }
             else
             {
+                if(m_stpInstancesRefused.count(instance))
+                {
+                    it++;
+                    continue;
+                }
                 if(!addVlanToStpInstance(vlan_alias, instance))
                 {
                     it++;
@@ -424,6 +448,216 @@ void StpOrch::doStpTask(Consumer &consumer)
         }
         it = consumer.m_toSync.erase(it);
     }
+}
+
+/*
+ * STP_PORT_TABLE carries per-port STP status published by stpd. The field
+ * acted on is bpdu_guard_shutdown:
+ *
+ *   "yes" - BPDU guard tripped with do_disable configured; err-disable the port.
+ *   "no"  - stpd considers the port recovered (bpdu_guard turned off, or the
+ *           port came oper-up again); release the hold on it.
+ *
+ * The port is held down through SAI, the way MacMoveGuard does it, so
+ * CONFIG_DB keeps the configured admin state.
+ */
+void StpOrch::doStpPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+        string port_alias = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            /* stpd publishes only the fields it changed, so an update without
+             * bpdu_guard_shutdown carries no opinion about err-disable. */
+            bool have_shutdown = false;
+            bool err_disable = false;
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "bpdu_guard_shutdown")
+                {
+                    have_shutdown = true;
+                    err_disable = (fvValue(i) == "yes");
+                }
+            }
+
+            if (have_shutdown && !setBpduGuardErrDisable(port_alias, err_disable))
+            {
+                /* Port not ready yet, or SAI rejected it - retry on the next pass. */
+                it++;
+                continue;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            /* STP config removed while we were holding the port down. Nobody
+             * owns the err-disable any more, so hand the port back rather than
+             * stranding it with CONFIG_DB claiming it is up. */
+            if (!setBpduGuardErrDisable(port_alias, false))
+            {
+                it++;
+                continue;
+            }
+        }
+
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+/*
+ * Idempotent: the tracking set is the single source of truth for "did we
+ * disable this port". Without it the re-enable -> port oper-up -> stpd
+ * republishes bpdu_guard_shutdown="no" sequence would keep re-triggering.
+ */
+bool StpOrch::setBpduGuardErrDisable(const string &port_alias, bool err_disable)
+{
+    SWSS_LOG_ENTER();
+
+    bool tracked = (m_bpduGuardErrDisabledPorts.count(port_alias) != 0);
+    if (tracked == err_disable)
+    {
+        /* The record only stands for a port PortsOrch still holds down for
+         * us. A port that came back up without the hold (recreated after a
+         * VLAN move, or its hold dropped when the port went away) has to be
+         * shut again, or every later trip is skipped as already done. */
+        if (!err_disable ||
+            gPortsOrch->isAdminDownHeldBy(port_alias, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD))
+        {
+            return true;
+        }
+    }
+
+    Port port;
+    if (!gPortsOrch->getPort(port_alias, port))
+    {
+        SWSS_LOG_ERROR("STP BPDU guard: unknown port %s", port_alias.c_str());
+        return false;
+    }
+
+    if (!gPortsOrch->setPortAdminStatusByAlias(
+            port_alias, !err_disable, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD))
+    {
+        SWSS_LOG_ERROR("STP BPDU guard: failed to admin-%s port %s",
+                       err_disable ? "down" : "up", port_alias.c_str());
+        return false;
+    }
+
+    if (err_disable)
+    {
+        m_bpduGuardErrDisabledPorts.insert(port_alias);
+        SWSS_LOG_NOTICE("STP BPDU guard: port %s err-disabled (admin-down via SAI)",
+                        port_alias.c_str());
+    }
+    else
+    {
+        m_bpduGuardErrDisabledPorts.erase(port_alias);
+        SWSS_LOG_NOTICE("STP BPDU guard: port %s released (admin-up via SAI)",
+                        port_alias.c_str());
+    }
+
+    persistBpduGuardErrDisabledPorts();
+    return true;
+}
+
+void StpOrch::persistBpduGuardErrDisabledPorts()
+{
+    if (m_bpduGuardErrDisabledPorts.empty())
+    {
+        m_stpTable->del(BPDU_GUARD_STATE_KEY);
+        return;
+    }
+
+    string joined;
+    for (const auto &alias : m_bpduGuardErrDisabledPorts)
+    {
+        if (!joined.empty())
+        {
+            joined += ",";
+        }
+        joined += alias;
+    }
+
+    vector<FieldValueTuple> fvs = { FieldValueTuple(BPDU_GUARD_PORTS_FIELD, joined) };
+    m_stpTable->set(BPDU_GUARD_STATE_KEY, fvs);
+}
+
+/*
+ * The hold is gone without stpd lifting it: an admin-up from APP_DB (config
+ * interface startup) went through over it, or the port was removed. The
+ * record must go too: with it in place the next bpdu_guard_shutdown="yes"
+ * from stpd would be skipped as already applied and the port would keep
+ * forwarding, and a port recreated admin-up would be shut again by the
+ * restore after an orchagent restart. The guard itself stays armed in stpd
+ * and trips again on the next BPDU.
+ */
+void StpOrch::releaseBpduGuardErrDisableRecord(const string &port_alias, const string &why)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_bpduGuardErrDisabledPorts.erase(port_alias) == 0)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("STP BPDU guard: port %s %s; err-disable record dropped",
+                    port_alias.c_str(), why.c_str());
+    persistBpduGuardErrDisabledPorts();
+}
+
+/*
+ * Re-assert err-disables recorded before an orchagent restart. The port is
+ * still guarded and stpd still holds it in protect_disabled_mask, but CONFIG_DB
+ * has no record of the shut, so nothing else would bring it back down. Runs
+ * once, after ports are ready.
+ */
+void StpOrch::restoreBpduGuardErrDisabledPorts()
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fvs;
+    if (!m_stpTable->get(BPDU_GUARD_STATE_KEY, fvs))
+    {
+        return;
+    }
+
+    for (const auto &fv : fvs)
+    {
+        if (fvField(fv) != BPDU_GUARD_PORTS_FIELD)
+        {
+            continue;
+        }
+
+        stringstream ss(fvValue(fv));
+        string alias;
+        while (getline(ss, alias, ','))
+        {
+            if (alias.empty())
+            {
+                continue;
+            }
+
+            if (!gPortsOrch->setPortAdminStatusByAlias(
+                    alias, false, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD))
+            {
+                SWSS_LOG_ERROR("STP BPDU guard: failed to re-assert err-disable on port %s "
+                               "after restart", alias.c_str());
+                continue;
+            }
+
+            m_bpduGuardErrDisabledPorts.insert(alias);
+            SWSS_LOG_NOTICE("STP BPDU guard: re-asserted err-disable on port %s after restart",
+                            alias.c_str());
+        }
+    }
+
+    persistBpduGuardErrDisabledPorts();
 }
 
 void StpOrch::doStpPortStateTask(Consumer &consumer)
@@ -466,6 +700,11 @@ void StpOrch::doStpPortStateTask(Consumer &consumer)
             }
             if(state != STP_STATE_INVALID)
             {
+                if(m_stpInstancesRefused.count(instance))
+                {
+                    it++;
+                    continue;
+                }
                 if(!updateStpPortState(port, instance, state))
                 {
                     it++;
@@ -580,10 +819,20 @@ void StpOrch::doTask(Consumer &consumer)
         return;
     }
 
+    if (!m_bpduGuardStateRestored)
+    {
+        m_bpduGuardStateRestored = true;
+        restoreBpduGuardErrDisabledPorts();
+    }
+
     string table_name = consumer.getTableName();
     if (table_name == APP_STP_VLAN_INSTANCE_TABLE_NAME)
     {
         doStpTask(consumer);
+    }
+    else if (table_name == APP_STP_PORT_TABLE_NAME)
+    {
+        doStpPortTask(consumer);
     }
     else if (table_name == APP_STP_PORT_STATE_TABLE_NAME)
     {
