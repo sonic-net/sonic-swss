@@ -77,6 +77,10 @@ private:
     // reaching STOP_STREAM that a pending update does.
     std::unordered_set<std::string> m_group_delete_blocked;
 
+    // Profiles whose creation is being retried after a retryable SAI create
+    // failure, so the failure is logged once per block instead of on every retry.
+    std::unordered_set<std::string> m_profile_create_blocked;
+
     // True if m_group_update_blocked or m_group_delete_blocked still holds
     // a key for this profile, i.e. some group's configuration update or
     // delete hasn't been applied yet - both are gated by one of
@@ -106,6 +110,7 @@ private:
     std::shared_ptr<HFTelProfile> tryGetProfile(const std::string &profile_name);
     bool isProfileInUse(const std::shared_ptr<HFTelProfile> &profile) const;
 
+    void doTask() override;
     void doTask(swss::NotificationConsumer &consumer);
     void doTask(Consumer &consumer);
 

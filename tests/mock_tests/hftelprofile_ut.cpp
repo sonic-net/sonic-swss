@@ -262,6 +262,7 @@ namespace hftelprofile_ut
                 new (&p->m_groups) decay_t<decltype(p->m_groups)>();
                 new (&p->m_sai_tam_tel_type_templates) decay_t<decltype(p->m_sai_tam_tel_type_templates)>();
                 new (&p->m_sai_tam_counter_subscription_objs) decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 new (&p->m_sai_tam_tel_type_objs) decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
                 new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
@@ -275,6 +276,7 @@ namespace hftelprofile_ut
                 p->m_groups.~map();
                 p->m_sai_tam_tel_type_templates.~unordered_map();
                 p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_tel_type_states.~unordered_map();
                 p->m_sai_tam_report_objs.~unordered_map();
@@ -395,6 +397,7 @@ namespace hftelprofile_ut
                 new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
                 new (&p->m_sai_tam_tel_type_templates) decay_t<decltype(p->m_sai_tam_tel_type_templates)>();
                 new (&p->m_sai_tam_counter_subscription_objs) decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 new (&p->m_sai_tam_tel_type_objs) decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
                 new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
@@ -408,6 +411,7 @@ namespace hftelprofile_ut
                 p->m_name_sai_map.~unordered_map();
                 p->m_sai_tam_tel_type_templates.~unordered_map();
                 p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_tel_type_states.~unordered_map();
                 p->m_sai_tam_report_objs.~unordered_map();
@@ -487,6 +491,7 @@ namespace hftelprofile_ut
                 new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
                 new (&p->m_sai_tam_counter_subscription_objs)
                     decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 new (&p->m_sai_tam_tel_type_objs)
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_states)
@@ -500,6 +505,7 @@ namespace hftelprofile_ut
                 p->m_groups.~map();
                 p->m_name_sai_map.~unordered_map();
                 p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_tel_type_states.~unordered_map();
                 p = nullptr;
@@ -571,6 +577,7 @@ namespace hftelprofile_ut
                 new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
                 new (&p->m_sai_tam_counter_subscription_objs)
                     decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 new (&p->m_sai_tam_tel_type_objs)
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_states)
@@ -590,6 +597,7 @@ namespace hftelprofile_ut
                 p->m_groups.~Groups();
                 p->m_name_sai_map.~NameSaiMap();
                 p->m_sai_tam_counter_subscription_objs.~CounterSubscriptionObjs();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_tel_type_objs.~TelTypeObjs();
                 p->m_sai_tam_tel_type_states.~TelTypeStates();
                 p = nullptr;
@@ -724,6 +732,7 @@ namespace hftelprofile_ut
                 p->m_poll_interval = 100;
                 new (&p->m_sai_tam_counter_subscription_objs)
                     decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 new (&p->m_sai_tam_tel_type_objs)
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_report_objs)
@@ -738,6 +747,7 @@ namespace hftelprofile_ut
                 if (!p) return;
                 p->m_profile_name.~basic_string();
                 p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_report_objs.~unordered_map();
                 p = nullptr;
@@ -872,6 +882,7 @@ namespace hftelprofile_ut
                 new (&p->m_sai_tam_tel_type_states) decay_t<decltype(p->m_sai_tam_tel_type_states)>();
                 new (&p->m_sai_tam_report_objs) decay_t<decltype(p->m_sai_tam_report_objs)>();
                 new (&p->m_sai_tam_tel_type_list) decay_t<decltype(p->m_sai_tam_tel_type_list)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 p->m_sai_tam_telemetry_obj = make_shared<sai_object_id_t>(0x900);
             }
 
@@ -882,6 +893,7 @@ namespace hftelprofile_ut
                 p->m_sai_tam_tel_type_objs.~unordered_map();
                 p->m_sai_tam_tel_type_states.~unordered_map();
                 p->m_sai_tam_tel_type_list.~vector();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_report_objs.~unordered_map();
                 p->m_sai_tam_telemetry_obj.~shared_ptr();
                 p = nullptr;
@@ -1060,6 +1072,7 @@ namespace hftelprofile_ut
                 new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
                 new (&p->m_sai_tam_counter_subscription_objs)
                     decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
                 new (&p->m_sai_tam_tel_type_objs)
                     decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
                 new (&p->m_sai_tam_tel_type_states)
@@ -1093,6 +1106,7 @@ namespace hftelprofile_ut
                 p->m_groups.~Groups();
                 p->m_name_sai_map.~NameSaiMap();
                 p->m_sai_tam_counter_subscription_objs.~CounterSubscriptionObjs();
+                p->m_redeploy_types.~set();
                 p->m_sai_tam_tel_type_objs.~TelTypeObjs();
                 p->m_sai_tam_tel_type_states.~TelTypeStates();
                 p = nullptr;
@@ -1324,7 +1338,8 @@ namespace hftelprofile_ut
         EXPECT_THROW(make_unique<HFTelProfile>(
             "b", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE), runtime_error);
         ut_api.create_tam_tel_type = mock_create_table_full;
-        EXPECT_THROW(profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        EXPECT_EQ(profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(profile_a->m_sai_tam_tel_type_objs.empty());
         ut_api.create_tam_telemetry = mock_create;
         ut_api.create_tam_tel_type = mock_create;
 

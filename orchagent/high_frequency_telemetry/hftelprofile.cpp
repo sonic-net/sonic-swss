@@ -566,6 +566,7 @@ void HFTelProfile::clearGroup(const std::string &group_name)
     }
     m_sai_tam_counter_subscription_objs.erase(sai_object_type);
     m_name_sai_map.erase(sai_object_type);
+    m_redeploy_types.erase(sai_object_type);
 
     // In SINGLE mode each object type owns its own tam_tel_type / tam_report,
     // so the shared_key below is just sai_object_type and erasing only
@@ -736,6 +737,7 @@ bool HFTelProfile::tryCommitConfig(sai_object_type_t object_type)
             return false;
         }
     }
+    m_redeploy_types.erase(object_type);
     setStreamState(object_type, SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
     return true;
 }
@@ -832,13 +834,18 @@ sai_object_id_t HFTelProfile::getTAMReportObjID(sai_object_type_t object_type)
     attr.value.s32 = SAI_TAM_REPORT_INTERVAL_UNIT_USEC;
     attrs.push_back(attr);
 
-    handleSaiCreateStatus(
+    auto status = handleSaiCreateStatus(
         SAI_API_TAM,
         sai_tam_api->create_tam_report(
             &sai_object,
             gSwitchId,
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
+    if (status != task_success)
+    {
+        onCreateFailure(object_type, status == task_need_retry, "TAM report");
+        return SAI_NULL_OBJECT_ID;
+    }
 
     m_sai_tam_report_objs[key] = move(
         sai_guard_t(
@@ -937,17 +944,25 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
 
     attr.id = SAI_TAM_TEL_TYPE_ATTR_REPORT_ID;
     attr.value.oid = getTAMReportObjID(object_type);
+    if (attr.value.oid == SAI_NULL_OBJECT_ID)
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
     attrs.push_back(attr);
 
-    if (handleSaiCreateStatus(
-            SAI_API_TAM,
-            sai_tam_api->create_tam_tel_type(
-                &sai_object,
-                gSwitchId,
-                static_cast<uint32_t>(attrs.size()),
-                attrs.data())) != task_success)
+    // Return a null OID rather than throwing, so callers that are in the
+    // middle of a group or object update can still complete it.
+    auto status = handleSaiCreateStatus(
+        SAI_API_TAM,
+        sai_tam_api->create_tam_tel_type(
+            &sai_object,
+            gSwitchId,
+            static_cast<uint32_t>(attrs.size()),
+            attrs.data()));
+    if (status != task_success)
     {
-        SWSS_LOG_THROW("Failed to create the TAM tel type object for profile %s", m_profile_name.c_str());
+        onCreateFailure(object_type, status == task_need_retry, "TAM tel type");
+        return SAI_NULL_OBJECT_ID;
     }
 
     m_sai_tam_tel_type_objs[key] = move(
@@ -1003,12 +1018,17 @@ void HFTelProfile::initTelemetry()
     attr.value.objlist.list = &sai_tam_collector_obj;
     attrs.push_back(attr);
 
-    if (handleSaiCreateStatus(
-            SAI_API_TAM,
-            sai_tam_api->create_tam_telemetry(
-                &sai_object,
-                gSwitchId, static_cast<uint32_t>(attrs.size()),
-                attrs.data())) != task_success)
+    auto status = handleSaiCreateStatus(
+        SAI_API_TAM,
+        sai_tam_api->create_tam_telemetry(
+            &sai_object,
+            gSwitchId, static_cast<uint32_t>(attrs.size()),
+            attrs.data()));
+    if (status == task_need_retry)
+    {
+        throw RetryableCreateError("Failed to create the TAM telemetry object for profile " + m_profile_name);
+    }
+    if (status != task_success)
     {
         SWSS_LOG_THROW("Failed to create the TAM telemetry object for profile %s", m_profile_name.c_str());
     }
@@ -1048,7 +1068,7 @@ void HFTelProfile::initTelemetry()
             }));
 }
 
-void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, uint16_t label)
+bool HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, uint16_t label)
 {
     SWSS_LOG_ENTER();
 
@@ -1061,12 +1081,16 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
         auto itr2 = itr->second.find(stat_id);
         if (itr2 != itr->second.end())
         {
-            return;
+            return true;
         }
     }
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE;
     attr.value.oid = getTAMTelTypeObjID(object_type);
+    if (attr.value.oid == SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID;
@@ -1087,13 +1111,18 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
 
     sai_object_id_t counter_id;
 
-    handleSaiCreateStatus(
+    auto status = handleSaiCreateStatus(
         SAI_API_TAM,
         sai_tam_api->create_tam_counter_subscription(
             &counter_id,
             gSwitchId,
             static_cast<uint32_t>(attrs.size()),
             attrs.data()));
+    if (status != task_success)
+    {
+        onCreateFailure(object_type, status == task_need_retry, "TAM counter subscription");
+        return false;
+    }
 
     m_sai_tam_counter_subscription_objs[object_type][sai_obj][stat_id] = move(
         sai_guard_t(
@@ -1105,9 +1134,11 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
                     sai_tam_api->remove_tam_counter_subscription(*p));
                 delete p;
             }));
+
+    return true;
 }
 
-void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type, sai_object_id_t sai_obj, std::uint16_t label)
+bool HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type, sai_object_id_t sai_obj, std::uint16_t label)
 {
     SWSS_LOG_ENTER();
 
@@ -1115,13 +1146,21 @@ void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type, sai
     auto group = m_groups.find(object_type);
     if (group == m_groups.end())
     {
-        return;
+        return true;
     }
 
     for (const auto &stat_id : group->second.getStatsIDs())
     {
-        deployCounterSubscription(object_type, sai_obj, stat_id, label);
+        if (!deployCounterSubscription(object_type, sai_obj, stat_id, label))
+        {
+            // isMonitoringObjectReady() counts objects, not stats, so a
+            // partially subscribed object must not be left in the map.
+            m_sai_tam_counter_subscription_objs[object_type].erase(sai_obj);
+            return false;
+        }
     }
+
+    return true;
 }
 
 void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type)
@@ -1142,10 +1181,49 @@ void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type)
         {
             continue;
         }
-        for (const auto &stat_id : group->second.getStatsIDs())
+        if (!deployCounterSubscriptions(object_type, itr->second, obj.second))
         {
-            deployCounterSubscription(object_type, itr->second, stat_id, obj.second);
+            return;
         }
+    }
+    m_redeploy_types.erase(object_type);
+}
+
+void HFTelProfile::retryDeploy()
+{
+    SWSS_LOG_ENTER();
+
+    const auto types = m_redeploy_types;
+    for (const auto type : types)
+    {
+        // A group past STOP_STREAM, or deployed by an object update, is
+        // committed by the regular update path.
+        if (getStreamState(type) != SAI_TAM_TEL_TYPE_STATE_STOP_STREAM || isMonitoringObjectReady(type))
+        {
+            m_redeploy_types.erase(type);
+            continue;
+        }
+        if (tryCommitConfig(type))
+        {
+            SWSS_LOG_NOTICE("Deployed the high frequency telemetry group %s of profile %s after a failed create",
+                            HFTelUtils::sai_type_to_group_name(type).c_str(), m_profile_name.c_str());
+        }
+    }
+}
+
+void HFTelProfile::onCreateFailure(sai_object_type_t object_type, bool retryable, const char *object_name)
+{
+    SWSS_LOG_ENTER();
+
+    if (!retryable)
+    {
+        SWSS_LOG_ERROR("Failed to create the %s object for profile %s", object_name, m_profile_name.c_str());
+        m_redeploy_types.erase(object_type);
+        return;
+    }
+    if (m_redeploy_types.insert(object_type).second)
+    {
+        SWSS_LOG_WARN("Failed to create the %s object for profile %s, will retry", object_name, m_profile_name.c_str());
     }
 }
 

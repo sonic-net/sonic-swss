@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <memory>
+#include <stdexcept>
 
 #include "hftelgroup.h"
 
@@ -22,6 +23,13 @@ using CounterNameCache = std::unordered_map<sai_object_type_t, std::unordered_ma
 class HFTelProfile
 {
 public:
+    // Thrown by the constructor when the TAM telemetry create failed with a
+    // status that may succeed on retry.
+    struct RetryableCreateError : public std::runtime_error
+    {
+        using std::runtime_error::runtime_error;
+    };
+
     HFTelProfile(
         const std::string &profile_name,
         sai_object_id_t sai_tam_obj,
@@ -88,6 +96,9 @@ public:
 
     void loadCounterNameCache(sai_object_type_t object_type);
     bool tryCommitConfig(sai_object_type_t object_type);
+    // Deploys again the groups whose last deploy hit a retryable SAI create
+    // failure, and commits each group that is then fully deployed.
+    void retryDeploy();
 
 private:
     // Configuration parameters
@@ -143,6 +154,8 @@ private:
     std::unordered_map<sai_object_type_t, sai_guard_t> m_sai_tam_tel_type_objs;
     std::unordered_map<sai_object_type_t, sai_guard_t> m_sai_tam_report_objs;
     std::unordered_map<sai_object_type_t, std::vector<std::uint8_t>> m_sai_tam_tel_type_templates;
+    // Groups whose deploy hit a retryable SAI create failure (see retryDeploy()).
+    std::set<sai_object_type_t> m_redeploy_types;
 
     bool isObjectTypeInProfile(sai_object_type_t object_type, const std::string &object_name) const;
     bool isMonitoringObjectReady(sai_object_type_t object_type) const;
@@ -164,8 +177,9 @@ private:
     sai_object_id_t getTAMReportObjID(sai_object_type_t object_type);
     sai_object_id_t getTAMTelTypeObjID(sai_object_type_t object_type);
     void initTelemetry();
-    void deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, std::uint16_t label);
-    void deployCounterSubscriptions(sai_object_type_t object_type, sai_object_id_t sai_obj, std::uint16_t label);
+    void onCreateFailure(sai_object_type_t object_type, bool retryable, const char *object_name);
+    bool deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, std::uint16_t label);
+    bool deployCounterSubscriptions(sai_object_type_t object_type, sai_object_id_t sai_obj, std::uint16_t label);
     void deployCounterSubscriptions(sai_object_type_t object_type);
     void undeployCounterSubscriptions(sai_object_type_t object_type);
     void updateTemplates(sai_object_id_t tam_tel_type_obj);
