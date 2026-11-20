@@ -198,6 +198,10 @@ public:
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
     bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
     sai_object_id_t getNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const;
+    bool prepareRemoveNextHopBulk(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni,
+                                  sai_object_id_t& nh_id);
+    bool commitRemoveNextHopBulk(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+    void abortRemoveNextHopBulk(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
 
     void incNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
     void decNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
@@ -321,6 +325,24 @@ public:
 
     bool
     removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni=0);
+
+    bool
+    getNextHopTunnelPending(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni,
+                            std::vector<sai_attribute_t>& next_hop_attrs);
+
+    bool
+    commitNextHopTunnelBulk(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni,
+                            sai_object_id_t nh_id);
+
+    bool
+    getRemoveNextHopTunnelPending(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni,
+                                  sai_object_id_t& nh_id);
+
+    bool
+    commitRemoveNextHopTunnelBulk(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+
+    void
+    abortRemoveNextHopTunnelBulk(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
 
     bool getTunnelPort(const std::string& vtep,Port& tunnelPort, bool local=false);
 

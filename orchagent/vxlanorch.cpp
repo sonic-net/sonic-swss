@@ -704,6 +704,61 @@ bool VxlanTunnel::removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32
     return true;
 }
 
+bool VxlanTunnel::prepareRemoveNextHopBulk(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni,
+                                            sai_object_id_t& nh_id)
+{
+    auto key = nh_key_t(ipAddr, macAddress, vni);
+
+    auto it = nh_tunnels_.find(key);
+    if (it == nh_tunnels_.end())
+    {
+        SWSS_LOG_INFO("remove NH tunnel for ip %s, mac %s, vni %d doesn't exist",
+                        ipAddr.to_string().c_str(), macAddress.to_string().c_str(), vni);
+        nh_id = SAI_NULL_OBJECT_ID;
+        return false;
+    }
+
+    SWSS_LOG_INFO("remove NH tunnel for ip %s, mac %s, vni %d, ref_count %d",
+                    ipAddr.to_string().c_str(), macAddress.to_string().c_str(), vni,
+                    nh_tunnels_[key].ref_count);
+
+    nh_tunnels_[key].ref_count--;
+
+    if (nh_tunnels_[key].ref_count > 0)
+    {
+        nh_id = SAI_NULL_OBJECT_ID;
+        return true;
+    }
+
+    nh_id = nh_tunnels_[key].nh_id;
+    return true;
+}
+
+bool VxlanTunnel::commitRemoveNextHopBulk(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
+{
+    auto key = nh_key_t(ipAddr, macAddress, vni);
+    nh_tunnels_.erase(key);
+
+    SWSS_LOG_INFO("NH tunnel for ip '%s', mac '%s' vni %d updated/deleted",
+                    ipAddr.to_string().c_str(), macAddress.to_string().c_str(), vni);
+    return true;
+}
+
+void VxlanTunnel::abortRemoveNextHopBulk(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
+{
+    auto key = nh_key_t(ipAddr, macAddress, vni);
+    auto it = nh_tunnels_.find(key);
+    if (it == nh_tunnels_.end())
+    {
+        return;
+    }
+
+    it->second.ref_count++;
+    SWSS_LOG_INFO("abort NH tunnel remove for ip %s, mac %s, vni %d, ref_count %d",
+                  ipAddr.to_string().c_str(), macAddress.to_string().c_str(), vni,
+                  it->second.ref_count);
+}
+
 bool VxlanTunnel::deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src)
 {
     try
@@ -1537,6 +1592,134 @@ VxlanTunnelOrch::removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
 
     //Delete request for the nh tunnel id
     return tunnel_obj->removeNextHop(ipAddr, macAddress, vni);
+}
+
+bool
+VxlanTunnelOrch::getNextHopTunnelPending(string tunnelName, IpAddress& ipAddr, MacAddress macAddress,
+                                         uint32_t vni, std::vector<sai_attribute_t>& next_hop_attrs)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isTunnelExists(tunnelName))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' does not exists", tunnelName.c_str());
+        return false;
+    }
+
+    auto tunnel_obj = getVxlanTunnel(tunnelName);
+
+    // Existing next hops are reused via createNextHopTunnel().
+    if (tunnel_obj->getNextHop(ipAddr, macAddress, vni) != SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
+
+    sai_ip_address_t host_ip;
+    swss::copy(host_ip, ipAddr);
+
+    sai_attribute_t next_hop_attr;
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
+    next_hop_attr.value.ipaddr = host_ip;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
+    next_hop_attr.value.oid = tunnel_obj->getTunnelId();
+    next_hop_attrs.push_back(next_hop_attr);
+
+    if (vni != 0)
+    {
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_VNI;
+        next_hop_attr.value.u32 = vni;
+        next_hop_attrs.push_back(next_hop_attr);
+    }
+
+    if (macAddress)
+    {
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_MAC;
+        memcpy(next_hop_attr.value.mac, macAddress.getMac(), sizeof(sai_mac_t));
+        next_hop_attrs.push_back(next_hop_attr);
+    }
+
+    return true;
+}
+
+bool
+VxlanTunnelOrch::commitNextHopTunnelBulk(string tunnelName, IpAddress& ipAddr, MacAddress macAddress,
+                                         uint32_t vni, sai_object_id_t nh_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
+
+    if (!isTunnelExists(tunnelName))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' does not exists", tunnelName.c_str());
+        return false;
+    }
+
+    // Bulk create stores the NH at refcount 1; unused refs are released after route programming.
+    auto tunnel_obj = getVxlanTunnel(tunnelName);
+    tunnel_obj->updateNextHop(ipAddr, macAddress, vni, nh_id);
+
+    SWSS_LOG_INFO("NH vxlan tunnel was bulk created for %s, id 0x%" PRIx64, tunnelName.c_str(), nh_id);
+    return true;
+}
+
+bool
+VxlanTunnelOrch::getRemoveNextHopTunnelPending(string tunnelName, IpAddress& ipAddr, MacAddress macAddress,
+                                               uint32_t vni, sai_object_id_t& nh_id)
+{
+    SWSS_LOG_ENTER();
+
+    nh_id = SAI_NULL_OBJECT_ID;
+
+    if (!isTunnelExists(tunnelName))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' does not exists", tunnelName.c_str());
+        return false;
+    }
+
+    auto tunnel_obj = getVxlanTunnel(tunnelName);
+    return tunnel_obj->prepareRemoveNextHopBulk(ipAddr, macAddress, vni, nh_id);
+}
+
+bool
+VxlanTunnelOrch::commitRemoveNextHopTunnelBulk(string tunnelName, IpAddress& ipAddr, MacAddress macAddress,
+                                               uint32_t vni)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isTunnelExists(tunnelName))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' does not exists", tunnelName.c_str());
+        return false;
+    }
+
+    auto tunnel_obj = getVxlanTunnel(tunnelName);
+    return tunnel_obj->commitRemoveNextHopBulk(ipAddr, macAddress, vni);
+}
+
+void
+VxlanTunnelOrch::abortRemoveNextHopTunnelBulk(string tunnelName, IpAddress& ipAddr, MacAddress macAddress,
+                                              uint32_t vni)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isTunnelExists(tunnelName))
+    {
+        return;
+    }
+
+    auto tunnel_obj = getVxlanTunnel(tunnelName);
+    tunnel_obj->abortRemoveNextHopBulk(ipAddr, macAddress, vni);
 }
 
 bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t map, uint32_t vni,
