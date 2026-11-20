@@ -472,6 +472,10 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
 {
     SWSS_LOG_ENTER();
     auto profile = getProfile(profile_name);
+    if (!profile)
+    {
+        return task_process_status::task_need_retry;
+    }
 
     // Parse stream_state (if present) up front without applying it yet, so
     // the poll_interval gate below can see where this same call is already
@@ -570,6 +574,8 @@ task_process_status HFTelOrch::profileTableSet(const string &profile_name, const
 task_process_status HFTelOrch::profileTableDel(const std::string &profile_name)
 {
     SWSS_LOG_ENTER();
+
+    m_profile_create_blocked.erase(profile_name);
 
     auto profile_itr = m_name_profile_mapping.find(profile_name);
     if (profile_itr == m_name_profile_mapping.end())
@@ -772,15 +778,30 @@ shared_ptr<HFTelProfile> HFTelOrch::getProfile(const string &profile_name)
 
     if (m_name_profile_mapping.find(profile_name) == m_name_profile_mapping.end())
     {
-        m_name_profile_mapping.emplace(
-            profile_name,
-            make_shared<HFTelProfile>(
+        try
+        {
+            m_name_profile_mapping.emplace(
                 profile_name,
-                m_sai_tam_obj,
-                m_sai_tam_collector_obj,
-                m_counter_name_cache,
-                m_tel_type_mode,
-                m_tel_type_supported_categories));
+                make_shared<HFTelProfile>(
+                    profile_name,
+                    m_sai_tam_obj,
+                    m_sai_tam_telemetry_list,
+                    m_sai_tam_collector_obj,
+                    m_counter_name_cache,
+                    m_tel_type_mode,
+                    m_tel_type_supported_categories));
+        }
+        catch (const HFTelProfile::RetryableCreateError &e)
+        {
+            // The profile is created again on retry, so the constructor must
+            // not leave any state behind when it throws.
+            if (m_profile_create_blocked.insert(profile_name).second)
+            {
+                SWSS_LOG_WARN("%s, will retry", e.what());
+            }
+            return nullptr;
+        }
+        m_profile_create_blocked.erase(profile_name);
     }
 
     return m_name_profile_mapping.at(profile_name);
@@ -979,6 +1000,26 @@ void HFTelOrch::doTask(swss::NotificationConsumer &consumer)
     }
 
     SWSS_LOG_ERROR("The TAM tel type object %s is not found in the profile", sai_serialize_object_id(tam_tel_type_obj).c_str());
+}
+
+void HFTelOrch::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    Orch::doTask();
+
+    for (const auto &profile : m_name_profile_mapping)
+    {
+        try
+        {
+            profile.second->retryDeploy();
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to redeploy the high frequency telemetry profile %s: %s",
+                           profile.first.c_str(), e.what());
+        }
+    }
 }
 
 void HFTelOrch::doTask(Consumer &consumer)

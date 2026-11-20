@@ -11,6 +11,7 @@
 #include <functional>
 #include <type_traits>
 #include <cstring>
+#include <sai_serialize.h>
 
 #define private public
 #define protected public
@@ -59,6 +60,8 @@ namespace hftelorch_notify_test
                 decay_t<decltype(p->m_group_update_blocked)>();
             new (&p->m_group_delete_blocked)
                 decay_t<decltype(p->m_group_delete_blocked)>();
+            new (&p->m_profile_create_blocked)
+                decay_t<decltype(p->m_profile_create_blocked)>();
         }
 
         ~HFTelOrchStub()
@@ -72,6 +75,7 @@ namespace hftelorch_notify_test
             p->m_name_profile_mapping.~NameProfileMapType();
             p->m_group_update_blocked.~BlockedSetType();
             p->m_group_delete_blocked.~DeleteBlockedSetType();
+            p->m_profile_create_blocked.~DeleteBlockedSetType();
             p->m_counter_name_cache.~CacheType();
             p->m_type_profile_mapping.~ProfileMapType();
             p = nullptr;
@@ -96,6 +100,7 @@ namespace hftelorch_notify_test
             new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
             new (&p->m_sai_tam_counter_subscription_objs)
                 decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+            new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
             new (&p->m_sai_tam_tel_type_objs)
                 decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
             new (&p->m_sai_tam_tel_type_states)
@@ -120,6 +125,7 @@ namespace hftelorch_notify_test
             p->m_groups.~map();
             p->m_name_sai_map.~unordered_map();
             p->m_sai_tam_counter_subscription_objs.~unordered_map();
+            p->m_redeploy_types.~set();
             p->m_sai_tam_tel_type_objs.~unordered_map();
             p->m_sai_tam_tel_type_states.~unordered_map();
             p = nullptr;
@@ -243,6 +249,423 @@ namespace hftelorch_notify_test
         ASSERT_NO_THROW(updater.setCounterNameMap("Ethernet0", 0x1000000000001ULL));
     }
 
+    struct LocallyNotifyCreateFailureTest : public LocallyNotifyTest
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+        static sai_object_id_t next_oid;
+
+        static sai_status_t mock_create(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            *oid = next_oid++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_create_table_full(
+            sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            return SAI_STATUS_TABLE_FULL;
+        }
+
+        static sai_status_t mock_remove(sai_object_id_t)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_set(sai_object_id_t, const sai_attribute_t *)
+        {
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            LocallyNotifyTest::SetUp();
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.create_tam_telemetry = mock_create;
+            ut_api.remove_tam_telemetry = mock_remove;
+            ut_api.create_tam_report = mock_create;
+            ut_api.remove_tam_report = mock_remove;
+            ut_api.create_tam_tel_type = mock_create_table_full;
+            ut_api.remove_tam_tel_type = mock_remove;
+            ut_api.set_tam_attribute = mock_set;
+            ut_api.set_tam_telemetry_attribute = mock_set;
+            sai_tam_api = &ut_api;
+            next_oid = 0x1000;
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+            LocallyNotifyTest::TearDown();
+        }
+    };
+
+    sai_object_id_t LocallyNotifyCreateFailureTest::next_oid;
+
+    /* A failed HFT CREATE must not stop the caller from publishing the
+     * counter name map. */
+    TEST_F(LocallyNotifyCreateFailureTest, FailedTelTypeCreateStillPublishesCounterName)
+    {
+        const sai_object_id_t port_oid = 0x1000000000001ULL;
+        vector<sai_object_id_t> telemetry_list;
+        auto profile = make_shared<HFTelProfile>(
+            "profile", 0x10, telemetry_list, 0x20, stub.p->m_counter_name_cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+        profile->setObjectNames("PORT", {"Ethernet0"});
+        profile->setStatsIDs("PORT", {"IF_IN_OCTETS"});
+        stub.p->m_type_profile_mapping[SAI_OBJECT_TYPE_PORT].insert(profile);
+
+        CounterNameMapUpdater updater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP);
+        EXPECT_NO_THROW(updater.setCounterNameMap("Ethernet0", port_oid));
+
+        swss::DBConnector counters_db("COUNTERS_DB", 0, true);
+        swss::Table name_map(&counters_db, COUNTERS_PORT_NAME_MAP);
+        string value;
+        EXPECT_TRUE(name_map.hget("", "Ethernet0", value));
+        EXPECT_EQ(value, sai_serialize_object_id(port_oid));
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_objs.empty());
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_list.empty());
+
+        stub.p->m_type_profile_mapping.clear();
+        profile.reset();
+        EXPECT_TRUE(telemetry_list.empty());
+    }
+
+    /* Drives profiles through the HFTelOrch table handlers with SAI CREATE
+     * failures injected. */
+    struct HFTelOrchCreateFailureTest : public LocallyNotifyCreateFailureTest
+    {
+        swss::DBConnector state_db{"STATE_DB", 0, true};
+        static set<sai_object_id_t> live_subscriptions;
+        static int subscription_creates;
+        static int fail_subscription_creates_from;
+        static int tel_type_creates;
+        static sai_status_t tel_type_create_status;
+        static int switch_sets;
+        sai_switch_api_t ut_switch_api;
+        sai_switch_api_t *orig_switch_api = nullptr;
+
+        static sai_status_t mock_create_tel_type(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            ++tel_type_creates;
+            if (tel_type_create_status != SAI_STATUS_SUCCESS)
+            {
+                return tel_type_create_status;
+            }
+            *oid = next_oid++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_create_not_supported(
+            sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            return SAI_STATUS_NOT_SUPPORTED;
+        }
+
+        static sai_status_t mock_set_switch(sai_object_id_t, const sai_attribute_t *)
+        {
+            ++switch_sets;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_get_tel_type(sai_object_id_t, uint32_t, sai_attribute_t *attr)
+        {
+            attr[0].value.u8list.count = 0;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_create_subscription(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            if (fail_subscription_creates_from && ++subscription_creates >= fail_subscription_creates_from)
+            {
+                return SAI_STATUS_TABLE_FULL;
+            }
+            *oid = next_oid++;
+            live_subscriptions.insert(*oid);
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t mock_remove_subscription(sai_object_id_t oid)
+        {
+            live_subscriptions.erase(oid);
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            LocallyNotifyCreateFailureTest::SetUp();
+            ut_api.create_tam_counter_subscription = mock_create_subscription;
+            ut_api.remove_tam_counter_subscription = mock_remove_subscription;
+            ut_api.set_tam_tel_type_attribute = mock_set;
+            ut_api.create_tam_tel_type = mock_create_tel_type;
+            ut_api.get_tam_tel_type_attribute = mock_get_tel_type;
+            live_subscriptions.clear();
+            subscription_creates = 0;
+            fail_subscription_creates_from = 0;
+            tel_type_creates = 0;
+            tel_type_create_status = SAI_STATUS_TABLE_FULL;
+            switch_sets = 0;
+
+            static sai_switch_api_t default_switch_api{};
+            orig_switch_api = sai_switch_api;
+            ut_switch_api = sai_switch_api ? *sai_switch_api : default_switch_api;
+            ut_switch_api.set_switch_attribute = mock_set_switch;
+            sai_switch_api = &ut_switch_api;
+
+            new (&stub.p->m_state_telemetry_session)
+                swss::Table(&state_db, STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE_NAME);
+            new (&stub.p->m_sai_tam_telemetry_list) vector<sai_object_id_t>();
+            new (&stub.p->m_consumerMap) ConsumerMap();
+            new (&stub.p->m_tel_type_supported_categories)
+                unordered_set<sai_object_type_t>({SAI_OBJECT_TYPE_PORT, SAI_OBJECT_TYPE_QUEUE});
+            stub.p->m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+            stub.p->m_sai_tam_obj = 0x10;
+            stub.p->m_sai_tam_collector_obj = 0x20;
+        }
+
+        void TearDown() override
+        {
+            stub.p->m_type_profile_mapping.clear();
+            stub.p->m_name_profile_mapping.clear();
+            using TelemetryListType = decay_t<decltype(stub.p->m_sai_tam_telemetry_list)>;
+            using CategoriesType = decay_t<decltype(stub.p->m_tel_type_supported_categories)>;
+            stub.p->m_state_telemetry_session.~Table();
+            stub.p->m_sai_tam_telemetry_list.~TelemetryListType();
+            stub.p->m_tel_type_supported_categories.~CategoriesType();
+            stub.p->m_consumerMap.~ConsumerMap();
+            sai_switch_api = orig_switch_api;
+            LocallyNotifyCreateFailureTest::TearDown();
+        }
+
+        void notifyPort(const string &name, sai_object_id_t oid)
+        {
+            CounterNameMapUpdater::Message msg;
+            msg.m_table_name = COUNTERS_PORT_NAME_MAP;
+            msg.m_operation = CounterNameMapUpdater::SET;
+            msg.m_counter_name = name;
+            msg.m_oid = oid;
+            EXPECT_NO_THROW(stub.p->locallyNotify(msg));
+        }
+    };
+
+    set<sai_object_id_t> HFTelOrchCreateFailureTest::live_subscriptions;
+    int HFTelOrchCreateFailureTest::subscription_creates;
+    int HFTelOrchCreateFailureTest::fail_subscription_creates_from;
+    int HFTelOrchCreateFailureTest::tel_type_creates;
+    sai_status_t HFTelOrchCreateFailureTest::tel_type_create_status;
+    int HFTelOrchCreateFailureTest::switch_sets;
+
+    /* MIXED profile with PORT and QUEUE groups, where the shared tel type
+     * CREATE fails: deleting QUEUE rebuilds PORT and must still complete,
+     * so the profile can then be deleted. */
+    TEST_F(HFTelOrchCreateFailureTest, MixedGroupDeleteCompletesWhenTelTypeCreateFails)
+    {
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "QUEUE",
+                                        {{"object_names", "Ethernet0|0"}, {"object_counters", "PACKETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+
+        notifyPort("Ethernet0", 0x1000000000001ULL);
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_objs.empty());
+        EXPECT_EQ(profile->m_name_sai_map[SAI_OBJECT_TYPE_PORT].size(), 1u);
+
+        tel_type_creates = 0;
+        EXPECT_EQ(stub.p->groupTableDel("p", "QUEUE"), task_process_status::task_success);
+        EXPECT_GT(tel_type_creates, 0);
+        EXPECT_EQ(stub.p->m_type_profile_mapping[SAI_OBJECT_TYPE_QUEUE].count(profile), 0u);
+
+        EXPECT_EQ(stub.p->groupTableDel("p", "PORT"), task_process_status::task_success);
+        profile.reset();
+        EXPECT_EQ(stub.p->profileTableDel("p"), task_process_status::task_success);
+        EXPECT_TRUE(stub.p->m_name_profile_mapping.empty());
+        EXPECT_TRUE(stub.p->m_sai_tam_telemetry_list.empty());
+    }
+
+    /* No tel type is recorded for a failed CREATE, so the next object update
+     * deploys the whole group once the CREATE succeeds. */
+    TEST_F(HFTelOrchCreateFailureTest, FailedTelTypeCreateIsRetriedOnNextDeploy)
+    {
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+
+        notifyPort("Ethernet0", 0x1000000000001ULL);
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_objs.empty());
+        EXPECT_TRUE(live_subscriptions.empty());
+
+        tel_type_create_status = SAI_STATUS_SUCCESS;
+        notifyPort("Ethernet4", 0x1000000000002ULL);
+        EXPECT_EQ(profile->m_sai_tam_tel_type_list.size(), 1u);
+        EXPECT_EQ(live_subscriptions.size(), 2u);
+        EXPECT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+    }
+
+    /* An object whose stats are only partly subscribed must not be counted
+     * as ready, so its successful subscriptions are removed too. */
+    TEST_F(HFTelOrchCreateFailureTest, PartialCounterSubscriptionIsRolledBack)
+    {
+        ut_api.create_tam_tel_type = mock_create;
+        fail_subscription_creates_from = 2;
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0"}, {"object_counters", "IF_IN_OCTETS,IF_OUT_OCTETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+
+        notifyPort("Ethernet0", 0x1000000000001ULL);
+        EXPECT_TRUE(live_subscriptions.empty());
+        EXPECT_FALSE(profile->isMonitoringObjectReady(SAI_OBJECT_TYPE_PORT));
+        EXPECT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+    }
+
+    /* A failed TAM telemetry CREATE is retried instead of dropping the
+     * profile, and logged once per block. */
+    TEST_F(HFTelOrchCreateFailureTest, FailedProfileCreateIsRetried)
+    {
+        ut_api.create_tam_telemetry = mock_create_table_full;
+        EXPECT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_need_retry);
+        EXPECT_TRUE(stub.p->m_name_profile_mapping.empty());
+        EXPECT_TRUE(stub.p->m_sai_tam_telemetry_list.empty());
+        EXPECT_EQ(stub.p->m_profile_create_blocked.count("p"), 1u);
+        EXPECT_EQ(stub.p->profileTableDel("p"), task_process_status::task_success);
+        EXPECT_TRUE(stub.p->m_profile_create_blocked.empty());
+
+        EXPECT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_need_retry);
+        ut_api.create_tam_telemetry = mock_create;
+        EXPECT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        EXPECT_EQ(stub.p->m_sai_tam_telemetry_list.size(), 1u);
+        EXPECT_TRUE(stub.p->m_profile_create_blocked.empty());
+    }
+
+    /* A non-retryable TAM telemetry CREATE failure fails the task instead of
+     * retrying it. */
+    TEST_F(HFTelOrchCreateFailureTest, NonRetryableProfileCreateIsNotRetried)
+    {
+        ut_api.create_tam_telemetry = mock_create_not_supported;
+        EXPECT_THROW(stub.p->profileTableSet("p", {}), std::exception);
+        EXPECT_EQ(switch_sets, 1);
+        EXPECT_TRUE(stub.p->m_name_profile_mapping.empty());
+        EXPECT_TRUE(stub.p->m_profile_create_blocked.empty());
+
+        ut_api.create_tam_telemetry = mock_create;
+        stub.p->m_sai_tam_obj = SAI_NULL_OBJECT_ID;
+        EXPECT_THROW(stub.p->profileTableSet("p", {}), std::exception);
+        EXPECT_TRUE(stub.p->m_name_profile_mapping.empty());
+    }
+
+    /* Objects already resolved when the group is set (e.g. on warm boot) get
+     * no later object update, so doTask() redeploys the group until the tel
+     * type CREATE succeeds. */
+    TEST_F(HFTelOrchCreateFailureTest, ResolvedGroupIsRedeployed)
+    {
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = 0x1000000000001ULL;
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"] = 0x1000000000002ULL;
+        ASSERT_EQ(stub.p->profileTableSet("p", {{"stream_state", "enabled"}}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+        EXPECT_EQ(profile->m_redeploy_types.count(SAI_OBJECT_TYPE_PORT), 1u);
+
+        int attempts = tel_type_creates;
+        stub.p->HFTelOrch::doTask();
+        EXPECT_GT(tel_type_creates, attempts);
+        EXPECT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+
+        tel_type_create_status = SAI_STATUS_SUCCESS;
+        stub.p->HFTelOrch::doTask();
+        EXPECT_TRUE(profile->m_redeploy_types.empty());
+        EXPECT_EQ(live_subscriptions.size(), 2u);
+        EXPECT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+
+        attempts = tel_type_creates;
+        stub.p->HFTelOrch::doTask();
+        EXPECT_EQ(tel_type_creates, attempts);
+    }
+
+    /* A deleted group is not redeployed. */
+    TEST_F(HFTelOrchCreateFailureTest, DeletedGroupIsNotRedeployed)
+    {
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = 0x1000000000001ULL;
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+        EXPECT_EQ(profile->m_redeploy_types.count(SAI_OBJECT_TYPE_PORT), 1u);
+
+        EXPECT_EQ(stub.p->groupTableDel("p", "PORT"), task_process_status::task_success);
+        EXPECT_TRUE(profile->m_redeploy_types.empty());
+        tel_type_creates = 0;
+        stub.p->HFTelOrch::doTask();
+        EXPECT_EQ(tel_type_creates, 0);
+    }
+
+    /* A group committed by an object update is not redeployed, so doTask()
+     * does not recommit it once it streams. */
+    TEST_F(HFTelOrchCreateFailureTest, CommittedGroupIsNotRedeployed)
+    {
+        stub.p->m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = 0x1000000000001ULL;
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"] = 0x1000000000002ULL;
+        ASSERT_EQ(stub.p->profileTableSet("p", {{"stream_state", "enabled"}}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+        ASSERT_EQ(profile->m_redeploy_types.count(SAI_OBJECT_TYPE_PORT), 1u);
+
+        tel_type_create_status = SAI_STATUS_SUCCESS;
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        EXPECT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+        EXPECT_TRUE(profile->m_redeploy_types.empty());
+
+        profile->notifyConfigReady(SAI_OBJECT_TYPE_PORT, false);
+        ASSERT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        profile->m_redeploy_types.insert(SAI_OBJECT_TYPE_PORT);
+        EXPECT_NO_THROW(stub.p->HFTelOrch::doTask());
+        EXPECT_EQ(profile->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_START_STREAM);
+        EXPECT_TRUE(profile->m_redeploy_types.empty());
+    }
+
+    /* A non-retryable failure on redeploy stops the redeploy. */
+    TEST_F(HFTelOrchCreateFailureTest, NonRetryableFailureStopsRedeploy)
+    {
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = 0x1000000000001ULL;
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+        ASSERT_EQ(profile->m_redeploy_types.count(SAI_OBJECT_TYPE_PORT), 1u);
+
+        tel_type_create_status = SAI_STATUS_SUCCESS;
+        ut_api.create_tam_counter_subscription = mock_create_not_supported;
+        for (int i = 0; i < 5; i++)
+        {
+            stub.p->HFTelOrch::doTask();
+        }
+        EXPECT_EQ(switch_sets, 1);
+        EXPECT_TRUE(profile->m_redeploy_types.empty());
+        EXPECT_TRUE(live_subscriptions.empty());
+    }
+
     /* CounterNameMapUpdater::delCounterNameMap with gHFTOrch non-null.
      * Covers the Message construction lines in counternameupdater.cpp DEL path. */
     TEST_F(LocallyNotifyTest, CounterNameUpdater_DelWithHFT)
@@ -282,6 +705,7 @@ namespace hftelorch_notify_test
             new (&p->m_name_sai_map) decay_t<decltype(p->m_name_sai_map)>();
             new (&p->m_sai_tam_counter_subscription_objs)
                 decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+            new (&p->m_redeploy_types) decay_t<decltype(p->m_redeploy_types)>();
             new (&p->m_sai_tam_tel_type_objs)
                 decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
             new (&p->m_sai_tam_tel_type_states)
@@ -312,6 +736,7 @@ namespace hftelorch_notify_test
             p->m_groups.~map();
             p->m_name_sai_map.~unordered_map();
             p->m_sai_tam_counter_subscription_objs.~unordered_map();
+            p->m_redeploy_types.~set();
             p->m_sai_tam_tel_type_objs.~unordered_map();
             p->m_sai_tam_tel_type_states.~unordered_map();
             p->m_sai_tam_report_objs.~unordered_map();
