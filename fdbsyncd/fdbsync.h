@@ -147,6 +147,8 @@ private:
     SubscriberStateTable m_stateFdbSyncTable;
     Table m_stateFdbSyncTableRead;
     Table m_cfgFdbSyncTableRead;
+    Table m_stateVlanMemberTable;
+    Table m_cfgVlanMemberTable;
 
     struct m_local_fdb_info
     {
@@ -165,6 +167,8 @@ private:
     bool macCheckMclagRemoteSrcDB(struct m_fdb_info *info);
 
     void updateLocalMac(struct m_fdb_info *info);
+    bool isKernelVlanMember(const std::string &port_name, const std::string &vlan);
+    bool isLeftVlan(const std::string &port_name, const std::string &vlan_name);
 
     void updateAllLocalMac();
 
