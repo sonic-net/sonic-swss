@@ -69,6 +69,8 @@ public:
 
     bool isIntfRestoreDone();
 
+    void dumpBridgeFdb();
+
     AppRestartAssist *getRestartAssist()
     {
         return m_AppRestartAssist;
@@ -116,6 +118,10 @@ public:
     bool m_isEvpnNvoExist = false;
 
 private:
+    void dumpBridgeFdb(struct nl_sock *sock);
+    void trackKeptEntry(const std::string &tableName, const std::string &key,
+                        const std::vector<FieldValueTuple> &fvVector);
+
     static bool parseFdbStateKey(
         const std::string &key,
         std::string &vlanName,
