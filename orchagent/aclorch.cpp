@@ -2015,6 +2015,10 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRuleUnderlaySetDscp>(acl, rule, table, m_metadataMgr);
         }
+        else if (action == ACTION_DSCP)
+        {
+            return make_shared<AclRulePacket>(acl, rule, table);
+        }
         else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
         {
             if (!dtel)
@@ -2263,6 +2267,20 @@ bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
         }
         actionData.parameter.oid = param_id;
     }
+    else if (attr_name == ACTION_DSCP)
+    {
+        try
+        {
+            actionData.parameter.u8 = to_uint<uint8_t>(attr_value, 0, 0x3F);
+        }
+        catch (const exception &e)
+        {
+            SWSS_LOG_ERROR("Invalid DSCP action value '%s': %s", attr_value.c_str(), e.what());
+            return false;
+        }
+        actionData.enable = true;
+        return setAction(SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP, actionData);
+    }
     // SET_POLICER attaches a policer (by name -> OID) to the ACL entry.
     else if (attr_name == ACTION_POLICER_ACTION)
     {
@@ -2399,16 +2417,17 @@ bool AclRulePacket::validate()
         return false;
     }
 
-    size_t nonPolicerActions = 0;
+    size_t nonModifierActions = 0;
     for (const auto& action : m_actions)
     {
-        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER)
+        if (action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER &&
+            action.first != SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP)
         {
-            nonPolicerActions++;
+            nonModifierActions++;
         }
     }
 
-    if (nonPolicerActions > 1)
+    if (nonModifierActions > 1)
     {
         return false;
     }
@@ -4358,10 +4377,10 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     string delimiter;
     ostringstream acl_action_value_stream;
     ostringstream is_action_list_mandatory_stream;
-    acl_rule_attr_lookup_t metadataActionLookup = {};
-    if (isAclMetaDataSupported())
+    auto metadataActionLookup = aclMetadataDscpActionLookup;
+    if (!isAclMetaDataSupported())
     {
-        metadataActionLookup = aclMetadataDscpActionLookup;
+        metadataActionLookup.erase(ACTION_META_DATA);
     }
     for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup, metadataActionLookup, aclInnerActionLookup})
     {
