@@ -1392,12 +1392,16 @@ void FabricPortsOrch::updateFabricRate()
         if (stoll(oldTime) > 0)
         {
             deltaTime = newTime - stoll(oldTime);
+            if (deltaTime <= 0)
+            {
+                deltaTime = 1;
+            }
         }
         SWSS_LOG_INFO("port %s %lld %ld ", sai_serialize_object_id(port).c_str(),
                         newTime, stol(oldTime));
         double percent;
         long long loadInterval = FABRIC_DEBUG_POLLING_INTERVAL_DEFAULT;
-        percent = exp( - deltaTime / loadInterval );
+        percent = exp( - static_cast<double>(deltaTime) / static_cast<double>(loadInterval) );
         double newRate =
            (oldRxRate * percent) + (static_cast<double>(deltaMegabits) / static_cast<double>(deltaTime)) * (1.0 - percent);
         double newRxRate = newRate;
