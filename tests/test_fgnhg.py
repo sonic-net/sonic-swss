@@ -1636,6 +1636,42 @@ class TestFineGrainedNextHopGroup(object):
         '''
         fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs)
 
+# DVSDatabase.restore_entry backs the restore_orchagent_logger fixture used above.
+# No daemon subscribes to this table, so writing it has no side effects.
+RESTORE_TEST_TB = "DVSLIB_RESTORE_TEST"
+RESTORE_TEST_KEY = "row"
+
+
+@pytest.fixture
+def restore_test_db(dvs):
+    db = dvs.get_config_db()
+    db.delete_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+    yield db
+    db.delete_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+
+
+class TestRestoreEntry(object):
+    def test_restore_entry_puts_row_back_exactly(self, restore_test_db):
+        db = restore_test_db
+        db.create_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, {"keep": "1", "change": "old"})
+        snapshot = db.get_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+
+        db.update_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, {"change": "new", "added": "x"})
+        db.restore_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, snapshot)
+
+        assert db.get_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY) == {"keep": "1", "change": "old"}
+
+    def test_restore_entry_empty_snapshot_deletes_row(self, restore_test_db):
+        db = restore_test_db
+        snapshot = db.get_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+        assert snapshot == {}
+
+        db.create_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, {"added": "x"})
+        db.restore_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, snapshot)
+
+        assert RESTORE_TEST_KEY not in db.get_keys(RESTORE_TEST_TB)
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
