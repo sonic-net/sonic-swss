@@ -19,6 +19,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_sai_api.h"
 #include "mock_sai_tunnel.h"
+#include "mock_sai_capability_wrap.h"
 #include "mock_orch_test.h"
 
 extern Directory<Orch*> gDirectory;
@@ -480,6 +481,240 @@ namespace vxlanorch_test
         EXPECT_FALSE(getSaiFailureStatus(error)) << error;
 
         vxlan_orch->delTunnel("vxlan_tunnel_1");
+    }
+
+    /*
+     * TTL modes of the VxLAN tunnels orchagent creates, against the SAI's enum capability for
+     * SAI_TUNNEL_ATTR_ENCAP_TTL_MODE / DECAP_TTL_MODE: the EVPN P2MP tunnel, the P2P tunnel
+     * createDynamicDIPTunnel makes for a remote VTEP, and a tunnel created with an explicit encap
+     * TTL (as a VNET does).
+     */
+    class VxlanTtlModeTest : public VxlanOrchTest
+    {
+        protected:
+            struct Created
+            {
+                std::map<sai_attr_id_t, int32_t> attrs;
+                bool has(sai_attr_id_t id) const { return attrs.count(id) != 0; }
+                int32_t at(sai_attr_id_t id) const { return attrs.at(id); }
+            };
+
+            static sai_enum_cap_ut::EnumValuesCapabilityOverride ttlCaps(sai_status_t status,
+                                                                         std::vector<int32_t> encap,
+                                                                         std::vector<int32_t> decap)
+            {
+                return [=](sai_object_id_t, sai_object_type_t object_type, sai_attr_id_t attr_id,
+                           sai_s32_list_t *caps) -> sai_status_t {
+                    // Every other query fails, PEER_MODE included: the orch then treats P2P tunnels as supported.
+                    if (object_type != SAI_OBJECT_TYPE_TUNNEL ||
+                        (attr_id != SAI_TUNNEL_ATTR_ENCAP_TTL_MODE && attr_id != SAI_TUNNEL_ATTR_DECAP_TTL_MODE))
+                    {
+                        return SAI_STATUS_NOT_SUPPORTED;
+                    }
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        return status;
+                    }
+                    const auto &values = attr_id == SAI_TUNNEL_ATTR_ENCAP_TTL_MODE ? encap : decap;
+                    if (caps->count < values.size())
+                    {
+                        caps->count = static_cast<uint32_t>(values.size());
+                        return SAI_STATUS_BUFFER_OVERFLOW;
+                    }
+                    std::copy(values.begin(), values.end(), caps->list);
+                    caps->count = static_cast<uint32_t>(values.size());
+                    return SAI_STATUS_SUCCESS;
+                };
+            }
+
+            // Creates the three tunnels; the P2MP tunnel (and so its P2P tunnel) has ttl_mode configured.
+            std::vector<Created> createTunnels(VxlanTunnelTTLMode configured)
+            {
+                initSwitchOrch();
+                initVxlanOrch();
+                VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+                VxlanTunnel* sip_tunnel = new VxlanTunnel("evpn_sip", IpAddress("10.1.0.1"), IpAddress("0.0.0.0"),
+                                                          TNL_CREATION_SRC_EVPN, configured);
+                vxlan_orch->addTunnel("evpn_sip", sip_tunnel);
+                VxlanTunnel* vnet_tunnel = new VxlanTunnel("vnet_tnl", IpAddress("10.1.0.2"), IpAddress("0.0.0.0"),
+                                                           TNL_CREATION_SRC_CLI);
+                vxlan_orch->addTunnel("vnet_tnl", vnet_tunnel);
+
+                std::vector<Created> created;
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel_map(_, _, _, _))
+                    .Times(::testing::AnyNumber())
+                    .WillRepeatedly(DoAll(SetArgPointee<0>(vxlan_tunnel_map_oid), Return(SAI_STATUS_SUCCESS)));
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel(_, _, _, _))
+                    .Times(3)
+                    .WillRepeatedly(Invoke([&](sai_object_id_t *tunnel_id, sai_object_id_t,
+                                               uint32_t attr_count, const sai_attribute_t *attr_list) {
+                        Created c;
+                        for (uint32_t i = 0; i < attr_count; i++)
+                        {
+                            switch (attr_list[i].id)
+                            {
+                            case SAI_TUNNEL_ATTR_PEER_MODE:
+                            case SAI_TUNNEL_ATTR_ENCAP_TTL_MODE:
+                            case SAI_TUNNEL_ATTR_DECAP_TTL_MODE:
+                                c.attrs[attr_list[i].id] = attr_list[i].value.s32;
+                                break;
+                            case SAI_TUNNEL_ATTR_ENCAP_TTL_VAL:
+                                c.attrs[attr_list[i].id] = attr_list[i].value.u8;
+                                break;
+                            default:
+                                c.attrs[attr_list[i].id] = 0;
+                            }
+                        }
+                        created.push_back(c);
+                        *tunnel_id = vxlan_tunnel_oid;
+                        return SAI_STATUS_SUCCESS;
+                    }));
+                EXPECT_CALL(mock_sai_tunnel_, create_tunnel_term_table_entry(_, _, _, _))
+                    .Times(::testing::AnyNumber())
+                    .WillRepeatedly(DoAll(SetArgPointee<0>(vxlan_tunnel_term_table_entry_oid), Return(SAI_STATUS_SUCCESS)));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_term_table_entry(_))
+                    .Times(::testing::AnyNumber())
+                    .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel(_))
+                    .Times(::testing::AnyNumber())
+                    .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+                EXPECT_CALL(mock_sai_tunnel_, remove_tunnel_map(_))
+                    .Times(::testing::AnyNumber())
+                    .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+                uint8_t mapper_list = 0;
+                TUNNELMAP_SET_VLAN(mapper_list);
+                TUNNELMAP_SET_VRF(mapper_list);
+                EXPECT_TRUE(sip_tunnel->createTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP));
+                EXPECT_TRUE(sip_tunnel->createDynamicDIPTunnel("20.1.0.1", TUNNEL_USER_IMR));
+                EXPECT_TRUE(vnet_tunnel->createTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP, true, 128));
+
+                EXPECT_TRUE(sip_tunnel->deleteDynamicDIPTunnel("20.1.0.1", TUNNEL_USER_IMR, true));
+                vnet_tunnel->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+                sip_tunnel->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+                vxlan_orch->delTunnel("vnet_tnl");
+                vxlan_orch->delTunnel("evpn_sip");
+
+                EXPECT_EQ(created.size(), 3u);
+                if (created.size() == 3u)
+                {
+                    EXPECT_EQ(created[0].at(SAI_TUNNEL_ATTR_PEER_MODE), SAI_TUNNEL_PEER_MODE_P2MP);
+                    EXPECT_EQ(created[1].at(SAI_TUNNEL_ATTR_PEER_MODE), SAI_TUNNEL_PEER_MODE_P2P);
+                    // The explicit encap TTL is always PIPE with that TTL.
+                    EXPECT_EQ(created[2].at(SAI_TUNNEL_ATTR_ENCAP_TTL_MODE), SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
+                    EXPECT_EQ(created[2].at(SAI_TUNNEL_ATTR_ENCAP_TTL_VAL), 128);
+                    // VNET decap without a configured ttl_mode stays at the SAI default.
+                    EXPECT_FALSE(created[2].has(SAI_TUNNEL_ATTR_DECAP_TTL_MODE));
+                }
+                return created;
+            }
+
+            // STATE_DB SWITCH_CAPABILITY|switch VXLAN_ENCAP_TTL_UNIFORM_CAPABLE, "" when absent.
+            std::string encapUniformCapable()
+            {
+                Table table(m_state_db.get(), "SWITCH_CAPABILITY");
+                std::string value;
+                return table.hget("switch", "VXLAN_ENCAP_TTL_UNIFORM_CAPABLE", value) ? value : "";
+            }
+
+            static void expectEncapPipe255(const std::vector<Created> &created)
+            {
+                for (size_t i = 0; i < 2 && i < created.size(); i++)
+                {
+                    ASSERT_TRUE(created[i].has(SAI_TUNNEL_ATTR_ENCAP_TTL_MODE)) << "tunnel " << i;
+                    EXPECT_EQ(created[i].at(SAI_TUNNEL_ATTR_ENCAP_TTL_MODE), SAI_TUNNEL_TTL_MODE_PIPE_MODEL) << "tunnel " << i;
+                    ASSERT_TRUE(created[i].has(SAI_TUNNEL_ATTR_ENCAP_TTL_VAL)) << "tunnel " << i;
+                    EXPECT_EQ(created[i].at(SAI_TUNNEL_ATTR_ENCAP_TTL_VAL), 255) << "tunnel " << i;
+                }
+            }
+
+            static void expectDecap(const std::vector<Created> &created, size_t count, int32_t mode)
+            {
+                for (size_t i = 0; i < count && i < created.size(); i++)
+                {
+                    ASSERT_TRUE(created[i].has(SAI_TUNNEL_ATTR_DECAP_TTL_MODE)) << "tunnel " << i;
+                    EXPECT_EQ(created[i].at(SAI_TUNNEL_ATTR_DECAP_TTL_MODE), mode) << "tunnel " << i;
+                }
+            }
+    };
+
+    TEST_F(VxlanTtlModeTest, EncapUniformWhenSaiListsUniform)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_SUCCESS,
+            {SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL, SAI_TUNNEL_TTL_MODE_PIPE_MODEL},
+            {SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL, SAI_TUNNEL_TTL_MODE_PIPE_MODEL}));
+        auto created = createTunnels(VxlanTunnelTTLMode::NOT_SET);
+        EXPECT_EQ(encapUniformCapable(), "true");
+        ASSERT_EQ(created.size(), 3u);
+        for (size_t i = 0; i < 2; i++)
+        {
+            ASSERT_TRUE(created[i].has(SAI_TUNNEL_ATTR_ENCAP_TTL_MODE)) << "tunnel " << i;
+            EXPECT_EQ(created[i].at(SAI_TUNNEL_ATTR_ENCAP_TTL_MODE), SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL) << "tunnel " << i;
+            EXPECT_FALSE(created[i].has(SAI_TUNNEL_ATTR_ENCAP_TTL_VAL)) << "tunnel " << i;
+        }
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
+    }
+
+    TEST_F(VxlanTtlModeTest, EncapPipe255WhenSaiListsPipeOnly)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_SUCCESS,
+            {SAI_TUNNEL_TTL_MODE_PIPE_MODEL},
+            {SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL, SAI_TUNNEL_TTL_MODE_PIPE_MODEL}));
+        auto created = createTunnels(VxlanTunnelTTLMode::NOT_SET);
+        EXPECT_EQ(encapUniformCapable(), "false");
+        ASSERT_EQ(created.size(), 3u);
+        expectEncapPipe255(created);
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
+    }
+
+    TEST_F(VxlanTtlModeTest, EncapPipe255WhenCapabilityQueryFails)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_NOT_SUPPORTED, {}, {}));
+        auto created = createTunnels(VxlanTunnelTTLMode::NOT_SET);
+        EXPECT_EQ(encapUniformCapable(), "false");
+        ASSERT_EQ(created.size(), 3u);
+        expectEncapPipe255(created);
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
+    }
+
+    TEST_F(VxlanTtlModeTest, ConfiguredUniformDecapOnP2mpAndDipTunnels)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_SUCCESS,
+            {SAI_TUNNEL_TTL_MODE_PIPE_MODEL},
+            {SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL, SAI_TUNNEL_TTL_MODE_PIPE_MODEL}));
+        auto created = createTunnels(VxlanTunnelTTLMode::UNIFORM);
+        ASSERT_EQ(created.size(), 3u);
+        expectEncapPipe255(created);
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL);
+    }
+
+    TEST_F(VxlanTtlModeTest, ConfiguredUniformDecapWhenCapabilityQueryFails)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_NOT_SUPPORTED, {}, {}));
+        auto created = createTunnels(VxlanTunnelTTLMode::UNIFORM);
+        ASSERT_EQ(created.size(), 3u);
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL);
+    }
+
+    TEST_F(VxlanTtlModeTest, ConfiguredUniformDecapFallsBackToPipeWhenUnsupported)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_SUCCESS,
+            {SAI_TUNNEL_TTL_MODE_PIPE_MODEL},
+            {SAI_TUNNEL_TTL_MODE_PIPE_MODEL}));
+        auto created = createTunnels(VxlanTunnelTTLMode::UNIFORM);
+        ASSERT_EQ(created.size(), 3u);
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
+    }
+
+    TEST_F(VxlanTtlModeTest, ConfiguredPipeDecapOnP2mpAndDipTunnels)
+    {
+        sai_enum_cap_ut::EnumValuesCapabilityOverrideGuard caps(ttlCaps(SAI_STATUS_SUCCESS,
+            {SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL, SAI_TUNNEL_TTL_MODE_PIPE_MODEL},
+            {SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL, SAI_TUNNEL_TTL_MODE_PIPE_MODEL}));
+        auto created = createTunnels(VxlanTunnelTTLMode::PIPE);
+        ASSERT_EQ(created.size(), 3u);
+        expectDecap(created, 2, SAI_TUNNEL_TTL_MODE_PIPE_MODEL);
     }
 
     TEST_F(VxlanOrchTest, TunnelTerminationCreateFailure)
