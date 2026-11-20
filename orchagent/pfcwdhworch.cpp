@@ -460,6 +460,17 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         }
     }
 
+    // A port without lossless TCs stays pending until it becomes PFC-ready. Its
+    // first attempt already reported it failed, so retries return here without
+    // rewriting STATE_DB or logging on every doTask pass. The mask is read
+    // directly because getLosslessTcsForPort() logs whenever it finds none.
+    uint8_t pfcMask = 0;
+    if (m_pfcwdPendingPorts.count(port.m_alias) &&
+        gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask) && pfcMask == 0)
+    {
+        return task_process_status::task_need_retry;
+    }
+
     // The hardware watchdog has no in-place update, so an existing
     // configuration is torn down first. A port that was never configured has
     // nothing to stop, and issuing the disable anyway would clear intervals
