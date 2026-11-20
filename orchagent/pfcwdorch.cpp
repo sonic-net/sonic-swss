@@ -36,6 +36,12 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
+
+    // STATE_DB outlives orchagent, so the entry may still hold what the
+    // previous run wrote, such as HARDWARE after a restart into software mode.
+    // The derived constructor writes this run's recovery mechanism.
+    m_stateTable->del(PFC_WD_STATE_KEY);
+
     if (m_platform == "")
     {
         SWSS_LOG_ERROR("Platform environment variable is not defined");

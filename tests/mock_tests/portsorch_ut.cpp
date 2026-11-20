@@ -6875,6 +6875,46 @@ TEST_F(PfcWdHwOrchTest, StateDbGlobalRecoveryMechanism)
     ASSERT_EQ(fields[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
 }
 
+// STATE_DB outlives orchagent, so each run must replace what the previous run
+// published: here hardware mode, then a restart into software mode (as when
+// PFC_DLR_INIT_ENABLE=0 is set), then a restart back into hardware mode.
+TEST_F(PfcWdHwOrchTest, StateDbRecoveryMechanismFollowsEachRestart)
+{
+    auto readState = [this]() {
+        vector<FieldValueTuple> fvs;
+        gPfcWdHwOrch->getStateTable()->get(PFC_WD_STATE_KEY, fvs);
+        return map<string, string>(fvs.begin(), fvs.end());
+    };
+
+    auto hwState = readState();
+    ASSERT_EQ(hwState[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
+    ASSERT_EQ(hwState.count(PFC_WD_HW_DETECTION_TIME_MIN), 1u);
+    ASSERT_EQ(hwState.count(PFC_WD_DLR_PACKET_ACTION), 1u);
+
+    vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
+    delete gPfcWdHwOrch;
+    gPfcWdHwOrch = nullptr;
+    {
+        auto swOrch = make_unique<PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>>(
+            m_config_db.get(), pfc_wd_tables,
+            s_portStatIds, s_queueStatIds, s_queueAttrIds, 100);
+
+        vector<FieldValueTuple> fvs;
+        ASSERT_TRUE(swOrch->getStateTable()->get(PFC_WD_STATE_KEY, fvs));
+        map<string, string> swState(fvs.begin(), fvs.end());
+        ASSERT_EQ(swState[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_SOFTWARE);
+        // The hardware-only fields from the previous run are gone too.
+        ASSERT_EQ(swState.size(), 1u);
+    }
+
+    gPfcWdHwOrch = new PfcWdHwOrch(
+        m_config_db.get(), pfc_wd_tables,
+        s_portStatIds, s_queueStatIds, s_queueAttrIds);
+    auto hwAgain = readState();
+    ASSERT_EQ(hwAgain[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
+    ASSERT_EQ(hwAgain.count(PFC_WD_HW_DETECTION_TIME_MIN), 1u);
+}
+
 TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
 {
     bringUpPorts();
