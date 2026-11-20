@@ -8,6 +8,7 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
+#include "sai_serialize.h"
 
 #define private public
 #define protected public
@@ -19,6 +20,8 @@
 extern sai_object_id_t gSwitchId;
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_queue_api_t *sai_queue_api;
+extern sai_buffer_api_t *sai_buffer_api;
 
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
@@ -380,6 +383,62 @@ namespace pfcactionhandler_test
         }
     };
 
+    // Serves fixed queue and PG counter values to PfcWdActionHandler::getHwCounters.
+    struct HwStatsStub
+    {
+        static PfcWdHwStats s_stats;
+
+        sai_queue_api_t m_queueApi;
+        sai_buffer_api_t m_bufferApi;
+        sai_queue_api_t *m_origQueueApi;
+        sai_buffer_api_t *m_origBufferApi;
+
+        static sai_status_t getQueueStats(sai_object_id_t, uint32_t count,
+                                          const sai_stat_id_t *, uint64_t *counters)
+        {
+            if (count < 2)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+            counters[0] = s_stats.txPkt;
+            counters[1] = s_stats.txDropPkt;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        static sai_status_t getPgStats(sai_object_id_t, uint32_t count,
+                                       const sai_stat_id_t *, uint64_t *counters)
+        {
+            if (count < 2)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+            counters[0] = s_stats.rxPkt;
+            counters[1] = s_stats.rxDropPkt;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        HwStatsStub()
+        {
+            m_origQueueApi = sai_queue_api;
+            m_queueApi = *sai_queue_api;
+            m_queueApi.get_queue_stats = getQueueStats;
+            sai_queue_api = &m_queueApi;
+
+            m_origBufferApi = sai_buffer_api;
+            m_bufferApi = *sai_buffer_api;
+            m_bufferApi.get_ingress_priority_group_stats = getPgStats;
+            sai_buffer_api = &m_bufferApi;
+        }
+
+        ~HwStatsStub()
+        {
+            sai_queue_api = m_origQueueApi;
+            sai_buffer_api = m_origBufferApi;
+        }
+    };
+
+    PfcWdHwStats HwStatsStub::s_stats = {};
+
     static string ingressRuleName(uint8_t queueId)
     {
         return "Rule_PfcWdAclHandler_" + to_string(queueId);
@@ -620,5 +679,43 @@ namespace pfcactionhandler_test
 
         // An unknown event is rejected without throwing.
         EXPECT_FALSE(orch->startWdActionOnQueue("bogus_event", queueOid));
+    }
+
+    // A HW counter that reads lower at restore than at storm detection must
+    // add 0 to the pfcwd stats, not wrap to ~2^64. Increasing counters still
+    // add their delta.
+    TEST_F(PfcActionHandlerTest, CommitCountersClampsBackwardHwCounters)
+    {
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_GT(port.m_queue_ids.size(), 3U);
+        ASSERT_GT(port.m_priority_group_ids.size(), 3U);
+        sai_object_id_t queueOid = port.m_queue_ids[3];
+        string queueKey = sai_serialize_object_id(queueOid);
+
+        HwStatsStub stub;
+        PfcWdActionHandler handler(port.m_port_id, queueOid, 3, m_countersTable);
+
+        HwStatsStub::s_stats = { 100, 10, 20115, 5 };
+        handler.initCounters();
+
+        HwStatsStub::s_stats = { 150, 12, 8, 0 };
+        handler.commitCounters();
+
+        auto expectStat = [&](const string &field, const string &expected) {
+            string value;
+            ASSERT_TRUE(m_countersTable->hget(queueKey, field, value)) << field;
+            EXPECT_EQ(value, expected) << field;
+        };
+
+        expectStat("PFC_WD_QUEUE_STATS_RX_PACKETS", "0");
+        expectStat("PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS", "0");
+        expectStat("PFC_WD_QUEUE_STATS_RX_PACKETS_LAST", "0");
+        expectStat("PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST", "0");
+
+        expectStat("PFC_WD_QUEUE_STATS_TX_PACKETS", "50");
+        expectStat("PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS", "2");
+        expectStat("PFC_WD_QUEUE_STATS_TX_PACKETS_LAST", "50");
+        expectStat("PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST", "2");
     }
 }
