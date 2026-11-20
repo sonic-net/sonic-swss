@@ -103,6 +103,24 @@ namespace ut_fpmsyncd
         return n->nlmsg_len;
     }
 
+    struct rtnexthop *nl_attr_rtnh(struct nlmsghdr *n, unsigned int maxlen)
+    {
+        struct rtnexthop *rtnh = reinterpret_cast<struct rtnexthop *>(static_cast<void *>(NLMSG_TAIL(n)));
+
+        if (NLMSG_ALIGN(n->nlmsg_len) + RTNH_ALIGN(sizeof(struct rtnexthop)) > maxlen)
+            return NULL;
+
+        memset(rtnh, 0, sizeof(struct rtnexthop));
+        n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len) + RTA_ALIGN(sizeof(struct rtnexthop));
+
+        return rtnh;
+    }
+
+    void nl_attr_rtnh_end(struct nlmsghdr *n, struct rtnexthop *rtnh)
+    {
+        rtnh->rtnh_len = (uint16_t)((uint8_t *)NLMSG_TAIL(n) - (uint8_t *)rtnh);
+    }
+
     /* Build a Netlink object containing an SRv6 VPN Route */
     struct nlmsg *create_srv6_vpn_route_nlmsg(
         uint16_t cmd,
@@ -210,6 +228,188 @@ namespace ut_fpmsyncd
             return NULL;
 
         nl_attr_nest_end(&nl_obj->n, nest);
+
+        return nl_obj;
+    }
+
+    struct nlmsg *create_srv6_vpn_route_nlmsg(
+        uint16_t cmd,
+        IpPrefix *dst,
+        IpAddress *encap_src_addr,
+        IpAddress *vpn_sid,
+        IpAddress *nexthop,
+        uint32_t ifindex,
+        uint16_t table_id,
+        uint8_t prefixlen,
+        uint8_t address_family,
+        uint8_t rtm_type,
+        uint32_t nhg_id,
+        uint32_t pic_id)
+    {
+        struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(
+            cmd, dst, encap_src_addr, vpn_sid, table_id, prefixlen,
+            address_family, rtm_type, nhg_id, pic_id);
+        if (!nl_obj)
+            return NULL;
+
+        if (nexthop)
+        {
+            int route_family = address_family > 0 ? address_family :
+                (dst ? dst->getIp().getIp().family : AF_INET6);
+            int nexthop_family = nexthop->isV4() ? AF_INET : AF_INET6;
+
+            if (route_family == nexthop_family)
+            {
+                bool attr_added;
+
+                if (nexthop->isV4())
+                {
+                    attr_added = nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), RTA_GATEWAY,
+                                               nexthop->getV4Addr());
+                }
+                else
+                {
+                    attr_added = nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_GATEWAY,
+                                             nexthop->getV6Addr(), IPV6_MAX_BYTE);
+                }
+
+                if (!attr_added)
+                {
+                    return NULL;
+                }
+            }
+            else
+            {
+                uint8_t via[sizeof(uint16_t) + IPV6_MAX_BYTE] = {};
+                uint16_t family = (uint16_t)nexthop_family;
+                unsigned int nexthop_len = nexthop->isV4() ? sizeof(uint32_t) : IPV6_MAX_BYTE;
+
+                memcpy(via, &family, sizeof(family));
+                if (nexthop->isV4())
+                {
+                    uint32_t nexthop_addr = nexthop->getV4Addr();
+                    memcpy(via + sizeof(family), &nexthop_addr, nexthop_len);
+                }
+                else
+                {
+                    memcpy(via + sizeof(family), nexthop->getV6Addr(), nexthop_len);
+                }
+
+                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_VIA, via,
+                                 sizeof(family) + nexthop_len))
+                    return NULL;
+            }
+        }
+
+        if (ifindex && !nl_attr_put32(&nl_obj->n, sizeof(*nl_obj), RTA_OIF, ifindex))
+            return NULL;
+
+        return nl_obj;
+    }
+
+    struct nlmsg *create_srv6_vpn_route_nlmsg(
+        uint16_t cmd,
+        IpPrefix *dst,
+        const std::vector<Srv6RouteNextHop> &nexthops,
+        uint16_t table_id,
+        uint8_t prefixlen,
+        uint8_t address_family,
+        uint8_t rtm_type)
+    {
+        if (nexthops.empty())
+            return NULL;
+
+        struct nlmsg *nl_obj = create_srv6_vpn_route_nlmsg(
+            cmd, dst, nexthops[0].encap_src_addr, nexthops[0].vpn_sid,
+            table_id, prefixlen, address_family, rtm_type);
+        if (!nl_obj)
+            return NULL;
+
+        int route_family = address_family > 0 ? address_family :
+            (dst ? dst->getIp().getIp().family : AF_INET6);
+        struct rtattr *multipath = nl_attr_nest(&nl_obj->n, sizeof(*nl_obj), RTA_MULTIPATH);
+        if (!multipath)
+            return NULL;
+
+        for (const auto &nh: nexthops)
+        {
+            if (!nh.nexthop || !nh.encap_src_addr || !nh.vpn_sid)
+            {
+                return NULL;
+            }
+
+            int nexthop_family = nh.nexthop->isV4() ? AF_INET : AF_INET6;
+            struct rtnexthop *rtnh = nl_attr_rtnh(&nl_obj->n, sizeof(*nl_obj));
+            if (!rtnh)
+                return NULL;
+
+            rtnh->rtnh_ifindex = (int)nh.ifindex;
+
+            if (route_family == nexthop_family)
+            {
+                bool attr_added;
+
+                if (nh.nexthop->isV4())
+                {
+                    uint32_t nexthop_addr = nh.nexthop->getV4Addr();
+                    attr_added = nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_GATEWAY,
+                                             &nexthop_addr, sizeof(nexthop_addr));
+                }
+                else
+                {
+                    attr_added = nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_GATEWAY,
+                                             nh.nexthop->getV6Addr(), IPV6_MAX_BYTE);
+                }
+
+                if (!attr_added)
+                {
+                    return NULL;
+                }
+            }
+            else
+            {
+                uint8_t via[sizeof(uint16_t) + IPV6_MAX_BYTE] = {};
+                uint16_t family = (uint16_t)nexthop_family;
+                unsigned int nexthop_len = nh.nexthop->isV4() ? sizeof(uint32_t) : IPV6_MAX_BYTE;
+
+                memcpy(via, &family, sizeof(family));
+                if (nh.nexthop->isV4())
+                {
+                    uint32_t nexthop_addr = nh.nexthop->getV4Addr();
+                    memcpy(via + sizeof(family), &nexthop_addr, nexthop_len);
+                }
+                else
+                {
+                    memcpy(via + sizeof(family), nh.nexthop->getV6Addr(), nexthop_len);
+                }
+
+                if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj), RTA_VIA, via,
+                                 sizeof(family) + nexthop_len))
+                    return NULL;
+            }
+
+            if (!nl_attr_put16(&nl_obj->n, sizeof(*nl_obj), RTA_ENCAP_TYPE,
+                               NH_ENCAP_SRV6_ROUTE))
+                return NULL;
+
+            struct rtattr *encap = nl_attr_nest(&nl_obj->n, sizeof(*nl_obj), RTA_ENCAP);
+            if (!encap)
+                return NULL;
+
+            if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj),
+                             ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR,
+                             nh.encap_src_addr->getV6Addr(), IPV6_MAX_BYTE))
+                return NULL;
+
+            if (!nl_attr_put(&nl_obj->n, sizeof(*nl_obj), ROUTE_ENCAP_SRV6_VPN_SID,
+                             nh.vpn_sid->getV6Addr(), IPV6_MAX_BYTE))
+                return NULL;
+
+            nl_attr_nest_end(&nl_obj->n, encap);
+            nl_attr_rtnh_end(&nl_obj->n, rtnh);
+        }
+
+        nl_attr_nest_end(&nl_obj->n, multipath);
 
         return nl_obj;
     }
