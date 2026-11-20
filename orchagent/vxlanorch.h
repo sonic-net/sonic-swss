@@ -46,6 +46,7 @@ typedef enum
 #define MAX_VLAN_ID 4095
 
 #define MAX_VNI_ID 16777215
+// Outer TTL of a VxLAN tunnel in PIPE encap mode when the SAI cannot do UNIFORM.
 #define DEFAULT_TUNNEL_ENCAP_TTL 255
 
 typedef enum
@@ -204,7 +205,9 @@ public:
 
     bool deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
     bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
-    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
+    // encap_ttl 0: UNIFORM encap where the SAI supports it, else PIPE with DEFAULT_TUNNEL_ENCAP_TTL.
+    // Non-zero: PIPE with that TTL.
+    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=0);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
@@ -312,7 +315,7 @@ public:
 
 
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
-                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
+                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=0);
 
     bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
 
@@ -373,6 +376,16 @@ public:
         return is_dip_tunnel_supported;
     }
 
+    // From the SAI enum capability of the tunnel TTL modes, queried once.
+    bool isEncapTtlUniformSupported(void) const
+    {
+        return m_encapTtlUniformSupported;
+    }
+    bool isDecapTtlUniformSupported(void) const
+    {
+        return m_decapTtlUniformSupported;
+    }
+
 
 private:
     virtual bool addOperation(const Request& request);
@@ -395,6 +408,10 @@ private:
     shared_ptr<DBConnector> m_asic_db;
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
     bool is_dip_tunnel_supported;
+    // False when the query fails: encap then stays PIPE.
+    bool m_encapTtlUniformSupported = false;
+    // True when the query fails: a configured ttl_mode is passed through.
+    bool m_decapTtlUniformSupported = true;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {
