@@ -1,3 +1,4 @@
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
@@ -794,6 +795,10 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 {
     SWSS_LOG_ENTER();
 
+    /* ptp_enabled=1 in platform_env.conf. Absent or any other value means no PTP SAI calls. */
+    m_ptpPlatformEnabled = readPtpPlatformEnabled();
+    SWSS_LOG_NOTICE("PTP platform support is %s", m_ptpPlatformEnabled ? "enabled" : "disabled");
+
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_counterNameMapUpdater = unique_ptr<CounterNameMapUpdater>(new CounterNameMapUpdater("COUNTERS_DB", COUNTERS_PORT_NAME_MAP));
@@ -1395,6 +1400,13 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList, std::vector
             p.m_fec_mode = cit.fec.value;
             p.m_override_fec = cit.fec.override_fec;
             p.m_fec_cfg = true;
+        }
+
+        if (m_ptpPlatformEnabled && cit.pt_ptp_mode.is_set)
+        {
+            attr.id        = SAI_PORT_ATTR_PTP_MODE;
+            attr.value.s32 = cit.pt_ptp_mode.value;
+            attrList.push_back(attr);
         }
 
         if (cit.tpid.is_set)
@@ -5782,6 +5794,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             "Set port %s Timestamp Template to %s",
                             p.m_alias.c_str(), m_portHlpr.getPtTimestampTemplateStr(pCfg).c_str()
                         );
+                    }
+                }
+
+                if (m_ptpPlatformEnabled && pCfg.pt_ptp_mode.is_set)
+                {
+                    if (p.m_ptp_mode != pCfg.pt_ptp_mode.value)
+                    {
+                        if (!setPortPtpMode(p, pCfg.pt_ptp_mode.value))
+                        {
+                            it++;
+                            continue;
+                        }
+                        p.m_ptp_mode = pCfg.pt_ptp_mode.value;
+                        m_portList[p.m_alias] = p;
                     }
                 }
             }
@@ -11913,6 +11939,102 @@ bool PortsOrch::setPortPtTimestampTemplate(const Port& port, sai_port_path_traci
         }
     }
 
+    return true;
+}
+
+bool PortsOrch::readPtpPlatformEnabled() const
+{
+    // SWSS_PTP_PLATFORM_ENV is set by unit tests. Unset, the platform
+    // and device files are the only ones consulted.
+    std::vector<std::string> paths;
+    const char *overridePath = std::getenv("SWSS_PTP_PLATFORM_ENV");
+    if (overridePath != nullptr && overridePath[0] != '\0')
+    {
+        paths.emplace_back(overridePath);
+    }
+    else
+    {
+        paths.emplace_back("/usr/share/sonic/platform/platform_env.conf");
+        const char *platform = std::getenv("PLATFORM");
+        if (platform != nullptr && platform[0] != '\0')
+        {
+            paths.emplace_back(std::string("/usr/share/sonic/device/") + platform + "/platform_env.conf");
+        }
+    }
+
+    for (const auto &path : paths)
+    {
+        std::ifstream file(path);
+        if (!file.is_open())
+        {
+            continue;
+        }
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            auto begin = line.find_first_not_of(" \t");
+            if (begin == std::string::npos || line[begin] == '#')
+            {
+                continue;
+            }
+
+            auto eq = line.find('=', begin);
+            if (eq == std::string::npos)
+            {
+                continue;
+            }
+
+            std::string key = line.substr(begin, eq - begin);
+            auto key_end = key.find_last_not_of(" \t");
+            if (key_end == std::string::npos)
+            {
+                continue;
+            }
+            key.erase(key_end + 1);
+            for (char &c : key)
+            {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (key != "ptp_enabled")
+            {
+                continue;
+            }
+
+            std::string value = line.substr(eq + 1);
+            auto value_begin = value.find_first_not_of(" \t");
+            if (value_begin == std::string::npos)
+            {
+                return false;
+            }
+            auto value_end = value.find_last_not_of(" \t\r");
+            value = value.substr(value_begin, value_end - value_begin + 1);
+            return value == "1";
+        }
+        return false;
+    }
+    return false;
+}
+
+bool PortsOrch::setPortPtpMode(const Port& port, sai_port_ptp_mode_t mode)
+{
+    if (!m_ptpPlatformEnabled)
+    {
+        SWSS_LOG_NOTICE("Skip SAI_PORT_ATTR_PTP_MODE on %s: PTP is disabled on this platform",
+                        port.m_alias.c_str());
+        return true;
+    }
+
+    sai_attribute_t attr;
+    attr.id    = SAI_PORT_ATTR_PTP_MODE;
+    attr.value.s32 = mode;
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+            return parseHandleSaiStatusFailure(handle_status);
+    }
     return true;
 }
 
