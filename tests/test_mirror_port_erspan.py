@@ -1,5 +1,6 @@
 # This test suite covers the functionality of mirror feature in SwSS
 import pytest
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -237,10 +238,17 @@ class TestMirror(object):
                                                 
         # Verify the LAG has been initialized properly
         lag_member_entries = self.dvs_lag.get_and_verify_port_channel_members(1)
-        fvs = self.dvs_vlan.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", lag_member_entries[0])
-        assert len(fvs) == 4
-        assert fvs.get("SAI_LAG_MEMBER_ATTR_LAG_ID") == lag_entries[0]
-        assert self.dvs_vlan.asic_db.port_to_id_map[fvs.get("SAI_LAG_MEMBER_ATTR_PORT_ID")] == "Ethernet88"
+
+        def _poll_lag_member():
+            fvs = self.dvs_vlan.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", lag_member_entries[0])
+            ok = (
+                len(fvs) == 4
+                and fvs.get("SAI_LAG_MEMBER_ATTR_LAG_ID") == lag_entries[0]
+                and self.dvs_vlan.asic_db.port_to_id_map.get(fvs.get("SAI_LAG_MEMBER_ATTR_PORT_ID")) == "Ethernet88"
+            )
+            return (ok, fvs)
+
+        wait_for_result(_poll_lag_member, PollingConfig(0.2, 10, strict=True))
 
         # bring up port channel and port channel member
         dvs.set_interface_status("PortChannel008", "up")
