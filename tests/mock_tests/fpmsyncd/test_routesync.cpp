@@ -10,8 +10,11 @@
 #include "orch_zmq_config.h"
 
 #include <arpa/inet.h>
+#include <linux/if_arp.h>
 #include <linux/pkt_cls.h>
 #include <linux/rtnetlink.h>
+#include <netlink/attr.h>
+#include <netlink/msg.h>
 #include <netlink/route/link.h>
 #include <netlink/route/nexthop.h>
 #include <linux/nexthop.h>
@@ -28,6 +31,80 @@ using namespace ut_fpmsyncd;
 #define MAX_PAYLOAD 1024
 
 using ::testing::_;
+
+namespace
+{
+struct LinkCacheFailureState
+{
+    bool enabled = false;
+    int refillResult = 0;
+    int includeCalls = 0;
+    int refillCalls = 0;
+};
+
+LinkCacheFailureState linkCacheFailure;
+}
+
+extern "C"
+{
+int __real_nl_cache_include(struct nl_cache *, struct nl_object *, change_func_t, void *);
+int __real_nl_cache_refill(struct nl_sock *, struct nl_cache *);
+
+int __wrap_nl_cache_include(struct nl_cache *cache, struct nl_object *obj,
+                            change_func_t callback, void *data)
+{
+    if (linkCacheFailure.enabled)
+    {
+        ++linkCacheFailure.includeCalls;
+        return -NLE_NOMEM;
+    }
+    return __real_nl_cache_include(cache, obj, callback, data);
+}
+
+int __wrap_nl_cache_refill(struct nl_sock *sock, struct nl_cache *cache)
+{
+    if (linkCacheFailure.enabled)
+    {
+        ++linkCacheFailure.refillCalls;
+        return linkCacheFailure.refillResult;
+    }
+    return __real_nl_cache_refill(sock, cache);
+}
+}
+
+static void dispatchLinkMessage(struct nl_object *obj, void *context)
+{
+    auto *routeSync = static_cast<RouteSync *>(context);
+    routeSync->onMsg(nl_object_get_msgtype(obj), obj);
+}
+
+static int sendLinkMessage(RouteSync& routeSync, struct rtnl_link *link,
+                           bool isDelete)
+{
+    struct nl_msg *msg = nlmsg_alloc_simple(
+        isDelete ? RTM_DELLINK : RTM_NEWLINK, NLM_F_REQUEST);
+    if (msg == nullptr)
+    {
+        return -NLE_NOMEM;
+    }
+    nlmsg_set_proto(msg, NETLINK_ROUTE);
+
+    struct ifinfomsg ifi = {};
+    ifi.ifi_family = AF_UNSPEC;
+    ifi.ifi_type = ARPHRD_ETHER;
+    ifi.ifi_index = rtnl_link_get_ifindex(link);
+    int err = nlmsg_append(msg, &ifi, sizeof(ifi), NLMSG_ALIGNTO);
+    if (err >= 0)
+    {
+        err = nla_put_string(msg, IFLA_IFNAME, rtnl_link_get_name(link));
+    }
+    if (err >= 0)
+    {
+        err = nl_msg_parse(msg, dispatchLinkMessage, &routeSync);
+    }
+    nlmsg_free(msg);
+    return err;
+}
 
 extern void resetMockWarmStartHelper();
 
@@ -148,6 +225,90 @@ TEST_F(FpmSyncdResponseTest, RouteResponseFeedbackV4)
         {"err_str", "SWSS_RC_SUCCESS"},
         {"protocol", "kernel"},
     });
+}
+
+class LinkCacheRecoveryTest : public FpmSyncdResponseTest,
+                              public ::testing::WithParamInterface<int>
+{
+public:
+    void TearDown() override
+    {
+        linkCacheFailure = {};
+        FpmSyncdResponseTest::TearDown();
+    }
+};
+
+TEST_P(LinkCacheRecoveryTest, RefreshesCacheWhenIncrementalUpdateFails)
+{
+    auto link = std::unique_ptr<rtnl_link, decltype(&rtnl_link_put)>(
+        rtnl_link_alloc(), rtnl_link_put);
+    ASSERT_NE(link, nullptr);
+    rtnl_link_set_ifindex(link.get(), 65000);
+    rtnl_link_set_name(link.get(), "fpmrecovery0");
+
+    linkCacheFailure.enabled = true;
+    linkCacheFailure.refillResult = GetParam();
+    ASSERT_GE(sendLinkMessage(m_routeSync, link.get(), false), 0);
+    EXPECT_EQ(linkCacheFailure.includeCalls, 1);
+    EXPECT_EQ(linkCacheFailure.refillCalls, 1);
+
+    // A failed update must not prevent processing the next notification.
+    linkCacheFailure.enabled = false;
+    ASSERT_GE(sendLinkMessage(m_routeSync, link.get(), false), 0);
+    auto cachedLink = std::unique_ptr<rtnl_link, decltype(&rtnl_link_put)>(
+        rtnl_link_get(m_routeSync.m_link_cache, 65000), rtnl_link_put);
+    ASSERT_NE(cachedLink, nullptr);
+    EXPECT_STREQ(rtnl_link_get_name(cachedLink.get()), "fpmrecovery0");
+}
+
+INSTANTIATE_TEST_SUITE_P(RefillSuccessAndFailure, LinkCacheRecoveryTest,
+                        ::testing::Values(0, -NLE_FAILURE));
+
+TEST(FpmSyncdNetlinkMockTest, LinkLookupReturnsHeldReference)
+{
+    auto *first = rtnl_link_get_by_name(nullptr, "Vrf10");
+    ASSERT_NE(first, nullptr);
+    auto *obj = reinterpret_cast<struct nl_object *>(first);
+    const int refCount = nl_object_get_refcnt(obj);
+
+    auto *second = rtnl_link_get_by_name(nullptr, "Vrf10");
+    ASSERT_EQ(second, first);
+    ASSERT_EQ(nl_object_get_refcnt(obj), refCount + 1);
+
+    rtnl_link_put(second);
+    EXPECT_EQ(nl_object_get_refcnt(obj), refCount);
+    rtnl_link_put(first);
+}
+
+TEST_F(FpmSyncdResponseTest, LinkEventsUpdateCachedLinksIncrementally)
+{
+    constexpr int testIfIndex = 65000;
+    constexpr char firstName[] = "fpmcache0";
+    constexpr char renamedName[] = "fpmcache1";
+    struct rtnl_link *link = rtnl_link_alloc();
+    ASSERT_NE(link, nullptr);
+
+    rtnl_link_set_ifindex(link, testIfIndex);
+    rtnl_link_set_name(link, firstName);
+    ASSERT_GE(sendLinkMessage(m_routeSync, link, false), 0);
+
+    struct rtnl_link *cachedLink = rtnl_link_get(
+        m_routeSync.m_link_cache, testIfIndex);
+    ASSERT_NE(cachedLink, nullptr);
+    EXPECT_STREQ(rtnl_link_get_name(cachedLink), firstName);
+    rtnl_link_put(cachedLink);
+
+    rtnl_link_set_name(link, renamedName);
+    ASSERT_GE(sendLinkMessage(m_routeSync, link, false), 0);
+    cachedLink = rtnl_link_get(m_routeSync.m_link_cache, testIfIndex);
+    ASSERT_NE(cachedLink, nullptr);
+    EXPECT_STREQ(rtnl_link_get_name(cachedLink), renamedName);
+    rtnl_link_put(cachedLink);
+
+    ASSERT_GE(sendLinkMessage(m_routeSync, link, true), 0);
+    EXPECT_EQ(rtnl_link_get(m_routeSync.m_link_cache, testIfIndex), nullptr);
+
+    rtnl_link_put(link);
 }
 
 TEST_F(FpmSyncdResponseTest, RouteResponseFeedbackV4Vrf)
