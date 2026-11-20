@@ -7,6 +7,8 @@ ARG build_dir
 ARG include_gcov=y
 ARG include_vpp=y
 ENV BUILD_DIR=$build_dir
+# Supervisor expands this optional bgpd argument before start.sh runs.
+ENV BGPD_GRACEFUL_RESTART_ARG=""
 
 COPY ["debs", "/debs"]
 
