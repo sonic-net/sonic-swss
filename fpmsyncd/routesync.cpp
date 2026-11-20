@@ -998,6 +998,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     char destipprefix[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
     int nlmsg_type = h->nlmsg_type;
     unsigned int vrf_index;
+    bool is_vnet = false;
 
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
@@ -1056,7 +1057,8 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
          * Now vrf device name is required to start with VRF_PREFIX,
          * it is difficult to split vrf_name:ipv6_addr.
          */
-        if (memcmp(destipprefix, VRF_PREFIX, strlen(VRF_PREFIX)))
+        is_vnet = !strncmp(destipprefix, VNET_PREFIX, strlen(VNET_PREFIX));
+        if (!is_vnet && memcmp(destipprefix, VRF_PREFIX, strlen(VRF_PREFIX)))
         {
             SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", destipprefix, vrf_index);
             return;
@@ -1087,6 +1089,12 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
      */
     if (nlmsg_type == RTM_DELROUTE)
     {
+        if (is_vnet)
+        {
+            m_vnet_routeTable.del(destipprefix);
+            m_vnet_tunnelTable.del(destipprefix);
+            return;
+        }
         SWSS_LOG_INFO("RouteTable del msg: %s", destipprefix);
         delWithWarmRestart(
             RouteTableFieldValueTupleWrapper{std::move(destipprefix), std::string(), isNbZmqEnabled()},
@@ -1098,7 +1106,8 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
         return;
     }
 
-    sendOffloadReply(h);
+    if (!is_vnet)
+        sendOffloadReply(h);
 
     switch (rtm->rtm_type)
     {
@@ -1140,6 +1149,18 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     if (nexthops.empty() || mac_list.empty())
     {
         SWSS_LOG_NOTICE("EVPN IP Prefix: %s nexthop or rmac is empty", destipprefix);
+        return;
+    }
+
+    if (is_vnet)
+    {
+        VnetTunnelTableFieldValueTupleWrapper fvw{destipprefix, false};
+        fvw.endpoint = std::move(nexthops);
+        fvw.vni = std::move(vni_list);
+        fvw.mac_address = std::move(mac_list);
+        m_vnet_routeTable.del(destipprefix);
+        setTable(fvw, m_vnet_tunnelTable);
+        sendOffloadReply(h);
         return;
     }
 
@@ -1330,6 +1351,10 @@ VnetTunnelTableFieldValueTupleWrapper::fieldValueTupleVector() {
             fvVector.push_back(FieldValueTuple("endpoint", endpoint.c_str()));
         }
     }
+    if (!vni.empty())
+        fvVector.emplace_back("vni", vni);
+    if (!mac_address.empty())
+        fvVector.emplace_back("mac_address", mac_address);
     return fvVector;
 }
 
@@ -3427,6 +3452,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
        the route is a VXLAN tunnel route. */
     if (ifnames.find(VXLAN_IF_NAME_PREFIX) == 0)
     {
+        m_vnet_routeTable.del(vnet_dip);
         SWSS_LOG_DEBUG("%s set msg: %s %s",
                        APP_VNET_RT_TUNNEL_TABLE_NAME, vnet_dip.c_str(), nexthops.c_str());
         VnetTunnelTableFieldValueTupleWrapper fvw{std::move(vnet_dip), isNbZmqEnabled()};
@@ -3453,6 +3479,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
                            APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str());
         }
 
+        m_vnet_tunnelTable.del(vnet_dip);
         setTable(fvw, m_vnet_routeTable);
     }
 }

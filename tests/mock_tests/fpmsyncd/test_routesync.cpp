@@ -5264,3 +5264,118 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     EXPECT_EQ(kfvOp(redisKfvs[0]), DEL_COMMAND);
     EXPECT_EQ(kfvOp(redisKfvs[1]), SET_COMMAND);
 }
+
+TEST_F(FpmSyncdResponseTest, EvpnVnetRouteAddWritesVnetTunnelTable)
+{
+    MockFpm mockFpm(&m_mockRouteSync);
+    Table routeTable(m_db.get(), APP_ROUTE_TABLE_NAME);
+    Table vnetRouteTable(m_db.get(), APP_VNET_RT_TABLE_NAME);
+    Table vnetTunnelTable(m_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+    const std::string key = "Vnet10:10.20.0.0/24";
+    vnetRouteTable.set(key, {{"ifname", "Ethernet0"}});
+
+    struct nlmsghdr *nlh = createRouteNlmsgWithTable(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                                      "10.20.0.0", 24, 110);
+    EXPECT_CALL(m_mockRouteSync, getIfName(110, _, _))
+        .WillOnce(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "Vnet10", sz); }, Return(true)));
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _))
+        .WillOnce([](nlmsghdr*, int, rtattr*[], std::string& nexthops, std::string& vni_list,
+                     std::string& mac_list, std::string& intf_list) {
+            nexthops = "10.0.0.1";
+            vni_list = "10001";
+            mac_list = "00:11:22:33:44:55";
+            intf_list = "Brvxlan10001";
+            return true;
+        });
+    EXPECT_CALL(mockFpm, send(_)).WillOnce(Return(true));
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(vnetTunnelTable.get(key, fvs));
+    EXPECT_EQ(fvsGetValue(fvs, "endpoint", true).get(), "10.0.0.1");
+    EXPECT_EQ(fvsGetValue(fvs, "vni", true).get(), "10001");
+    EXPECT_EQ(fvsGetValue(fvs, "mac_address", true).get(), "00:11:22:33:44:55");
+    EXPECT_FALSE(vnetRouteTable.get(key, fvs));
+
+    vector<string> keys;
+    routeTable.getKeys(keys);
+    EXPECT_TRUE(keys.empty());
+}
+
+TEST_F(FpmSyncdResponseTest, EvpnVnetRouteWithoutRmacIsIgnored)
+{
+    MockFpm mockFpm(&m_mockRouteSync);
+    Table vnetTunnelTable(m_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+
+    struct nlmsghdr *nlh = createRouteNlmsgWithTable(RTM_NEWROUTE, AF_INET, RTN_UNICAST,
+                                                      "10.21.0.0", 24, 111);
+    EXPECT_CALL(m_mockRouteSync, getIfName(111, _, _))
+        .WillOnce(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "Vnet10", sz); }, Return(true)));
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _))
+        .WillOnce([](nlmsghdr*, int, rtattr*[], std::string& nexthops, std::string& vni_list,
+                     std::string&, std::string&) {
+            nexthops = "10.0.0.1";
+            vni_list = "10001";
+            return true;
+        });
+    EXPECT_CALL(mockFpm, send(_)).Times(0);
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+
+    vector<string> keys;
+    vnetTunnelTable.getKeys(keys);
+    EXPECT_TRUE(keys.empty());
+}
+
+TEST_F(FpmSyncdResponseTest, EvpnVnetRouteDelRemovesVnetTables)
+{
+    MockFpm mockFpm(&m_mockRouteSync);
+    Table vnetRouteTable(m_db.get(), APP_VNET_RT_TABLE_NAME);
+    Table vnetTunnelTable(m_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+    const std::string key = "Vnet10:10.22.0.0/24";
+    vnetRouteTable.set(key, {{"ifname", "Ethernet0"}});
+    vnetTunnelTable.set(key, {{"endpoint", "10.0.0.1"}});
+
+    struct nlmsghdr *nlh = createRouteNlmsgWithTable(RTM_DELROUTE, AF_INET, RTN_UNICAST,
+                                                      "10.22.0.0", 24, 112);
+    EXPECT_CALL(m_mockRouteSync, getIfName(112, _, _))
+        .WillOnce(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "Vnet10", sz); }, Return(true)));
+    EXPECT_CALL(m_mockRouteSync, getEvpnNextHop(_, _, _, _, _, _, _)).Times(0);
+    EXPECT_CALL(mockFpm, send(_)).Times(0);
+    m_mockRouteSync.onMsgRaw(nlh);
+    free(nlh);
+
+    vector<FieldValueTuple> fvs;
+    EXPECT_FALSE(vnetRouteTable.get(key, fvs));
+    EXPECT_FALSE(vnetTunnelTable.get(key, fvs));
+}
+
+TEST_F(FpmSyncdResponseTest, VnetRouteSwitchoverBetweenTunnelAndRegular)
+{
+    Table vnetRouteTable(m_db.get(), APP_VNET_RT_TABLE_NAME);
+    Table vnetTunnelTable(m_db.get(), APP_VNET_RT_TUNNEL_TABLE_NAME);
+    const std::string key = "Vnet10:10.23.0.0/24";
+
+    EXPECT_CALL(m_mockRouteSync, getIfName(41, _, _))
+        .WillRepeatedly(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "Brvxlan100", sz); }, Return(true)));
+    EXPECT_CALL(m_mockRouteSync, getIfName(42, _, _))
+        .WillRepeatedly(DoAll([](int, char* buf, size_t sz){ strncpy(buf, "Ethernet4", sz); }, Return(true)));
+
+    auto tunnelRoute = create_vnet_route("10.23.0.0/24", "10.0.0.1", 41);
+    auto regularRoute = create_vnet_route("10.23.0.0/24", "192.168.1.1", 42);
+    vector<FieldValueTuple> fvs;
+
+    m_mockRouteSync.onVnetRouteMsg(RTM_NEWROUTE, (nl_object*)tunnelRoute.get(), "Vnet10");
+    EXPECT_TRUE(vnetTunnelTable.get(key, fvs));
+    EXPECT_FALSE(vnetRouteTable.get(key, fvs));
+
+    m_mockRouteSync.onVnetRouteMsg(RTM_NEWROUTE, (nl_object*)regularRoute.get(), "Vnet10");
+    EXPECT_FALSE(vnetTunnelTable.get(key, fvs));
+    ASSERT_TRUE(vnetRouteTable.get(key, fvs));
+    EXPECT_EQ(fvsGetValue(fvs, "ifname", true).get(), "Ethernet4");
+
+    m_mockRouteSync.onVnetRouteMsg(RTM_NEWROUTE, (nl_object*)tunnelRoute.get(), "Vnet10");
+    EXPECT_TRUE(vnetTunnelTable.get(key, fvs));
+    EXPECT_FALSE(vnetRouteTable.get(key, fvs));
+}
