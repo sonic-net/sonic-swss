@@ -6,7 +6,6 @@
 //! not downstream completion. Criterion times the entire async iteration, including
 //! DB setup, readiness, the two-interval smoke write window, checks, and teardown.
 
-use std::process::{Command, Stdio};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -33,8 +32,6 @@ use countersyncd::message::{
 mod ipfix_bench_data;
 use ipfix_bench_data::{datasets, PreparedDataset};
 
-const COUNTERS_DB_ID: i32 = 2;
-const SOCK_PATH: &str = "/var/run/redis/redis.sock";
 
 struct BenchNullWriter;
 
@@ -110,25 +107,13 @@ fn start_mock_collector() -> (
 }
 
 fn flush_counters_db() {
-    let output = Command::new("redis-cli")
-        .args([
-            "-s",
-            SOCK_PATH,
-            "-n",
-            &COUNTERS_DB_ID.to_string(),
-            "FLUSHDB",
-        ])
-        .stdout(Stdio::null())
-        .output()
-        .expect("spawn redis-cli for flush");
-
-    if !output.status.success() {
-        panic!("redis-cli FLUSHDB failed with status {}", output.status);
-    }
+    let db = swss_common::DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
+        .expect("connect counter db for flush");
+    assert!(db.flush_db().expect("flush counters DB"));
 }
 
 fn seed_port_name_map(port_count: usize) {
-    let db = swss_common::DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
+    let db = swss_common::DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
         .expect("connect counter db for seed");
 
     let table = "COUNTERS_PORT_NAME_MAP";
@@ -291,21 +276,11 @@ async fn run_end_to_end(
     drop(counter_tx);
     counter_handle.await.expect("CounterDB actor should join");
     // This checks only a periodic write, not final values or all counters.
-    let counters_key_count = Command::new("redis-cli")
-        .args([
-            "-s",
-            SOCK_PATH,
-            "-n",
-            &COUNTERS_DB_ID.to_string(),
-            "EXISTS",
-            "COUNTERS:oid:0x1000000000000",
-        ])
-        .output()
-        .expect("query counters DB output");
-    assert!(counters_key_count.status.success());
-    assert_eq!(
-        String::from_utf8_lossy(&counters_key_count.stdout).trim(),
-        "1",
+    let db = swss_common::DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
+        .expect("connect counter db for smoke check");
+    assert!(
+        db.exists("COUNTERS:oid:0x1000000000000")
+            .expect("query counters DB"),
         "CounterDB smoke check: expected a port key from a periodic write"
     );
 
