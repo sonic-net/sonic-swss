@@ -234,12 +234,14 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::clearPluginState(const Port& port
             "PFC_WD_DETECTION_TIME_LEFT",
             "PFC_WD_RESTORATION_TIME_LEFT",
             "SAI_QUEUE_STAT_PACKETS_last",
-            "SAI_QUEUE_ATTR_PAUSE_STATUS_last"});
+            "SAI_QUEUE_ATTR_PAUSE_STATUS_last",
+            "PFC_STAT_HISTORY_PAUSED_last"});
 
     string portKey = tableName + separator + sai_serialize_object_id(port.m_port_id);
     string pfcPrefix = "SAI_PORT_STAT_PFC_" + to_string(tc);
     this->getCountersDb()->hdel(portKey, {
             pfcPrefix + "_RX_PKTS_last",
+            pfcPrefix + "_RX_PKTS_history_last",
             pfcPrefix + "_ON2OFF_RX_PKTS_last",
             pfcPrefix + "_RX_PAUSE_DURATION_last",
             pfcPrefix + "_RX_PAUSE_DURATION_US_last"});

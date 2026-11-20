@@ -444,6 +444,36 @@ class TestPfcwdFunc(object):
         finally:
             self.stop_pfcwd_on_ports()
 
+    def test_pfcwd_stop_clears_stat_history_state(self, dvs, setup_teardown_test):
+        # the previous-poll values pfc_detect_broadcom.lua keeps for PFC stat
+        # history; the VS detect plugin never writes them, so they are set here
+        queue_fields = {"PFC_STAT_HISTORY_PAUSED_last": "true"}
+        port_fields = {"SAI_PORT_STAT_PFC_3_RX_PKTS_history_last": "100"}
+        try:
+            test_queues = [3, 4]
+            self.set_ports_pfc(pfc_queues=test_queues)
+            self.verify_ports_pfc(test_queues)
+
+            self.start_pfcwd_on_ports()
+
+            queue_oid = self.queue_oids["Ethernet0:3"]
+            port_oid = self.port_oids["Ethernet0"]
+            self.counters_db.wait_for_fields("COUNTERS", queue_oid, ["PFC_WD_DETECTION_TIME"])
+            self.counters_db.update_entry("COUNTERS", queue_oid, queue_fields)
+            self.counters_db.update_entry("COUNTERS", port_oid, port_fields)
+
+            self.stop_pfcwd_on_ports()
+
+            def _cleared():
+                q = self.counters_db.get_entry("COUNTERS", queue_oid)
+                p = self.counters_db.get_entry("COUNTERS", port_oid)
+                present = [f for f in queue_fields if f in q] + [f for f in port_fields if f in p]
+                return (not present, present)
+
+            wait_for_result(_cleared, PollingConfig(polling_interval=1, timeout=10, strict=True))
+        finally:
+            self.stop_pfcwd_on_ports()
+
     def test_pfcwd_start_ignores_stale_detection_state(self, dvs, setup_teardown_test):
         # State left in COUNTERS_DB by an earlier registration that was never
         # unregistered (orchagent restarting on a live database) must not
