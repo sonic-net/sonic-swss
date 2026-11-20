@@ -2134,6 +2134,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
         config_db = dvs.get_config_db()
 
         logfvs = config_db.get_entry("LOGGER", "orchagent")
+        logger_row_existed = bool(logfvs)
+        old_log_level = logfvs.get("LOGLEVEL")
         logfvs["LOGLEVEL"] = "INFO"
         config_db.update_entry("LOGGER", "orchagent", logfvs)
 
@@ -2170,6 +2172,14 @@ class TestMuxTunnel(TestMuxTunnelBase):
                                       polling_config=max_poll)
         state_db.wait_for_field_match(swsscommon.STATE_WARM_RESTART_TABLE_NAME, "neighsyncd", {"state": "reconciled"},
                                       polling_config=max_poll)
+
+        # Put LOGGER|orchagent back the way the test found it
+        if old_log_level:
+            config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": old_log_level})
+        elif logger_row_existed:
+            config_db.delete_field("LOGGER", "orchagent", "LOGLEVEL")
+        else:
+            config_db.delete_entry("LOGGER", "orchagent")
 
     def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,

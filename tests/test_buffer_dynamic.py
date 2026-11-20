@@ -777,6 +777,7 @@ class TestBufferMgrDyn(object):
 
         # Update log level so that we can analyze the log in case the test failed
         logfvs = self.config_db.get_entry("LOGGER", "buffermgrd")
+        logger_row_existed = bool(logfvs)
         old_log_level = logfvs.get("LOGLEVEL")
         logfvs["LOGLEVEL"] = "INFO"
         self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
@@ -861,6 +862,8 @@ class TestBufferMgrDyn(object):
             if old_log_level:
                 logfvs["LOGLEVEL"] = old_log_level
                 self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
+            elif logger_row_existed:
+                self.config_db.delete_field("LOGGER", "buffermgrd", "LOGLEVEL")
             else:
                 # The test created the row; removing it restores the default
                 self.config_db.delete_entry("LOGGER", "buffermgrd")

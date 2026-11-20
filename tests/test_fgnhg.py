@@ -361,6 +361,16 @@ def remove_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         remove_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2))
     remove_entry(config_db, FG_NHG, fg_nhg_name)
 
+def restore_logger_row(config_db, name, row_existed, old_log_level):
+    """Put LOGGER|<name> back the way the test found it."""
+    if old_log_level:
+        config_db.update_entry("LOGGER", name, {"LOGLEVEL": old_log_level})
+    elif row_existed:
+        config_db.delete_field("LOGGER", name, "LOGLEVEL")
+    else:
+        config_db.delete_entry("LOGGER", name)
+
+
 def fine_grained_ecmp_base_test(dvs, match_mode):
     app_db = dvs.get_app_db()
     asic_db = dvs.get_asic_db()
@@ -376,6 +386,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     # Update log level so that we can analyze the log in case the test failed
     logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
+    logger_row_existed = bool(logfvs)
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
 
@@ -714,6 +725,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
+    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 
 def fine_grained_ecmp_match_mode_prefix_test(dvs):
@@ -732,6 +744,7 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     # Update log level so that we can analyze the log in case the test failed
     logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
+    logger_row_existed = bool(logfvs)
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
 
@@ -962,6 +975,7 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
         remove_entry(config_db, IF_TB, if_name_key)
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     app_db = dvs.get_app_db()
@@ -983,6 +997,7 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     # Update log level so that we can analyze the log in case the test failed
     logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
+    logger_row_existed = bool(logfvs)
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
 
@@ -1201,6 +1216,7 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
         remove_entry(config_db, VLAN_TB, vlan_name_key)
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     app_db = dvs.get_app_db()
@@ -1218,6 +1234,7 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     # Update log level so that we can analyze the log in case the test failed
     logfvs = config_db.get_entry("LOGGER", "orchagent")
     old_log_level = logfvs.get("LOGLEVEL")
+    logger_row_existed = bool(logfvs)
     logfvs["LOGLEVEL"] = "INFO"
     config_db.update_entry("LOGGER", "orchagent", logfvs)
 
@@ -1332,6 +1349,7 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
         remove_entry(config_db, IF_TB, if_name_key)
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 
 def fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs):
