@@ -213,6 +213,20 @@ void ResponsePublisher::publishAsyncBatch()
     {
         return;
     }
+    // The record timestamp is taken once per batch, not per publishAsync()
+    // call: getTimestamp() formats through localtime(), which is far too
+    // expensive to run per route, and the recorder is the only consumer of
+    // record_ts. All items in the batch belong to the same drain batch and
+    // are stamped at hand-off to the worker; per-item enqueue-time fidelity
+    // is not something the recorder needs.
+    if (swss::Recorder::Instance().respub.isRecord())
+    {
+        const std::string ts = swss::getTimestamp();
+        for (auto &item : batch)
+        {
+            item.record_ts = ts;
+        }
+    }
     {
         std::lock_guard<std::mutex> lock(m_lock);
         entry e;
@@ -238,7 +252,6 @@ void ResponsePublisher::publishAsync(const std::string &table, const std::string
     item.intent_attrs = intent_attrs;
     item.status = status;
     item.replace = replace;
-    item.record_ts = swss::getTimestamp();
     m_async_publish_pending.push_back(std::move(item));
 }
 

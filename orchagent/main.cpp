@@ -15,6 +15,7 @@ extern "C" {
 #include <inttypes.h>
 #include <sstream>
 #include <stdexcept>
+#include <cerrno>
 #include <stdlib.h>
 #include <string.h>
 #include <fstream>
@@ -56,6 +57,7 @@ extern size_t gMaxBulkSize;
 
 #define DEFAULT_BATCH_SIZE  128
 extern int gBatchSize;
+extern long gRouteDrainQuantumMsec;
 
 bool gRingMode = false;
 bool gSyncMode = false;
@@ -92,7 +94,7 @@ bool isVoqChassisDbInUse()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M] [-F]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-A] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size] [-q zmq_server_address] [-c mode] [-t create_switch_timeout] [-v VRF] [-I heart_beat_interval] [-R] [-M] [-F] [-Q route_drain_quantum]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
@@ -119,6 +121,7 @@ void usage()
     cout << "    -R enable the ring thread feature" << endl;
     cout << "    -M enable SAI MACSec POST" << endl;
     cout << "    -F enable BGP FIB suppression" << endl;
+    cout << "    -Q route_drain_quantum: ZMQ route drain quantum in millisecond (default 20; 0 yields at every logical point, for debug and test only)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -470,13 +473,26 @@ int main(int argc, char **argv)
     // Disable SAI MACSec POST by default. Use option -M to enable it.
     bool macsec_post_enabled = false;
 
-    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RMF")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:Af:j:d:i:hsz:k:q:c:t:v:I:RMFQ:")) != -1)
     {
         switch (opt)
         {
         case 'b':
             gBatchSize = atoi(optarg);
             break;
+        case 'Q':
+        {
+            /* A typo must not become 0, which yields at every point. */
+            char *end = nullptr;
+            errno = 0;
+            gRouteDrainQuantumMsec = strtol(optarg, &end, 10);
+            if (errno != 0 || end == optarg || *end != '\0' || gRouteDrainQuantumMsec < 0)
+            {
+                SWSS_LOG_ERROR("Invalid route drain quantum '%s': must be a non-negative integer (msec)", optarg);
+                exit(EXIT_FAILURE);
+            }
+            break;
+        }
         case 'i':
             {
                 // Limit asic instance string max length

@@ -228,6 +228,30 @@ TEST_F(NhgOrchReplaceTest, MovesRoutesWithAContextIndex)
     EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 0);
 }
 
+/* Routes staged by an unfinished drain already carry the old ID, so the
+ * replacement waits for the drain to finish. */
+TEST_F(NhgOrchReplaceTest, WaitsForAnUnfinishedRouteDrain)
+{
+    ASSERT_NO_FATAL_FAILURE(seed());
+    gNhgOrch->m_drainDeferrals = 0;
+    gRouteOrch->m_zmqDrainBatch.phase = RouteOrch::RouteDrainBatch::Phase::kFlushing;
+
+    EXPECT_FALSE(gNhgOrch->replaceNhg(index, NextHopGroupKey("10.0.0.2@Ethernet4", string(""))));
+    EXPECT_FALSE(gNhgOrch->replaceNhg(index, NextHopGroupKey("10.0.0.2@Ethernet4", string(""))));
+
+    gRouteOrch->m_zmqDrainBatch.phase = RouteOrch::RouteDrainBatch::Phase::kIdle;
+    EXPECT_EQ(gNhgOrch->m_drainDeferrals, 2u);
+    EXPECT_EQ(g_route_set_calls, 0);
+    EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at(index).nhg->getId(), nh1_oid);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh1].ref_count, 1);
+    EXPECT_EQ(gNeighOrch->m_syncdNextHops[nh2].ref_count, 0);
+
+    /* Once the drain is done, the retry goes through. */
+    EXPECT_TRUE(gNhgOrch->replaceNhg(index, NextHopGroupKey("10.0.0.2@Ethernet4", string(""))));
+    EXPECT_EQ(gNhgOrch->m_drainDeferrals, 0u);
+    EXPECT_EQ(g_route_set_oid, nh2_oid);
+}
+
 TEST_F(NhgOrchReplaceTest, OnlySingleNextHopTransitionsReplaceTheId)
 {
     ASSERT_NO_FATAL_FAILURE(seed());
