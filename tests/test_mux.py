@@ -2123,7 +2123,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_warm_boot_mux_state(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            setup_peer_switch, neighbor_cleanup, testlog
+            setup_peer_switch, neighbor_cleanup, testlog,
+            restore_orchagent_logger
     ):
         """
         test mux initialization during warm boot.
@@ -2133,11 +2134,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
         state_db = dvs.get_state_db()
         config_db = dvs.get_config_db()
 
-        logfvs = config_db.get_entry("LOGGER", "orchagent")
-        logger_row_existed = bool(logfvs)
-        old_log_level = logfvs.get("LOGLEVEL")
-        logfvs["LOGLEVEL"] = "INFO"
-        config_db.update_entry("LOGGER", "orchagent", logfvs)
+        # (restore_orchagent_logger puts it back)
+        config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "active")
@@ -2172,14 +2170,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
                                       polling_config=max_poll)
         state_db.wait_for_field_match(swsscommon.STATE_WARM_RESTART_TABLE_NAME, "neighsyncd", {"state": "reconciled"},
                                       polling_config=max_poll)
-
-        # Put LOGGER|orchagent back the way the test found it
-        if old_log_level:
-            config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": old_log_level})
-        elif logger_row_existed:
-            config_db.delete_field("LOGGER", "orchagent", "LOGLEVEL")
-        else:
-            config_db.delete_entry("LOGGER", "orchagent")
 
     def test_warm_boot_neighbor_restore(
         self, dvs, dvs_route, setup, setup_vlan, setup_mux_cable, setup_tunnel,

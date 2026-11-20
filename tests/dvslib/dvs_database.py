@@ -59,6 +59,22 @@ class DVSDatabase:
             for f in [ k for k, v in dict(fv_pairs).items() if k not in entry.keys() ]:
                 table.hdel(key, f)
 
+    def restore_entry(self, table_name: str, key: str, snapshot: Dict[str, str]) -> None:
+        """Put the entry at `key` back exactly as `snapshot`, a prior get_entry() result.
+
+        Fields added since the snapshot are removed. An empty snapshot means the
+        entry did not exist, so it is deleted. Like set_entry, not for APPL_DB.
+
+        Args:
+            table_name: The name of the table.
+            key: The key of the entry to restore.
+            snapshot: The entry as get_entry() returned it before the change.
+        """
+        if snapshot:
+            self.set_entry(table_name, key, snapshot)
+        else:
+            self.delete_entry(table_name, key)
+
     def update_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Update entry of an existing key in the specified table.
 

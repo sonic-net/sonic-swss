@@ -361,16 +361,6 @@ def remove_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         remove_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2))
     remove_entry(config_db, FG_NHG, fg_nhg_name)
 
-def restore_logger_row(config_db, name, row_existed, old_log_level):
-    """Put LOGGER|<name> back the way the test found it."""
-    if old_log_level:
-        config_db.update_entry("LOGGER", name, {"LOGLEVEL": old_log_level})
-    elif row_existed:
-        config_db.delete_field("LOGGER", name, "LOGLEVEL")
-    else:
-        config_db.delete_entry("LOGGER", name)
-
-
 def fine_grained_ecmp_base_test(dvs, match_mode):
     app_db = dvs.get_app_db()
     asic_db = dvs.get_asic_db()
@@ -384,11 +374,8 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     ip_to_if_map = {}
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.get_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logger_row_existed = bool(logfvs)
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    # (restore_orchagent_logger puts it back)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode}
     create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
@@ -725,7 +712,6 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
-    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 
 def fine_grained_ecmp_match_mode_prefix_test(dvs):
@@ -742,11 +728,8 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.get_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logger_row_existed = bool(logfvs)
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    # (restore_orchagent_logger puts it back)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
            "max_next_hops": str(NUM_NHs)}
@@ -975,7 +958,6 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
         remove_entry(config_db, IF_TB, if_name_key)
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
-    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     app_db = dvs.get_app_db()
@@ -995,11 +977,8 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.get_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logger_row_existed = bool(logfvs)
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    # (restore_orchagent_logger puts it back)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     ### Create first fine grained next hop group and prefix
     fvs = {"bucket_size": str(bucket0_size), "match_mode": match_mode,
@@ -1216,7 +1195,6 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
         remove_entry(config_db, VLAN_TB, vlan_name_key)
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
-    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     app_db = dvs.get_app_db()
@@ -1232,11 +1210,8 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.get_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logger_row_existed = bool(logfvs)
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    # (restore_orchagent_logger puts it back)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
            "max_next_hops": str(NUM_NHs)}
@@ -1349,7 +1324,6 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
         remove_entry(config_db, IF_TB, if_name_key)
         dvs.port_admin_set(if_name_key, "down")
         dvs.servers[i].runcmd("ip link set down dev eth0") == 0
-    restore_logger_row(config_db, "orchagent", logger_row_existed, old_log_level)
 
 
 def fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs):
@@ -1388,31 +1362,31 @@ def fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs):
 
 
 class TestFineGrainedNextHopGroup(object):
-    def test_fgnhg_matchmode_route(self, dvs, testlog):
+    def test_fgnhg_matchmode_route(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode route-based
         '''
         fine_grained_ecmp_base_test(dvs, 'route-based')
 
-    def test_fgnhg_matchmode_nexthop(self, dvs, testlog):
+    def test_fgnhg_matchmode_nexthop(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode nexthop-based
         '''
         fine_grained_ecmp_base_test(dvs, 'nexthop-based')
 
-    def test_fgnhg_matchmode_prefix(self, dvs, testlog):
+    def test_fgnhg_matchmode_prefix(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode prefix-based
         '''
         fine_grained_ecmp_match_mode_prefix_test(dvs)
 
-    def test_fgnhg_matchmode_prefix_multi_route(self, dvs, testlog):
+    def test_fgnhg_matchmode_prefix_multi_route(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode prefix-based with multiple routes
         '''
         fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs);
 
-    def test_fgnhg_matchmode_prefix_even_distribution(self, dvs, testlog):
+    def test_fgnhg_matchmode_prefix_even_distribution(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode prefix-based with up to 16 nexthops and even distribution
         '''
