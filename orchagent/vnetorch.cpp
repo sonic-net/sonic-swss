@@ -27,6 +27,7 @@
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
+extern size_t gMaxBulkSize;
 extern sai_bridge_api_t* sai_bridge_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_fdb_api_t* sai_fdb_api;
@@ -828,7 +829,8 @@ static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_obj
 
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
                                   : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), bfd_session_producer_(db, APP_BFD_SESSION_TABLE_NAME),
-                                    app_tunnel_decap_term_producer_(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
+                                    app_tunnel_decap_term_producer_(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME),
+                                    m_vnetRouteBulker(sai_route_api, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
 
@@ -2133,6 +2135,7 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
                                                     const NextHopGroupKey& nhg, const string& op)
 {
     auto& bulkNhgReducedRefCnt = gRouteOrch->getBulkNhgReducedRefCnt();
+    auto& bulkMplsNhReducedRefCnt = gRouteOrch->getBulkMplsNhReducedRefCnt();
 
     // Get vnet name from vrf id
     std::string vnet_name;
@@ -2152,14 +2155,15 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
     if (op == SET_COMMAND)
     {
         // Add route via route orch
-        if (gRouteOrch->addRoute(ctx, nhg))
+        if (gRouteOrch->addRoute(ctx, nhg, &m_vnetRouteBulker))
         {
             return true;
         }
         
-        // Flush the route bulker, so routes will be written to syncd and ASIC
-        gRouteOrch->flushRouteBulker();
+        // Flush our private route bulker, so VNET routes are written to syncd and ASIC
+        m_vnetRouteBulker.flush();
         bulkNhgReducedRefCnt.clear();
+        bulkMplsNhReducedRefCnt.clear();
 
         // Post add route via route orch
         if (gRouteOrch->addRoutePost(ctx, nhg))
@@ -2175,14 +2179,15 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
     else if (op == DEL_COMMAND)
     {
         // Remove route via route orch
-        if (gRouteOrch->removeRoute(ctx))
+        if (gRouteOrch->removeRoute(ctx, &m_vnetRouteBulker))
         {
             return true;
         }
 
-        // Flush the route bulker, so routes will be written to syncd and ASIC
-        gRouteOrch->flushRouteBulker();
+        // Flush our private route bulker, so VNET routes are written to syncd and ASIC
+        m_vnetRouteBulker.flush();
         bulkNhgReducedRefCnt.clear();
+        bulkMplsNhReducedRefCnt.clear();
 
         // Post remove route via route orch
         if (gRouteOrch->removeRoutePost(ctx))
@@ -2203,6 +2208,15 @@ bool VNetRouteOrch::setAndDeleteRoutesWithRouteOrch(const sai_object_id_t vr_id,
         {
             gRouteOrch->removeNextHopGroup(it.first);
             SWSS_LOG_INFO("Next hop group %s has 0 references, removed via routeorch", it.first.to_string().c_str());
+        }
+    }
+
+    // Single-MPLS next hops whose create failed; RouteOrch's drain keeps its own set.
+    for (const auto& nexthop : bulkMplsNhReducedRefCnt)
+    {
+        if (gNeighOrch->hasNextHop(nexthop) && gNeighOrch->getNextHopRefCount(nexthop) == 0)
+        {
+            gNeighOrch->removeMplsNextHop(nexthop);
         }
     }
 

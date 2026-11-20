@@ -811,6 +811,46 @@ bool Srv6Orch::removeSrv6NexthopWithoutVpn(const NextHopKey &nhKey)
     return deleteSrv6Nexthop(nhKey);
 }
 
+bool Srv6Orch::removeSrv6VpnSids(const NextHopGroupKey &nhg)
+{
+    SWSS_LOG_ENTER();
+
+    if (nhg.is_srv6_vpn())
+    {
+        for (auto &sr_nh : nhg.getNextHops())
+        {
+            if (sr_nh.isSrv6Vpn())
+            {
+                if (!deleteSrv6Vpn(sr_nh.ip_address.to_string(), sr_nh.srv6_vpn_sid, getAggId(nhg)))
+                {
+                    SWSS_LOG_ERROR("Failed to delete SRV6 vpn %s", sr_nh.to_string(false, true).c_str());
+                    return false;
+                }
+            }
+        }
+        decreasePrefixAggIdRefCount(nhg);
+        deleteAggId(nhg);
+    }
+
+    return true;
+}
+
+bool Srv6Orch::removeSrv6GroupNexthops(const NextHopGroupKey &nhg)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &sr_nh : nhg.getNextHops())
+    {
+        if (!deleteSrv6Nexthop(sr_nh))
+        {
+            SWSS_LOG_ERROR("Failed to delete SRV6 nexthop %s", sr_nh.to_string(false,true).c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool Srv6Orch::removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv)
 {
     SWSS_LOG_ENTER();
@@ -818,34 +858,18 @@ bool Srv6Orch::removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv)
     // 1. remove vpn_sid first
     for (auto& it_nhg : nhgv)
     {
-        if (it_nhg.is_srv6_vpn())
+        if (!removeSrv6VpnSids(it_nhg))
         {
-            for (auto &sr_nh : it_nhg.getNextHops())
-            {
-                if (sr_nh.isSrv6Vpn())
-                {
-                    if (!deleteSrv6Vpn(sr_nh.ip_address.to_string(), sr_nh.srv6_vpn_sid, getAggId(it_nhg)))
-                    {
-                        SWSS_LOG_ERROR("Failed to delete SRV6 vpn %s", sr_nh.to_string(false, true).c_str());
-                        return false;
-                    }
-                }
-            }
-            decreasePrefixAggIdRefCount(it_nhg);
-            deleteAggId(it_nhg);
+            return false;
         }
     }
 
     // 2. delete nexthop & prefix agg id
     for (auto& nhg : nhgv)
     {
-        for (auto &sr_nh : nhg.getNextHops())
+        if (!removeSrv6GroupNexthops(nhg))
         {
-            if (!deleteSrv6Nexthop(sr_nh))
-            {
-                SWSS_LOG_ERROR("Failed to delete SRV6 nexthop %s", sr_nh.to_string(false,true).c_str());
-                return false;
-            }
+            return false;
         }
     }
 

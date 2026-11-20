@@ -24,6 +24,27 @@ public:
     void drain() override;
     void dumpPendingTasks(std::vector<std::string> &ts) override;
 
+    /* Matches drain()'s run condition: while a yielded route drain batch is
+     * in flight, m_toSync can be empty because the batch owns its entries. */
+    bool hasPendingTasks() const override;
+
+    /* Re-arm this consumer's selectable so select() returns at once. The
+     * yielding route drain calls it when it stops with work left; other ready
+     * selectables of equal or higher priority are served first. */
+    void notifyPending()
+    {
+        static_cast<swss::ZmqRouteConsumerStateTable *>(getSelectable())->notifyPending();
+    }
+
+    /* True if the mqPollThread has staged tuples not yet merged into
+     * m_toSync. The notification for them may have been consumed by an
+     * execute() that could not merge while a drain batch was in flight. */
+    bool ingressPending()
+    {
+        std::lock_guard<std::mutex> lk(m_ingressMutex);
+        return !m_ingress.empty();
+    }
+
 /* protected rather than private so the unit tests (which compile with
  * protected mapped to public) can assert staging invariants such as
  * m_ingress.empty() after a drain. */
@@ -50,6 +71,11 @@ public:
 
     virtual void doTask(ConsumerBase &consumer) { };
     void doTask(Consumer &consumer) override;
+
+    /* True while a drain batch for tableName is between yields.
+     * ZmqRouteConsumer::execute() does not merge m_ingress into m_toSync
+     * then, so m_toSync changes only through the drain for the whole batch. */
+    virtual bool drainInFlight(const std::string &tableName) const { return false; }
 
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqRouteServer *zmqServer);

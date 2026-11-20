@@ -168,7 +168,8 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
 
 }
 
-bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                         EntityBulker<sai_route_api_t> *bulker)
 {
     return true;
 }
@@ -178,7 +179,8 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     return true;
 }
 
-bool RouteOrch::removeRoute(RouteBulkContext& ctx)
+bool RouteOrch::removeRoute(RouteBulkContext& ctx,
+                            EntityBulker<sai_route_api_t> *bulker)
 {
     return true;
 }
