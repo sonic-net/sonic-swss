@@ -167,6 +167,7 @@ void HFTelProfile::setStreamState(sai_object_type_t type, sai_tam_tel_type_state
         if (status != SAI_STATUS_SUCCESS)
         {
             handleSaiSetStatus(SAI_API_TAM, status);
+            return;
         }
 
         stats->second = state;

@@ -242,6 +242,113 @@ namespace hftelprofile_ut
         EXPECT_THROW(s.p->updateTemplates(bad_oid), runtime_error);
     }
 
+    struct SetStreamStateTest : public ::testing::Test
+    {
+        sai_tam_api_t ut_api;
+        sai_tam_api_t *orig_api = nullptr;
+
+        static sai_status_t set_status;
+        static int call_count;
+
+        static sai_status_t mock_set_tam_tel_type_attribute(
+            sai_object_id_t /*id*/, const sai_attribute_t *attr)
+        {
+            ++call_count;
+            if (!attr || attr->id != SAI_TAM_TEL_TYPE_ATTR_STATE)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+            return set_status;
+        }
+
+        struct Stub
+        {
+            alignas(HFTelProfile) unsigned char buf[sizeof(HFTelProfile)];
+            HFTelProfile *p = nullptr;
+            HFTelProfile::sai_guard_t guard;
+
+            void init()
+            {
+                memset(buf, 0, sizeof(buf));
+                p = reinterpret_cast<HFTelProfile *>(static_cast<void *>(buf));
+
+                new (const_cast<string*>(&p->m_profile_name)) string("test_profile");
+                new (const_cast<sai_tam_tel_type_mode_t*>(&p->m_tel_type_mode))
+                    sai_tam_tel_type_mode_t(SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE);
+                new (&p->m_groups) decay_t<decltype(p->m_groups)>();
+                new (&p->m_sai_tam_counter_subscription_objs)
+                    decay_t<decltype(p->m_sai_tam_counter_subscription_objs)>();
+                new (&p->m_sai_tam_tel_type_objs)
+                    decay_t<decltype(p->m_sai_tam_tel_type_objs)>();
+                new (&p->m_sai_tam_tel_type_states)
+                    decay_t<decltype(p->m_sai_tam_tel_type_states)>();
+
+                p->m_groups.emplace(SAI_OBJECT_TYPE_PORT, HFTelGroup("port"));
+                p->m_sai_tam_counter_subscription_objs[SAI_OBJECT_TYPE_PORT] = {};
+                guard = make_shared<sai_object_id_t>(0x200);
+                p->m_sai_tam_tel_type_objs[SAI_OBJECT_TYPE_PORT] = guard;
+                p->m_sai_tam_tel_type_states[guard] = SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG;
+            }
+
+            ~Stub()
+            {
+                if (!p) return;
+                p->m_profile_name.~basic_string();
+                p->m_groups.~map();
+                p->m_sai_tam_counter_subscription_objs.~unordered_map();
+                p->m_sai_tam_tel_type_objs.~unordered_map();
+                p->m_sai_tam_tel_type_states.~unordered_map();
+                p = nullptr;
+            }
+        };
+
+        void SetUp() override
+        {
+            if (sai_tam_api == nullptr)
+            {
+                static sai_tam_api_t default_tam_api{};
+                sai_tam_api = &default_tam_api;
+            }
+            ut_api = *sai_tam_api;
+            orig_api = sai_tam_api;
+            ut_api.set_tam_tel_type_attribute = mock_set_tam_tel_type_attribute;
+            sai_tam_api = &ut_api;
+            set_status = SAI_STATUS_SUCCESS;
+            call_count = 0;
+        }
+
+        void TearDown() override
+        {
+            sai_tam_api = orig_api;
+        }
+    };
+
+    sai_status_t SetStreamStateTest::set_status = SAI_STATUS_SUCCESS;
+    int SetStreamStateTest::call_count = 0;
+
+    TEST_F(SetStreamStateTest, UpdatesLocalStateAfterSaiSuccess)
+    {
+        Stub s;
+        s.init();
+
+        s.p->setStreamState(SAI_OBJECT_TYPE_PORT, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+
+        EXPECT_EQ(call_count, 1);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+    }
+
+    TEST_F(SetStreamStateTest, PreservesLocalStateAfterSaiFailure)
+    {
+        Stub s;
+        s.init();
+        set_status = SAI_STATUS_OBJECT_IN_USE;
+
+        s.p->setStreamState(SAI_OBJECT_TYPE_PORT, SAI_TAM_TEL_TYPE_STATE_STOP_STREAM);
+
+        EXPECT_EQ(call_count, 1);
+        EXPECT_EQ(s.p->getStreamState(SAI_OBJECT_TYPE_PORT), SAI_TAM_TEL_TYPE_STATE_CREATE_CONFIG);
+    }
+
     /*
      * Fixture for clearGroup() tests.
      * Constructs all members that clearGroup() reads/writes.
