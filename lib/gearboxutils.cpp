@@ -15,6 +15,7 @@
  */
 
 #include "gearboxutils.h"
+#include <stdexcept>
 
 namespace swss {
 
@@ -113,6 +114,15 @@ bool GearboxUtils::isGearboxEnabled(Table *gearboxTable)
     return gearboxDone;
 }
 
+std::string GearboxUtils::parsePortStatsSupportedSides(const std::string &sides)
+{
+    if (sides != "line" && sides != "system" && sides != "both")
+    {
+        throw std::invalid_argument("port_stats_supported_sides must be line, system, or both: " + sides);
+    }
+    return sides;
+}
+
 std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
 {
     std::vector<FieldValueTuple> ovalues;
@@ -199,6 +209,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 else if (val.first == "macsec_supported")
                 {
                     phy.macsec_supported = (val.second == "true");
+                }
+                else if (val.first == "port_stats_supported_sides")
+                {
+                    phy.port_stats_supported_sides = parsePortStatsSupportedSides(val.second);
                 }
             }
             gearboxPhyMap[phy.phy_id] = phy;

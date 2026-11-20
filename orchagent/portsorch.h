@@ -284,6 +284,7 @@ public:
     bool getRecircPort(Port &p, Port::Role role);
 
     const gearbox_phy_t* getGearboxPhy(const Port &port);
+    void addGearboxPortCounters(const Port &port, const std::unordered_set<std::string> &counter_stats);
     std::string gearboxInterfaceKey(const Port &port) const;
     std::string gearboxPortKey(const Port &port) const;
 

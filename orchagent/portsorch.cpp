@@ -4276,12 +4276,7 @@ void PortsOrch::registerPort(Port &p)
         port_stat_manager.setCounterIdList(p.m_port_id,
                 CounterType::PORT, port_counter_stats);
         auto gbport_counter_stats = generateCounterStats(gbport_stat_ids, sai_serialize_port_stat);
-        if (p.m_system_side_id)
-            gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
-                    CounterType::PORT, gbport_counter_stats, p.m_switch_id);
-        if (p.m_line_side_id)
-            gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
-                    CounterType::PORT, gbport_counter_stats, p.m_switch_id);
+        addGearboxPortCounters(p, gbport_counter_stats);
     }
     if (flex_counters_orch->getPortPhyAttrCounterState())
     {
@@ -9396,6 +9391,34 @@ void PortsOrch::deletePortBufferPgCounters(const Port& port, uint32_t startIndex
     CounterCheckOrch::getInstance().removePort(port);
 }
 
+void PortsOrch::addGearboxPortCounters(const Port &port, const std::unordered_set<std::string> &counter_stats)
+{
+    if (!port.m_system_side_id && !port.m_line_side_id)
+    {
+        return;
+    }
+
+    const auto *phy = getGearboxPhy(port);
+    if (!phy)
+    {
+        SWSS_LOG_ERROR("Cannot determine gearbox port statistics capability for %s", port.m_alias.c_str());
+        return;
+    }
+
+    if (port.m_system_side_id &&
+        (phy->port_stats_supported_sides == "both" || phy->port_stats_supported_sides == "system"))
+    {
+        gb_port_stat_manager.setCounterIdList(port.m_system_side_id,
+                CounterType::PORT, counter_stats, port.m_switch_id);
+    }
+    if (port.m_line_side_id &&
+        (phy->port_stats_supported_sides == "both" || phy->port_stats_supported_sides == "line"))
+    {
+        gb_port_stat_manager.setCounterIdList(port.m_line_side_id,
+                CounterType::PORT, counter_stats, port.m_switch_id);
+    }
+}
+
 void PortsOrch::generatePortCounterMap()
 {
     if (m_isPortCounterMapGenerated)
@@ -9414,12 +9437,7 @@ void PortsOrch::generatePortCounterMap()
         }
         port_stat_manager.setCounterIdList(it.second.m_port_id,
                 CounterType::PORT, port_counter_stats);
-        if (it.second.m_system_side_id)
-            gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
-                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
-        if (it.second.m_line_side_id)
-            gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id,
-                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
+        addGearboxPortCounters(it.second, gbport_counter_stats);
     }
 
     m_isPortCounterMapGenerated = true;

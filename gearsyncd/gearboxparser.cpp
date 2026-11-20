@@ -164,6 +164,19 @@ bool GearboxParser::parse()
                 attr = std::make_pair("macsec_supported", val.get<bool>() ? "true" : "false");
                 attrs.push_back(attr);
             }
+            std::string supported = "both";
+            if (phy.find("port_stats_supported_sides") != phy.end())
+            {
+                const auto &sides = phy["port_stats_supported_sides"];
+                if (!sides.is_string())
+                {
+                    SWSS_LOG_ERROR("'port_stats_supported_sides' must be a string in 'phys' item %d", iter);
+                    return false;
+                }
+                supported = swss::GearboxUtils::parsePortStatsSupportedSides(
+                    sides.get<std::string>());
+            }
+            attrs.emplace_back("port_stats_supported_sides", supported);
             if (phy.find("hwinfo") == phy.end())
             {
                 SWSS_LOG_ERROR("missing 'hwinfo' field in 'phys' item %d in gearbox configuration", iter);
@@ -190,7 +203,7 @@ bool GearboxParser::parse()
         } 
         catch (const std::exception& e) 
         {
-            SWSS_LOG_ERROR("unable to read 'phys' item %d in gearbox configuration (invalid format)", iter);
+            SWSS_LOG_ERROR("unable to read 'phys' item %d in gearbox configuration (invalid format: %s)", iter, e.what());
             return false;
         }
     } 
