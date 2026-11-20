@@ -115,6 +115,29 @@ class TestPortchannel(object):
         self.dvs_lag.get_and_verify_port_channel(0)
 
 
+    def test_Portchannel_fallback_timeout(self, dvs, testlog):
+        po_id = "0003"
+        po_member = "Ethernet16"
+        fallback_timeout = 60
+
+        # Create PortChannel with fallback enabled and a configurable fallback_timeout
+        self.dvs_lag.create_port_channel(po_id, fallback=True, fallback_timeout=fallback_timeout)
+        self.dvs_lag.get_and_verify_port_channel(1)
+
+        # Add member to PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
+
+        # verify fallback and fallback_timeout in teamd runner config
+        self.dvs_lag.get_and_verify_port_channel_fallback(po_id, True)
+        self.dvs_lag.get_and_verify_port_channel_fallback_timeout(po_id, fallback_timeout)
+
+        # remove PortChannel
+        self.dvs_lag.remove_port_channel_member(po_id, po_member)
+        self.dvs_lag.remove_port_channel(po_id)
+        self.dvs_lag.get_and_verify_port_channel(0)
+
+
     def test_Portchannel_lacpkey(self, dvs, testlog):
         portchannelNamesAuto = [("PortChannel001", "Ethernet0", 1001),
                             ("PortChannel002", "Ethernet4", 1002),
