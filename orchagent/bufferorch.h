@@ -56,6 +56,8 @@ struct PriorityGroupTask
         bool update_sai = true;
         bool counter_was_added = false;
         bool counter_needs_to_add = false;
+        // Set when the removed range left this pg still covered by another entry
+        bool rebound = false;
         sai_object_id_t pg_id = SAI_NULL_OBJECT_ID;
         SaiAttrWrapper attr = {};
         sai_status_t status = SAI_STATUS_NOT_EXECUTED;
@@ -126,6 +128,8 @@ private:
     void initBufferConstants();
     task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);
     task_process_status processBufferProfile(KeyOpFieldsValuesTuple &tuple);
+    sai_object_id_t getCoveringPgBufferProfile(const std::string &port_name, size_t pg_index,
+                                               const std::string &excluded_key, std::string &profile_name);
 
     // These methods process input task and add operations to the bulk buffer. This is first stage.
     task_process_status processQueue(KeyOpFieldsValuesTuple &tuple);
