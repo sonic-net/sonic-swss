@@ -2984,10 +2984,12 @@ TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerDoesNotInterceptClassicZebraVxlanWithdraw
     m_mockFdbSync.onMsgRaw(p);free(p);
     std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
     p=mac_route_msg(false,0,"",100,100,MacAddress("02:31:00:00:00:01"));
-    auto *rta=reinterpret_cast<rtattr *>(reinterpret_cast<char *>(p)+NLMSG_ALIGN(p->nlmsg_len));
-    rta->rta_type=NDA_PROTOCOL;rta->rta_len=RTA_LENGTH(sizeof(uint8_t));
-    *static_cast<uint8_t *>(RTA_DATA(rta))=11;
-    p->nlmsg_len+=RTA_ALIGN(rta->rta_len);
+    const uint8_t protocol = 11;
+    const rtattr attribute{RTA_LENGTH(sizeof(protocol)), NDA_PROTOCOL};
+    auto *tail = reinterpret_cast<char *>(p) + NLMSG_ALIGN(p->nlmsg_len);
+    memcpy(tail, &attribute, sizeof(attribute));
+    memcpy(tail + RTA_LENGTH(0), &protocol, sizeof(protocol));
+    p->nlmsg_len += RTA_ALIGN(attribute.rta_len);
     m_mockFdbSync.onMsgRaw(p);free(p);
     EXPECT_FALSE(getFdbTable().get(key,fields));
 }
