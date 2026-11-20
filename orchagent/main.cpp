@@ -25,6 +25,7 @@ extern "C" {
 #include <logger.h>
 
 #include "orchdaemon.h"
+#include "bpprotorch.h"
 #include "orch_zmq_config.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -426,6 +427,7 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
 
 int main(int argc, char **argv)
 {
+    BpProtLog::initialize();
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();

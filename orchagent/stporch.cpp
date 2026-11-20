@@ -266,7 +266,7 @@ bool StpOrch::removeStpPort(Port &port, sai_uint16_t stp_instance)
     }
 
     sai_status_t status = sai_stp_api->remove_stp_port(port.m_stp_port_ids[stp_instance]);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_ITEM_NOT_FOUND && status != SAI_STATUS_ADDR_NOT_FOUND)
     {
         SWSS_LOG_ERROR("Failed to remove STP port %s instance %d oid %" PRIx64 " status %x", port.m_alias.c_str(), stp_instance,
                 port.m_stp_port_ids[stp_instance], status);
@@ -282,33 +282,22 @@ bool StpOrch::removeStpPort(Port &port, sai_uint16_t stp_instance)
 
 bool StpOrch::removeStpPorts(Port &port)
 {
-    if(port.m_stp_port_ids.empty())
-        return true;
-
-    for(auto stp_port_id: port.m_stp_port_ids)
+    bool ready = true;
+    const auto stpPorts = port.m_stp_port_ids;
+    for (const auto &entry : stpPorts)
     {
-        uint16_t stp_instance = stp_port_id.first;
-        sai_object_id_t stp_port_oid = stp_port_id.second;
-
-        if(stp_port_oid == SAI_NULL_OBJECT_ID)
+        if (entry.second == SAI_NULL_OBJECT_ID)
         {
-            continue;
+            port.m_stp_port_ids.erase(entry.first);
+            gPortsOrch->setPort(port.m_alias, port);
         }
-
-        sai_status_t status = sai_stp_api->remove_stp_port(stp_port_oid);
-        if (status != SAI_STATUS_SUCCESS)
+        else if (!removeStpPort(port, entry.first))
         {
-            SWSS_LOG_ERROR("Failed to remove STP port %s instance %d oid %" PRIx64 " status %x", port.m_alias.c_str(), stp_instance, stp_port_oid, status);
-        }
-        else
-        {
-            SWSS_LOG_INFO("Remove STP port %s instance %d oid %" PRIx64 "", port.m_alias.c_str(), stp_instance, stp_port_oid);
+            // Retain failed owners for retry; independent STP ports may leave.
+            ready = false;
         }
     }
-
-    port.m_stp_port_ids.clear();
-    gPortsOrch->setPort(port.m_alias, port);
-    return true;
+    return ready;
 }
 
 sai_stp_port_state_t StpOrch::getStpSaiState(sai_uint8_t stp_state)

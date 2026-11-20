@@ -230,7 +230,14 @@ IsoGrpOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
-    if (type != SUBJECT_TYPE_BRIDGE_PORT_CHANGE)
+    if (type == SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE)
+    {
+        auto &removal = *static_cast<BridgePortRemovalUpdate *>(cntx);
+        for (auto &kv : m_isolationGrps)
+            if (!kv.second->prepareBridgePortRemoval(removal.port)) removal.ready = false;
+        return;
+    }
+    if (type != SUBJECT_TYPE_BRIDGE_PORT_CHANGE && type != SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED)
     {
         return;
     }
@@ -647,7 +654,8 @@ IsolationGroup::unbind(Port &port, bool do_fwd_ref)
         m_bind_ports.erase(find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias));
     }
 
-    if (do_fwd_ref)
+    if (do_fwd_ref && status == SAI_STATUS_SUCCESS &&
+        find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias) == m_pending_bind_ports.end())
     {
         m_pending_bind_ports.push_back(port.m_alias);
     }
@@ -710,6 +718,19 @@ IsolationGroup::setBindPorts(string ports)
     return ISO_GRP_STATUS_SUCCESS;
 }
 
+bool
+IsolationGroup::prepareBridgePortRemoval(Port &port)
+{
+    // Port-type isolation references the physical port, which still exists.
+    if (m_type != ISOLATION_GROUP_TYPE_BRIDGE_PORT) return true;
+    if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) != m_bind_ports.end())
+    {
+        unbind(port, true);
+        if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) != m_bind_ports.end()) return false;
+    }
+    return !m_members.count(port.m_alias) || delMember(port, true) == ISO_GRP_STATUS_SUCCESS;
+}
+
 void
 IsolationGroup::update(SubjectType, void *cntx)
 {
@@ -721,15 +742,17 @@ IsolationGroup::update(SubjectType, void *cntx)
         auto mem_node = find(m_pending_members.begin(), m_pending_members.end(), port.m_alias);
         if (mem_node != m_pending_members.end())
         {
-            m_pending_members.erase(mem_node);
             addMember(port);
+            if (m_members.count(port.m_alias))
+                m_pending_members.erase(find(m_pending_members.begin(), m_pending_members.end(), port.m_alias));
         }
 
         auto bind_node = find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias);
         if (bind_node != m_pending_bind_ports.end())
         {
-            m_pending_bind_ports.erase(bind_node);
             bind(port);
+            if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) != m_bind_ports.end())
+                m_pending_bind_ports.erase(find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias));
         }
     }
     else

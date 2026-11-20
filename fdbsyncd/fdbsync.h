@@ -35,6 +35,8 @@
  */
 #define INTF_RESTORE_MAX_WAIT_TIME 180
 
+struct nl_addr;
+
 namespace swss {
 
 enum FDB_OP_TYPE {
@@ -147,6 +149,21 @@ private:
     SubscriberStateTable m_stateFdbSyncTable;
     Table m_stateFdbSyncTableRead;
     Table m_cfgFdbSyncTableRead;
+    Table m_cfgPortChannelRead, m_cfgVlanRead, m_cfgVlanMemberRead;
+    Table m_fdbStateTableRead, m_mclagStateRead, m_cfgVxlanMapRead;
+
+    struct KernelL3Link { std::string name, kind; int master; };
+    struct KernelL3Pin { int ifindex, master; std::string port, stage; };
+    std::unordered_map<int, KernelL3Link> m_kernelL3Links;
+    std::unordered_map<std::string, KernelL3Pin> m_kernelL3Pins;
+    // Current APP snapshot before our first queued warm SET for this key.
+    std::unordered_map<std::string, std::vector<FieldValueTuple>> m_kernelL3WarmBaseline;
+    bool validKernelL3Port(int ifindex, int master, const std::string &vlan);
+    bool handleKernelL3Pin(struct nlmsghdr *h, struct rtattr **tb);
+    bool restoreKernelL3Owner(const std::string &key, const KernelL3Pin &pin);
+    void publishKernelL3Pin(const std::string &key, const KernelL3Pin &pin);
+    void releaseKernelL3Pin(const std::string &key);
+
 
     struct m_local_fdb_info
     {

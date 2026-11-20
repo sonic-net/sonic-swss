@@ -2,6 +2,8 @@
 #define SWSS_PORTSORCH_H
 
 #include <map>
+#include <functional>
+#include <memory>
 #include <unordered_set>
 
 #include "acltable.h"
@@ -89,6 +91,16 @@ struct PortUpdate
 {
     Port port;
     bool add;
+    sai_object_id_t removedBridgePortId = SAI_NULL_OBJECT_ID;
+    uint64_t removedBridgePortGeneration = 0;
+};
+
+// Observers may set ready=false to defer removal. They must not reset a veto.
+// Sent before admin-down, FDB flushing, STP cleanup or SAI removal.
+struct BridgePortRemovalUpdate
+{
+    Port port;
+    bool ready = true;
 };
 
 struct PortOperStateUpdate
@@ -408,6 +420,21 @@ private:
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
     set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
     map<string, uint32_t> m_bridge_port_ref_count;
+    uint64_t m_nextBridgePortGeneration = 0;
+    struct BridgePortRemovalState
+    {
+        enum class Stage { ADMIN_DOWN, STRIP_TAGS, STP, FDB_FLUSH, REMOVE };
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        uint64_t generation = 0;
+        Stage stage = Stage::ADMIN_DOWN;
+        unsigned attempts = 0;
+        uint64_t retryAt = 0;
+        bool blocked = false;
+        bool inProgress = false;
+    };
+    map<string, std::shared_ptr<BridgePortRemovalState>> m_bridgePortRemovalPending;
+    static uint64_t bridgePortRemovalClock();
+    std::function<uint64_t()> m_bridgePortRemovalNow = bridgePortRemovalClock;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
     NotificationConsumer* m_portHostTxReadyNotificationConsumer;
@@ -454,7 +481,7 @@ private:
     void initializeVoqs(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id, bool isUp);
-    bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
+    bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip, sai_status_t *failure = nullptr);
 
     bool setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode);
 

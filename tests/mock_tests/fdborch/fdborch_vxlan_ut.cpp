@@ -17,6 +17,7 @@
 
 // Include the mock FDB API functions
 #include "mock_sai_fdb.h"
+#include "muxorch.h"
 #include "mock_sai_capability_wrap.h"
 
 using ::testing::_;
@@ -100,6 +101,7 @@ namespace fdborch_vxlan_ut
         FlexCounterOrch *m_flexCounterOrch = nullptr;
         VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
         FlowCounterRouteOrch *m_flowCounterRouteOrch = nullptr;
+        std::unique_ptr<MuxOrch> m_muxOrch;
 
         virtual void SetUp() override
         {
@@ -228,6 +230,11 @@ namespace fdborch_vxlan_ut
             gIntfsOrch = new IntfsOrch(m_app_db.get(), intf_tables, gVrfOrch, m_chassis_app_db.get());
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, m_portsOrch.get(), m_chassis_app_db.get());
+            // NeighOrch's next-hop lookup consults MuxOrch even when no MUX
+            // cable is configured. Keep the normal empty dependency registered.
+            m_muxOrch.reset(new MuxOrch(m_config_db.get(),
+                {CFG_MUX_CABLE_TABLE_NAME, CFG_PEER_SWITCH_TABLE_NAME}, nullptr, gNeighOrch, gFdbOrch));
+            gDirectory.set(m_muxOrch.get());
 
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
@@ -282,6 +289,7 @@ namespace fdborch_vxlan_ut
         }
 
         virtual void TearDown() override {
+            m_muxOrch->detachObservers();
             delete gCrmOrch;
             gCrmOrch = nullptr;
 
@@ -333,6 +341,7 @@ namespace fdborch_vxlan_ut
             delete m_flexCounterOrch;
             m_flexCounterOrch = nullptr;
 
+            m_muxOrch.reset();
             gDirectory.m_values.clear();
             sai_route_api = pold_sai_route_api;
             sai_router_intfs_api = pold_sai_router_intfs_api;
@@ -5397,4 +5406,262 @@ namespace fdborch_vxlan_ut
         EXPECT_EQ(gFdbOrch->m_entries[cd_key].type, "dynamic_control_learn");
     }
 
+}
+
+
+// Pure-L3 local-ES kernel pin handoff regressions.
+namespace fdborch_vxlan_ut {
+static const std::string kernelSyncPort="PortChannel31";
+static const std::string kernelSyncKey="Vlan40:02:31:00:00:00:01";
+static std::vector<int32_t> kernelSyncTypeUpdates;
+static sai_status_t kernelSyncSetAttribute(const sai_fdb_entry_t *,const sai_attribute_t *a)
+{
+    if(a->id==SAI_FDB_ENTRY_ATTR_TYPE)kernelSyncTypeUpdates.push_back(a->value.s32);
+    return SAI_STATUS_SUCCESS;
+}
+struct ScopedKernelSyncSetCapture {
+    sai_set_fdb_entry_attribute_fn saved;
+    ScopedKernelSyncSetCapture():saved(sai_fdb_api->set_fdb_entry_attribute) {
+        kernelSyncTypeUpdates.clear();sai_fdb_api->set_fdb_entry_attribute=kernelSyncSetAttribute;
+    }
+    ~ScopedKernelSyncSetCapture(){sai_fdb_api->set_fdb_entry_attribute=saved;}
+};
+static void prepareKernelSyncFixture(VxlanFdbOrchTest &f)
+{
+    Table ports(f.m_app_db.get(),APP_PORT_TABLE_NAME);
+    const auto initial=ut_helper::getInitialSaiPorts();
+    for(const auto &p:initial) ports.set(p.first,p.second);
+    ports.set("PortConfigDone",{{"count",std::to_string(initial.size())}});
+    ports.set("PortInitDone",{{"lanes","0"}});
+    f.m_portsOrch->addExistingData(&ports);
+    static_cast<Orch *>(f.m_portsOrch.get())->doTask();
+    setUpVlan(f.m_portsOrch.get());
+    Port pc(kernelSyncPort,Port::LAG);
+    pc.m_lag_id=0x200000000004a4;
+    pc.m_bridge_port_id=0x3a000000002c33;
+    pc.m_oper_status=SAI_PORT_OPER_STATUS_UP;
+    f.m_portsOrch->m_portList[kernelSyncPort]=pc;
+    f.m_portsOrch->saiOidToAlias[pc.m_bridge_port_id]=kernelSyncPort;
+    f.m_portsOrch->m_portList[VLAN40].m_members.insert(kernelSyncPort);
+}
+static FdbEntry kernelSyncEntry(const VxlanFdbOrchTest &f)
+{
+    FdbEntry e;e.mac=MacAddress("02:31:00:00:00:01");
+    e.bv_id=f.m_portsOrch->m_portList.at(VLAN40).m_vlan_info.vlan_oid;return e;
+}
+static void kernelSyncApp(const std::string &op,const std::string &type,
+                          const std::string &owner="",bool provenance=true,
+                          const std::string &port=kernelSyncPort)
+{
+    std::vector<FieldValueTuple> fields;
+    if(op=="SET") {
+        fields={{"ifname",port},{"vni","0"},{"type",type}};
+        if(!owner.empty()) { fields.emplace_back("l3vni_neigh_sync",owner);
+            if(provenance)fields.emplace_back("kernel_l3vni_sync","true"); }
+    }
+    DBConnector app("APPL_DB",0); Table table(&app,APP_VXLAN_FDB_TABLE_NAME);
+    if(op=="SET")table.set(kernelSyncKey,fields);else table.del(kernelSyncKey);
+    std::deque<KeyOpFieldsValuesTuple> rows{{kernelSyncKey,op,fields}};
+    auto *consumer=dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+    consumer->addToSync(rows);static_cast<Orch *>(gFdbOrch)->doTask();
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinExplicitLocalHandoffSurvivesLateRemoteDelete)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    sai_attribute_t attrs[16]={};uint32_t count=0;ScopedKernelSyncSetCapture captureSet;
+    EXPECT_CALL(*mock_sai_fdb_api,create_fdb_entry(_,_,_)).Times(1)
+      .WillOnce(::testing::DoAll(SaveArg<1>(&count),SaveSAIAttrs(attrs),
+                                ::testing::Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(*mock_sai_fdb_api,remove_fdb_entry(_)).Times(0);
+    kernelSyncApp("SET","static","peer");
+    auto i=gFdbOrch->m_entries.find(entry);ASSERT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_EQ(i->second.origin,FDB_ORIGIN_VXLAN_ADVERTIZED);
+    EXPECT_EQ(i->second.type,"static");
+    bool staticType=false,localPort=false;
+    for(uint32_t n=0;n<count;++n) {
+      if(attrs[n].id==SAI_FDB_ENTRY_ATTR_TYPE)staticType=attrs[n].value.s32==SAI_FDB_ENTRY_TYPE_STATIC;
+      if(attrs[n].id==SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)localPort=attrs[n].value.oid==m_portsOrch->m_portList[kernelSyncPort].m_bridge_port_id;
+      EXPECT_NE(attrs[n].id,SAI_FDB_ENTRY_ATTR_ENDPOINT_IP);
+    }
+    EXPECT_TRUE(staticType);EXPECT_TRUE(localPort);
+    std::string value;
+    EXPECT_FALSE(gFdbOrch->m_fdbStateTable.hget(kernelSyncKey,"port",value));
+    // Receiver emits this only for that verified peer pin's plain-local ADD.
+    kernelSyncApp("SET","dynamic","local");
+    i=gFdbOrch->m_entries.find(entry);ASSERT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_EQ(i->second.origin,FDB_ORIGIN_LEARN);
+    EXPECT_EQ(i->second.type,"dynamic");
+    EXPECT_NE(std::find(kernelSyncTypeUpdates.begin(),kernelSyncTypeUpdates.end(),SAI_FDB_ENTRY_TYPE_DYNAMIC),kernelSyncTypeUpdates.end());
+    EXPECT_TRUE(gFdbOrch->m_fdbStateTable.hget(kernelSyncKey,"port",value));
+    EXPECT_EQ(value,kernelSyncPort);
+    triggerUpdate(gFdbOrch,SAI_FDB_EVENT_LEARNED,{2,49,0,0,0,1},
+      m_portsOrch->m_portList[kernelSyncPort].m_bridge_port_id,entry.bv_id);
+    kernelSyncApp("DEL","");
+    i=gFdbOrch->m_entries.find(entry);EXPECT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_TRUE(gFdbOrch->m_fdbStateTable.hget(kernelSyncKey,"type",value));
+    EXPECT_EQ(value,"dynamic");
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinFullWithdrawRemovesOnlyControlOwnedEntry)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    EXPECT_CALL(*mock_sai_fdb_api,remove_fdb_entry(_)).Times(1)
+      .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+    kernelSyncApp("SET","static","peer");
+    ASSERT_NE(gFdbOrch->m_entries.find(entry),gFdbOrch->m_entries.end());
+    kernelSyncApp("DEL","");
+    EXPECT_EQ(gFdbOrch->m_entries.find(entry),gFdbOrch->m_entries.end());
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinLocalMarkerWithoutProducerProvenanceRejected)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    EXPECT_CALL(*mock_sai_fdb_api,create_fdb_entry(_,_,_)).Times(0);
+    kernelSyncApp("SET","dynamic","local",false);
+    EXPECT_EQ(gFdbOrch->m_entries.find(entry),gFdbOrch->m_entries.end());
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinMarkerCannotStealClassicStaticIfname)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    kernelSyncApp("SET","static");
+    kernelSyncApp("SET","dynamic","local");
+    auto i=gFdbOrch->m_entries.find(entry);ASSERT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_EQ(i->second.origin,FDB_ORIGIN_VXLAN_ADVERTIZED);
+    EXPECT_EQ(i->second.type,"static");
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinSamePortHardwareLearnDoesNotDeleteForwarding)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    EXPECT_CALL(*mock_sai_fdb_api,remove_fdb_entry(_)).Times(0);
+    kernelSyncApp("SET","static","peer");
+    triggerUpdate(gFdbOrch,SAI_FDB_EVENT_LEARNED,{2,49,0,0,0,1},
+      m_portsOrch->m_portList[kernelSyncPort].m_bridge_port_id,entry.bv_id);
+    auto i=gFdbOrch->m_entries.find(entry);ASSERT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_EQ(i->second.bridge_port_id,m_portsOrch->m_portList[kernelSyncPort].m_bridge_port_id);
+    // C/D ownership and type are intentionally not prescribed by this guard.
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinDurableLocalReplayWithoutCacheRetainsLocalOwnership)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    sai_attribute_t attrs[16]={};uint32_t count=0;
+    EXPECT_CALL(*mock_sai_fdb_api,create_fdb_entry(_,_,_)).Times(1)
+      .WillOnce(::testing::DoAll(SaveArg<1>(&count),SaveSAIAttrs(attrs),
+                                ::testing::Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(*mock_sai_fdb_api,remove_fdb_entry(_)).Times(0);
+    // Durable provenance is revalidated by receiver before this cold replay.
+    kernelSyncApp("SET","dynamic","local");
+    auto i=gFdbOrch->m_entries.find(entry);ASSERT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_EQ(i->second.origin,FDB_ORIGIN_LEARN);
+    bool dynamicType=false;
+    for(uint32_t n=0;n<count;++n)
+      if(attrs[n].id==SAI_FDB_ENTRY_ATTR_TYPE)dynamicType=attrs[n].value.s32==SAI_FDB_ENTRY_TYPE_DYNAMIC;
+    EXPECT_TRUE(dynamicType);
+    std::string value;EXPECT_TRUE(gFdbOrch->m_fdbStateTable.hget(kernelSyncKey,"type",value));
+    EXPECT_EQ(value,"dynamic");
+    kernelSyncApp("DEL","");EXPECT_NE(gFdbOrch->m_entries.find(entry),gFdbOrch->m_entries.end());
+}
+TEST_F(VxlanFdbOrchTest, L3PeerPinHardwareLocalMoveBeforeUnpinSurvivesLateDelete)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    Port pc("PortChannel32",Port::LAG);pc.m_lag_id=0x200000000004a5;
+    pc.m_bridge_port_id=0x3a000000002c34;pc.m_oper_status=SAI_PORT_OPER_STATUS_UP;
+    m_portsOrch->m_portList[pc.m_alias]=pc;
+    m_portsOrch->saiOidToAlias[pc.m_bridge_port_id]=pc.m_alias;
+    m_portsOrch->m_portList[VLAN40].m_members.insert(pc.m_alias);
+    EXPECT_CALL(*mock_sai_fdb_api,remove_fdb_entry(_)).Times(0);
+    kernelSyncApp("SET","static","peer");
+    // SAI itself reports a dynamic local source on another access PC.
+    triggerUpdate(gFdbOrch,SAI_FDB_EVENT_LEARNED,{2,49,0,0,0,1},pc.m_bridge_port_id,entry.bv_id);
+    auto i=gFdbOrch->m_entries.find(entry);ASSERT_NE(i,gFdbOrch->m_entries.end());
+    EXPECT_EQ(i->second.bridge_port_id,pc.m_bridge_port_id);
+    EXPECT_EQ(i->second.origin,FDB_ORIGIN_LEARN);
+    std::string value;EXPECT_TRUE(gFdbOrch->m_fdbStateTable.hget(kernelSyncKey,"port",value));
+    EXPECT_EQ(value,pc.m_alias);
+    kernelSyncApp("DEL","");i=gFdbOrch->m_entries.find(entry);
+    ASSERT_NE(i,gFdbOrch->m_entries.end());EXPECT_EQ(i->second.bridge_port_id,pc.m_bridge_port_id);
+}
+
+}
+namespace fdborch_vxlan_ut {
+TEST_F(VxlanFdbOrchTest,L3PeerPinPeerMarkerCannotStealUntaggedClassicOwner)
+{
+    prepareKernelSyncFixture(*this);auto entry=kernelSyncEntry(*this);
+    kernelSyncApp("SET","static");
+    EXPECT_EQ(gFdbOrch->m_kernelL3PeerOwners.count(entry),0u);
+    kernelSyncApp("SET","static","peer");
+    EXPECT_EQ(gFdbOrch->m_kernelL3PeerOwners.count(entry),0u);
+    kernelSyncApp("SET","dynamic","local");
+    ASSERT_NE(gFdbOrch->m_entries.find(entry),gFdbOrch->m_entries.end());
+    EXPECT_EQ(gFdbOrch->m_entries.at(entry).type,"static");
+    EXPECT_EQ(gFdbOrch->m_entries.at(entry).origin,FDB_ORIGIN_VXLAN_ADVERTIZED);
+}
+}
+
+namespace fdborch_vxlan_ut
+{
+TEST_F(VxlanFdbOrchTest, L3PeerPinWaitsForBridgePortAndVlanMembership)
+{
+    prepareKernelSyncFixture(*this);
+    auto entry = kernelSyncEntry(*this);
+    const auto bridge = m_portsOrch->m_portList.at(kernelSyncPort).m_bridge_port_id;
+    auto port = m_portsOrch->m_portList.at(kernelSyncPort);
+    m_portsOrch->m_portList.erase(kernelSyncPort);
+    m_portsOrch->m_portList[VLAN40].m_members.erase(kernelSyncPort);
+    auto *consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(APP_VXLAN_FDB_TABLE_NAME));
+
+    kernelSyncApp("SET", "static", "peer");
+    EXPECT_EQ(consumer->m_toSync.count(kernelSyncKey), 1u);
+    EXPECT_EQ(gFdbOrch->m_entries.count(entry), 0u);
+
+    port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
+    m_portsOrch->m_portList[kernelSyncPort] = port;
+    static_cast<Orch *>(gFdbOrch)->doTask();
+    EXPECT_EQ(consumer->m_toSync.count(kernelSyncKey), 1u);
+    EXPECT_EQ(gFdbOrch->m_entries.count(entry), 0u);
+
+    m_portsOrch->m_portList[kernelSyncPort].m_bridge_port_id = bridge;
+    static_cast<Orch *>(gFdbOrch)->doTask();
+    EXPECT_EQ(consumer->m_toSync.count(kernelSyncKey), 1u);
+    EXPECT_EQ(gFdbOrch->m_entries.count(entry), 0u);
+
+    m_portsOrch->m_portList[VLAN40].m_members.insert(kernelSyncPort);
+    static_cast<Orch *>(gFdbOrch)->doTask();
+    ASSERT_EQ(gFdbOrch->m_entries.count(entry), 1u);
+    EXPECT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id, bridge);
+    EXPECT_EQ(consumer->m_toSync.count(kernelSyncKey), 0u);
+}
+
+TEST_F(VxlanFdbOrchTest, L3PeerPinMovesVerifiedPeerLeaseToAnotherPortChannel)
+{
+    prepareKernelSyncFixture(*this);
+    auto entry = kernelSyncEntry(*this);
+    Port replacement("PortChannel32", Port::LAG);
+    replacement.m_lag_id = 0x200000000004a5;
+    replacement.m_bridge_port_id = 0x3a000000002c34;
+    replacement.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+    m_portsOrch->m_portList[replacement.m_alias] = replacement;
+    m_portsOrch->saiOidToAlias[replacement.m_bridge_port_id] = replacement.m_alias;
+    m_portsOrch->m_portList[VLAN40].m_members.insert(replacement.m_alias);
+    sai_attribute_t attrs[16] = {};
+    uint32_t count = 0;
+    EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _)).Times(2)
+        .WillRepeatedly(::testing::DoAll(SaveArg<1>(&count), SaveSAIAttrs(attrs),
+                                        ::testing::Return(SAI_STATUS_SUCCESS)));
+    // A real host move follows the existing FDB replacement path.
+    EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_)).Times(1)
+        .WillOnce(::testing::Return(SAI_STATUS_SUCCESS));
+
+    kernelSyncApp("SET", "static", "peer");
+    ASSERT_EQ(gFdbOrch->m_entries.count(entry), 1u);
+    kernelSyncApp("SET", "static", "peer", true, replacement.m_alias);
+    EXPECT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id, replacement.m_bridge_port_id);
+    EXPECT_EQ(gFdbOrch->m_kernelL3PeerOwners.at(entry), replacement.m_alias);
+    bool programmed = false;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        if (attrs[index].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
+        {
+            programmed = attrs[index].value.oid == replacement.m_bridge_port_id;
+        }
+    }
+    EXPECT_TRUE(programmed);
+}
 }

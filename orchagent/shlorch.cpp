@@ -471,7 +471,14 @@ ShlOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
-    if (type != SUBJECT_TYPE_BRIDGE_PORT_CHANGE)
+    if (type == SUBJECT_TYPE_BRIDGE_PORT_PRE_REMOVE)
+    {
+        auto &removal = *static_cast<BridgePortRemovalUpdate *>(cntx);
+        for (auto &kv : m_isolationGrps)
+            if (!kv.second->prepareBridgePortRemoval(removal.port)) removal.ready = false;
+        return;
+    }
+    if (type != SUBJECT_TYPE_BRIDGE_PORT_CHANGE && type != SUBJECT_TYPE_BRIDGE_PORT_REMOVE_FAILED)
     {
         return;
     }
@@ -552,8 +559,6 @@ shl_isolation_group_status_t
 ShlIsolationGroup::unbind(string vtep, bool do_fwd_ref)
 {
     SWSS_LOG_ENTER();
-    sai_attribute_t attr;
-    sai_status_t status = SAI_STATUS_SUCCESS;
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     auto tunnel_port_name = tunnel_orch->getTunnelPortName(vtep);
@@ -564,6 +569,16 @@ ShlIsolationGroup::unbind(string vtep, bool do_fwd_ref)
                         m_name.c_str());
         return SHL_ISO_GRP_STATUS_FAIL;
     }
+
+    return unbind(port, do_fwd_ref);
+}
+
+shl_isolation_group_status_t
+ShlIsolationGroup::unbind(Port &port, bool do_fwd_ref)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status = SAI_STATUS_SUCCESS;
 
     if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) == m_bind_ports.end())
     {
@@ -592,12 +607,24 @@ ShlIsolationGroup::unbind(string vtep, bool do_fwd_ref)
         SWSS_LOG_NOTICE("Unbind function, port = %s, removed port in m_bind_ports for iso grp: %s", port.m_alias.c_str(), m_name.c_str());
     }
 
-    if (do_fwd_ref)
+    if (do_fwd_ref && status == SAI_STATUS_SUCCESS &&
+        find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias) == m_pending_bind_ports.end())
     {
         m_pending_bind_ports.push_back(port.m_alias);
     }
 
     return SHL_ISO_GRP_STATUS_SUCCESS;
+}
+
+bool
+ShlIsolationGroup::prepareBridgePortRemoval(Port &port)
+{
+    if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) != m_bind_ports.end())
+    {
+        unbind(port, true);
+        if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) != m_bind_ports.end()) return false;
+    }
+    return !m_members.count(port.m_alias) || delMember(port, true) == SHL_ISO_GRP_STATUS_SUCCESS;
 }
 
 void
@@ -611,15 +638,17 @@ ShlIsolationGroup::update(SubjectType, void *cntx)
         auto mem_node = find(m_pending_members.begin(), m_pending_members.end(), port.m_alias);
         if (mem_node != m_pending_members.end())
         {
-            m_pending_members.erase(mem_node);
             addMember(port);
+            if (m_members.count(port.m_alias))
+                m_pending_members.erase(find(m_pending_members.begin(), m_pending_members.end(), port.m_alias));
         }
 
         auto bind_node = find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias);
         if (bind_node != m_pending_bind_ports.end())
         {
-            m_pending_bind_ports.erase(bind_node);
             bind(port);
+            if (find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias) != m_bind_ports.end())
+                m_pending_bind_ports.erase(find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias));
         }
     }
     else
@@ -627,7 +656,7 @@ ShlIsolationGroup::update(SubjectType, void *cntx)
         auto bind_node = find(m_bind_ports.begin(), m_bind_ports.end(), port.m_alias);
         if (bind_node != m_bind_ports.end())
         {
-            unbind(port.m_alias, true);
+            unbind(port, true);
         }
 
         auto mem_node = m_members.find(port.m_alias);

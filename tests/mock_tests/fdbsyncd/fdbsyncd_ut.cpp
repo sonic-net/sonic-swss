@@ -4,6 +4,7 @@
 #include <gmock/gmock.h>
 #include <linux/nexthop.h>
 #include <net/if.h>
+#include <netlink/route/link.h>
 #include "mock_table.h"
 #define private public
 #include "fdbsyncd/neighbour.h"
@@ -2816,4 +2817,451 @@ TEST_F(FdbSyncdEvpnMhTest, RemoteMacVxlanDeleteFailureIsAnError)
 
     EXPECT_NE(errors.find("Failed cmd: bridge fdb del 00:aa:bb:cc:dd:ef dev Vxlan-200 dst 10.0.0.2 vlan 200 self"),
               std::string::npos);
+}
+
+// Pure-L3 local-ES kernel pin ownership regressions.
+static const unsigned char capturedPeerPin[] = {104,0,0,0,28,0,0,0,1,0,0,0,0,0,0,0,7,0,0,0,45,1,0,0,64,0,0,0,10,0,2,0,2,49,0,0,0,1,0,0,8,0,9,0,229,0,0,0,5,0,12,0,11,0,0,0,8,0,15,0,0,0,0,0,20,0,3,0,0,0,0,0,153,222,0,0,210,223,0,0,0,0,0,0,6,0,5,0,29,12,0,0,12,0,14,0,5,0,1,0,3,0,0,0};
+static struct nlmsghdr *capturedKernelPin(bool add, unsigned char protocol=11,
+                                        unsigned short state=NUD_NOARP,
+                                        unsigned char flags=0, int ifindex=301)
+{
+    auto *p=static_cast<struct nlmsghdr *>(malloc(sizeof(capturedPeerPin)));
+    memcpy(p,capturedPeerPin,sizeof(capturedPeerPin));
+    p->nlmsg_type=add?RTM_NEWNEIGH:RTM_DELNEIGH;
+    auto *ndm=reinterpret_cast<struct ndmsg *>(NLMSG_DATA(p));
+    ndm->ndm_state=state;ndm->ndm_flags=flags;ndm->ndm_ifindex=ifindex;
+    int len=static_cast<int>(p->nlmsg_len-NLMSG_LENGTH(sizeof(*ndm)));
+    for(auto *a=NDA_RTA(ndm);RTA_OK(a,len);a=RTA_NEXT(a,len))
+        if(a->rta_type==NDA_PROTOCOL) memcpy(RTA_DATA(a),&protocol,sizeof(protocol));
+    return p;
+}
+static void configureKernelOwnerFixture(FdbSyncdEvpnMhTest &f)
+{
+    // Legacy mock reserves 301 as a fake VXLAN interface. The captured
+    // runtime link is a local team, which the VXLAN cache never contains.
+    f.m_mockFdbSync.m_intf_info.erase(301);
+    Table vlan(f.m_configDb.get(),"VLAN");vlan.set("Vlan3101",{{"vlanid","3101"}});
+    Table pc(f.m_configDb.get(),"PORTCHANNEL");pc.set("PortChannel31",{{"admin_status","up"}});
+    Table member(f.m_configDb.get(),"VLAN_MEMBER");
+    member.set("Vlan3101|PortChannel31",{{"tagging_mode","tagged"}});
+    auto *bridge=rtnl_link_alloc();rtnl_link_set_ifindex(bridge,229);
+    rtnl_link_set_name(bridge,"Bridge");rtnl_link_set_type(bridge,"bridge");
+    f.m_mockFdbSync.onMsg(RTM_NEWLINK,reinterpret_cast<nl_object *>(bridge));rtnl_link_put(bridge);
+    auto *bond=rtnl_link_alloc();rtnl_link_set_ifindex(bond,301);
+    rtnl_link_set_name(bond,"PortChannel31");rtnl_link_set_type(bond,"team");
+    rtnl_link_set_master(bond,229);
+    f.m_mockFdbSync.onMsg(RTM_NEWLINK,reinterpret_cast<nl_object *>(bond));rtnl_link_put(bond);
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerPinEmitsExplicitPeerMarker)
+{
+    configureKernelOwnerFixture(*this);auto *p=capturedKernelPin(true);
+    m_mockFdbSync.onMsgRaw(p);free(p);std::vector<FieldValueTuple> fields;
+    ASSERT_TRUE(getFdbTable().get("Vlan3101:02:31:00:00:00:01",fields));
+    EXPECT_EQ(fvsGetValue(fields,"ifname",true).get(),"PortChannel31");
+    EXPECT_EQ(fvsGetValue(fields,"vni",true).get(),"0");
+    EXPECT_EQ(fvsGetValue(fields,"type",true).get(),"static");
+    EXPECT_EQ(fvsGetValue(fields,"l3vni_neigh_sync",true).get(),"peer");
+    EXPECT_EQ(fvsGetValue(fields,"kernel_l3vni_sync",true).get(),"true");
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerPlainLocalHandoffThenStateAckAndLateDelete)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    p=capturedKernelPin(true,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    ASSERT_TRUE(getFdbTable().get(key,fields));
+    EXPECT_EQ(fvsGetValue(fields,"type",true).get(),"dynamic");
+    EXPECT_EQ(fvsGetValue(fields,"l3vni_neigh_sync",true).get(),"local");
+    EXPECT_EQ(fvsGetValue(fields,"kernel_l3vni_sync",true).get(),"true");
+    // Real receiver STATE input acknowledges FdbOrch's programmed local state.
+    Table state(m_stateDb.get(),STATE_FDB_TABLE_NAME);
+    std::vector<FieldValueTuple> local{{"port","PortChannel31"},{"type","dynamic"}};
+    state.set(key,local);m_mockFdbSync.processStateFdbEntry({key,"SET",local},false);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+    mockCallArgs.clear();p=capturedKernelPin(false,11,NUD_REACHABLE);
+    m_mockFdbSync.onMsgRaw(p);free(p);
+    EXPECT_TRUE(state.get(key,fields));
+    for(const auto &cmd:mockCallArgs)EXPECT_EQ(cmd.find("bridge fdb del"),std::string::npos);
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerDuplicateReplayDoesNotInventIpReferences)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    for(int i=0;i<2;++i){auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);}
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    // IP-reference ownership is in FRR, not counted from duplicate FDB adds.
+    auto *p=capturedKernelPin(false,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerPlainLocalCannotMintOrRestoreUntaggedLease)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto *p=capturedKernelPin(true,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;EXPECT_FALSE(getFdbTable().get(key,fields));
+    getFdbTable().set(key,{{"ifname","PortChannel31"},{"vni","0"},{"type","static"}});
+    p=capturedKernelPin(true,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    ASSERT_TRUE(getFdbTable().get(key,fields));
+    EXPECT_FALSE(fvsGetValue(fields,"kernel_l3vni_sync",true));
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerDurableLocalReplayRequiresExactProvenanceAndCurrentState)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto fields=std::vector<FieldValueTuple>{{"ifname","PortChannel31"},{"vni","0"},
+      {"type","dynamic"},{"kernel_l3vni_sync","true"},{"l3vni_neigh_sync","local"}};
+    getFdbTable().set(key,fields);
+    Table state(m_stateDb.get(),STATE_FDB_TABLE_NAME);
+    state.set(key,{{"port","PortChannel32"},{"type","dynamic"}});
+    auto *p=capturedKernelPin(true,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+    state.del(key);
+    p=capturedKernelPin(true,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    ASSERT_EQ(m_mockFdbSync.m_kernelL3Pins.count(key),1u);
+    EXPECT_EQ(m_mockFdbSync.m_kernelL3Pins.at(key).stage,"local");
+    state.set(key,{{"port","PortChannel31"},{"type","dynamic"}});
+    m_mockFdbSync.processStateFdbEntry({key,"SET",{{"port","PortChannel32"},{"type","static"}}},false);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.at(key).port_name,"PortChannel31");
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.at(key).type,FDB_TYPE_DYNAMIC);
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerRejectsActiveMclagAndL2VniEvenWithZebraProtocol)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    Table mclag(m_stateDb.get(),STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+    mclag.set(key,{{"port","PortChannel31"},{"type","static"}});
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;EXPECT_FALSE(getFdbTable().get(key,fields));
+    mclag.del(key);
+    Table map(m_configDb.get(),"VXLAN_TUNNEL_MAP");map.set("vtep|Vlan3101",{{"vlan","Vlan3101"},{"vni","103101"}});
+    p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerStaleDeleteAndLinkDeleteUseExactInterface)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    p=capturedKernelPin(false,11,NUD_REACHABLE,0,302);m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    auto *link=rtnl_link_alloc();rtnl_link_set_ifindex(link,302);
+    m_mockFdbSync.onMsg(RTM_DELLINK,reinterpret_cast<nl_object *>(link));
+    EXPECT_TRUE(getFdbTable().get(key,fields));
+    rtnl_link_set_ifindex(link,301);
+    m_mockFdbSync.onMsg(RTM_DELLINK,reinterpret_cast<nl_object *>(link));rtnl_link_put(link);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerFpmHandoffClearsAuthorityAndDoesNotAdoptStalePin)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    m_mockFdbSync.setMacSyncMode("fpm");
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    EXPECT_FALSE(fvsGetValue(fields,"kernel_l3vni_sync",true));
+    EXPECT_FALSE(fvsGetValue(fields,"l3vni_neigh_sync",true));
+    EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+    m_mockFdbSync.setMacSyncMode("kernel");
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+}
+TEST_F(FdbSyncdEvpnMhTest, CapturedKernelPinIgnoresHardwareLearnEcho)
+{
+    auto *p=capturedKernelPin(true,0,NUD_REACHABLE,NTF_EXT_LEARNED);
+    m_mockFdbSync.onMsgRaw(p);free(p);std::vector<FieldValueTuple> fields;
+    EXPECT_FALSE(getFdbTable().get("Vlan3101:02:31:00:00:00:01",fields));
+}
+TEST_F(FdbSyncdEvpnMhTest, CapturedKernelPinIgnoresAdministratorStatic)
+{
+    auto *p=capturedKernelPin(true,4,NUD_NOARP);
+    m_mockFdbSync.onMsgRaw(p);free(p);std::vector<FieldValueTuple> fields;
+    EXPECT_FALSE(getFdbTable().get("Vlan3101:02:31:00:00:00:01",fields));
+}
+TEST_F(FdbSyncdEvpnMhTest, CapturedKernelPinIgnoresUnmarkedMclagStyleStatic)
+{
+    auto *p=capturedKernelPin(true,0,NUD_PERMANENT);
+    m_mockFdbSync.onMsgRaw(p);free(p);std::vector<FieldValueTuple> fields;
+    EXPECT_FALSE(getFdbTable().get("Vlan3101:02:31:00:00:00:01",fields));
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerDoesNotInterceptClassicZebraVxlanWithdrawal)
+{
+    const std::string key="Vlan100:02:31:00:00:00:01";
+    auto *p=mac_route_msg(true,0,"10.0.0.2",100,100,MacAddress("02:31:00:00:00:01"));
+    m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    p=mac_route_msg(false,0,"",100,100,MacAddress("02:31:00:00:00:01"));
+    const uint8_t protocol = 11;
+    const rtattr attribute{RTA_LENGTH(sizeof(protocol)), NDA_PROTOCOL};
+    auto *tail = reinterpret_cast<char *>(p) + NLMSG_ALIGN(p->nlmsg_len);
+    memcpy(tail, &attribute, sizeof(attribute));
+    memcpy(tail + RTA_LENGTH(0), &protocol, sizeof(protocol));
+    p->nlmsg_len += RTA_ALIGN(attribute.rta_len);
+    m_mockFdbSync.onMsgRaw(p);free(p);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerOldReleaseCannotDeleteReplacementAppOwner)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    for(int reason=0;reason<3;++reason)
+    {
+        getFdbTable().del(key);
+        auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+        ASSERT_EQ(m_mockFdbSync.m_kernelL3Pins.count(key),1u);
+        // Replacement may be classic (no tag), or another tagged stage/port.
+        getFdbTable().del(key);
+        getFdbTable().set(key,{{"ifname","PortChannel32"},{"vni","0"},{"type","dynamic"},
+          {"kernel_l3vni_sync",reason==0?"false":"true"},{"l3vni_neigh_sync","local"}});
+        if(reason==0){p=capturedKernelPin(false,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);}
+        else if(reason==1){auto *l=rtnl_link_alloc();rtnl_link_set_ifindex(l,301);m_mockFdbSync.onMsg(RTM_DELLINK,reinterpret_cast<nl_object *>(l));rtnl_link_put(l);}
+        else m_mockFdbSync.releaseKernelL3Pin(key);
+        std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+        EXPECT_EQ(fvsGetValue(fields,"ifname",true).get(),"PortChannel32");
+        EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+        if(reason==1)configureKernelOwnerFixture(*this);
+    }
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerPartialLinkPreservesKindAndTracksMasterPresence)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto *l=rtnl_link_alloc();rtnl_link_set_ifindex(l,301);
+    m_mockFdbSync.onMsg(RTM_NEWLINK,reinterpret_cast<nl_object *>(l));
+    EXPECT_EQ(m_mockFdbSync.m_kernelL3Links.at(301).kind,"team");
+    EXPECT_EQ(m_mockFdbSync.m_kernelL3Links.at(301).master,229);
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    // Explicit master=0 is a detach; omitted master above is not.
+    rtnl_link_set_master(l,0);
+    m_mockFdbSync.onMsg(RTM_NEWLINK,reinterpret_cast<nl_object *>(l));rtnl_link_put(l);
+    EXPECT_EQ(m_mockFdbSync.m_kernelL3Links.at(301).kind,"team");
+    EXPECT_EQ(m_mockFdbSync.m_kernelL3Links.at(301).master,0);
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+}
+
+// Exercise actual warm-restart cache/reconciliation, not the no-op fake.
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerWarmQueuedAddThenWithdrawDoesNotCreateStalePin)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto assist=std::make_unique<AppRestartAssist>(m_pipeline.get(),"fdbsyncd","swss",120);
+    assist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME,&m_mockFdbSync.m_fdbTable);
+    assist->m_warmStartInProgress=true;m_mockFdbSync.m_AppRestartAssist=assist.get();
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    std::vector<FieldValueTuple> fields;EXPECT_FALSE(getFdbTable().get(key,fields));
+    p=capturedKernelPin(false,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    assist->reconcile();
+    EXPECT_FALSE(getFdbTable().get(key,fields));
+    m_mockFdbSync.m_AppRestartAssist=nullptr;
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerWarmOldReleasePreservesReplacementThroughReconcile)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    auto assist=std::make_unique<AppRestartAssist>(m_pipeline.get(),"fdbsyncd","swss",120);
+    assist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME,&m_mockFdbSync.m_fdbTable);
+    assist->m_warmStartInProgress=true;m_mockFdbSync.m_AppRestartAssist=assist.get();
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    getFdbTable().set(key,{{"ifname","PortChannel32"},{"vni","0"},{"type","static"}});
+    p=capturedKernelPin(false,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    assist->reconcile();
+    std::vector<FieldValueTuple> fields;ASSERT_TRUE(getFdbTable().get(key,fields));
+    EXPECT_EQ(fvsGetValue(fields,"ifname",true).get(),"PortChannel32");
+    EXPECT_FALSE(fvsGetValue(fields,"kernel_l3vni_sync",true));
+    m_mockFdbSync.m_AppRestartAssist=nullptr;
+}
+TEST_F(FdbSyncdEvpnMhTest,L3KernelOwnerWarmLocalAckCancelsOnlyUnchangedPriorPeerRow)
+{
+    configureKernelOwnerFixture(*this);const std::string key="Vlan3101:02:31:00:00:00:01";
+    getFdbTable().set(key,{{"ifname","PortChannel31"},{"vni","0"},{"type","static"},
+      {"kernel_l3vni_sync","true"},{"l3vni_neigh_sync","peer"}});
+    auto assist=std::make_unique<AppRestartAssist>(m_pipeline.get(),"fdbsyncd","swss",120);
+    assist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME,&m_mockFdbSync.m_fdbTable);
+    assist->m_warmStartInProgress=true;assist->readTablesToMap();
+    m_mockFdbSync.m_AppRestartAssist=assist.get();
+    auto *p=capturedKernelPin(true);m_mockFdbSync.onMsgRaw(p);free(p);
+    p=capturedKernelPin(true,11,NUD_REACHABLE);m_mockFdbSync.onMsgRaw(p);free(p);
+    Table state(m_stateDb.get(),STATE_FDB_TABLE_NAME);
+    state.set(key,{{"port","PortChannel31"},{"type","dynamic"}});
+    m_mockFdbSync.processStateFdbEntry({key,"SET",{{"port","PortChannel31"},{"type","dynamic"}}},false);
+    assist->reconcile();
+    std::vector<FieldValueTuple> fields;EXPECT_FALSE(getFdbTable().get(key,fields));
+    EXPECT_TRUE(state.get(key,fields));
+    m_mockFdbSync.m_AppRestartAssist=nullptr;
+}
+
+class KernelPinInputTest : public FdbSyncdEvpnMhTest,
+                           public ::testing::WithParamInterface<std::string>
+{
+};
+
+TEST_P(KernelPinInputTest, IneligibleInputCannotClaimAnAppRow)
+{
+    configureKernelOwnerFixture(*this);
+    const std::string key = "Vlan3101:02:31:00:00:00:01";
+    const auto scenario = GetParam();
+    SCOPED_TRACE(scenario);
+    auto *message = capturedKernelPin(true);
+    auto *neighbor = reinterpret_cast<ndmsg *>(NLMSG_DATA(message));
+    rtattr *attributes[NDA_MAX + 1] = {};
+    int length = static_cast<int>(message->nlmsg_len - NLMSG_LENGTH(sizeof(*neighbor)));
+    for (auto *attribute = NDA_RTA(neighbor); RTA_OK(attribute, length); attribute = RTA_NEXT(attribute, length))
+        if (attribute->rta_type <= NDA_MAX) attributes[attribute->rta_type] = attribute;
+    struct { rtattr attribute; uint32_t value; } extra{};
+    extra.attribute.rta_len = RTA_LENGTH(sizeof(extra.value));
+    if (scenario == "family") neighbor->ndm_family = AF_INET;
+    else if (scenario == "missing_mac") attributes[NDA_LLADDR] = nullptr;
+    else if (scenario == "short_mac") attributes[NDA_LLADDR]->rta_len = RTA_LENGTH(5);
+    else if (scenario == "missing_vlan") attributes[NDA_VLAN] = nullptr;
+    else if (scenario == "short_vlan") attributes[NDA_VLAN]->rta_len = RTA_LENGTH(1);
+    else if (scenario == "missing_protocol") attributes[NDA_PROTOCOL] = nullptr;
+    else if (scenario == "short_protocol") attributes[NDA_PROTOCOL]->rta_len = RTA_LENGTH(0);
+    else if (scenario == "foreign_protocol") *static_cast<uint8_t *>(RTA_DATA(attributes[NDA_PROTOCOL])) = 4;
+    else if (scenario == "zero_mac") memset(RTA_DATA(attributes[NDA_LLADDR]), 0, 6);
+    else if (scenario == "multicast_mac") *static_cast<uint8_t *>(RTA_DATA(attributes[NDA_LLADDR])) = 1;
+    else if (scenario == "zero_vlan" || scenario == "high_vlan")
+    {
+        uint16_t vlan = scenario == "zero_vlan" ? 0 : 4095;
+        memcpy(RTA_DATA(attributes[NDA_VLAN]), &vlan, sizeof(vlan));
+    }
+    else if (scenario == "short_master") attributes[NDA_MASTER]->rta_len = RTA_LENGTH(3);
+    else if (scenario == "missing_master") attributes[NDA_MASTER] = nullptr;
+    else if (scenario == "unknown_port") m_mockFdbSync.m_kernelL3Links.erase(301);
+    else if (scenario == "unknown_bridge") m_mockFdbSync.m_kernelL3Links.erase(229);
+    else if (scenario == "non_lag") m_mockFdbSync.m_kernelL3Links.at(301).kind = "dummy";
+    else if (scenario == "wrong_master") m_mockFdbSync.m_kernelL3Links.at(301).master = 230;
+    else if (scenario == "non_bridge") m_mockFdbSync.m_kernelL3Links.at(229).kind = "dummy";
+    else if (scenario == "missing_portchannel") Table(m_configDb.get(), "PORTCHANNEL").del("PortChannel31");
+    else if (scenario == "missing_vlan_config") Table(m_configDb.get(), "VLAN").del("Vlan3101");
+    else if (scenario == "missing_member") Table(m_configDb.get(), "VLAN_MEMBER").del("Vlan3101|PortChannel31");
+    else if (scenario == "remote_vtep") attributes[NDA_DST] = &extra.attribute;
+    else if (scenario == "nexthop_group") attributes[NDA_NH_ID] = &extra.attribute;
+    else if (scenario == "cached_mclag") m_mockFdbSync.m_mclag_remote_fdb_mac[key] = {"PortChannel31", FDB_TYPE_STATIC};
+    else if (scenario == "state_mclag") Table(m_stateDb.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME).set(key, {{"port", "PortChannel31"}});
+    else if (scenario == "fpm_mode") m_mockFdbSync.setMacSyncMode("fpm");
+    else if (scenario == "local_learn") Table(m_stateDb.get(), STATE_FDB_TABLE_NAME).set(key, {{"port", "PortChannel31"}, {"type", "dynamic"}});
+    else if (scenario == "peer_permanent") neighbor->ndm_state = NUD_NOARP | NUD_PERMANENT;
+    else if (scenario == "peer_incomplete") neighbor->ndm_state = NUD_NOARP | NUD_INCOMPLETE;
+    else if (scenario == "peer_failed") neighbor->ndm_state = NUD_NOARP | NUD_FAILED;
+    else if (scenario == "local_permanent") neighbor->ndm_state = NUD_PERMANENT;
+    else if (scenario == "local_incomplete") neighbor->ndm_state = NUD_INCOMPLETE;
+    else if (scenario == "local_failed") neighbor->ndm_state = NUD_FAILED;
+    else FAIL() << scenario;
+    // This boundary test supplies an already parsed attribute table, including
+    // malformed attributes that libnl may reject before onMsgNbr is reached.
+    m_mockFdbSync.handleKernelL3Pin(message, attributes);
+    free(message);
+    std::vector<FieldValueTuple> fields;
+    EXPECT_FALSE(getFdbTable().get(key, fields));
+    EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(OwnershipGuards, KernelPinInputTest, ::testing::Values(
+    "family", "missing_mac", "short_mac", "missing_vlan", "short_vlan", "missing_protocol",
+    "short_protocol", "foreign_protocol", "zero_mac", "multicast_mac", "zero_vlan", "high_vlan",
+    "short_master", "missing_master", "unknown_port", "unknown_bridge", "non_lag", "wrong_master",
+    "non_bridge", "missing_portchannel", "missing_vlan_config", "missing_member", "remote_vtep",
+    "nexthop_group", "cached_mclag", "state_mclag", "fpm_mode", "local_learn", "peer_permanent",
+    "peer_incomplete", "peer_failed", "local_permanent", "local_incomplete", "local_failed"));
+
+class KernelPinLeaseTest : public FdbSyncdEvpnMhTest,
+                           public ::testing::WithParamInterface<std::string>
+{
+};
+
+TEST_P(KernelPinLeaseTest, InvalidDurableLeaseCannotAuthorizeLocalReplay)
+{
+    configureKernelOwnerFixture(*this);
+    const std::string key = "Vlan3101:02:31:00:00:00:01";
+    const auto scenario = GetParam();
+    SCOPED_TRACE(scenario);
+    auto &app = getFdbTable();
+    app.set(key, {{"ifname", "PortChannel31"}, {"vni", "0"}, {"type", "static"},
+                  {"kernel_l3vni_sync", "true"}, {"l3vni_neigh_sync", "peer"}});
+    if (scenario == "missing_owner") app.hdel(key, "kernel_l3vni_sync");
+    else if (scenario == "foreign_owner") app.hset(key, "kernel_l3vni_sync", "false");
+    else if (scenario == "missing_stage") app.hdel(key, "l3vni_neigh_sync");
+    else if (scenario == "foreign_stage") app.hset(key, "l3vni_neigh_sync", "other");
+    else if (scenario == "missing_port") app.hdel(key, "ifname");
+    else if (scenario == "different_port") app.hset(key, "ifname", "PortChannel32");
+    else if (scenario == "missing_vni") app.hdel(key, "vni");
+    else if (scenario == "different_vni") app.hset(key, "vni", "1");
+    else if (scenario == "missing_type") app.hdel(key, "type");
+    else if (scenario == "peer_dynamic") app.hset(key, "type", "dynamic");
+    else if (scenario == "local_static") app.hset(key, "l3vni_neigh_sync", "local");
+    else if (scenario == "remote_vtep") app.hset(key, "remote_vtep", "192.0.2.1");
+    else if (scenario == "nexthop_group") app.hset(key, "nexthop_group", "536870913");
+    else if (scenario == "state_other_port") Table(m_stateDb.get(), STATE_FDB_TABLE_NAME).set(key, {{"port", "PortChannel32"}, {"type", "dynamic"}});
+    else if (scenario == "state_no_type") Table(m_stateDb.get(), STATE_FDB_TABLE_NAME).set(key, {{"port", "PortChannel31"}});
+    else if (scenario == "state_static") Table(m_stateDb.get(), STATE_FDB_TABLE_NAME).set(key, {{"port", "PortChannel31"}, {"type", "static"}});
+    else FAIL() << scenario;
+    std::vector<FieldValueTuple> before, after;
+    ASSERT_TRUE(app.get(key, before));
+    auto *message = capturedKernelPin(true, 11, NUD_REACHABLE);
+    m_mockFdbSync.onMsgRaw(message);
+    free(message);
+    ASSERT_TRUE(app.get(key, after));
+    EXPECT_EQ(after, before);
+    EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(RecoveryGuards, KernelPinLeaseTest, ::testing::Values(
+    "missing_owner", "foreign_owner", "missing_stage", "foreign_stage", "missing_port", "different_port",
+    "missing_vni", "different_vni", "missing_type", "peer_dynamic", "local_static", "remote_vtep",
+    "nexthop_group", "state_other_port", "state_no_type", "state_static"));
+
+class KernelPinReleaseTest : public FdbSyncdEvpnMhTest,
+                             public ::testing::WithParamInterface<std::string>
+{
+};
+
+TEST_P(KernelPinReleaseTest, WithdrawalCannotRemoveAReplacedLease)
+{
+    configureKernelOwnerFixture(*this);
+    const std::string key = "Vlan3101:02:31:00:00:00:01";
+    auto *message = capturedKernelPin(true);
+    m_mockFdbSync.onMsgRaw(message);
+    free(message);
+    auto &app = getFdbTable();
+    const auto field = GetParam();
+    SCOPED_TRACE(field);
+    app.hset(key, field, field == "ifname" ? "PortChannel32" : "replacement");
+    std::vector<FieldValueTuple> before, after;
+    ASSERT_TRUE(app.get(key, before));
+    message = capturedKernelPin(false, 11, NUD_REACHABLE);
+    m_mockFdbSync.onMsgRaw(message);
+    free(message);
+    ASSERT_TRUE(app.get(key, after));
+    EXPECT_EQ(after, before);
+    EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+}
+
+INSTANTIATE_TEST_SUITE_P(DeleteGuards, KernelPinReleaseTest, ::testing::Values(
+    "kernel_l3vni_sync", "l3vni_neigh_sync", "ifname", "vni", "type", "remote_vtep", "nexthop_group"));
+
+TEST_F(FdbSyncdEvpnMhTest, L3KernelPinAcceptsBondAndIgnoresUnrelatedVniMaps)
+{
+    configureKernelOwnerFixture(*this);
+    m_mockFdbSync.m_kernelL3Links.at(301).kind = "bond";
+    Table map(m_configDb.get(), "VXLAN_TUNNEL_MAP");
+    map.set("missing-vlan", {{"vni", "1000"}});
+    map.set("unrelated", {{"vlan", "Vlan200"}, {"vni", "10200"}});
+    auto *message = capturedKernelPin(true);
+    m_mockFdbSync.onMsgRaw(message);
+    free(message);
+    std::vector<FieldValueTuple> fields;
+    ASSERT_TRUE(getFdbTable().get("Vlan3101:02:31:00:00:00:01", fields));
+    EXPECT_EQ(fvsGetValue(fields, "ifname", true).get(), "PortChannel31");
+}
+
+TEST_F(FdbSyncdEvpnMhTest, L3KernelPinPeerStateEchoAndHardwareLocalMovePreserveOwnership)
+{
+    configureKernelOwnerFixture(*this);
+    const std::string key = "Vlan3101:02:31:00:00:00:01";
+    auto *message = capturedKernelPin(true);
+    m_mockFdbSync.onMsgRaw(message);
+    free(message);
+    mockCallArgs.clear();
+    m_mockFdbSync.processStateFdbEntry({key, "SET", {{"port", "PortChannel31"}, {"type", "dynamic"}}}, false);
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.at(key).port_name, "PortChannel31");
+    m_mockFdbSync.processStateFdbEntry({key, "DEL", {}}, false);
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.count(key), 0u);
+    EXPECT_EQ(countBridgeFdbCmds(), 0u);
+    std::vector<FieldValueTuple> fields;
+    ASSERT_TRUE(getFdbTable().get(key, fields));
+    Table(m_stateDb.get(), STATE_FDB_TABLE_NAME).set(key, {{"port", "PortChannel32"}, {"type", "dynamic"}});
+    m_mockFdbSync.processStateFdbEntry({key, "SET", {{"port", "PortChannel32"}, {"type", "dynamic"}}}, false);
+    EXPECT_FALSE(getFdbTable().get(key, fields));
+    EXPECT_TRUE(m_mockFdbSync.m_kernelL3Pins.empty());
+    EXPECT_EQ(m_mockFdbSync.m_fdb_mac.at(key).port_name, "PortChannel32");
 }
