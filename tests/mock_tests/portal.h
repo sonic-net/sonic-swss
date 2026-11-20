@@ -93,6 +93,11 @@ struct Portal
         {
             return obj.supported_trap_ids;
         }
+
+        static bool &excludePortsSupported(CoppOrch &obj)
+        {
+            return obj.m_exclude_ports_supported;
+        }
     };
 
     struct SflowOrchInternal

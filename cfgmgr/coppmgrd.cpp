@@ -29,6 +29,9 @@ int main(int argc, char **argv)
             CFG_COPP_TRAP_TABLE_NAME,
             CFG_COPP_GROUP_TABLE_NAME,
             CFG_FEATURE_TABLE_NAME,
+            CFG_COPP_TRAP_EXCLUDE_PORTS_TABLE_NAME,
+            CFG_PORT_TABLE_NAME,
+            CFG_LAG_MEMBER_TABLE_NAME,
         };
 
         WarmStart::initialize("coppmgrd", "swss");
