@@ -645,7 +645,8 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
     return true;
 }
 
-bool RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+template <typename ConsumerT>
+bool RouteOrch::toBulkTask(ConsumerT& consumer, RouteDrainBatch& batch,
                            const std::function<bool()>& expired)
 {
     SWSS_LOG_ENTER();
@@ -1255,7 +1256,7 @@ void RouteOrch::releaseStagedPin(RouteBulkContext& ctx)
     ctx.staged = StagedNextHop::kNone;
 }
 
-bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+bool RouteOrch::responseHandlerTask(ConsumerBaseCommon& consumer, RouteDrainBatch& batch,
                                     std::deque<KeyOpFieldsValuesTuple>& retained,
                                     const std::function<bool()>& expired,
                                     bool& keepDraining)
@@ -1478,7 +1479,8 @@ bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& bat
     return true;
 }
 
-void RouteOrch::doTask(ConsumerBase& consumer)
+template <typename ConsumerT>
+void RouteOrch::doRouteTaskImpl(ConsumerT& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -1493,23 +1495,32 @@ void RouteOrch::doTask(ConsumerBase& consumer)
 
     if (table_name == APP_LABEL_ROUTE_TABLE_NAME)
     {
-        doLabelTask(consumer);
+        doLabelTaskImpl(consumer);
         return;
     }
 
     /* Default handling is for APP_ROUTE_TABLE_NAME. Only the ZMQ consumer
      * yields; the label table above and the non-ZMQ consumer drain without
      * yielding. */
-    auto *zmqConsumer = dynamic_cast<ZmqRouteConsumer *>(&consumer);
-    if (zmqConsumer != nullptr)
-    {
-        drainRoutes(*zmqConsumer);
-    }
-    else
-    {
-        drainRoutes(consumer);
-    }
+    drainRoutes(consumer);
 }
+
+void RouteOrch::doTask(ConsumerBase& consumer)
+{
+    doRouteTaskImpl(consumer);
+}
+
+void RouteOrch::doTask(ZmqRouteConsumer& consumer)
+{
+    doRouteTaskImpl(consumer);
+}
+
+template void RouteOrch::doRouteTaskImpl<ConsumerBase>(ConsumerBase&);
+template void RouteOrch::doRouteTaskImpl<ZmqRouteConsumer>(ZmqRouteConsumer&);
+template bool RouteOrch::toBulkTask<ConsumerBase>(ConsumerBase&, RouteDrainBatch&,
+                                                  const std::function<bool()>&);
+template bool RouteOrch::toBulkTask<ZmqRouteConsumer>(ZmqRouteConsumer&, RouteDrainBatch&,
+                                                      const std::function<bool()>&);
 
 /* Runs whole batches back to back, without yielding. */
 void RouteOrch::drainRoutes(ConsumerBase& consumer)

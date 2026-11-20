@@ -386,7 +386,14 @@ private:
     void updateDefRouteState(string ip, bool add=false);
 
     void doTask(ConsumerBase& consumer) override;
-    void doLabelTask(ConsumerBase& consumer);
+    void doTask(ZmqRouteConsumer& consumer) override;
+
+    /* Shared task bodies for both consumer types: ConsumerBase (SyncMap, no
+     * ZMQ server) and ZmqRouteConsumer (RouteSyncMap). doRouteTaskImpl is in
+     * routeorch.cpp and doLabelTaskImpl in mplsrouteorch.cpp, each explicitly
+     * instantiated there for exactly these two types. */
+    template <typename ConsumerT> void doRouteTaskImpl(ConsumerT& consumer);
+    template <typename ConsumerT> void doLabelTaskImpl(ConsumerT& consumer);
 
     bool drainInFlight(const std::string &tableName) const override
     {
@@ -485,10 +492,11 @@ private:
      * The non-yielding drain passes kNeverExpired. */
     static const std::function<bool()> kNeverExpired;
 
-    bool toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+    template <typename ConsumerT>
+    bool toBulkTask(ConsumerT& consumer, RouteDrainBatch& batch,
                     const std::function<bool()>& expired);
     void flushTask();
-    bool responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+    bool responseHandlerTask(ConsumerBaseCommon& consumer, RouteDrainBatch& batch,
                              std::deque<swss::KeyOpFieldsValuesTuple>& retained,
                              const std::function<bool()>& expired,
                              bool& keepDraining);

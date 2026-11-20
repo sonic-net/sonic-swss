@@ -17,9 +17,14 @@ extern CrmOrch *gCrmOrch;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
 
-void RouteOrch::doLabelTask(ConsumerBase& consumer)
+template <typename ConsumerT>
+void RouteOrch::doLabelTaskImpl(ConsumerT& consumer)
 {
     SWSS_LOG_ENTER();
+
+    /* Resync DELs are merged into m_toSync after the scan. An insert into a
+     * RouteSyncMap during the scan may rehash it and invalidate `it`. */
+    std::deque<KeyOpFieldsValuesTuple> resyncDels;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -78,9 +83,7 @@ void RouteOrch::doLabelTask(ConsumerBase& consumer)
                         for (auto i : j.second)
                         {
                             vector<FieldValueTuple> v;
-                            key = vrf + to_string(i.first);
-                            auto x = KeyOpFieldsValuesTuple(key, DEL_COMMAND, v);
-                            consumer.addToSync(x);
+                            resyncDels.emplace_back(vrf + to_string(i.first), DEL_COMMAND, v);
                         }
                     }
                     m_resync = true;
@@ -415,7 +418,15 @@ void RouteOrch::doLabelTask(ConsumerBase& consumer)
             }
         }
     }
+
+    if (!resyncDels.empty())
+    {
+        consumer.addToSync(resyncDels);
+    }
 }
+
+template void RouteOrch::doLabelTaskImpl<ConsumerBase>(ConsumerBase&);
+template void RouteOrch::doLabelTaskImpl<ZmqRouteConsumer>(ZmqRouteConsumer&);
 
 void RouteOrch::addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {

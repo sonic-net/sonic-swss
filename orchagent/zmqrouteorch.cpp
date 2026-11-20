@@ -6,8 +6,9 @@ using namespace std;
 extern int gBatchSize;
 extern size_t gMaxBulkSize;
 
-ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name)
-    : ConsumerBase(select, orch, name)
+ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, ZmqRouteOrch *orch, const std::string &name)
+    : ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge>(select, orch, name)
+    , m_routeOrch(orch)
 {
     // mqPollThread delivers bursts of tuples through this callback. Stage them
     // in the plain m_ingress map under m_ingressMutex rather than merging into
@@ -20,8 +21,8 @@ ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orc
             std::lock_guard<std::mutex> lk(m_ingressMutex);
             for (const auto &kco : kcos)
             {
-                // Plain last-writer-wins staging by key. The SyncMap merge into
-                // m_toSync is applied later by execute()'s addToSync().
+                // Plain last-writer-wins staging by key. The OverwriteMerge
+                // into m_toSync is applied later by execute()'s addToSync().
                 m_ingress[kfvKey(*kco)] = *kco;
             }
             if (m_ingress.size() >= gMaxBulkSize)
@@ -38,7 +39,7 @@ void ZmqRouteConsumer::execute()
     /* A drain batch is in flight: only advance it. New tuples keep coalescing
      * in m_ingress, and the drain re-arms this selectable when the batch ends
      * with ingress pending. */
-    if (static_cast<ZmqRouteOrch*>(m_orch)->drainInFlight(getTableName()))
+    if (m_routeOrch->drainInFlight(getTableName()))
     {
         drain();
         return;
@@ -80,7 +81,7 @@ void ZmqRouteConsumer::dumpPendingTasks(std::vector<std::string> &ts)
             ts.push_back(dumpTuple(kv.second));
         }
     }
-    ConsumerBase::dumpPendingTasks(ts);
+    ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge>::dumpPendingTasks(ts);
 }
 
 void ZmqRouteConsumer::drain()
@@ -91,7 +92,7 @@ void ZmqRouteConsumer::drain()
     // resumes the same batch on the next call. Mid-batch, m_toSync can be
     // empty because the batch owns its entries.
     if (hasPendingTasks())
-        (static_cast<ZmqRouteOrch*>(m_orch))->doTask(*this);
+        m_routeOrch->doTask(*this);
 }
 
 bool ZmqRouteConsumer::hasPendingTasks() const
@@ -99,7 +100,7 @@ bool ZmqRouteConsumer::hasPendingTasks() const
     // m_toSyncQueue is left out: the ordered queue is never enabled on the
     // ZMQ route path.
     return !m_toSync.empty() ||
-           static_cast<ZmqRouteOrch*>(m_orch)->drainInFlight(getTableName());
+           m_routeOrch->drainInFlight(getTableName());
 }
 
 

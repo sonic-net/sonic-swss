@@ -10,9 +10,11 @@
 #include "zmqrouteserver.h"
 #include "zmqrouteconsumerstatetable.h"
 
-class ZmqRouteConsumer : public ConsumerBase {
+class ZmqRouteOrch;
+
+class ZmqRouteConsumer : public ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge> {
 public:
-    ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name);
+    ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, ZmqRouteOrch *orch, const std::string &name);
 
     swss::TableBase *getConsumerTable() const override
     {
@@ -49,6 +51,11 @@ public:
  * protected mapped to public) can assert staging invariants such as
  * m_ingress.empty() after a drain. */
 protected:
+    /* Typed owner. Only ZmqRouteOrch::addConsumer constructs this consumer,
+     * so it calls doTask(ZmqRouteConsumer&) and drainInFlight() without a
+     * cast. */
+    ZmqRouteOrch *m_routeOrch;
+
     // Staging buffer for tuples delivered by the ZmqRouteServer mqPollThread
     // ingress callback. The callback writes here (rather than merging into
     // m_toSync directly); execute() drains it into m_toSync.
@@ -57,10 +64,12 @@ protected:
     // owned exclusively by the orch main thread (execute() -> drain() ->
     // doTask()), and no lock is held across doTask(). That is what keeps
     // re-entrant addToSync() calls made from inside doTask() -- e.g. the route
-    // resync path in RouteOrch::doTask() -- safe rather than a self-deadlock,
-    // and it lets the base ConsumerBase paths stay lock-free.
+    // resync path in RouteOrch -- safe rather than a self-deadlock, and it
+    // lets the base pending-task paths stay lock-free.
+    //
+    // Same type as m_toSync: both keep one entry per key, last writer wins.
     std::mutex m_ingressMutex;
-    std::unordered_map<std::string, swss::KeyOpFieldsValuesTuple> m_ingress;
+    RouteSyncMap m_ingress;
 };
 
 class ZmqRouteOrch : public Orch
@@ -69,7 +78,13 @@ public:
     ZmqRouteOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqRouteServer *zmqServer);
     ZmqRouteOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNames_with_pri, swss::ZmqRouteServer *zmqServer);
 
+    // Empty defaults rather than pure virtual: the unit tests create
+    // ZmqRouteOrch directly. doTask(ConsumerBase&) serves the path without a
+    // ZMQ server, where the executor is a plain Consumer;
+    // doTask(ZmqRouteConsumer&) is the ZMQ path, called from
+    // ZmqRouteConsumer::drain().
     virtual void doTask(ConsumerBase &consumer) { };
+    virtual void doTask(ZmqRouteConsumer &consumer) { };
     void doTask(Consumer &consumer) override;
 
     /* True while a drain batch for tableName is between yields.

@@ -69,7 +69,13 @@ public:
     {
     }
 
-    void doTask(ConsumerBase &consumer) override
+    // One recording body for both pending-map types, as RouteOrch shares
+    // its task body between ConsumerBase and ZmqRouteConsumer.
+    void doTask(ConsumerBase &consumer) override { record(consumer); }
+    void doTask(ZmqRouteConsumer &consumer) override { record(consumer); }
+
+    template <typename ConsumerT>
+    void record(ConsumerT &consumer)
     {
         ++doTaskCount;
         // Record the keys handed to doTask before clearing. m_toSync is cleared
@@ -676,4 +682,68 @@ TEST(ZmqRouteConsumerTest, RetryCacheDelPlusSetReachableAfterCoalescing)
         fm[fvField(fv)] = fvValue(fv);
     EXPECT_EQ(fm["nexthop"], "10.0.0.9");
     EXPECT_EQ(fm["ifname"], "Ethernet12");
+}
+
+// The route consumer keeps one pending entry per key, and the newest tuple
+// replaces it whole: a newer SET replaces an older SET with no field merge,
+// DEL replaces a pending SET, and SET replaces a pending DEL.
+TEST(ZmqRouteConsumerTest, OverwriteMergeCoalescesPerKey)
+{
+    vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_T1", 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server("tcp://*:1269", "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    KeyOpFieldsValuesTuple setA("k1", SET_COMMAND,
+                                vector<FieldValueTuple>{{"nh", "1.1.1.1"}});
+    KeyOpFieldsValuesTuple setB("k1", SET_COMMAND,
+                                vector<FieldValueTuple>{{"nh", "2.2.2.2"},
+                                                        {"ifname", "Ethernet0"}});
+
+    zrc->addToSync(setA);
+    zrc->addToSync(setB);
+    ASSERT_EQ(zrc->m_toSync.size(), 1u);
+    EXPECT_EQ(kfvOp(zrc->m_toSync.begin()->second), SET_COMMAND);
+    EXPECT_EQ(kfvFieldsValues(zrc->m_toSync.begin()->second),
+              kfvFieldsValues(setB));
+
+    KeyOpFieldsValuesTuple del("k1", DEL_COMMAND, vector<FieldValueTuple>{});
+    zrc->addToSync(del);
+    ASSERT_EQ(zrc->m_toSync.size(), 1u);
+    EXPECT_EQ(kfvOp(zrc->m_toSync.begin()->second), DEL_COMMAND);
+
+    zrc->addToSync(setA);
+    ASSERT_EQ(zrc->m_toSync.size(), 1u);
+    EXPECT_EQ(kfvOp(zrc->m_toSync.begin()->second), SET_COMMAND);
+    EXPECT_EQ(kfvFieldsValues(zrc->m_toSync.begin()->second),
+              kfvFieldsValues(setA));
+}
+
+// Warm restart refill and Orch::dumpPendingTasks find consumers by
+// dynamic_cast<ConsumerBaseCommon*> and skip any executor that fails the cast,
+// so the route consumer must stay visible to both.
+TEST(ZmqRouteOrchTest, RouteConsumerVisibleToDaemonWideMachinery)
+{
+    vector<table_name_with_pri_t> tables = { { "ZMQ_ROUTE_UT_T1", 1 } };
+    auto app_db = make_shared<DBConnector>("APPL_DB", 0);
+    ZmqRouteServer server("tcp://*:1270", "", /*lazyBind=*/true);
+    auto orch = make_shared<RecordingZmqRouteOrch>(app_db.get(), tables, &server);
+    auto *zrc = dynamic_cast<ZmqRouteConsumer *>(
+        orch->m_consumerMap.begin()->second.get());
+    ASSERT_NE(zrc, nullptr);
+
+    EXPECT_EQ(orch->getConsumerBase("ZMQ_ROUTE_UT_T1"),
+              static_cast<ConsumerBaseCommon *>(zrc));
+
+    KeyOpFieldsValuesTuple kfv("visible_route", SET_COMMAND,
+                               vector<FieldValueTuple>{{"f", "v"}});
+    zrc->addToSync(kfv);
+
+    vector<string> ts;
+    orch->dumpPendingTasks(ts);
+    ASSERT_EQ(ts.size(), 1u);
+    EXPECT_NE(ts[0].find("visible_route"), string::npos);
 }
