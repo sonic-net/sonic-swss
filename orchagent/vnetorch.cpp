@@ -404,8 +404,9 @@ std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, const VNetInf
     return vnet_obj;
 }
 
-VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
-         : Orch2(db, tableName, request_)
+VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, DBConnector *stateDb, const std::string& stateTableName, VNET_EXEC op)
+         : Orch2(db, tableName, request_),
+           m_stateVrfObjectTable(stateDb, stateTableName)
 {
     vnet_exec_ = op;
 
@@ -563,6 +564,7 @@ bool VNetOrch::addOperation(const Request& request)
         if (create)
         {
             vnet_table_[vnet_name] = std::move(obj);
+            m_stateVrfObjectTable.hset(vnet_name, "state", "ok");
         }
         else if (peer)
         {
@@ -629,6 +631,7 @@ bool VNetOrch::delOperation(const Request& request)
     }
 
     vnet_table_.erase(vnet_name);
+    m_stateVrfObjectTable.del(vnet_name);
 
     return true;
 }

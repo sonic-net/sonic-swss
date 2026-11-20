@@ -314,7 +314,8 @@ void VrfMgr::doTask(Consumer &consumer)
             /*
              * Delay delLink until vrf object deleted in orchagent to ensure fpmsyncd can get vrf ifname.
              * Now state VRF_TABLE|Vrf represent vrf exist in appDB, if it exist vrf device is always effective.
-             * VRFOrch add/del state VRF_OBJECT_TABLE|Vrf to represent object existence. VNETOrch is not do so now.
+             * VRFOrch add/del state VRF_OBJECT_TABLE|Vrf and VNETOrch add/del state VRF_OBJECT_TABLE|Vnet
+             * to represent object existence.
              */
             if (consumer.getTableName() == CFG_VXLAN_EVPN_NVO_TABLE_NAME)
             {
@@ -347,8 +348,20 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             else
             {
-                m_appVnetTableProducer.del(vrfName);
-                m_stateVrfTable.del(vrfName);
+                vector<FieldValueTuple> temp;
+
+                if (m_stateVrfTable.get(vrfName, temp))
+                {
+                    m_appVnetTableProducer.del(vrfName);
+                    m_stateVrfTable.del(vrfName);
+                }
+
+                /* VNETOrch removes the VNET only after all its routes are gone */
+                if (isVrfObjExist(vrfName))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             if (consumer.getTableName() != CFG_VXLAN_EVPN_NVO_TABLE_NAME)
