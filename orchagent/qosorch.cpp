@@ -17,6 +17,7 @@ using namespace std;
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_port_api_t *sai_port_api;
+extern sai_system_port_api_t *sai_system_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_scheduler_api_t *sai_scheduler_api;
 extern sai_wred_api_t *sai_wred_api;
@@ -2043,6 +2044,54 @@ task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsVal
     return task_status;
 }
 
+task_process_status QosOrch::applyTcToQueueMapToSystemPort(const Port &port, sai_object_id_t map_id)
+{
+    SWSS_LOG_ENTER();
+
+    /*
+     * On a VOQ switch the queue that actually buffers and schedules traffic is the ingress
+     * VOQ, keyed by the destination system port + TC. The port-level
+     * SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP only reprograms the downstream egress (EGQ) mapping;
+     * the vendor SAI deliberately skips the TC->VOQ map on a port attribute set. To make the
+     * TC->queue map actually take effect, mirror it onto the port's local system port via
+     * SAI_SYSTEM_PORT_ATTR_QOS_TC_TO_QUEUE_MAP, which hits the VOQ path.
+     *
+     * The caller gates this on a VOQ switch. Every front-panel port on a VOQ switch owns a
+     * local system port, so a missing or non-local system port here means the system port has
+     * not been created yet (a transient ordering condition during init). Retry until it is
+     * ready rather than silently skipping the VOQ programming, which would leave the configured
+     * map ineffective - the very failure this path exists to fix.
+     */
+    if (port.m_system_port_oid == SAI_NULL_OBJECT_ID ||
+        port.m_system_port_info.type != SAI_SYSTEM_PORT_TYPE_LOCAL)
+    {
+        SWSS_LOG_WARN("Local system port for %s is not ready (system_port_oid:0x%" PRIx64 ", type:%d); "
+                      "deferring TC->VOQ map programming",
+                      port.m_alias.c_str(), port.m_system_port_oid, port.m_system_port_info.type);
+        return task_process_status::task_need_retry;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_SYSTEM_PORT_ATTR_QOS_TC_TO_QUEUE_MAP;
+    attr.value.oid = map_id;
+
+    sai_status_t status = sai_system_port_api->set_system_port_attribute(port.m_system_port_oid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to apply tc_to_queue map 0x%" PRIx64 " to system port 0x%" PRIx64 " of %s, rv:%d",
+                       map_id, port.m_system_port_oid, port.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_SYSTEM_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return task_process_status::task_invalid_entry;
+        }
+    }
+
+    SWSS_LOG_INFO("Applied tc_to_queue map 0x%" PRIx64 " to system port 0x%" PRIx64 " of %s",
+                  map_id, port.m_system_port_oid, port.m_alias.c_str());
+    return task_process_status::task_success;
+}
+
 task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -2095,6 +2144,17 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                     }
                 }
                 SWSS_LOG_INFO("Removed %s on port %s", mapRef.first.c_str(), port_name.c_str());
+
+                /* On VOQ switches the port set above only cleared the EGQ mapping; clear the
+                 * local system port's TC->VOQ mapping too. */
+                if (gMySwitchType == "voq" && mapRef.second == SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP)
+                {
+                    task_process_status sp_status = applyTcToQueueMapToSystemPort(port, SAI_NULL_OBJECT_ID);
+                    if (sp_status != task_process_status::task_success)
+                    {
+                        return sp_status;
+                    }
+                }
             }
 
             if (!gPortsOrch->setPortPfc(port.m_port_id, 0))
@@ -2202,6 +2262,17 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                 }
             }
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
+
+            /* On VOQ switches the port set above only programs the EGQ mapping; mirror the
+             * TC->queue map onto the local system port so the VOQ mapping takes effect too. */
+            if (gMySwitchType == "voq" && it->first == SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP)
+            {
+                task_process_status sp_status = applyTcToQueueMapToSystemPort(port, it->second.second);
+                if (sp_status != task_process_status::task_success)
+                {
+                    return sp_status;
+                }
+            }
         }
 
         sai_uint8_t old_pfc_enable = 0;

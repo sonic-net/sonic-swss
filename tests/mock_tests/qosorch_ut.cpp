@@ -9,6 +9,7 @@
 #include "mock_table.h"
 
 extern string gMySwitchType;
+extern sai_system_port_api_t *sai_system_port_api;
 
 
 namespace qosorch_test
@@ -38,6 +39,12 @@ namespace qosorch_test
     sai_set_switch_attribute_fn old_set_switch_attribute_fn;
     sai_switch_api_t ut_sai_switch_api, *pold_sai_switch_api;
     sai_tunnel_api_t ut_sai_tunnel_api, *pold_sai_tunnel_api;
+    sai_system_port_api_t ut_sai_system_port_api, *pold_sai_system_port_api;
+
+    // Capture state for the VOQ TC->queue (system port) programming path
+    int sai_set_system_port_tc_to_queue_count;
+    sai_object_id_t set_system_port_tc_to_queue_map_id;
+    sai_object_id_t set_system_port_oid;
 
     typedef struct
     {
@@ -52,6 +59,17 @@ namespace qosorch_test
         if (rc == SAI_STATUS_SUCCESS && attr->id == SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP)
             switch_dscp_to_tc_map_id = attr->value.oid;
         return rc;
+    }
+
+    sai_status_t _ut_stub_sai_set_system_port_attribute(sai_object_id_t system_port_id, const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_SYSTEM_PORT_ATTR_QOS_TC_TO_QUEUE_MAP)
+        {
+            sai_set_system_port_tc_to_queue_count++;
+            set_system_port_tc_to_queue_map_id = attr->value.oid;
+            set_system_port_oid = system_port_id;
+        }
+        return SAI_STATUS_SUCCESS;
     }
 
     sai_status_t _ut_stub_sai_remove_qos_map(sai_object_id_t qos_map_id)
@@ -687,6 +705,83 @@ namespace qosorch_test
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_queue_map", CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "tc_to_pg_map", CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "tc_to_queue_map", CFG_TC_TO_QUEUE_MAP_TABLE_NAME, "AZURE");
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestVoqPortQosMapProgramsSystemPort)
+    {
+        // On a VOQ switch, applying tc_to_queue_map to a port must also program the port's
+        // local system port (SAI_SYSTEM_PORT_ATTR_QOS_TC_TO_QUEUE_MAP) so the VOQ takes effect.
+        std::string saved_switch_type = gMySwitchType;
+        gMySwitchType = "voq";
+
+        // Redirect the system port API so we can observe the VOQ TC->queue programming
+        pold_sai_system_port_api = sai_system_port_api;
+        if (pold_sai_system_port_api)
+            ut_sai_system_port_api = *pold_sai_system_port_api;
+        ut_sai_system_port_api.set_system_port_attribute = _ut_stub_sai_set_system_port_attribute;
+        sai_system_port_api = &ut_sai_system_port_api;
+
+        // Attach a local system port to Ethernet0 so the TC->VOQ path has a target
+        const sai_object_id_t test_system_port_oid = 0x5d00000000000001;
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        port.m_system_port_oid = test_system_port_oid;
+        port.m_system_port_info.type = SAI_SYSTEM_PORT_TYPE_LOCAL;
+        gPortsOrch->setPort("Ethernet0", port);
+
+        sai_set_system_port_tc_to_queue_count = 0;
+        set_system_port_tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
+        set_system_port_oid = SAI_NULL_OBJECT_ID;
+
+        // Apply tc_to_queue_map to Ethernet0 via PORT_QOS_MAP
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", {{"tc_to_queue_map", "AZURE"}}});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        // The same map applied to the port must have been mirrored onto the local system port
+        sai_object_id_t azure_map_oid = (*QosOrch::getTypeMap()[CFG_TC_TO_QUEUE_MAP_TABLE_NAME])["AZURE"].m_saiObjectId;
+        ASSERT_NE(azure_map_oid, SAI_NULL_OBJECT_ID);
+        ASSERT_EQ(sai_set_system_port_tc_to_queue_count, 1);
+        ASSERT_EQ(set_system_port_oid, test_system_port_oid);
+        ASSERT_EQ(set_system_port_tc_to_queue_map_id, azure_map_oid);
+
+        // Removing the port entry must clear the system port's VOQ mapping back to NULL
+        RemoveItem(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0");
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(sai_set_system_port_tc_to_queue_count, 2);
+        ASSERT_EQ(set_system_port_oid, test_system_port_oid);
+        ASSERT_EQ(set_system_port_tc_to_queue_map_id, SAI_NULL_OBJECT_ID);
+
+        sai_system_port_api = pold_sai_system_port_api;
+        gMySwitchType = saved_switch_type;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestNonVoqPortQosMapSkipsSystemPort)
+    {
+        // On a non-VOQ switch, the system port must never be touched.
+        ASSERT_NE(gMySwitchType, "voq");
+
+        pold_sai_system_port_api = sai_system_port_api;
+        if (pold_sai_system_port_api)
+            ut_sai_system_port_api = *pold_sai_system_port_api;
+        ut_sai_system_port_api.set_system_port_attribute = _ut_stub_sai_set_system_port_attribute;
+        sai_system_port_api = &ut_sai_system_port_api;
+
+        sai_set_system_port_tc_to_queue_count = 0;
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", {{"tc_to_queue_map", "AZURE"}}});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        ASSERT_EQ(sai_set_system_port_tc_to_queue_count, 0);
+
+        sai_system_port_api = pold_sai_system_port_api;
     }
 
     TEST_F(QosOrchTest, QosOrchTestQueueRemoveWredProfile)
