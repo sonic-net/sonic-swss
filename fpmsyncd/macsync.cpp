@@ -815,6 +815,10 @@ void MacSync::processNhgFlush(std::chrono::steady_clock::time_point now)
  */
 void MacSync::onEsPortVlan(const string& dfKey, bool present)
 {
+    /* The main loop notes an FPM message only once select() returns the link,
+     * which can come after the DF key expiry timer read in the same poll. */
+    m_dfKeySinceStart = true;
+    noteFpmMessage();
     m_esDfUnconfirmed.erase(dfKey);
     bool known = present ? !m_esDfKeys.insert(dfKey).second : !m_esDfKeys.erase(dfKey);
     auto sep = dfKey.find(':');
@@ -879,6 +883,53 @@ void MacSync::onWarmStartEnd()
         m_esDfKeys.erase(key);
     }
     m_esDfUnconfirmed.clear();
+}
+
+time_t MacSync::startDfKeyExpiry(std::chrono::steady_clock::time_point now)
+{
+    m_dfExpirySince = now;
+    m_dfKeySinceStart = false;
+    return m_esDfUnconfirmed.empty() ? 0 : STALE_SWEEP_HOLD;
+}
+
+/*
+ * After a cold restart zebra starts empty and learns the ES ports only from
+ * the config replay, so its DF entries can come well after the connect. The
+ * keys still waiting go no earlier than STALE_SWEEP_HOLD after the connect,
+ * then once zebra has sent a DF entry and the FPM channel has been quiet for
+ * STALE_SWEEP_QUIET; with no DF entry from zebra, at STALE_SWEEP_MAX.
+ */
+time_t MacSync::onDfKeyExpiryTimer(std::chrono::steady_clock::time_point now)
+{
+    using std::chrono::duration_cast;
+    using time_t_seconds = std::chrono::duration<time_t>;
+
+    if (m_esDfUnconfirmed.empty())
+    {
+        return 0;
+    }
+
+    time_t sinceMsg = duration_cast<time_t_seconds>(now - m_lastFpmMessage).count();
+    time_t sinceStart = duration_cast<time_t_seconds>(now - m_dfExpirySince).count();
+
+    if (sinceStart < STALE_SWEEP_HOLD)
+    {
+        return STALE_SWEEP_HOLD - sinceStart;
+    }
+
+    bool settled = m_dfKeySinceStart && sinceMsg >= STALE_SWEEP_QUIET;
+
+    if (!settled && sinceStart < STALE_SWEEP_MAX)
+    {
+        time_t quiet = m_dfKeySinceStart ? STALE_SWEEP_QUIET - sinceMsg : STALE_SWEEP_QUIET;
+
+        return std::max<time_t>(1, std::min(quiet, STALE_SWEEP_MAX - sinceStart));
+    }
+
+    SWSS_LOG_NOTICE("MacSync: %zu EVPN_DF_TABLE keys zebra did not send again are gone",
+                    m_esDfUnconfirmed.size());
+    onWarmStartEnd();
+    return 0;
 }
 
 /* The timer can fire after it was re-armed, so only the re-adds that are due run. */

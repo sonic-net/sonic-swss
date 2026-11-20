@@ -180,6 +180,7 @@ int main(int argc, char **argv)
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
             SelectableTimer macStaleTimer(timespec{0, 0});
             SelectableTimer esDfWarmTimer(timespec{0, 0});
+            SelectableTimer esDfExpiryTimer(timespec{0, 0});
            
             /*
              * Pipeline should be flushed right away to deal with state pending
@@ -255,11 +256,15 @@ int main(int argc, char **argv)
                 sync.startRouteCoalescer();
                 sync.getWarmStartHelper().setState(WarmStart::WSDISABLED);
 
-                /* zebra sends the EVPN_DF_TABLE keys it holds right after the connect;
-                 * those read at start that it has not sent by then are gone. */
-                esDfWarmTimer.setInterval(timespec{MacSync::STALE_SWEEP_HOLD, 0});
-                esDfWarmTimer.start();
-                s.addSelectable(&esDfWarmTimer);
+                /* The EVPN_DF_TABLE keys read at start go once zebra's DF
+                 * entries have settled, as remote MACs do; see MacSync. */
+                time_t dfWait = macsync.startDfKeyExpiry();
+                if (dfWait)
+                {
+                    esDfExpiryTimer.setInterval(timespec{dfWait, 0});
+                    esDfExpiryTimer.start();
+                    s.addSelectable(&esDfExpiryTimer);
+                }
             }
 
             /* In a warm start MacSync's stale rows go at the warm restart timer,
@@ -357,6 +362,19 @@ int main(int argc, char **argv)
                 {
                     macsync.onWarmStartEnd();
                     s.removeSelectable(&esDfWarmTimer);
+                }
+                else if (temps == &esDfExpiryTimer)
+                {
+                    time_t wait = macsync.onDfKeyExpiryTimer();
+
+                    if (wait)
+                    {
+                        restartTimer(esDfExpiryTimer, timespec{wait, 0});
+                    }
+                    else
+                    {
+                        s.removeSelectable(&esDfExpiryTimer);
+                    }
                 }
                 else if (temps == &macStaleTimer)
                 {

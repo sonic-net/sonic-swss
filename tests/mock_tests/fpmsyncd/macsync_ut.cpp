@@ -1933,6 +1933,201 @@ TEST_F(MacSyncEsReReportTest, DfMessageReachesMacSync)
 }
 
 /*
+ * A cold start finds Vlan100:PortChannel1 in EVPN_DF_TABLE, with a local MAC
+ * on that port. zebra sending the key while it is still known reports
+ * nothing; sending it after it was taken as gone reports the MAC again.
+ */
+class MacSyncDfExpiryTest : public MacSyncEsReReportTest
+{
+public:
+    void SetUp() override
+    {
+        MacSyncEsReReportTest::SetUp();
+        Table df(m_appDb.get(), "EVPN_DF_TABLE");
+        df.set("Vlan100:PortChannel1", std::vector<FieldValueTuple>{{"df", "true"}});
+        m_cold = std::make_unique<MacSync>(m_pipeline.get(), m_stateDb.get(), m_cfgDb.get());
+        m_cold->m_fpmMode = true;
+        m_cold->m_ifNameToIndex = m_macSync->m_ifNameToIndex;
+        m_cold->onFpmConnected(m_coldFpm);
+        m_cold->processStateFdbEntry(KeyOpFieldsValuesTuple{"Vlan100:00:11:22:33:44:01", SET_COMMAND,
+                                                            {{"port", "PortChannel1"}, {"type", "dynamic"}}});
+        ASSERT_EQ(m_coldFpm.count(), 1u);
+        ASSERT_EQ(m_cold->startDfKeyExpiry(m_t0), MacSync::STALE_SWEEP_HOLD);
+    }
+
+    void TearDown() override
+    {
+        m_cold.reset();
+        MacSyncEsReReportTest::TearDown();
+    }
+
+    time_t expiry(std::chrono::seconds sinceConnect)
+    {
+        return m_cold->onDfKeyExpiryTimer(m_t0 + sinceConnect);
+    }
+
+    bool waiting()
+    {
+        return m_cold->m_esDfKeys.count("Vlan100:PortChannel1") != 0;
+    }
+
+    /* zebra sends the key; true when the port's MAC was reported again. */
+    bool keyReturnsAsAChange()
+    {
+        size_t before = m_coldFpm.count();
+
+        m_cold->onEsPortVlan("Vlan100:PortChannel1", true);
+        return m_coldFpm.count() != before;
+    }
+
+    /* Another port's DF entry from zebra, read sinceConnect after the connect. */
+    void otherDfEntry(std::chrono::seconds sinceConnect)
+    {
+        m_cold->onEsPortVlan("Vlan200:Ethernet4", true);
+        m_cold->noteFpmMessage(m_t0 + sinceConnect);
+    }
+
+    static constexpr std::chrono::seconds HOLD {MacSync::STALE_SWEEP_HOLD};
+    static constexpr std::chrono::seconds QUIET {MacSync::STALE_SWEEP_QUIET};
+    static constexpr std::chrono::seconds MAX {MacSync::STALE_SWEEP_MAX};
+
+    std::chrono::steady_clock::time_point m_t0 = std::chrono::steady_clock::now();
+    RecordingFpm m_coldFpm;
+    std::unique_ptr<MacSync> m_cold;
+};
+
+constexpr std::chrono::seconds MacSyncDfExpiryTest::HOLD;
+constexpr std::chrono::seconds MacSyncDfExpiryTest::QUIET;
+constexpr std::chrono::seconds MacSyncDfExpiryTest::MAX;
+
+TEST_F(MacSyncDfExpiryTest, NothingExpiresBeforeTheHold)
+{
+    otherDfEntry(std::chrono::seconds(0));
+
+    EXPECT_EQ(expiry(HOLD - std::chrono::seconds(1)), 1);
+    EXPECT_TRUE(waiting());
+    EXPECT_FALSE(keyReturnsAsAChange());
+}
+
+/* zebra is still replaying its routes at the hold and has sent no DF entry:
+ * a key it sends after the hold is still known. */
+TEST_F(MacSyncDfExpiryTest, KeyAfterTheHoldOnABusyChannelIsKept)
+{
+    using std::chrono::seconds;
+
+    m_cold->noteFpmMessage(m_t0 + HOLD - seconds(1));
+    EXPECT_EQ(expiry(HOLD), MacSync::STALE_SWEEP_QUIET);
+    m_cold->noteFpmMessage(m_t0 + HOLD + seconds(9));
+    EXPECT_GT(expiry(HOLD + seconds(10)), 0);
+    EXPECT_TRUE(waiting());
+
+    EXPECT_FALSE(keyReturnsAsAChange());
+}
+
+/* zebra has started on its DF entries but the channel is not quiet yet. */
+TEST_F(MacSyncDfExpiryTest, KeyAfterOtherDfEntriesOnABusyChannelIsKept)
+{
+    using std::chrono::seconds;
+
+    otherDfEntry(HOLD - seconds(5));
+    m_cold->noteFpmMessage(m_t0 + HOLD - seconds(1));
+    EXPECT_EQ(expiry(HOLD), MacSync::STALE_SWEEP_QUIET - 1);
+    m_cold->noteFpmMessage(m_t0 + HOLD + seconds(8));
+    EXPECT_EQ(expiry(HOLD + QUIET - seconds(1)), MacSync::STALE_SWEEP_QUIET - 1);
+    EXPECT_TRUE(waiting());
+
+    EXPECT_FALSE(keyReturnsAsAChange());
+}
+
+TEST_F(MacSyncDfExpiryTest, KeyExpiresOnceZebrasDfEntriesGoQuiet)
+{
+    using std::chrono::seconds;
+
+    otherDfEntry(HOLD + seconds(5));
+    EXPECT_EQ(expiry(HOLD + seconds(5) + QUIET - seconds(1)), 1);
+    EXPECT_TRUE(waiting());
+
+    EXPECT_EQ(expiry(HOLD + seconds(5) + QUIET), 0);
+    EXPECT_FALSE(waiting());
+    EXPECT_TRUE(keyReturnsAsAChange());
+}
+
+/* A DF delete from zebra counts as a DF entry. */
+TEST_F(MacSyncDfExpiryTest, DfDeleteCountsAsADfEntry)
+{
+    using std::chrono::seconds;
+
+    m_cold->onEsPortVlan("Vlan200:Ethernet4", false);
+    m_cold->noteFpmMessage(m_t0 + HOLD + seconds(5));
+    EXPECT_EQ(expiry(HOLD + seconds(5) + QUIET), 0);
+    EXPECT_FALSE(waiting());
+}
+
+/* No DF entry from zebra, however quiet the channel: the key waits for the bound. */
+TEST_F(MacSyncDfExpiryTest, KeyExpiresAtTheBoundWithoutADfEntry)
+{
+    using std::chrono::seconds;
+
+    EXPECT_EQ(expiry(HOLD), MacSync::STALE_SWEEP_QUIET);
+    EXPECT_EQ(expiry(MAX - seconds(1)), 1);
+    EXPECT_TRUE(waiting());
+
+    EXPECT_EQ(expiry(MAX), 0);
+    EXPECT_FALSE(waiting());
+    EXPECT_TRUE(keyReturnsAsAChange());
+}
+
+TEST_F(MacSyncDfExpiryTest, KeyExpiresAtTheBoundOnABusyChannel)
+{
+    using std::chrono::seconds;
+
+    otherDfEntry(HOLD);
+    m_cold->noteFpmMessage(m_t0 + MAX - seconds(1));
+    EXPECT_GT(expiry(MAX - seconds(1)), 0);
+
+    EXPECT_EQ(expiry(MAX), 0);
+    EXPECT_FALSE(waiting());
+}
+
+/* zebra's DF entry can be read in the same poll that returns the expiry
+ * timer, before the main loop notes the FPM message: the channel is not
+ * quiet then. */
+TEST_F(MacSyncDfExpiryTest, DfEntryOfTheSamePollIsNotQuiet)
+{
+    auto now = std::chrono::steady_clock::now();
+
+    ASSERT_EQ(m_cold->startDfKeyExpiry(now - HOLD - std::chrono::seconds(5)), MacSync::STALE_SWEEP_HOLD);
+    m_cold->onEsPortVlan("Vlan200:Ethernet4", true);
+    EXPECT_GT(m_cold->onDfKeyExpiryTimer(std::chrono::steady_clock::now()), 0);
+    EXPECT_TRUE(waiting());
+}
+
+/* A DF entry before a reconnect says nothing about zebra's replay after it. */
+TEST_F(MacSyncDfExpiryTest, ReconnectWaitsForANewDfEntry)
+{
+    using std::chrono::seconds;
+
+    otherDfEntry(seconds(0));
+    auto reconnect = m_t0 + seconds(30);
+    ASSERT_EQ(m_cold->startDfKeyExpiry(reconnect), MacSync::STALE_SWEEP_HOLD);
+
+    EXPECT_EQ(m_cold->onDfKeyExpiryTimer(reconnect + HOLD), MacSync::STALE_SWEEP_QUIET);
+    EXPECT_TRUE(waiting());
+}
+
+TEST_F(MacSyncDfExpiryTest, EveryKeyBackEndsTheWait)
+{
+    EXPECT_FALSE(keyReturnsAsAChange());
+    EXPECT_EQ(expiry(HOLD), 0);
+    EXPECT_TRUE(waiting());
+}
+
+TEST_F(MacSyncDfExpiryTest, NoKeyWaitingArmsNoTimer)
+{
+    EXPECT_EQ(m_macSync->startDfKeyExpiry(m_t0), 0);
+}
+
+/*
  * zebra answers the re-report's delete of a MAC an ES peer also advertises by
  * sending the MAC as remote (on the segment's next hop group), and keeps it
  * after the sessions close. Written, the row replaces the hardware's local
