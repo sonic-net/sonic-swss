@@ -4,6 +4,7 @@
 #include <string>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "orch.h"
@@ -32,6 +33,8 @@ private:
     void handleVnetConfigSet(KeyOpFieldsValuesTuple &t);
     bool doVrfEvpnNvoAddTask(const KeyOpFieldsValuesTuple & t);
     bool doVrfEvpnNvoDelTask(const KeyOpFieldsValuesTuple & t);
+    bool validateVrfVniConfig(const KeyOpFieldsValuesTuple & t, uint32_t& vni,
+                              std::string& s_vni, bool& retry);
     bool doVrfVxlanTableCreateTask(const KeyOpFieldsValuesTuple & t);
     bool doVrfVxlanTableRemoveTask(const KeyOpFieldsValuesTuple & t);
     bool doVrfVxlanTableUpdate(const string& vrf_name, const string& vni, bool add);
@@ -40,9 +43,12 @@ private:
 
     std::map<std::string, uint32_t> m_vrfTableMap;
     std::set<uint32_t> m_freeTables;
+    std::set<std::string> m_publishedVrfVxlanMappings;
+    std::map<std::string, std::pair<uint32_t, std::string>> m_reportedVniOwnershipConflicts;
+    std::string m_evpnVxlanNvo;
     VRFNameVNIMapTable m_vrfVniMapTable;
 
-    Table m_stateVrfTable, m_stateVrfObjectTable;
+    Table m_stateVrfTable, m_stateVrfObjectTable, m_cfgVrfTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appVxlanVrfTableProducer;
 };
 
