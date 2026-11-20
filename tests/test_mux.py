@@ -2134,7 +2134,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
         state_db = dvs.get_state_db()
         config_db = dvs.get_config_db()
 
-        # (restore_orchagent_logger puts it back)
         config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
         self.set_mux_state(appdb, "Ethernet0", "active")

@@ -374,7 +374,6 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     ip_to_if_map = {}
 
     # Update log level so that we can analyze the log in case the test failed
-    # (restore_orchagent_logger puts it back)
     config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode}
@@ -728,7 +727,6 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    # (restore_orchagent_logger puts it back)
     config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
@@ -977,7 +975,6 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    # (restore_orchagent_logger puts it back)
     config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     ### Create first fine grained next hop group and prefix
@@ -1210,7 +1207,6 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    # (restore_orchagent_logger puts it back)
     config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
