@@ -433,6 +433,8 @@ private:
     /* Handle Nexthop message */
     void onNextHopMsg(struct nlmsghdr *h, int len);
     void onPicContextMsg(struct nlmsghdr *h, int len);
+    /* Handle a resolve-via route event for PIC convergence/recovery */
+    void onResolvedEventMsg(struct nlmsghdr *h, int len);
     int parse_encap_seg6(const struct rtattr *tb, struct in6_addr *segs, struct in6_addr *src);
     /* Get next hop group key */
     const string getNextHopGroupKeyAsString(uint32_t id) const;

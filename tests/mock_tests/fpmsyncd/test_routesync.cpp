@@ -10,6 +10,8 @@
 #include "orch_zmq_config.h"
 
 #include <arpa/inet.h>
+#include <cstdlib>
+#include <cstring>
 #include <linux/pkt_cls.h>
 #include <linux/rtnetlink.h>
 #include <netlink/route/link.h>
@@ -5263,4 +5265,112 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     ASSERT_EQ(redisKfvs.size(), 2u);
     EXPECT_EQ(kfvOp(redisKfvs[0]), DEL_COMMAND);
     EXPECT_EQ(kfvOp(redisKfvs[1]), SET_COMMAND);
+}
+
+// ============================================================================
+// Resolve-via event hook (PIC convergence plumbing)
+// ============================================================================
+namespace
+{
+/* NHA_JSON_STR in routesync.cpp: the JSON payload attribute of the event. */
+constexpr int kResolvedEventJsonAttr = 2;
+
+struct nlmsghdr *createResolvedEventMsg(const std::string *json)
+{
+    size_t attrLen = json ? RTA_LENGTH(json->size() + 1) : 0;
+    size_t msgLen = NLMSG_LENGTH(sizeof(struct rtmsg)) + RTA_ALIGN(attrLen);
+    struct nlmsghdr *nlh = (struct nlmsghdr *)calloc(1, msgLen);
+    EXPECT_NE(nlh, nullptr);
+    if (nlh == nullptr)
+        return nullptr;
+
+    nlh->nlmsg_len = msgLen;
+    nlh->nlmsg_type = RTM_NEWRESOLVEDEVENT;
+    nlh->nlmsg_flags = NLM_F_REQUEST;
+    nlh->nlmsg_seq = 1;
+
+    struct rtmsg *rtm = (struct rtmsg *)NLMSG_DATA(nlh);
+    rtm->rtm_family = AF_INET6;
+    rtm->rtm_table = RT_TABLE_MAIN;
+
+    if (json)
+    {
+        struct rtattr *rta = RTM_RTA(rtm);
+        rta->rta_type = kResolvedEventJsonAttr;
+        rta->rta_len = attrLen;
+        memcpy(RTA_DATA(rta), json->c_str(), json->size() + 1);
+    }
+    return nlh;
+}
+}
+
+/* The event type reaches onResolvedEventMsg; a missing payload is a no-op. */
+TEST_F(FpmSyncdResponseTest, TestResolvedEventMsgWithoutJson)
+{
+    struct nlmsghdr *nlh = createResolvedEventMsg(nullptr);
+    ASSERT_NE(nlh, nullptr);
+
+    EXPECT_NO_THROW(m_mockRouteSync.onMsgRaw(nlh));
+
+    free(nlh);
+}
+
+/* Malformed JSON is caught in the handler instead of terminating fpmsyncd. */
+TEST_F(FpmSyncdResponseTest, TestResolvedEventMsgWithInvalidJson)
+{
+    const std::string json = "{ not-json";
+    struct nlmsghdr *nlh = createResolvedEventMsg(&json);
+    ASSERT_NE(nlh, nullptr);
+
+    EXPECT_NO_THROW(m_mockRouteSync.onMsgRaw(nlh));
+
+    free(nlh);
+}
+
+/* Withdrawal: curr_resolved_nhg_id == 0, unknown id is handled gracefully. */
+TEST_F(FpmSyncdResponseTest, TestResolvedEventMsgWithdrawal)
+{
+    const std::string json = R"({
+        "rnh_prefix": "fc00::1/128",
+        "prev_resolved_prefix": "fc00::1/128",
+        "prev_resolved_nhg_id": 4242,
+        "curr_resolved_prefix": "",
+        "curr_resolved_nhg_id": 0
+    })";
+    struct nlmsghdr *nlh = createResolvedEventMsg(&json);
+    ASSERT_NE(nlh, nullptr);
+
+    EXPECT_NO_THROW(m_mockRouteSync.onMsgRaw(nlh));
+
+    free(nlh);
+}
+
+/* Recovery: a non-zero curr id undoes the fix-ups of the previous id. */
+TEST_F(FpmSyncdResponseTest, TestResolvedEventMsgRecovery)
+{
+    const std::string json = R"({
+        "rnh_prefix": "fc00::1/128",
+        "prev_resolved_prefix": "fc00::1/128",
+        "prev_resolved_nhg_id": 4242,
+        "curr_resolved_prefix": "fc00::1/128",
+        "curr_resolved_nhg_id": 4343
+    })";
+    struct nlmsghdr *nlh = createResolvedEventMsg(&json);
+    ASSERT_NE(nlh, nullptr);
+
+    EXPECT_NO_THROW(m_mockRouteSync.onMsgRaw(nlh));
+
+    free(nlh);
+}
+
+/* Missing optional fields fall back to their defaults. */
+TEST_F(FpmSyncdResponseTest, TestResolvedEventMsgWithEmptyJson)
+{
+    const std::string json = "{}";
+    struct nlmsghdr *nlh = createResolvedEventMsg(&json);
+    ASSERT_NE(nlh, nullptr);
+
+    EXPECT_NO_THROW(m_mockRouteSync.onMsgRaw(nlh));
+
+    free(nlh);
 }
