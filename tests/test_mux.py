@@ -2123,7 +2123,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
     def test_warm_boot_mux_state(
             self, dvs, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
-            setup_peer_switch, neighbor_cleanup, testlog
+            setup_peer_switch, neighbor_cleanup, testlog,
+            restore_orchagent_logger
     ):
         """
         test mux initialization during warm boot.
@@ -2133,9 +2134,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         state_db = dvs.get_state_db()
         config_db = dvs.get_config_db()
 
-        logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
-        logfvs["LOGLEVEL"] = "INFO"
-        config_db.update_entry("LOGGER", "orchagent", logfvs)
+        config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "active")

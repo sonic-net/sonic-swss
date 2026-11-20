@@ -2054,6 +2054,15 @@ def testlog(request, dvs):
     yield
     dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
 
+
+@pytest.fixture
+def restore_orchagent_logger(dvs):
+    """Put LOGGER|orchagent back the way the test found it, even if the test fails."""
+    config_db = dvs.get_config_db()
+    snapshot = config_db.get_entry("LOGGER", "orchagent")
+    yield
+    config_db.restore_entry("LOGGER", "orchagent", snapshot)
+
 ################# DVSLIB module manager fixtures #############################
 @pytest.fixture(scope="class")
 def dvs_acl(request, dvs) -> DVSAcl:

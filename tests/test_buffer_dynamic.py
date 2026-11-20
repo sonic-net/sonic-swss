@@ -775,19 +775,17 @@ class TestBufferMgrDyn(object):
     def test_bufferPortMaxParameter(self, dvs, testlog):
         self.setup_db(dvs)
 
-        # Update log level so that we can analyze the log in case the test failed
-        logfvs = self.config_db.wait_for_entry("LOGGER", "buffermgrd")
-        old_log_level = logfvs.get("LOGLEVEL")
-        logfvs["LOGLEVEL"] = "INFO"
-        self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
-
         # Check whether port's maximum parameter has been exposed to STATE_DB
         fvs = self.state_db.wait_for_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
         assert int(fvs["max_queues"]) and int(fvs["max_priority_groups"])
 
         _, oa_pid = dvs.runcmd("pgrep orchagent")
 
+        logger_snapshot = self.config_db.get_entry("LOGGER", "buffermgrd")
         try:
+            # Update log level so that we can analyze the log in case the test failed
+            self.config_db.update_entry("LOGGER", "buffermgrd", {"LOGLEVEL": "INFO"})
+
             fvs["max_headroom_size"] = "122880"
             self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
 
@@ -858,9 +856,7 @@ class TestBufferMgrDyn(object):
             self.state_db.delete_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
             self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
 
-            if old_log_level:
-                logfvs["LOGLEVEL"] = old_log_level
-                self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
+            self.config_db.restore_entry("LOGGER", "buffermgrd", logger_snapshot)
 
             dvs.port_admin_set('Ethernet0', 'down')
 
