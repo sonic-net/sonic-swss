@@ -96,10 +96,20 @@ public:
      * no longer does; dfKey is that EVPN_DF_TABLE key, "Vlan<id>:<port>". */
     void onEsPortVlan(const std::string& dfKey, bool present);
 
-    /* The warm restart window is over, or STALE_SWEEP_HOLD after a cold start's
-     * connect: the EVPN_DF_TABLE keys read at start that zebra has not sent
-     * again are taken as gone. */
+    /* The warm restart window is over, or onDfKeyExpiryTimer() says so after a
+     * cold start's connect: the EVPN_DF_TABLE keys read at start that zebra
+     * has not sent again are taken as gone. */
     void onWarmStartEnd();
+
+    /* After a cold start's connect the EVPN_DF_TABLE keys still waiting for
+     * zebra go by onStaleSweepTimer()'s settle rule, with a DF entry from zebra
+     * in place of a remote MAC. startDfKeyExpiry() returns the seconds to the
+     * first onDfKeyExpiryTimer(), 0 when no key waits; onDfKeyExpiryTimer()
+     * returns the seconds to wait before asking again, 0 when done. */
+    time_t startDfKeyExpiry(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+    time_t onDfKeyExpiryTimer(
+        std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
     /* Sends the local MACs whose re-add onEsPortVlan() delayed. */
     SelectableTimer *getEsReAddTimer() { return &m_esReAddTimer; }
@@ -239,6 +249,9 @@ private:
     std::set<std::string> m_esDfKeys;
     /* The keys found in APPL_DB at start that zebra has not sent since. */
     std::set<std::string> m_esDfUnconfirmed;
+    std::chrono::steady_clock::time_point m_dfExpirySince;
+    /* zebra has sent a DF entry since startDfKeyExpiry(). */
+    bool m_dfKeySinceStart {false};
 
     /* Local MACs withdrawn from zebra by onEsPortVlan(), and when to add them back. */
     std::map<std::string, std::chrono::steady_clock::time_point> m_esReAddPending;
