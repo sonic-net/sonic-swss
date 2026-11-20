@@ -11,6 +11,7 @@
 #include "macaddress.h"
 #include "ipaddress.h"
 #include "vxlanmgr.h"
+#include "vnetmgr.h"
 #include "exec.h"
 #include "tokenize.h"
 #include "shellcmd.h"
@@ -1160,6 +1161,10 @@ void VxlanMgr::getAllVxlanNetDevices()
     std::vector<std::string> netdevs = parseNetDev(stdout);
     for (auto netdev : netdevs)
     {
+        if (netdev == VNET_VXLAN_TX_DEV)
+        {
+            continue;
+        }
         m_vxlanNetDevices[netdev] = VXLAN;
     }
 
