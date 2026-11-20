@@ -203,6 +203,7 @@ public:
     bool                m_l3_vni = false;
     sai_object_id_t     m_port_id = 0;
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
+    sai_port_ptp_mode_t m_ptp_mode = SAI_PORT_PTP_MODE_NONE;
     VlanInfo            m_vlan_info;
     MacAddress          m_mac;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs

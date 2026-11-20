@@ -15,6 +15,9 @@
 #include "switchorch.h"
 #include "notifications.h"
 #include <sys/mman.h>
+#include <cstdlib>
+#include <fstream>
+#include <unistd.h>
 #undef private
 #define private public
 #include "warm_restart.h"
@@ -79,6 +82,11 @@ namespace portsorch_test
     bool set_autoneg_need_retry = false;
     bool set_autoneg_fail = false;
     uint32_t _sai_set_port_tpid_count;
+    uint32_t _sai_set_port_ptp_mode_count;
+    int32_t _sai_port_ptp_mode;
+    uint32_t _sai_create_ports_calls;
+    uint32_t _sai_create_ports_ptp_count;
+    int32_t _sai_create_ports_ptp_mode;
     int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
 
@@ -310,6 +318,13 @@ namespace portsorch_test
         {
             _sai_set_port_tpid_count++;
         }
+        else if (attr[0].id == SAI_PORT_ATTR_PTP_MODE)
+        {
+            _sai_set_port_ptp_mode_count++;
+            _sai_port_ptp_mode = attr[0].value.s32;
+            // saivs does not have to implement this attribute.
+            return SAI_STATUS_SUCCESS;
+        }
         else if (attr[0].id == SAI_PORT_ATTR_FAST_LINKUP_ENABLED)
         {
             _sai_set_fast_linkup_count++;
@@ -539,6 +554,44 @@ namespace portsorch_test
         // Reset admin status failure flags
         set_admin_status_fail = false;
         set_admin_status_failures = 0;
+    }
+
+    // Record SAI_PORT_ATTR_PTP_MODE and drop it before the real bulk create.
+    // The virtual switch does not have to implement the attribute.
+    sai_status_t _ut_stub_sai_create_ports(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t object_count,
+        _In_ const uint32_t *attr_count,
+        _In_ const sai_attribute_t **attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_object_id_t *object_id,
+        _Out_ sai_status_t *object_statuses)
+    {
+        _sai_create_ports_calls++;
+
+        std::vector<std::vector<sai_attribute_t>> stripped(object_count);
+        std::vector<uint32_t> counts(object_count);
+        std::vector<const sai_attribute_t *> ptrs(object_count);
+
+        for (uint32_t i = 0; i < object_count; i++)
+        {
+            for (uint32_t a = 0; a < attr_count[i]; a++)
+            {
+                if (attr_list[i][a].id == SAI_PORT_ATTR_PTP_MODE)
+                {
+                    _sai_create_ports_ptp_count++;
+                    _sai_create_ports_ptp_mode = attr_list[i][a].value.s32;
+                    continue;
+                }
+                stripped[i].push_back(attr_list[i][a]);
+            }
+            counts[i] = static_cast<uint32_t>(stripped[i].size());
+            ptrs[i] = stripped[i].empty() ? nullptr : stripped[i].data();
+        }
+
+        return pold_sai_port_api->create_ports(
+            switch_id, object_count, counts.data(), ptrs.data(),
+            mode, object_id, object_statuses);
     }
 
     void _hook_sai_port_api()
@@ -1455,6 +1508,242 @@ namespace portsorch_test
 
         // Cleanup ports
         cleanupPorts(gPortsOrch);
+    }
+
+    // Points SWSS_PTP_PLATFORM_ENV at a temp file for one test.
+    class PtpPlatformEnv
+    {
+    public:
+        PtpPlatformEnv()
+        {
+            char tmpl[] = "/tmp/swss-ptp-env-XXXXXX";
+            int fd = mkstemp(tmpl);
+            if (fd >= 0)
+            {
+                close(fd);
+            }
+            m_path = tmpl;
+            setenv("SWSS_PTP_PLATFORM_ENV", m_path.c_str(), 1);
+        }
+
+        ~PtpPlatformEnv()
+        {
+            unsetenv("SWSS_PTP_PLATFORM_ENV");
+            unlink(m_path.c_str());
+        }
+
+        void write(const std::string &contents) const
+        {
+            std::ofstream out(m_path, std::ios::trunc);
+            out << contents;
+        }
+
+    private:
+        std::string m_path;
+    };
+
+    bool initDefaultPorts(swss::DBConnector *appDb)
+    {
+        auto portTable = Table(appDb, APP_PORT_TABLE_NAME);
+        auto &ports = defaultPortList;
+        if (ports.empty())
+        {
+            ADD_FAILURE() << "no default SAI ports";
+            return false;
+        }
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        if (gPortsOrch->getAllPorts().size() != ports.size() + 1)
+        {
+            ADD_FAILURE() << "ports were not created";
+            return false;
+        }
+        return true;
+    }
+
+    void setEthernet0PtpMode(const std::string &mode)
+    {
+        std::deque<KeyOpFieldsValuesTuple> kfvList = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "ptp_mode", mode }
+            }
+        }};
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvList);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+    }
+
+    TEST_F(PortsOrchTest, PtpPlatformEnvFile)
+    {
+        unlink("/tmp/swss-ptp-env-missing");
+        setenv("SWSS_PTP_PLATFORM_ENV", "/tmp/swss-ptp-env-missing", 1);
+        EXPECT_FALSE(gPortsOrch->readPtpPlatformEnabled());
+        unsetenv("SWSS_PTP_PLATFORM_ENV");
+
+        PtpPlatformEnv env;
+
+        env.write("# comment\n\nptp_enabled=0\n");
+        EXPECT_FALSE(gPortsOrch->readPtpPlatformEnabled());
+
+        env.write("PTP_ENABLED = 1\n");
+        EXPECT_TRUE(gPortsOrch->readPtpPlatformEnabled());
+
+        env.write("ptp_enabled=1\r\n");
+        EXPECT_TRUE(gPortsOrch->readPtpPlatformEnabled());
+
+        env.write("ptp_enabled=\n");
+        EXPECT_FALSE(gPortsOrch->readPtpPlatformEnabled());
+
+        env.write("other=1\n");
+        EXPECT_FALSE(gPortsOrch->readPtpPlatformEnabled());
+
+        // The first ptp_enabled line wins.
+        env.write("ptp_enabled=0\nptp_enabled=1\n");
+        EXPECT_FALSE(gPortsOrch->readPtpPlatformEnabled());
+    }
+
+    TEST_F(PortsOrchTest, PtpModeNotProgrammedWhenPlatformDisabled)
+    {
+        ASSERT_TRUE(initDefaultPorts(m_app_db.get()));
+        EXPECT_FALSE(gPortsOrch->m_ptpPlatformEnabled);
+
+        _sai_set_port_ptp_mode_count = 0;
+        _hook_sai_port_api();
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        EXPECT_TRUE(gPortsOrch->setPortPtpMode(p, SAI_PORT_PTP_MODE_SINGLE_STEP_TIMESTAMP));
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 0u);
+
+        setEthernet0PtpMode("one-step");
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        EXPECT_EQ(p.m_ptp_mode, SAI_PORT_PTP_MODE_NONE);
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 0u);
+
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        EXPECT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    TEST_F(PortsOrchTest, PtpModeProgrammedWhenPlatformEnabled)
+    {
+        ASSERT_TRUE(initDefaultPorts(m_app_db.get()));
+        gPortsOrch->m_ptpPlatformEnabled = true;
+
+        _sai_set_port_ptp_mode_count = 0;
+        _hook_sai_port_api();
+
+        setEthernet0PtpMode("one-step");
+
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        EXPECT_EQ(p.m_ptp_mode, SAI_PORT_PTP_MODE_SINGLE_STEP_TIMESTAMP);
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 1u);
+        EXPECT_EQ(_sai_port_ptp_mode, SAI_PORT_PTP_MODE_SINGLE_STEP_TIMESTAMP);
+
+        setEthernet0PtpMode("two-step");
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        EXPECT_EQ(p.m_ptp_mode, SAI_PORT_PTP_MODE_TWO_STEP_TIMESTAMP);
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 2u);
+        EXPECT_EQ(_sai_port_ptp_mode, SAI_PORT_PTP_MODE_TWO_STEP_TIMESTAMP);
+
+        // Unchanged mode does not call SAI again.
+        setEthernet0PtpMode("two-step");
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 2u);
+
+        setEthernet0PtpMode("none");
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        EXPECT_EQ(p.m_ptp_mode, SAI_PORT_PTP_MODE_NONE);
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 3u);
+
+        // An invalid mode is dropped and leaves the port unchanged.
+        setEthernet0PtpMode("three-step");
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        EXPECT_EQ(p.m_ptp_mode, SAI_PORT_PTP_MODE_NONE);
+        EXPECT_EQ(_sai_set_port_ptp_mode_count, 3u);
+
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        EXPECT_TRUE(taskList.empty());
+
+        _unhook_sai_port_api();
+        cleanupPorts(gPortsOrch);
+    }
+
+    bool createEthernet0WithPtp(swss::DBConnector *appDb, bool platformEnabled)
+    {
+        gPortsOrch->m_ptpPlatformEnabled = platformEnabled;
+        _sai_create_ports_calls = 0;
+        _sai_create_ports_ptp_count = 0;
+
+        auto portTable = Table(appDb, APP_PORT_TABLE_NAME);
+        auto &ports = defaultPortList;
+        if (ports.empty())
+        {
+            ADD_FAILURE() << "no default SAI ports";
+            return false;
+        }
+
+        // Lanes differ from the default port, so bulk create runs.
+        std::vector<FieldValueTuple> fvList = {
+            { "alias",               "Ethernet0" },
+            { "index",               "0"         },
+            { "lanes",               "0,1,2,3"   },
+            { "speed",               "100000"    },
+            { "autoneg",             "on"        },
+            { "adv_speeds",          "all"       },
+            { "interface_type",      "none"      },
+            { "adv_interface_types", "all"       },
+            { "fec",                 "rs"        },
+            { "mtu",                 "9100"      },
+            { "tpid",                "0x8101"    },
+            { "pfc_asym",            "on"        },
+            { "admin_status",        "up"        },
+            { "ptp_mode",            "one-step"  },
+            { "description",         "FP port"   }
+        };
+        portTable.set("Ethernet0", fvList);
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+        gPortsOrch->addExistingData(&portTable);
+
+        _hook_sai_port_api();
+        ut_sai_port_api.create_ports = _ut_stub_sai_create_ports;
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        _unhook_sai_port_api();
+
+        EXPECT_GT(_sai_create_ports_calls, 0u);
+        if (platformEnabled)
+        {
+            EXPECT_EQ(_sai_create_ports_ptp_count, 1u);
+            EXPECT_EQ(_sai_create_ports_ptp_mode, SAI_PORT_PTP_MODE_SINGLE_STEP_TIMESTAMP);
+        }
+        else
+        {
+            EXPECT_EQ(_sai_create_ports_ptp_count, 0u);
+        }
+
+        cleanupPorts(gPortsOrch);
+        return true;
+    }
+
+    TEST_F(PortsOrchTest, PtpModeOmittedFromCreateWhenPlatformDisabled)
+    {
+        ASSERT_TRUE(createEthernet0WithPtp(m_app_db.get(), false));
+    }
+
+    TEST_F(PortsOrchTest, PtpModeSetOnCreateWhenPlatformEnabled)
+    {
+        ASSERT_TRUE(createEthernet0WithPtp(m_app_db.get(), true));
     }
 
     TEST_F(PortsOrchTest, PortBasicConfig)
