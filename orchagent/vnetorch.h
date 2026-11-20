@@ -14,6 +14,7 @@
 #include "producerstatetable.h"
 #include "observer.h"
 #include "nexthopgroupkey.h"
+#include "bulker.h"
 #include "bfdorch.h"
 #include "tunneltermhelper.h"
 
@@ -531,6 +532,11 @@ public:
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+
+    /* VNET routes are programmed through RouteOrch's addRoute/removeRoute
+     * but staged here, not in RouteOrch's shared gRouteBulker, so a VNET
+     * flush cannot submit or reset work RouteOrch has staged. */
+    EntityBulker<sai_route_api_t> m_vnetRouteBulker;
 
     void addRoute(const std::string & vnet, const IpPrefix & ipPrefix, const nextHop& nh);
     void delRoute(const IpPrefix& ipPrefix);

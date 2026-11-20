@@ -2068,9 +2068,13 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
     addRoute(ctx, tmp_next_hop);
 }
 
-bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                         EntityBulker<sai_route_api_t> *bulker)
 {
     SWSS_LOG_ENTER();
+
+    /* Stage into the caller's bulker, or RouteOrch's shared one by default. */
+    EntityBulker<sai_route_api_t>& routeBulker = bulker ? *bulker : gRouteBulker;
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2366,7 +2370,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
      * from m_syncdRoutes during the bulk call. Therefore, such entries need to be
      * re-created rather than set attribute.
      */
-    if (it_route == m_syncdRoutes.at(vrf_id).end() || gRouteBulker.bulk_entry_pending_removal(route_entry))
+    if (it_route == m_syncdRoutes.at(vrf_id).end() || routeBulker.bulk_entry_pending_removal(route_entry))
     {
         if (blackhole)
         {
@@ -2390,7 +2394,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
         /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
         object_statuses.emplace_back();
-        sai_status_t status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)route_attrs.size(), route_attrs.data());
+        sai_status_t status = routeBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)route_attrs.size(), route_attrs.data());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s: already exists in bulker",
@@ -2407,7 +2411,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
             object_statuses.emplace_back();
-            gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
 
         if (curNhgIsFineGrained && !isFineGrainedNextHopIdChanged)
@@ -2434,7 +2438,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
                 object_statuses.emplace_back();
-                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+                routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
 
             // Set/update prefix agg id if needed
@@ -2443,7 +2447,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
                 route_attr.value.u32 = ctx.nhg_index.empty() ? m_srv6Orch->getAggId(nextHops) : m_srv6Orch->getAggId(ctx.context_index);
                 object_statuses.emplace_back();
-                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+                routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
 
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
@@ -2451,7 +2455,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
             /* Set the next hop ID to a new value */
             object_statuses.emplace_back();
-            gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
 
         if (blackhole)
@@ -2460,7 +2464,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             route_attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
             object_statuses.emplace_back();
-            gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
     }
     return false;
@@ -2877,9 +2881,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     return !ctx.using_temp_nhg;
 }
 
-bool RouteOrch::removeRoute(RouteBulkContext& ctx)
+bool RouteOrch::removeRoute(RouteBulkContext& ctx,
+                            EntityBulker<sai_route_api_t> *bulker)
 {
     SWSS_LOG_ENTER();
+
+    /* Stage into the caller's bulker, or RouteOrch's shared one by default. */
+    EntityBulker<sai_route_api_t>& routeBulker = bulker ? *bulker : gRouteBulker;
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2897,7 +2905,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     copy(route_entry.destination, ipPrefix);
 
     auto it_route = it_route_table->second.find(ipPrefix);
-    size_t creating = gRouteBulker.creating_entries_count(route_entry);
+    size_t creating = routeBulker.creating_entries_count(route_entry);
     if (it_route == it_route_table->second.end() && creating == 0)
     {
         /*
@@ -2908,7 +2916,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
          * However, we can not do that unless going over all entries in gRouteBulker.
          * So, we use above strict conditions here
          */
-        if (it_route_table->second.size() == 0 && gRouteBulker.creating_entries_count() == 0)
+        if (it_route_table->second.size() == 0 && routeBulker.creating_entries_count() == 0)
         {
             m_syncdRoutes.erase(vrf_id);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
@@ -2929,18 +2937,18 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
         attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
         object_statuses.emplace_back();
-        gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
+        routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
 
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
 
         object_statuses.emplace_back();
-        gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
+        routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
     }
     else
     {
         object_statuses.emplace_back();
-        gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
+        routeBulker.remove_entry(&object_statuses.back(), &route_entry);
     }
 
     return false;

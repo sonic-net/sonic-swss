@@ -236,15 +236,21 @@ public:
     void decreaseNextHopRefCount(const NextHopGroupKey&);
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
-    void flushRouteBulker() { gRouteBulker.flush(); }
     int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
 
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&, const bool is_default_route_nh_swap=false);
 
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoute(RouteBulkContext& ctx);
+    /* addRoute/removeRoute stage into a route bulker. `bulker` selects
+     * which one: nullptr uses RouteOrch's shared gRouteBulker (the default
+     * for RouteOrch's own route tasks); VNetRouteOrch passes its private
+     * bulker so a VNET flush never touches entries RouteOrch has staged.
+     * The Post functions read ctx.object_statuses and are bulker-agnostic. */
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                  EntityBulker<sai_route_api_t> *bulker = nullptr);
+    bool removeRoute(RouteBulkContext& ctx,
+                     EntityBulker<sai_route_api_t> *bulker = nullptr);
     bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoutePost(const RouteBulkContext& ctx);
 
