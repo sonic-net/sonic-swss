@@ -142,6 +142,12 @@ class NeighSyncTest : public ::testing::Test
         m_sync->m_isDualToR = true;
     }
 
+    void enableLinkLocal(const std::string& table, const std::string& key)
+    {
+        Table configTable(m_configDb.get(), table);
+        configTable.set(key, {{"ipv6_use_link_local_only", "enable"}});
+    }
+
     bool failedNeighborExists(const std::string& ip, std::vector<FieldValueTuple>* fields = nullptr)
     {
         Table failedNeighborTable(m_appDb.get(), APP_NEIGH_FAILED_TABLE_NAME);
@@ -339,6 +345,96 @@ TEST_F(NeighSyncTest, RemovesStaleFailedNeighborOnNonVlanInterface)
     m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
 
     EXPECT_FALSE(failedNeighborExists("2001:db8:3::1"));
+}
+
+TEST_F(NeighSyncTest, BareEthernetLinkLocalEnabled)
+{
+    enableLinkLocal(CFG_INTF_TABLE_NAME, "Ethernet0");
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("Ethernet0"));
+}
+
+TEST_F(NeighSyncTest, BarePortChannelLinkLocalEnabled)
+{
+    enableLinkLocal(CFG_LAG_INTF_TABLE_NAME, "PortChannel10");
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("PortChannel10"));
+}
+
+TEST_F(NeighSyncTest, BareVlanLinkLocalEnabled)
+{
+    enableLinkLocal(CFG_VLAN_INTF_TABLE_NAME, "Vlan100");
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("Vlan100"));
+}
+
+TEST_F(NeighSyncTest, LongNameSubInterfacesLinkLocalEnabled)
+{
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "Ethernet0.10");
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "PortChannel1.20");
+
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("Ethernet0.10"));
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("PortChannel1.20"));
+}
+
+TEST_F(NeighSyncTest, ShortNameSubInterfacesLinkLocalEnabled)
+{
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "Eth0.10");
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "Po1.20");
+
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("Eth0.10"));
+    EXPECT_TRUE(m_sync->isLinkLocalEnabled("Po1.20"));
+}
+
+TEST_F(NeighSyncTest, SubInterfaceWithoutLinkLocalDisabled)
+{
+    Table configTable(m_configDb.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+    configTable.set("Eth0.10", {{"admin_status", "up"}, {"vlan", "10"}});
+
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Eth0.10"));
+}
+
+TEST_F(NeighSyncTest, SubInterfaceWithDisableValueDisabled)
+{
+    Table configTable(m_configDb.get(), CFG_VLAN_SUB_INTF_TABLE_NAME);
+    configTable.set("Eth0.10", {{"ipv6_use_link_local_only", "disable"}});
+
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Eth0.10"));
+}
+
+TEST_F(NeighSyncTest, UnconfiguredSubInterfacesLinkLocalDisabled)
+{
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Eth0.10"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Ethernet0.10"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Po1.20"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("PortChannel1.20"));
+}
+
+TEST_F(NeighSyncTest, SubInterfaceDoesNotUseParentConfiguration)
+{
+    enableLinkLocal(CFG_INTF_TABLE_NAME, "Ethernet0");
+    enableLinkLocal(CFG_LAG_INTF_TABLE_NAME, "PortChannel1");
+
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Ethernet0.10"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Eth0.10"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("PortChannel1.20"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Po1.20"));
+}
+
+TEST_F(NeighSyncTest, UnsupportedInterfacesLinkLocalDisabled)
+{
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("lo"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("eth0"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Bridge"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Loopback0"));
+}
+
+TEST_F(NeighSyncTest, NonSonicDottedNamesRejected)
+{
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "eth0.10");
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "lo.10");
+    enableLinkLocal(CFG_VLAN_SUB_INTF_TABLE_NAME, "Vlan100.10");
+
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("eth0.10"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("lo.10"));
+    EXPECT_FALSE(m_sync->isLinkLocalEnabled("Vlan100.10"));
 }
 
 } // namespace
