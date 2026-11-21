@@ -6775,6 +6775,64 @@ TEST_F(PfcWdHwOrchTest, DeleteWithEmptyLosslessSetClearsPort)
     ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[4]]);
 }
 
+// pfcwd_sw_enable names the queues to watch and pfc_enable the queues that
+// honour PFC. A queue with PFC off cannot be paused, so it is not watched even
+// when the watchdog list still carries it.
+TEST_F(PfcWdHwOrchTest, QueueWithPfcDisabledNotWatched)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    // PFC turned off on priority 4 with pfcwd_sw_enable left at 3,4
+    ASSERT_TRUE(gPortsOrch->setPortPfc(port.m_port_id, 1 << 3));
+
+    auto consumer = dynamic_cast<Consumer *>(
+        gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    deque<KeyOpFieldsValuesTuple> entries;
+    entries.push_back({ "Ethernet0", "SET",
+        { { "action", "drop" }, { "detection_time", "200" },
+          { "restoration_time", "200" } } });
+    consumer->addToSync(entries);
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 1u);
+    ASSERT_TRUE(_sai_queue_dldr_enabled[port.m_queue_ids[3]]);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[4]]);
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(port.m_queue_ids[3]), 1u);
+    ASSERT_EQ(gPfcWdHwOrch->m_queueToPortMap.count(port.m_queue_ids[4]), 0u);
+}
+
+// A port with PFC off on every watched queue has nothing to watch: it is
+// refused like a port with no lossless TC, not reported as configured.
+TEST_F(PfcWdHwOrchTest, PortWithPfcDisabledOnWatchedQueuesRejected)
+{
+    bringUpPorts();
+    enablePfcOnPort("Ethernet0");
+
+    Port port;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+    ASSERT_TRUE(gPortsOrch->setPortPfc(port.m_port_id, 0));
+
+    auto consumer = dynamic_cast<Consumer *>(
+        gPfcWdHwOrch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+    deque<KeyOpFieldsValuesTuple> entries;
+    entries.push_back({ "Ethernet0", "SET",
+        { { "action", "drop" }, { "detection_time", "200" },
+          { "restoration_time", "200" } } });
+    consumer->addToSync(entries);
+    static_cast<Orch *>(gPfcWdHwOrch)->doTask();
+
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->m_pfcWdHwStateTable->get("Ethernet0", fvs));
+    map<string, string> fields(fvs.begin(), fvs.end());
+    ASSERT_EQ(fields["status"], "failed");
+    ASSERT_EQ(gPfcWdHwOrch->m_pfcwd_ports.count("Ethernet0"), 0u);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[3]]);
+    ASSERT_FALSE(_sai_queue_dldr_enabled[port.m_queue_ids[4]]);
+}
+
 TEST_F(PfcWdHwOrchTest, ActionResetOnLastDelete)
 {
     bringUpPorts();

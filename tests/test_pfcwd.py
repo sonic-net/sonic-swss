@@ -370,6 +370,34 @@ class TestPfcwdFunc(object):
             self.config_db.delete_entry("PFC_WD", no_pfc_port)
             self.stop_pfcwd_on_ports()
 
+    def test_pfcwd_pfc_disabled_queue_not_watched(self, dvs, setup_teardown_test):
+        """A queue in pfcwd_sw_enable whose PFC is off gets no watchdog."""
+        # pfc_enable and pfcwd_sw_enable are written separately, so turning PFC off on a
+        # priority leaves it in the watchdog list; the watchdog must skip it
+        watched_queues = [3]
+        unwatched_queues = [4]
+        try:
+            for port in self.test_ports:
+                self.config_db.create_entry("PORT_QOS_MAP", port,
+                                            {"pfcwd_sw_enable": "3,4", "pfc_enable": "3"})
+            self.verify_ports_pfc(watched_queues)
+            # a previous run of the watchdog may still be unregistering queue 4
+            self.wait_pfcwd_unregistered(unwatched_queues)
+
+            self.start_pfcwd_on_ports()
+            self.verify_pfcwd_action(watched_queues, "drop")
+
+            # queue 3 is registered in the same doTask pass, so queue 4 has been skipped
+            for port in self.test_ports:
+                for queue in unwatched_queues:
+                    fvs = self.counters_db.get_entry("COUNTERS", self.queue_oids[port + ":" + str(queue)])
+                    assert "PFC_WD_STATUS" not in fvs
+                    assert "PFC_WD_DETECTION_TIME" not in fvs
+
+        finally:
+            self.stop_pfcwd_on_ports()
+            self.set_ports_pfc(pfc_queues=[3, 4])
+
     def test_pfcwd_appl_db_storm_row_validation(self, dvs, setup_teardown_test):
         """
         APPL_DB PFC_WD_TABLE is the storm replay input used after a warm reboot. Every row is

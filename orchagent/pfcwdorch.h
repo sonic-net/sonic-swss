@@ -142,7 +142,8 @@ protected:
     // Helper functions used in both SW and HW watchdog implementations
     // ========================================================================
 
-    // Get lossless TCs for a port based on PFC mask
+    // Get the TCs the watchdog watches on a port: those in pfcwd_sw_enable that
+    // also have PFC enabled. Named for the lossless queues these normally are.
     bool getLosslessTcsForPort(const Port& port, set<uint8_t>& losslessTc);
 
     // Report PFC storm event
