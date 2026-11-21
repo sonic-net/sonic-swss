@@ -21,4 +21,4 @@ rm -f ../swss_*.deb ../swss-dbg_*.deb
 RUSTFLAGS=-Dwarnings dpkg-buildpackage -us -uc -b -j"$(nproc)"
 cp ../*.deb .
 
-RUSTFLAGS=-Dwarnings cargo test
+RUSTFLAGS=-Dwarnings cargo test --locked
