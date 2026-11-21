@@ -16,6 +16,7 @@ namespace intfsorch_test
 
     int create_rif_count = 0;
     int remove_rif_count = 0;
+    sai_object_id_t last_create_rif_vr_id = SAI_NULL_OBJECT_ID;
     bool saw_loopback_action = false;
     bool fail_next_rif_set = false;
     int loopback_action_set_count = 0;
@@ -30,6 +31,13 @@ namespace intfsorch_test
             _In_ const sai_attribute_t *attr_list)
     {
         ++create_rif_count;
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            if (attr_list[i].id == SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID)
+            {
+                last_create_rif_vr_id = attr_list[i].value.oid;
+            }
+        }
         return pold_sai_rif_api->create_router_interface(
             router_interface_id, switch_id, attr_count, attr_list);
     }
@@ -518,6 +526,171 @@ namespace intfsorch_test
         syncd = gIntfsOrch->getSyncdIntfses();
         ASSERT_EQ(syncd["Loopback6"].vrf_id, gVrfOrch->getVRFid("Vrf-Blue"));
         ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+    }
+
+    // A VRF bind is a DEL + SET of the interface key, which ConsumerStateTable
+    // can coalesce into a single SET carrying the new vrf_name. The router
+    // interface VRF is create-only, so that SET must recreate the router
+    // interface in the new VRF, waiting for any reference to it to go away.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfRebindWithoutDel)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        ASSERT_TRUE(gVrfOrch->isVRFexists("Vrf-Blue"));
+        auto vrf_id = gVrfOrch->getVRFid("Vrf-Blue");
+        auto base_vrf_ref = gVrfOrch->getVrfRefCount("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        // router interface in the default vrf
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"}}});
+        intfConsumer->addToSync(entries);
+        auto create_count = create_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(last_create_rif_vr_id, gVirtualRouterId);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, gVirtualRouterId);
+
+        // a referenced router interface cannot be removed: the rebind waits
+        gIntfsOrch->increaseRouterIntfsRefCount("Ethernet0");
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"vrf_name", "Vrf-Blue"}, {"mtu", "9100"}}});
+        intfConsumer->addToSync(entries);
+        create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(remove_count, remove_rif_count);
+        ASSERT_EQ(create_count, create_rif_count);
+        ASSERT_EQ(intfConsumer->m_toSync.size(), 1u);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, gVirtualRouterId);
+        ASSERT_TRUE(gIntfsOrch->isIntfChangeInProgress("Ethernet0"));
+
+        // an address SET must not attach to the old router interface, where it
+        // would block its removal
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", { {"scope", "global"}, {"family", "IPv4"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(intfConsumer->m_toSync.size(), 2u);
+        ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.empty());
+
+        // once the reference is gone the router interface moves to Vrf-Blue,
+        // and the address follows it
+        gIntfsOrch->decreaseRouterIntfsRefCount("Ethernet0");
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(last_create_rif_vr_id, vrf_id);
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_FALSE(gIntfsOrch->isIntfChangeInProgress("Ethernet0"));
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, vrf_id);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").ip_addresses.count(IpPrefix("10.0.0.1/24")), 1u);
+        ASSERT_EQ(gVrfOrch->getVrfRefCount("Vrf-Blue"), base_vrf_ref + 1);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_EQ(port.m_vr_id, vrf_id);
+        ASSERT_NE(port.m_rif_id, SAI_NULL_OBJECT_ID);
+
+        // neither the same SET again nor a SET without vrf_name moves it
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"vrf_name", "Vrf-Blue"}, {"mtu", "9100"}}});
+        intfConsumer->addToSync(entries);
+        create_count = create_rif_count;
+        remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"mac_addr", "00:01:02:03:04:05"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(remove_count, remove_rif_count);
+        ASSERT_EQ(create_count, create_rif_count);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, vrf_id);
+    }
+
+    // Proxy ARP is disabled along with the old router interface, as on DEL, and
+    // set again only if the SET asks for it.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfRebindWithoutDelDisablesProxyArp)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        auto vrf_id = gVrfOrch->getVRFid("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"proxy_arp", "enabled"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").proxy_arp);
+
+        entries.clear();
+        entries.push_back({"Ethernet0", "SET", { {"vrf_name", "Vrf-Blue"}}});
+        intfConsumer->addToSync(entries);
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0").vrf_id, vrf_id);
+        ASSERT_FALSE(gIntfsOrch->getSyncdIntfses().at("Ethernet0").proxy_arp);
+    }
+
+    // A sub port is removed along with its router interface, so the SET is
+    // retried, recreating the sub port and its router interface in the new VRF.
+    TEST_F(IntfsOrchTest, IntfsOrchVrfRebindWithoutDelRecreatesSubPort)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vrf-Blue", "SET", { {"NULL", "NULL"}}});
+        auto vrfConsumer = dynamic_cast<Consumer *>(gVrfOrch->getExecutor(APP_VRF_TABLE_NAME));
+        vrfConsumer->addToSync(entries);
+        static_cast<Orch *>(gVrfOrch)->doTask();
+        auto vrf_id = gVrfOrch->getVRFid("Vrf-Blue");
+
+        auto intfConsumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+
+        entries.clear();
+        entries.push_back({"Ethernet0.10", "SET", { {"vlan", "10"}, {"admin_status", "up"}}});
+        intfConsumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id, gVirtualRouterId);
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_EQ(port.m_type, Port::SUBPORT);
+
+        entries.clear();
+        entries.push_back({"Ethernet0.10", "SET", { {"vlan", "10"}, {"admin_status", "up"}, {"vrf_name", "Vrf-Blue"}}});
+        intfConsumer->addToSync(entries);
+        auto create_count = create_rif_count;
+        auto remove_count = remove_rif_count;
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+
+        // the first pass removes the router interface and the sub port, and
+        // keeps the SET
+        ASSERT_EQ(remove_count + 1, remove_rif_count);
+        ASSERT_EQ(intfConsumer->m_toSync.size(), 1u);
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().count("Ethernet0.10"), 0u);
+        ASSERT_FALSE(gPortsOrch->getPort("Ethernet0.10", port));
+
+        // the retry recreates both, the router interface in Vrf-Blue
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        ASSERT_EQ(create_count + 1, create_rif_count);
+        ASSERT_EQ(last_create_rif_vr_id, vrf_id);
+        ASSERT_TRUE(intfConsumer->m_toSync.empty());
+        ASSERT_EQ(gIntfsOrch->getSyncdIntfses().at("Ethernet0.10").vrf_id, vrf_id);
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0.10", port));
+        ASSERT_EQ(port.m_vr_id, vrf_id);
     }
 
     TEST_F(IntfsOrchTest, IntfsOrchRetriesLoopbackActionSetFailure)
