@@ -17,9 +17,10 @@ extern SwitchOrch *gSwitchOrch;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
 /*
- * Set by the orchagent signal handler.  Callbacks stop forwarding once it is
- * set so a libsairedis callback thread never touches consumers that are being
- * torn down during shutdown.
+ * Set by the orchagent signal handler.  Once it is set,
+ * dispatchSaiNotification() returns without forwarding.  Graceful shutdown
+ * exits without running destructors, so this stops new work that the main
+ * loop will no longer drain.
  */
 volatile sig_atomic_t gOrchShutdownRequested = 0;
 
@@ -48,8 +49,9 @@ std::unordered_map<std::string, swss::NotificationConsumer *> gConsumerRegistry;
  * doTask(NotificationConsumer&) on the orchagent main thread.
  *
  * No in-process consumer registered for the op (or its orch does not exist):
- * publish on the Redis NOTIFICATIONS channel as before, so consumers that are
- * still Redis-subscribed keep working.
+ * publish on the Redis NOTIFICATIONS channel.  In ZMQ mode the owning orch's
+ * consumer is in-process, so this fallback does not deliver the notification
+ * to an orch.  It covers an op that arrives before that orch has registered.
  */
 void dispatchSaiNotification(const std::string &op, const std::string &sdata)
 {
