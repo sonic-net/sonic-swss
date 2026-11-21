@@ -332,6 +332,126 @@ namespace hftelorch_notify_test
         EXPECT_TRUE(telemetry_list.empty());
     }
 
+    /* Drives a MIXED profile through the HFTelOrch table handlers while the
+     * tel type CREATE fails. */
+    struct HFTelOrchCreateFailureTest : public LocallyNotifyCreateFailureTest
+    {
+        swss::DBConnector state_db{"STATE_DB", 0, true};
+        static int tel_type_creates;
+        static int subscription_creates;
+
+        static sai_status_t mock_create_tel_type_table_full(
+            sai_object_id_t *, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            ++tel_type_creates;
+            return SAI_STATUS_TABLE_FULL;
+        }
+
+        static sai_status_t mock_create_subscription(
+            sai_object_id_t *oid, sai_object_id_t, uint32_t, const sai_attribute_t *)
+        {
+            ++subscription_creates;
+            *oid = next_oid++;
+            return SAI_STATUS_SUCCESS;
+        }
+
+        void SetUp() override
+        {
+            LocallyNotifyCreateFailureTest::SetUp();
+            ut_api.create_tam_tel_type = mock_create_tel_type_table_full;
+            ut_api.set_tam_tel_type_attribute = mock_set;
+            ut_api.create_tam_counter_subscription = mock_create_subscription;
+            ut_api.remove_tam_counter_subscription = mock_remove;
+            tel_type_creates = 0;
+            subscription_creates = 0;
+
+            new (&stub.p->m_state_telemetry_session)
+                swss::Table(&state_db, STATE_HIGH_FREQUENCY_TELEMETRY_SESSION_TABLE_NAME);
+            new (&stub.p->m_sai_tam_telemetry_list) vector<sai_object_id_t>();
+            new (&stub.p->m_tel_type_supported_categories)
+                unordered_set<sai_object_type_t>({SAI_OBJECT_TYPE_PORT, SAI_OBJECT_TYPE_QUEUE});
+            stub.p->m_tel_type_mode = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+            stub.p->m_sai_tam_obj = 0x10;
+            stub.p->m_sai_tam_collector_obj = 0x20;
+        }
+
+        void TearDown() override
+        {
+            stub.p->m_type_profile_mapping.clear();
+            stub.p->m_name_profile_mapping.clear();
+            using TelemetryListType = decay_t<decltype(stub.p->m_sai_tam_telemetry_list)>;
+            using CategoriesType = decay_t<decltype(stub.p->m_tel_type_supported_categories)>;
+            stub.p->m_state_telemetry_session.~Table();
+            stub.p->m_sai_tam_telemetry_list.~TelemetryListType();
+            stub.p->m_tel_type_supported_categories.~CategoriesType();
+            LocallyNotifyCreateFailureTest::TearDown();
+        }
+    };
+
+    int HFTelOrchCreateFailureTest::tel_type_creates;
+    int HFTelOrchCreateFailureTest::subscription_creates;
+
+    /* A failed tel type CREATE stops the deploy of an object or group, so it
+     * is not attempted again for every counter. */
+    TEST_F(HFTelOrchCreateFailureTest, FailedTelTypeCreateStopsDeploy)
+    {
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet0"] = 0x1000000000001ULL;
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet4"] = 0x1000000000002ULL;
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4"},
+                                         {"object_counters", "IF_IN_OCTETS,IF_OUT_OCTETS"}}),
+                  task_process_status::task_success);
+        EXPECT_EQ(tel_type_creates, 2);
+        EXPECT_EQ(subscription_creates, 0);
+
+        stub.p->m_counter_name_cache[SAI_OBJECT_TYPE_PORT]["Ethernet8"] = 0x1000000000003ULL;
+        tel_type_creates = 0;
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4,Ethernet8"},
+                                         {"object_counters", "IF_IN_OCTETS,IF_OUT_OCTETS"}}),
+                  task_process_status::task_success);
+        // Once per resolved object, then once more on commit, not per counter.
+        EXPECT_EQ(tel_type_creates, 4);
+        EXPECT_EQ(subscription_creates, 0);
+    }
+
+    /* MIXED profile with PORT and QUEUE groups, where the shared tel type
+     * CREATE fails: deleting QUEUE rebuilds PORT and must still complete,
+     * so the profile can then be deleted. */
+    TEST_F(HFTelOrchCreateFailureTest, MixedGroupDeleteCompletesWhenTelTypeCreateFails)
+    {
+        ASSERT_EQ(stub.p->profileTableSet("p", {}), task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "PORT",
+                                        {{"object_names", "Ethernet0,Ethernet4"}, {"object_counters", "IF_IN_OCTETS"}}),
+                  task_process_status::task_success);
+        ASSERT_EQ(stub.p->groupTableSet("p", "QUEUE",
+                                        {{"object_names", "Ethernet0|0"}, {"object_counters", "PACKETS"}}),
+                  task_process_status::task_success);
+        auto profile = stub.p->m_name_profile_mapping.at("p");
+
+        CounterNameMapUpdater::Message msg;
+        msg.m_table_name = COUNTERS_PORT_NAME_MAP;
+        msg.m_operation = CounterNameMapUpdater::SET;
+        msg.m_counter_name = "Ethernet0";
+        msg.m_oid = 0x1000000000001ULL;
+        EXPECT_NO_THROW(stub.p->locallyNotify(msg));
+        EXPECT_TRUE(profile->m_sai_tam_tel_type_objs.empty());
+        EXPECT_EQ(profile->m_name_sai_map[SAI_OBJECT_TYPE_PORT].size(), 1u);
+
+        tel_type_creates = 0;
+        EXPECT_EQ(stub.p->groupTableDel("p", "QUEUE"), task_process_status::task_success);
+        EXPECT_GT(tel_type_creates, 0);
+        EXPECT_EQ(subscription_creates, 0);
+        EXPECT_EQ(stub.p->m_type_profile_mapping[SAI_OBJECT_TYPE_QUEUE].count(profile), 0u);
+
+        EXPECT_EQ(stub.p->groupTableDel("p", "PORT"), task_process_status::task_success);
+        profile.reset();
+        EXPECT_EQ(stub.p->profileTableDel("p"), task_process_status::task_success);
+        EXPECT_TRUE(stub.p->m_name_profile_mapping.empty());
+        EXPECT_TRUE(stub.p->m_sai_tam_telemetry_list.empty());
+    }
+
     /* CounterNameMapUpdater::delCounterNameMap with gHFTOrch non-null.
      * Covers the Message construction lines in counternameupdater.cpp DEL path. */
     TEST_F(LocallyNotifyTest, CounterNameUpdater_DelWithHFT)

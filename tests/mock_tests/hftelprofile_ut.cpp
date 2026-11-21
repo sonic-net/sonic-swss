@@ -1324,7 +1324,8 @@ namespace hftelprofile_ut
         EXPECT_THROW(make_unique<HFTelProfile>(
             "b", tam_oid, telemetry_list, collector_oid, cache, SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE), runtime_error);
         ut_api.create_tam_tel_type = mock_create_table_full;
-        EXPECT_THROW(profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), runtime_error);
+        EXPECT_EQ(profile_a->getTAMTelTypeObjID(SAI_OBJECT_TYPE_PORT), SAI_NULL_OBJECT_ID);
+        EXPECT_TRUE(profile_a->m_sai_tam_tel_type_objs.empty());
         ut_api.create_tam_telemetry = mock_create;
         ut_api.create_tam_tel_type = mock_create;
 

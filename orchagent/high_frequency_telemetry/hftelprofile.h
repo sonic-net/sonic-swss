@@ -164,7 +164,7 @@ private:
     sai_object_id_t getTAMReportObjID(sai_object_type_t object_type);
     sai_object_id_t getTAMTelTypeObjID(sai_object_type_t object_type);
     void initTelemetry();
-    void deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, std::uint16_t label);
+    bool deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, std::uint16_t label);
     void deployCounterSubscriptions(sai_object_type_t object_type, sai_object_id_t sai_obj, std::uint16_t label);
     void deployCounterSubscriptions(sai_object_type_t object_type);
     void undeployCounterSubscriptions(sai_object_type_t object_type);

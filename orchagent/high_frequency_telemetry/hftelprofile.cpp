@@ -947,7 +947,10 @@ sai_object_id_t HFTelProfile::getTAMTelTypeObjID(sai_object_type_t object_type)
                 static_cast<uint32_t>(attrs.size()),
                 attrs.data())) != task_success)
     {
-        SWSS_LOG_THROW("Failed to create the TAM tel type object for profile %s", m_profile_name.c_str());
+        // Return a null OID rather than throwing, so callers that are in the
+        // middle of a group or object update can still complete it.
+        SWSS_LOG_ERROR("Failed to create the TAM tel type object for profile %s", m_profile_name.c_str());
+        return SAI_NULL_OBJECT_ID;
     }
 
     m_sai_tam_tel_type_objs[key] = move(
@@ -1048,7 +1051,7 @@ void HFTelProfile::initTelemetry()
             }));
 }
 
-void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, uint16_t label)
+bool HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_object_id_t sai_obj, sai_stat_id_t stat_id, uint16_t label)
 {
     SWSS_LOG_ENTER();
 
@@ -1061,12 +1064,16 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
         auto itr2 = itr->second.find(stat_id);
         if (itr2 != itr->second.end())
         {
-            return;
+            return true;
         }
     }
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_TEL_TYPE;
     attr.value.oid = getTAMTelTypeObjID(object_type);
+    if (attr.value.oid == SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_TAM_COUNTER_SUBSCRIPTION_ATTR_OBJECT_ID;
@@ -1105,6 +1112,8 @@ void HFTelProfile::deployCounterSubscription(sai_object_type_t object_type, sai_
                     sai_tam_api->remove_tam_counter_subscription(*p));
                 delete p;
             }));
+
+    return true;
 }
 
 void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type, sai_object_id_t sai_obj, std::uint16_t label)
@@ -1120,7 +1129,10 @@ void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type, sai
 
     for (const auto &stat_id : group->second.getStatsIDs())
     {
-        deployCounterSubscription(object_type, sai_obj, stat_id, label);
+        if (!deployCounterSubscription(object_type, sai_obj, stat_id, label))
+        {
+            return;
+        }
     }
 }
 
@@ -1144,7 +1156,10 @@ void HFTelProfile::deployCounterSubscriptions(sai_object_type_t object_type)
         }
         for (const auto &stat_id : group->second.getStatsIDs())
         {
-            deployCounterSubscription(object_type, itr->second, stat_id, obj.second);
+            if (!deployCounterSubscription(object_type, itr->second, stat_id, obj.second))
+            {
+                return;
+            }
         }
     }
 }
