@@ -1,6 +1,7 @@
 #define protected public
 #include "orch.h"
 #include "orchdaemon.h"
+#include "notifier.h"
 #undef protected
 #include "dbconnector.h"
 #include <gtest/gtest.h>
@@ -645,6 +646,76 @@ namespace orchdaemon_test
         // redisGetReply) does not re-parse it.
         freeMockReplyTree(mockReply);
         mockReply = nullptr;
+    }
+
+    class NotificationRetryOrch : public Orch
+    {
+    public:
+        NotificationRetryOrch() : Orch(&appl_db, "NOTIFICATION_RETRY_TABLE")
+        {
+            notifications = new NotificationConsumer(&appl_db, "NOTIFICATION_RETRY_CHANNEL");
+            addExecutor(new Notifier(notifications, this, "NOTIFICATION_RETRY"));
+        }
+
+        void doTask() override
+        {
+            ++tableSweeps;
+        }
+
+        void doTask(Consumer &consumer) override
+        {
+            ++tableTasks;
+            ready = true;
+            consumer.m_toSync.clear();
+        }
+
+        void doTask(NotificationConsumer &consumer) override
+        {
+            if (!ready)
+                return;
+
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            consumer.pops(entries);
+            consumed += entries.size();
+        }
+
+        NotificationConsumer *notifications;
+        bool ready = false;
+        unsigned int consumed = 0;
+        unsigned int tableSweeps = 0;
+        unsigned int tableTasks = 0;
+    };
+
+    TEST_F(OrchDaemonTest, DrainNotificationsRetriesBufferedBurstWithoutTableSweep)
+    {
+        ASSERT_EQ(orchd->gRingBuffer, nullptr);
+        auto *orch = new NotificationRetryOrch();
+        orchd->m_orchList.push_back(orch);
+
+        auto *tableConsumer = dynamic_cast<Consumer *>(orch->getExecutor("NOTIFICATION_RETRY_TABLE"));
+        ASSERT_NE(tableConsumer, nullptr);
+        tableConsumer->addToSync(KeyOpFieldsValuesTuple(
+            "ready", "SET", std::vector<FieldValueTuple>{{"state", "ready"}}));
+
+        for (int notification = 0; notification < 3; ++notification)
+            feedTaskStatsQuery(orch->notifications, "test");
+
+        orchd->drainNotifications();
+        EXPECT_EQ(orch->consumed, 0u);
+        ASSERT_TRUE(orch->notifications->hasData());
+        EXPECT_FALSE(orch->ready);
+        EXPECT_EQ(orch->tableTasks, 0u);
+        EXPECT_FALSE(tableConsumer->m_toSync.empty());
+
+        tableConsumer->drain();
+        ASSERT_TRUE(orch->ready);
+        EXPECT_TRUE(tableConsumer->m_toSync.empty());
+        orchd->drainNotifications();
+        EXPECT_EQ(orch->consumed, 3u);
+        EXPECT_FALSE(orch->notifications->hasData());
+
+        EXPECT_EQ(orch->tableSweeps, 0u);
+        EXPECT_EQ(orch->tableTasks, 1u);
     }
 
     // initTaskStatsChannel() must wire up the APPL_DB notification channels and
