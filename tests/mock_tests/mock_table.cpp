@@ -65,6 +65,16 @@ namespace swss
         existing_values.swap(new_values);
     }
 
+    // A YANG leaf-list is stored with an "@" suffix on its field name, and the
+    // real Table strips it on every read, so a daemon only ever sees the bare
+    // name. The mock has to deliver the same or a test can pass on input the
+    // daemon never gets.
+    std::string strip_leaf_list_marker(const std::string &field)
+    {
+        auto pos = field.find('@');
+        return pos == std::string::npos ? field : field.substr(0, pos);
+    }
+
     bool _hget(int dbId, const std::string &tableName, const std::string &key, const std::string &field, std::string &value)
     {
         auto table = gDB[dbId][tableName];
@@ -75,7 +85,7 @@ namespace swss
 
         for (const auto &it : table[key])
         {
-            if (it.first == field)
+            if (strip_leaf_list_marker(it.first) == field)
             {
                 value = it.second;
                 return true;
@@ -93,7 +103,11 @@ namespace swss
             return false;
         }
 
-        ovalues = table[key];
+        ovalues.clear();
+        for (const auto &it : table[key])
+        {
+            ovalues.emplace_back(strip_leaf_list_marker(it.first), it.second);
+        }
         return true;
     }
 

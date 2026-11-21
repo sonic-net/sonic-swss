@@ -27,6 +27,8 @@ private:
     std::set<std::string> m_vlans;
     std::set<std::string> m_vlanReplay;
     std::set<std::string> m_vlanMemberReplay;
+    // VLANs and members whose host command failed and is being retried.
+    std::set<std::string> m_hostCmdFailed;
     bool replayDone;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_PortVlanMember;
     
@@ -36,16 +38,20 @@ private:
     void processUntaggedVlanMembers(std::string vlan, const std::string &members);
 
     bool addHostVlan(int vlan_id);
+    void noteHostCmdFailed(const std::string &key, const std::string &what, const std::string &err);
+    void noteHostCmdDone(const std::string &key);
     bool removeHostVlan(int vlan_id);
     bool setHostVlanAdminState(int vlan_id, const std::string &admin_status);
     bool setHostVlanMtu(int vlan_id, uint32_t mtu);
     bool setHostVlanMac(int vlan_id, const std::string &mac);
     bool addHostVlanMember(int vlan_id, const std::string &port_alias, const std::string& tagging_mode);
-    bool removeHostVlanMember(int vlan_id, const std::string &port_alias);
+    bool removeHostVlanMember(int vlan_id, const std::string &port_alias, bool last_vlan);
+    bool portHasOtherVlanMembers(const std::string &vlan_alias, const std::string &port_alias);
     bool isMemberStateOk(const std::string &alias);
     bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
     bool isVlanMemberStateOk(const std::string &vlanMemberKey);
+    bool isVlanMemberModeApplied(const std::string &vlanMemberKey, const std::string &tagging_mode);
     void doVlanPacPortTask(Consumer &consumer);
     void doVlanPacFdbTask(Consumer &consumer);
     void doVlanPacVlanMemberTask(Consumer &consumer);
