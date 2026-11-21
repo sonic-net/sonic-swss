@@ -48,8 +48,16 @@ const char state_db_key_delimiter  = '|';
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
+#define CISCO_PLATFORM_SUBSTRING "cisco"
 #define XS_PLATFORM_SUBSTRING   "xsight"
 #define CLX_PLATFORM_SUBSTRING  "clounix"
+#define VPP_PLATFORM_SUBSTRING "vpp"
+
+inline bool isCiscoPlatform(const std::string &platform)
+{
+    return platform == CISCO_8000_PLATFORM_SUBSTRING ||
+           platform == CISCO_PLATFORM_SUBSTRING;
+}
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -172,7 +180,9 @@ public:
     }
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(std::vector<std::string> &ts);
+    // virtual so consumers with additional pending state (e.g.
+    // ZmqRouteConsumer's m_ingress staging map) can report it too.
+    virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -322,6 +332,11 @@ public:
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch() = default;
+
+    // TODO: override in every Orch that attaches as an Observer in its
+    //       constructor so OrchDaemon can detach all observers while every
+    //       subject is still alive, eliminating shutdown-order UAFs.
+    virtual void detachObservers() {}
 
     static std::shared_ptr<RingBuffer> gRingBuffer;
 

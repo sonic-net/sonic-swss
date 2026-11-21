@@ -94,6 +94,7 @@ namespace ut_helper
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
         sai_api_query(SAI_API_ICMP_ECHO, (void**)&sai_icmp_echo_api);
+        sai_api_query(SAI_API_BFD, (void**)&sai_bfd_api);
         sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
         sai_api_query(SAI_API_TAM, (void**)&sai_tam_api);
         sai_api_query((sai_api_t)SAI_API_DASH_VIP, (void**)&sai_dash_vip_api);
@@ -111,6 +112,7 @@ namespace ut_helper
         sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_PORT_MAP, (void**)&sai_dash_outbound_port_map_api);
         sai_api_query((sai_api_t)SAI_API_DASH_TRUSTED_VNI, (void**)&sai_dash_trusted_vni_api);
         sai_api_query(SAI_API_STP, (void**)&sai_stp_api);
+        sai_api_query(SAI_API_L2MC_GROUP, (void**)&sai_l2mc_group_api);
         sai_api_query((sai_api_t)SAI_API_DASH_METER, (void**)&sai_dash_meter_api);
         return SAI_STATUS_SUCCESS;
     }
@@ -143,6 +145,7 @@ namespace ut_helper
         sai_queue_api = nullptr;
         sai_counter_api = nullptr;
         sai_icmp_echo_api = nullptr;
+        sai_bfd_api = nullptr;
         sai_twamp_api = nullptr;
         sai_tam_api = nullptr;
         sai_dash_vip_api = nullptr;
@@ -151,6 +154,7 @@ namespace ut_helper
         sai_dash_ha_api = nullptr;
         sai_dash_flow_api = nullptr;
         sai_stp_api = nullptr;
+        sai_l2mc_group_api = nullptr;
         sai_dash_meter_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
@@ -205,13 +209,7 @@ namespace ut_helper
                 { "lanes", lanes_str },
                 { "speed", "1000" },
                 { "mtu", "6000" },
-                { "admin_status", "up" },
-                // PortConfig::role.value has no default initializer; without
-                // an explicit role here, p.m_role is read from uninitialized
-                // memory and intermittently matches Rec/Inb, which would make
-                // the recycle/inband gates in portsorch silently skip serdes
-                // and PHY-attr setup for these ports.
-                { "role", "Ext" }
+                { "admin_status", "up" }
             };
 
             auto key = FRONT_PANEL_PORT_PREFIX + to_string(i);

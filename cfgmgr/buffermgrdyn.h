@@ -271,6 +271,9 @@ private:
     // Profiles waiting for SAI sync in refreshSharedHeadroomPool
     std::vector<std::string> m_shpProfilesToCheck;
 
+    // Ratio-driven SHP disable is waiting for expanded profiles to reach SAI.
+    bool m_shpDisablePendingByRatio;
+
     // Seconds between SAI sync polls in waitWithRetry. 0 means no sleep (UT only).
     unsigned int m_saiSyncPollIntervalSec;
 
@@ -312,7 +315,7 @@ private:
     task_process_status waitSharedHeadroomPoolEnabledInSai();
     task_process_status checkPendingProfilesSyncStatus();
     task_process_status waitPendingProfilesSyncStatus();
-    void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
+    task_process_status refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
     task_process_status checkBufferProfileDirection(const std::string &profiles, buffer_direction_t dir);
     std::string constructZeroProfileListFromNormalProfileList(const std::string &normalProfileList, const std::string &port);
     void removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const std::string &port);

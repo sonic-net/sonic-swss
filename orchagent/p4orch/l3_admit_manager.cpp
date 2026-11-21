@@ -403,6 +403,7 @@ std::string L3AdmitManager::verifyState(const std::string &key, const std::vecto
     auto &app_db_entry = *app_db_entry_or;
     const std::string l3_admit_key = KeyGenerator::generateL3AdmitKey(
         app_db_entry.mac_address_data, app_db_entry.mac_address_mask, app_db_entry.port_name, app_db_entry.priority);
+
     auto *l3_admit_entry = getL3AdmitEntry(l3_admit_key);
     if (l3_admit_entry == nullptr)
     {

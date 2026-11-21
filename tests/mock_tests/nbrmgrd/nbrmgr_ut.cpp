@@ -2,18 +2,27 @@
 #include <iostream>
 #include <netlink/netlink.h>
 #include <netlink/msg.h>
+#include <linux/neighbour.h>
 #include <net/if.h>
 #include "../mock_table.h"
 #include "warm_restart.h"
-#define private public
 #include "nbrmgr.h"
-#undef private
 
 extern int (*callback)(const std::string &cmd, std::string &stdout);
 extern std::vector<std::string> mockCallArgs;
 
-/* Track netlink neighbor resolve calls */
-static std::vector<std::string> neighResolvedKeys;
+struct CapturedNeighborRequest
+{
+    int state;
+    unsigned int neighborFlags;
+    int family;
+    int messageFlags;
+};
+
+static std::vector<CapturedNeighborRequest> capturedNeighborRequests;
+static std::vector<std::string> operationOrder;
+static int mockNlSendResult;
+static int mockExecResult;
 
 /*
  * Wrap netlink and interface functions to avoid real kernel interaction.
@@ -37,8 +46,12 @@ int __wrap_nl_connect(struct nl_sock *sk, int protocol)
 
 int __wrap_nl_send_auto(struct nl_sock *sk, struct nl_msg *msg)
 {
-    /* Record that a neighbor resolve was attempted */
-    return 0;
+    struct nlmsghdr *hdr = nlmsg_hdr(msg);
+    struct ndmsg *nd = static_cast<struct ndmsg *>(NLMSG_DATA(hdr));
+    capturedNeighborRequests.push_back(
+        {nd->ndm_state, nd->ndm_flags, nd->ndm_family, hdr->nlmsg_flags});
+    operationOrder.push_back("netlink");
+    return mockNlSendResult;
 }
 
 /* Control whether nlmsg_alloc returns NULL to simulate setNeighbor failure */
@@ -65,11 +78,19 @@ unsigned int __wrap_if_nametoindex(const char *ifname)
 
 int noop_cb(const std::string &cmd, std::string &out){
     mockCallArgs.push_back(cmd);
-    return 0;
+    operationOrder.push_back("ndisc6");
+    return mockExecResult;
 }
 
 namespace nbrmgr_ut
 {
+    class TestableNbrMgr : public swss::NbrMgr
+    {
+    public:
+        using swss::NbrMgr::NbrMgr;
+        using Orch::getExecutor;
+    };
+
     struct NbrMgrTest : public ::testing::Test
     {
         std::shared_ptr<swss::DBConnector> m_config_db;
@@ -86,9 +107,37 @@ namespace nbrmgr_ut
             swss::WarmStart::initialize("nbrmgrd", "swss");
 
             mockCallArgs.clear();
-            neighResolvedKeys.clear();
+            capturedNeighborRequests.clear();
+            operationOrder.clear();
             mock_nlmsg_alloc_fail = false;
+            mockNlSendResult = 0;
+            mockExecResult = 0;
             callback = noop_cb;
+        }
+
+        void processFailedNeighborRequest(TestableNbrMgr& nbrmgr, const std::string& key)
+        {
+            swss::Table failedNeighTable(m_app_db.get(), APP_NEIGH_FAILED_TABLE_NAME);
+            failedNeighTable.set(key, {{"NULL", "NULL"}});
+            std::vector<swss::FieldValueTuple> values;
+            ASSERT_TRUE(failedNeighTable.get(key, values));
+
+            auto executor = nbrmgr.getExecutor(APP_NEIGH_FAILED_TABLE_NAME);
+            ASSERT_NE(executor, nullptr);
+            executor->execute();
+        }
+
+        void enableDualTor()
+        {
+            swss::Table peerSwitchTable(m_config_db.get(), CFG_PEER_SWITCH_TABLE_NAME);
+            peerSwitchTable.set("peer_switch_hostname", {{"address_ipv4", "10.0.0.1"}});
+        }
+
+        bool hasPendingFailedNeighborTask(TestableNbrMgr& nbrmgr)
+        {
+            auto consumer = dynamic_cast<Consumer *>(nbrmgr.getExecutor(APP_NEIGH_FAILED_TABLE_NAME));
+            EXPECT_NE(consumer, nullptr);
+            return consumer && !consumer->m_toSync.empty();
         }
     };
 
@@ -200,5 +249,108 @@ namespace nbrmgr_ut
 
         /* Should not crash; failures are logged as warnings */
         swss::NbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+    }
+
+    TEST_F(NbrMgrTest, ProcessFailedIpv6Neighbor)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        processFailedNeighborRequest(nbrmgr, "Vlan1000:2001:db8::1");
+
+        ASSERT_EQ(capturedNeighborRequests.size(), 1u);
+        EXPECT_EQ(capturedNeighborRequests[0].state, NUD_INCOMPLETE);
+        EXPECT_EQ(capturedNeighborRequests[0].neighborFlags, 0u);
+        EXPECT_EQ(capturedNeighborRequests[0].family, AF_INET6);
+        EXPECT_EQ(capturedNeighborRequests[0].messageFlags & NLM_F_CREATE, 0);
+        EXPECT_NE(capturedNeighborRequests[0].messageFlags & NLM_F_REPLACE, 0);
+        EXPECT_NE(capturedNeighborRequests[0].messageFlags & NLM_F_ACK, 0);
+
+        ASSERT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_EQ(mockCallArgs[0], "/usr/bin/ndisc6 -q -r 1 -w 0 \"2001:db8::1\" \"Vlan1000\"");
+        EXPECT_EQ(operationOrder, (std::vector<std::string>{"netlink", "ndisc6"}));
+        EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
+    }
+
+    TEST_F(NbrMgrTest, NetlinkSendFailureIsBestEffort)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        mockNlSendResult = -NLE_FAILURE;
+        processFailedNeighborRequest(nbrmgr, "Vlan1000:2001:db8::2");
+
+        ASSERT_EQ(capturedNeighborRequests.size(), 1u);
+        EXPECT_TRUE(mockCallArgs.empty());
+        EXPECT_EQ(operationOrder, (std::vector<std::string>{"netlink"}));
+        EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
+    }
+
+    TEST_F(NbrMgrTest, NoSolicitationResponseIsSuccess)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        mockExecResult = 2;
+        processFailedNeighborRequest(nbrmgr, "Vlan1000:2001:db8::4");
+
+        EXPECT_EQ(capturedNeighborRequests.size(), 1u);
+        EXPECT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
+    }
+
+    TEST_F(NbrMgrTest, SolicitationExecutionFailureIsBestEffort)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        mockExecResult = 1;
+        processFailedNeighborRequest(nbrmgr, "Vlan1000:2001:db8::5");
+
+        EXPECT_EQ(capturedNeighborRequests.size(), 1u);
+        EXPECT_EQ(mockCallArgs.size(), 1u);
+        EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
+    }
+
+    TEST_F(NbrMgrTest, RejectsIpv4FailedNeighborRequest)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        processFailedNeighborRequest(nbrmgr, "Vlan1000:192.0.2.1");
+
+        EXPECT_TRUE(capturedNeighborRequests.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(NbrMgrTest, RejectsMalformedFailedNeighborRequest)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        processFailedNeighborRequest(nbrmgr, "invalid-key");
+
+        EXPECT_TRUE(capturedNeighborRequests.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+    }
+
+    TEST_F(NbrMgrTest, RejectsEmptyInterfaceFailedNeighborRequest)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        enableDualTor();
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+        processFailedNeighborRequest(nbrmgr, ":2001:db8::6");
+
+        EXPECT_TRUE(capturedNeighborRequests.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+        EXPECT_FALSE(hasPendingFailedNeighborTask(nbrmgr));
+    }
+
+    TEST_F(NbrMgrTest, DoesNotSubscribeToFailedNeighborTableOnNonDualTor)
+    {
+        std::vector<std::string> cfg_nbr_tables = {CFG_NEIGH_TABLE_NAME};
+        TestableNbrMgr nbrmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_nbr_tables);
+
+        EXPECT_EQ(nbrmgr.getExecutor(APP_NEIGH_FAILED_TABLE_NAME), nullptr);
     }
 }

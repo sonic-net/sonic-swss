@@ -16,8 +16,8 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
-#include "zmqorch.h"
-#include "zmqserver.h"
+#include "zmqrouteorch.h"
+#include "zmqrouteserver.h"
 #include <unordered_map>
 
 extern bool gRouteStateAsyncPublish;
@@ -224,7 +224,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public ZmqRouteOrch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqServer *zmqServer = nullptr);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqServer = nullptr);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -280,6 +280,8 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
+    /* Point every route and label route using NhgOrch group nhg_index at nhg_id. */
+    bool moveNhgIndexRoutes(const std::string& nhg_index, sai_object_id_t nhg_id);
 
     void flushResponses() override;
 
@@ -307,6 +309,7 @@ private:
 
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
+    std::set<NextHopKey> m_bulkMplsNhReducedRefCnt;
 
     std::set<IpPrefix> m_SubnetDecapTermsCreated;
     ProducerStateTable m_appTunnelDecapTermProducer;
@@ -346,6 +349,9 @@ private:
     void updateDefaultRouteSwapSet(const NextHopGroupKey default_nhg_key, std::set<NextHopKey>& active_default_route_nhops);
     void incNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
     void decNhgRefCount(const std::string& nhg_index, const std::string &context_index = "");
+    bool isStandbyMuxNextHop(const NextHopGroupKey &nexthops);
+    void increaseRouteNextHopRefCount(const NextHopGroupKey &nexthops);
+    void decreaseRouteNextHopRefCount(const NextHopGroupKey &nexthops);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

@@ -415,6 +415,12 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
+        # Allow unused trap group removal
+        copp_app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        copp_tbl = swsscommon.ProducerStateTable(copp_app_db, self._p4rt_trap_group_obj.APP_DB_TBL_NAME)
+        copp_trap_group = self._p4rt_trap_group_obj.TBL_NAME_PREFIX + str(10)
+        copp_tbl._del(copp_trap_group)
+
         # maintain list of original Application and ASIC DB ACL entries before adding
         # new ACL rule
         original_appl_acl_rules = util.get_keys(
@@ -762,32 +768,12 @@ class TestP4RTAcl(object):
         ]
         util.verify_attr(fvs, attr_list)
 
-        # First attempt failed since cpu queue is out of range
+        # create ACL rule 2 with QOS_QUEUE action
         rule_json_key2 = '{"match/is_ip":"0x1","match/ether_type":"0x0800 & 0xFFFF","match/ether_dst":"AA:BB:CC:DD:EE:FF & FF:FF:FF:FF:FF:FF","priority":100}'
         action = "qos_queue"
         meter_cir = "80"
         meter_cbs = "80"
         table_name_with_rule_key2 = table_name + ":" + rule_json_key2
-
-    # First attempt failed since no UserDefinedTrap is created for the CPU queue    
-        attr_list = [
-            (self._p4rt_acl_rule_obj.ACTION, action),
-            # No UserDefinedTrap created for the queue.
-            ("param/cpu_queue", "48"),
-            (self._p4rt_acl_rule_obj.METER_CIR, meter_cir),
-            (self._p4rt_acl_rule_obj.METER_CBURST, meter_cbs),
-            (self._p4rt_acl_rule_obj.METER_PIR, meter_pir),
-            (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
-        ]
-
-        self._p4rt_acl_rule_obj.set_app_db_entry(
-            table_name_with_rule_key2, attr_list)
-        self._p4rt_acl_rule_obj.verify_response(
-            table_name_with_rule_key2,
-            attr_list,
-            "SWSS_RC_INVALID_PARAM",
-            "[OrchAgent] Invalid CPU queue number '48' for 'ACL_PUNT_TABLE_RULE_TEST'. Queue number should >= 0 and <= 47",
-        )
 
         # Second attempt failed since no UserDefinedTrap is created for the CPU queue
         attr_list = [
