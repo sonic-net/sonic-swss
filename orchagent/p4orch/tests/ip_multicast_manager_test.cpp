@@ -747,6 +747,8 @@ TEST_F(IpMulticastManagerTest, DeleteIpMulticastEntriesSuccess) {
   EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
       .WillOnce(Return(SAI_STATUS_SUCCESS))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_rpf_group_, remove_rpf_group(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_THAT(
       DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
       ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
@@ -808,6 +810,65 @@ TEST_F(IpMulticastManagerTest, DeleteIpMulticastEntriesMissingEntry) {
       DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
       ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_NOT_FOUND,
                                       StatusCode::SWSS_RC_NOT_EXECUTED}));
+}
+
+TEST_F(IpMulticastManagerTest, DeleteIpMulticastEntriesDeleteRpfGroupFailure) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now delete those entries.
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_rpf_group_, remove_rpf_group(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_THAT(
+      DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                      StatusCode::SWSS_RC_UNKNOWN}));
+
+  auto* entry1_ptr = GetIpMulticastEntry(entry1.ip_multicast_entry_key);
+  auto* entry2_ptr = GetIpMulticastEntry(entry2.ip_multicast_entry_key);
+  EXPECT_EQ(entry1_ptr, nullptr);
+  EXPECT_NE(entry2_ptr, nullptr);
+
+  EXPECT_FALSE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                        entry1.ip_multicast_entry_key));
+  EXPECT_TRUE(p4_oid_mapper_.existsOID(SAI_OBJECT_TYPE_IPMC_ENTRY,
+                                       entry2.ip_multicast_entry_key));
+}
+
+TEST_F(IpMulticastManagerTest,
+       DeleteIpMulticastEntriesDeleteRpfGroupRecoverFailure) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry1 =
+      SetupIpMulticastEntry(gVrfName, swss_ipv4_address, kMulticastGroup1,
+                            kMulticastGroupOid1, "meta_ipv4");
+  auto swss_ipv6_address = swss::IpAddress(kIpv6Address1);
+  auto entry2 = SetupIpMulticastEntry(gVrfName, swss_ipv6_address,
+                                      kMulticastGroup2, kMulticastGroupOid2,
+                                      "meta_ipv6", /*expect_rpf=*/false);
+
+  // Now delete those entries.
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_rpf_group_, remove_rpf_group(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  EXPECT_THAT(
+      DeleteIpMulticastEntries(std::vector<P4IpMulticastEntry>{entry1, entry2}),
+      ArrayEq(std::vector<StatusCode>{StatusCode::SWSS_RC_SUCCESS,
+                                      StatusCode::SWSS_RC_UNKNOWN}));
 }
 
 TEST_F(IpMulticastManagerTest, UpdateIpMulticastEntriesSuccess) {
@@ -1134,6 +1195,8 @@ TEST_F(IpMulticastManagerTest, DrainAddUpdateDeleteSuccess) {
 
   EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_rpf_group_, remove_rpf_group(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_del)),
                       FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_del)),
@@ -1147,6 +1210,121 @@ TEST_F(IpMulticastManagerTest, DrainAddUpdateDeleteSuccess) {
   EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
                                          kMulticastGroup2, &ref_cnt2));
   EXPECT_EQ(0, ref_cnt2);
+}
+
+TEST_F(IpMulticastManagerTest, DrainAddDeleteAddSuccess) {
+  auto swss_ipv4_address = swss::IpAddress(kIpv4Address1);
+  auto entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                          p4orch::kSetMulticastGroupId,
+                                          kMulticastGroup1, "meta");
+
+  auto key_op_fvs_add = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup1, "meta");
+  auto key_op_fvs_update = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, SET_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2, "meta");
+  auto key_op_fvs_del = GenerateKeyOpFieldsValuesTuple(
+      gVrfName, swss_ipv4_address, DEL_COMMAND, p4orch::kSetMulticastGroupId,
+      kMulticastGroup2, "meta");
+
+  // Fake that multicast groups have been added
+  AddMulticastGroup(kMulticastGroup1, kMulticastGroupOid1);
+  AddMulticastGroup(kMulticastGroup2, kMulticastGroupOid2);
+
+  // Add operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_add);
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_add)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_add)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  auto* read_entry = GetIpMulticastEntry(entry.ip_multicast_entry_key);
+  ASSERT_NE(read_entry, nullptr);
+
+  auto expect_entry = GenerateP4IpMulticastEntry(gVrfName, swss_ipv4_address,
+                                                 p4orch::kSetMulticastGroupId,
+                                                 kMulticastGroup1, "meta");
+  expect_entry.sai_ipmc_entry.switch_id = gSwitchId;
+  expect_entry.sai_ipmc_entry.vr_id = gVrfOrch->getVRFid(gVrfName);
+  expect_entry.sai_ipmc_entry.type = SAI_IPMC_ENTRY_TYPE_XG;
+  sai_ip_address_t sai_address_v4;
+  copy(sai_address_v4, swss_ipv4_address);
+  expect_entry.sai_ipmc_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_entry.sai_ipmc_entry.destination.addr.ip4 = sai_address_v4.addr.ip4;
+  expect_entry.sai_ipmc_entry.source.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+  expect_entry.sai_ipmc_entry.source.addr.ip4 = 0;
+
+  VerifyP4IpMulticastEntryEqual(expect_entry, *read_entry);
+  uint32_t ref_cnt = 777;
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_IPMC_GROUP, expect_entry.multicast_group_id, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
+
+  // Remove operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_del);
+
+  EXPECT_CALL(mock_sai_ipmc_, remove_ipmc_entry(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(mock_sai_rpf_group_, remove_rpf_group(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_del)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_del)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  read_entry = GetIpMulticastEntry(entry.ip_multicast_entry_key);
+  ASSERT_EQ(read_entry, nullptr);
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(SAI_OBJECT_TYPE_IPMC_GROUP,
+                                         kMulticastGroup2, &ref_cnt));
+  EXPECT_EQ(0, ref_cnt);
+
+  // Add operation
+  Enqueue(APP_P4RT_IPV4_MULTICAST_TABLE_NAME, key_op_fvs_add);
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
+      .WillOnce(
+          DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
+  EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  EXPECT_CALL(publisher_,
+              publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_add)),
+                      FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_add)),
+                      Eq(StatusCode::SWSS_RC_SUCCESS), Eq(true)))
+      .Times(1);
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, Drain(/*failure_before=*/false));
+
+  read_entry = GetIpMulticastEntry(entry.ip_multicast_entry_key);
+  ASSERT_NE(read_entry, nullptr);
+
+  VerifyP4IpMulticastEntryEqual(expect_entry, *read_entry);
+  EXPECT_TRUE(p4_oid_mapper_.getRefCount(
+      SAI_OBJECT_TYPE_IPMC_GROUP, expect_entry.multicast_group_id, &ref_cnt));
+  EXPECT_EQ(1, ref_cnt);
 }
 
 TEST_F(IpMulticastManagerTest, DrainCannotDeserialize) {
@@ -1215,12 +1393,6 @@ TEST_F(IpMulticastManagerTest, DrainCannotHandleDuplicates) {
   EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group(_, _, 0, _))
       .WillOnce(
           DoAll(SetArgPointee<0>(kRpfGroupOid1), Return(SAI_STATUS_SUCCESS)));
-  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, 7, _))
-      .WillOnce(DoAll(SetArgPointee<0>(kRpfRouterInterfaceOid1),
-                      Return(SAI_STATUS_SUCCESS)));
-  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, 2, _))
-      .WillOnce(DoAll(SetArgPointee<0>(kRpfGroupMemberOid1),
-                      Return(SAI_STATUS_SUCCESS)));
   EXPECT_CALL(mock_sai_ipmc_, create_ipmc_entry(_, _, _))
       .WillOnce(Return(SAI_STATUS_SUCCESS));
 
@@ -1234,6 +1406,12 @@ TEST_F(IpMulticastManagerTest, DrainCannotHandleDuplicates) {
                       FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_2)),
                       Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
       .Times(1);
+
+  EXPECT_CALL(mock_sai_router_intf_, create_router_interface(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
+
+  EXPECT_CALL(mock_sai_rpf_group_, create_rpf_group_member(_, _, _, _))
+      .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
 
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, Drain(/*failure_before=*/false));
 }

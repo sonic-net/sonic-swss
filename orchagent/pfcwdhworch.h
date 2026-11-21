@@ -1,0 +1,129 @@
+#ifndef PFC_WATCHDOG_HW_H
+#define PFC_WATCHDOG_HW_H
+
+#include "pfcwdorch.h"
+#include "timer.h"
+#include "dbconnector.h"
+
+extern "C" {
+#include "sai.h"
+}
+
+// Hardware watchdog STATE_DB field names
+#define PFC_WD_HW_DETECTION_TIME_MIN       "DETECTION_TIME_MIN"
+#define PFC_WD_HW_DETECTION_TIME_MAX       "DETECTION_TIME_MAX"
+#define PFC_WD_HW_RESTORATION_TIME_MIN     "RESTORATION_TIME_MIN"
+#define PFC_WD_HW_RESTORATION_TIME_MAX     "RESTORATION_TIME_MAX"
+
+enum class PfcWdRecoveryMode
+{
+    Software,   // software detection and action
+    HybridDlr,  // software detection, hardware-assisted recovery
+    Hardware,   // hardware detection and recovery
+};
+
+// Both DLDR and DLR_INIT select hardware; DLR_INIT alone selects hybrid.
+PfcWdRecoveryMode selectPfcWdRecoveryMode(bool dldrCapable, bool dlrInitCapable);
+
+class PfcWdHwOrch: public PfcWdBaseOrch
+{
+public:
+    PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
+                const vector<sai_port_stat_t> &portStatIds,
+                const vector<sai_queue_stat_t> &queueStatIds,
+                const vector<sai_queue_attr_t> &queueAttrIds);
+    virtual ~PfcWdHwOrch(void);
+
+    // Implementation-specific methods
+    virtual bool startWdOnPort(const Port& port, uint32_t detectionTime,
+                              uint32_t restorationTime, PfcWdAction action,
+                              string pfcStatHistory) override;
+    virtual bool stopWdOnPort(const Port& port) override;
+
+    task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
+    task_process_status deleteEntry(const string& key) override;
+
+protected:
+    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") override;
+
+public:
+    // PFC deadlock notification callback
+    void doTask(NotificationConsumer &consumer) override;
+    void onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notification_data_t *data);
+
+private:
+    // Hardware-specific methods
+    bool configureHwWatchdog(const Port& port, uint32_t detectionTime,
+                            uint32_t restorationTime, PfcWdAction action);
+    // bestEffort finishes the port level teardown even when a queue could not be
+    // disabled. The configuration rollback uses it: no queue was armed there, so a
+    // failed disable must not leave the port half configured.
+    bool disableHwWatchdog(const Port& port, bool bestEffort = false);
+
+    // Member variables
+    const vector<sai_port_stat_t> c_portStatIds;
+    const vector<sai_queue_stat_t> c_queueStatIds;
+    const vector<sai_queue_attr_t> c_queueAttrIds;
+
+    // Hardware timer ranges
+    uint32_t m_detectionTimeMin;
+    uint32_t m_detectionTimeMax;
+    uint32_t m_restorationTimeMin;
+    uint32_t m_restorationTimeMax;
+
+    // False when the hardware ranges could not be queried, in which case the
+    // configured times are not range checked.
+    bool m_timerRangesValid = false;
+
+    // STATE_DB for hardware watchdog state
+    shared_ptr<Table> m_pfcWdHwStateTable;
+
+    // PFC deadlock notifications, forwarded from the SAI callback thread
+    shared_ptr<DBConnector> m_notificationsDb;
+    swss::NotificationConsumer *m_deadlockNotificationConsumer = nullptr;
+
+    // Write failure status to STATE_DB
+    void writeFailureStatus(const Port& port);
+
+    // Check if port has any queue in stormed state
+    bool isPortInStormedState(const Port& port);
+
+    // Read back and verify timer value from hardware
+    bool readBackTimerValue(const Port& port, sai_port_attr_t attrId,
+                           const set<uint8_t>& losslessTc, uint32_t expected,
+                           uint32_t& actual, const string& timerName);
+
+    // Initialization functions
+    void initializeTimerRanges();
+    void registerCallbacks();
+    void recoverWarmReboot(DBConnector *db);
+
+    // Configuration functions
+    bool configureSwitchAction(const Port& port, PfcWdAction action,
+                               const function<bool(const string&)>& handleFailure);
+    bool configureTimerIntervals(const Port& port, const set<uint8_t>& losslessTc,
+                                 uint32_t detectionTime, uint32_t restorationTime,
+                                 const function<bool(const string&)>& handleFailure);
+    bool enableDldrOnLosslessQueues(const Port& port, const set<uint8_t>& losslessTc,
+                                    uint32_t detectionTime, uint32_t restorationTime,
+                                    const function<bool(const string&)>& handleFailure);
+    void mapQueuesToPort(const Port& port, const set<uint8_t>& losslessTc);
+    bool disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId);
+
+
+    // Port and queue information
+    struct PortQueueInfo
+    {
+        sai_object_id_t port_id;
+        std::string port_alias;
+        uint8_t queue_index;
+    };
+
+    // Queue ID to port/queue info mapping
+    std::unordered_map<sai_object_id_t, PortQueueInfo> m_queueToPortMap;
+
+    // Queues currently reported in storm by the hardware deadlock notification.
+    std::set<sai_object_id_t> m_stormedQueues;
+};
+
+#endif

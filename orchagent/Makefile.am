@@ -58,12 +58,15 @@ orchagent_SOURCES = \
             notifications.cpp \
             nhgorch.cpp \
             nhgbase.cpp \
+            protnhg.cpp \
             cbf/cbfnhgorch.cpp  \
             cbf/nhgmaporch.cpp \
             routeorch.cpp \
             mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
+            evpnmhorch.cpp \
+            l2nhgorch.cpp \
             port/port_capabilities.cpp \
             port/porthlpr.cpp \
             portsorch.cpp \
@@ -76,6 +79,7 @@ orchagent_SOURCES = \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
+            macmoveguard.cpp \
             aclorch.cpp \
             pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
@@ -90,6 +94,8 @@ orchagent_SOURCES = \
             switch/trimming/helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
+            pfcwdsworch.cpp \
+            pfcwdhworch.cpp \
             pfcactionhandler.cpp \
             crmorch.cpp \
             request_parser.cpp \
@@ -101,7 +107,9 @@ orchagent_SOURCES = \
             dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
+            notificationconsumerstatsorch.cpp \
             policerorch.cpp \
+            namelabelmapper.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
@@ -117,8 +125,10 @@ orchagent_SOURCES = \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            zmqrouteorch.cpp \
             dash/dashenifwdorch.cpp \
             dash/dashenifwdinfo.cpp \
+            dash/dashcounter.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
@@ -129,7 +139,9 @@ orchagent_SOURCES = \
             dash/dashtunnelorch.cpp \
             dash/pbutils.cpp \
             dash/dashhaorch.cpp \
+            dash/dashhafloworch.cpp \
             dash/dashportmaporch.cpp \
+            dash/dashresulthelper.cpp \
             twamporch.cpp \
             stporch.cpp \
             nexthopkey.cpp \
@@ -138,7 +150,9 @@ orchagent_SOURCES = \
             high_frequency_telemetry/hftelprofile.cpp \
             high_frequency_telemetry/counternameupdater.cpp \
             high_frequency_telemetry/hftelutils.cpp \
-            high_frequency_telemetry/hftelgroup.cpp
+            high_frequency_telemetry/hftelgroup.cpp \
+            shlorch.cpp
+
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
@@ -183,8 +197,8 @@ orchagent_restart_check_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
-orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp
-routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp
-orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp
+orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
+orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp $(top_srcdir)/lib/asan_ctor.cpp
 endif
 

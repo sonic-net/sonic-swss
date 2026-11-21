@@ -1,5 +1,4 @@
 import random
-from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig
 
 
@@ -7,7 +6,8 @@ class TestVirtualChassis(object):
     def test_voq_switch_fabric_link(self, vst):
         """Test basic fabric link monitoring infrastructure in VOQ switchs.
 
-        This test validates that fabric links get isolated if they experienced some errors.
+        This test validates that fabric links get isolated and records the correct reason for isolation
+        if they experienced some errors.
         And the link get unisolated if it clears the error for several consecutive polls.
         """
 
@@ -53,25 +53,30 @@ class TestVirtualChassis(object):
                        config_db.wait_for_field_match("FABRIC_PORT", configKey, {'forceUnisolateStatus': str(curForceStatus)},
                                                       polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "none"}, polling_config=max_poll)
 
                        # ======
                        # inject testing errors and wait for link get isolated.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "crc_errors"}, polling_config=max_poll)
 
                        # clear the testing errors and wait for link get unisolated.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "0"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "none"}, polling_config=max_poll)
 
                        # inject testing errors and wait for link get isolated.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "crc_errors"}, polling_config=max_poll)
 
                        lnkDownCnt = 2
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {'PORT_DOWN_COUNT': str(lnkDownCnt)})
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"PORT_DOWN_COUNT_handled": str(lnkDownCnt)}, polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
-
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "link_event_counters_reset"}, polling_config=max_poll,
+                                                 comparator=lambda field, actual, expected: actual in ("link_event_counters_reset", "none"))
 
                        # inject testing errors and wait for link get isolated again.
                        sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
@@ -79,16 +84,38 @@ class TestVirtualChassis(object):
 
                        # check if the link get permanently isolated as the link get isolate/unisolated more than 3 times
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"PRM_ISOLATED": "1"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "permanent"}, polling_config=max_poll)
 
 
                        # now test force unisolate this link
-                       configKey = "Fabric"+str(portNum)
                        curForceStatus = int( config_db.get_entry( "FABRIC_PORT", configKey)['forceUnisolateStatus'] )
                        curForceStatus += 1
                        config_db.update_entry("FABRIC_PORT", configKey, {'forceUnisolateStatus': str(curForceStatus)})
                        config_db.wait_for_field_match("FABRIC_PORT", configKey, {'forceUnisolateStatus': str(curForceStatus)},
                                                       polling_config=max_poll)
                        sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "none"}, polling_config=max_poll,
+                                                 comparator=lambda field, actual, expected: actual in ("admin_unisolate", "none"))
+
+                       # FEC-only auto isolate
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "0"})
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "2"})
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "fec_uncorrectable"}, polling_config=max_poll)
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "0"})
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "none"}, polling_config=max_poll)
+
+                       # CRC and FEC combined auto isolate
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "2"})
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "2"})
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "1"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port,
+                                                 {"ISOLATE_REASON": "crc_errors,fec_uncorrectable"}, polling_config=max_poll)
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CRC_ERRORS": "0"})
+                       sdb.update_entry("FABRIC_PORT_TABLE", port, {"TEST_CODE_ERRORS": "0"})
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"AUTO_ISOLATED": "0"}, polling_config=max_poll)
+                       sdb.wait_for_field_match("FABRIC_PORT_TABLE", port, {"ISOLATE_REASON": "none"}, polling_config=max_poll)
 
                    finally:
                        # cleanup

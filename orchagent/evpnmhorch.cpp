@@ -1,0 +1,329 @@
+#include "evpnmhorch.h"
+
+#include "portsorch.h"
+
+extern PortsOrch *gPortsOrch;
+
+extern sai_vlan_api_t *sai_vlan_api;
+
+#define VLAN_PREFIX "Vlan"
+
+EvpnMhOrch::EvpnMhOrch(vector<TableConnector> &connectors) : Orch(connectors)
+{
+    SWSS_LOG_ENTER();
+}
+
+EvpnMhOrch::~EvpnMhOrch()
+{
+    SWSS_LOG_ENTER();
+}
+
+EsCacheEntry *EvpnMhOrch::getEsCache(const std::string &key)
+{
+    auto entry_it = m_esDataMap.find(key);
+    return (entry_it != m_esDataMap.end()) ? entry_it->second.get() : nullptr;
+}
+
+/* A platform without the DF attribute forwards normally and only loses non-DF BUM
+ * suppression; retrying cannot change that. */
+static bool isDfAttrUnsupported(sai_status_t status)
+{
+    return status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED ||
+           SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status);
+}
+
+static std::string getPortFromEsKey(const std::string &key)
+{
+    auto pos = key.find(':');
+    return (pos != std::string::npos) ? key.substr(pos + 1) : "Unknown";
+}
+
+static std::string getVlanFromEsKey(const std::string &key)
+{
+    auto pos = key.find(':');
+    return (pos != std::string::npos) ? key.substr(0, pos) : "Unknown";
+}
+
+bool EvpnMhOrch::updateEsCache(string &key, KeyOpFieldsValuesTuple &t)
+{
+    bool is_df = false;
+    struct EsCacheEntry *existing_entry = nullptr;
+
+    // Note: KeyOpFieldsValuesTuple is the standard swss framework type for receiving
+    // data from Redis tables. Although not optimal for lookups, it's part of the API contract.
+    for (const auto &i : kfvFieldsValues(t))
+    {
+        if (fvField(i) == "df")
+        {
+            is_df = (fvValue(i) == "true");
+            break;  // Found the field we need, no need to continue
+        }
+    }
+
+    existing_entry = getEsCache(key);
+    if (existing_entry)
+    {
+        existing_entry->is_df = is_df;
+    }
+    else
+    {
+        m_esDataMap[key] = std::make_unique<EsCacheEntry>(is_df);
+        existing_entry = m_esDataMap[key].get();
+    }
+
+    /*
+     * DESIGN NOTE: The YANG schema takes only the interface name, but the implementation
+     * uses a composite key format "VlanX:InterfaceName" for cache lookups. This design
+     * has performance implications:
+     *
+     * 1. Each VLAN in the bridge triggers an attribute update against the main port
+     * 2. Current flat map structure requires string parsing on every lookup
+     *
+     * TODO: Consider alternative data structures for better performance:
+     * - Nested map: map<vlan_id, map<port_name, EsCacheEntry*>>
+     * - Multimap indexed by port for O(1) port-based lookups
+     * - Parent/child cache relationship to reduce redundant updates
+     */
+    std::string port_name = getPortFromEsKey(key);
+    std::string vlan_id = getVlanFromEsKey(key);
+    Port port;
+    sai_object_id_t vlan_member_id;
+
+    SWSS_LOG_NOTICE("updateEsCache: SET oper: %s, vlan: %s, port_name: %s, is_df: %d", key.c_str(), vlan_id.c_str(), port_name.c_str(), existing_entry->is_df);
+
+    /* The role is cached above; portsorch sets it right after it creates the VLAN member. */
+    if (!gPortsOrch->getPort(vlan_id, port))
+    {
+        SWSS_LOG_INFO("updateEsCache: %s: VLAN not created yet, DF role set after member create", key.c_str());
+        return true;
+    }
+
+    if (gPortsOrch->getVlanMember(port_name, port, vlan_member_id))
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
+        attr.value.booldata = isTunnelTermBumDropped(port_name, port.m_vlan_info.vlan_id);
+
+        auto status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &attr);
+        if (isDfAttrUnsupported(status))
+        {
+            SWSS_LOG_WARN("updateEsCache: DF role attribute unavailable for %s (status %d), "
+                          "non-DF BUM suppression not applied", key.c_str(), status);
+        }
+        else if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("updateEsCache: Failed to set VLAN member attribute for %s, SAI status: %d. "
+                          "BUM traffic forwarding state may be incorrect. Will retry.", key.c_str(), status);
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_INFO("updateEsCache: %s: not a VLAN member yet, DF role set after member create", key.c_str());
+    }
+    return true;
+}
+
+bool EvpnMhOrch::deleteEsCache(string &key)
+{
+    EsCacheEntry *entry = getEsCache(key);
+
+    if (!entry)
+    {
+        SWSS_LOG_WARN("deleteEsCache: Entry not found for key: %s", key.c_str());
+        return true;  // Nothing to delete, consider it successful
+    }
+
+    SWSS_LOG_NOTICE("deleteEsCache: DEL oper: intf: %s, is_df: %d", key.c_str(), entry->is_df);
+    std::string port_name = getPortFromEsKey(key);
+    std::string vlan_id = getVlanFromEsKey(key);
+    Port port;
+    sai_object_id_t vlan_member_id;
+
+    /* Without the VLAN member there is no attribute to reset, only the cache entry. */
+    if (!gPortsOrch->getPort(vlan_id, port))
+    {
+        m_esDataMap.erase(key);
+        return true;
+    }
+    if (gPortsOrch->getVlanMember(port_name, port, vlan_member_id))
+    {
+        /* Without a DF entry isTunnelTermBumDropped() is false. */
+        sai_attribute_t attr;
+        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
+        attr.value.booldata = false;
+
+        auto status = sai_vlan_api->set_vlan_member_attribute(vlan_member_id, &attr);
+        if (status != SAI_STATUS_SUCCESS && !isDfAttrUnsupported(status))
+        {
+            SWSS_LOG_ERROR("deleteEsCache: Failed to reset VLAN member attribute for %s, SAI status: %d. "
+                          "BUM traffic forwarding state may be incorrect. Will retry.", key.c_str(), status);
+            return false;
+        }
+    }
+    m_esDataMap.erase(key);
+    return true;
+}
+
+bool EvpnMhOrch::vlanMembersApplyNonDF(string port_name)
+{
+    vlan_members_t vlan_members;
+    Port port;
+    /* A port that does not exist yet has no VLAN members; portsorch consults the ES
+     * state when it creates them. */
+    if (!gPortsOrch->getPort(port_name, port))
+    {
+        SWSS_LOG_INFO("vlanMembersApplyNonDF: port %s not created yet", port_name.c_str());
+        return true;
+    }
+    gPortsOrch->getPortVlanMembers(port, vlan_members);
+    for (const auto &member : vlan_members)
+    {
+        auto vlan_id = member.first;
+        auto vlan_mem_entry = member.second;
+        /* Also runs when the port leaves its ES, which clears the drop. */
+        sai_attribute_t attr;
+        attr.id = SAI_VLAN_MEMBER_ATTR_TUNNEL_TERM_BUM_TX_DROP;
+        attr.value.booldata = isTunnelTermBumDropped(port_name, vlan_id);
+        SWSS_LOG_NOTICE("vlanMembersApplyNonDF: port: %s, vlan: %d, tunnel-terminated BUM drop: %d",
+                        port_name.c_str(), vlan_id, attr.value.booldata);
+
+        auto status = sai_vlan_api->set_vlan_member_attribute(vlan_mem_entry.vlan_member_id, &attr);
+        if (isDfAttrUnsupported(status))
+        {
+            SWSS_LOG_WARN("vlanMembersApplyNonDF: SAI attribute not supported for port %s vlan %d, "
+                          "Non-DF BUM suppression unavailable on this platform",
+                          port_name.c_str(), vlan_id);
+            continue;
+        }
+        else if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("vlanMembersApplyNonDF: failed to set Non-DF for port %s vlan %d (status %d)",
+                           port_name.c_str(), vlan_id, status);
+            return false;
+        }
+    }
+    return true;
+}
+void EvpnMhOrch::doEvpnEsIntfTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        SWSS_LOG_NOTICE("doEvpnEsIntfTask: %s oper: ESI intf: %s", op.c_str(), key.c_str());
+
+        // Update ES intent state immediately - this is a control-plane fact
+        // independent of whether the port exists in SAI yet.
+        if (op == SET_COMMAND)
+        {
+            m_esIntfMap[key] = true;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_esIntfMap.erase(key);
+        }
+
+        if (!vlanMembersApplyNonDF(key))
+        {
+            // SAI operation failed, leave in m_toSync for retry.
+            // m_esIntfMap is already updated above so callers see correct ES state.
+            ++it;
+        }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void EvpnMhOrch::doEvpnEsDfTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        bool success = false;
+        if (op == SET_COMMAND)
+        {
+            success = updateEsCache(key, t);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            success = deleteEsCache(key);
+        }
+
+        if (!success)
+        {
+            // SAI operation failed, leave in m_toSync for retry
+            ++it;
+        }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void EvpnMhOrch::doTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    string table_name = consumer.getTableName();
+    if (table_name == "EVPN_DF_TABLE")
+    {
+        doEvpnEsDfTask(consumer);
+    }
+    else
+    {
+        if (table_name == "EVPN_ETHERNET_SEGMENT")
+        {
+            doEvpnEsIntfTask(consumer);
+        }
+    }
+}
+
+bool EvpnMhOrch::isInterfaceDF(const std::string &port_name, sai_vlan_id_t vlan_id)
+{
+    std::string df_key = VLAN_PREFIX + std::to_string(vlan_id) + ":" + port_name;
+    if (EsCacheEntry *entry = getEsCache(df_key))
+        return entry->is_df;
+    return false;
+}
+
+bool EvpnMhOrch::isTunnelTermBumDropped(const std::string &port_name, sai_vlan_id_t vlan_id)
+{
+    if (!isPortInterfaceAssociatedToEs(port_name))
+        return false;
+
+    std::string df_key = VLAN_PREFIX + std::to_string(vlan_id) + ":" + port_name;
+    EsCacheEntry *entry = getEsCache(df_key);
+    return entry != nullptr && !entry->is_df;
+}
+
+// Returns true if the port participates in EVPN-MH either:
+//   (a) as a port-level Ethernet Segment interface association (any VLAN), OR
+//   (b) as a port+VLAN DF (Designated Forwarder) entry for the specific VLAN.
+// Either condition affects forwarding decisions for traffic on (port, vlan_id),
+// so both paths must be reported.
+bool EvpnMhOrch::isPortAndVlanAssociatedToEs(const std::string &port_name, sai_vlan_id_t vlan_id)
+{
+    if (isPortInterfaceAssociatedToEs(port_name))
+        return true;
+
+    std::string df_key = VLAN_PREFIX + std::to_string(vlan_id) + ":" + port_name;
+    return getEsCache(df_key) != nullptr;
+}
+
+bool EvpnMhOrch::isPortInterfaceAssociatedToEs(const std::string &port_name)
+{
+    return (m_esIntfMap.find(port_name) != m_esIntfMap.end());
+}

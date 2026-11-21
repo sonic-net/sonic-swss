@@ -329,20 +329,16 @@ class NextHopManagerTest : public ::testing::Test
         mock_sai_hostif = &mock_sai_hostif_;
         mock_sai_switch = &mock_sai_switch_;
         sai_switch_api->get_switch_attribute = mock_get_switch_attribute;
-        sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
         sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
         EXPECT_CALL(mock_sai_hostif_, create_hostif_table_entry(_, _, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_hostif_, create_hostif_trap(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_switch_, get_switch_attribute(_, _, _)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
         std::vector<std::string> p4_tables;
-        gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
+        gP4Orch = new P4Orch(gAppDb, p4_tables, nullptr, gVrfOrch);
     }
 
     ~NextHopManagerTest()
     {
         delete gP4Orch;
-        delete copp_orch_;
     }
 
     void SetUp() override
@@ -449,7 +445,6 @@ class NextHopManagerTest : public ::testing::Test
     NextHopManager next_hop_manager_;
     StrictMock<MockSaiHostif> mock_sai_hostif_;
     StrictMock<MockSaiSwitch> mock_sai_switch_;
-    CoppOrch *copp_orch_;
 };
 
 bool NextHopManagerTest::ResolveNextHopEntryDependency(const P4NextHopAppDbEntry &app_db_entry,
@@ -991,8 +986,37 @@ TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteSuccess) {
       swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
                             "1")};
 
-  EXPECT_TRUE(
-      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes).ok());
+  auto entry_or =
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes);
+  EXPECT_TRUE(entry_or.ok());
+  EXPECT_EQ(entry_or->disable_decrement_ttl, false);
+  EXPECT_EQ(entry_or->disable_src_mac_rewrite, true);
+  EXPECT_EQ(entry_or->disable_dst_mac_rewrite, false);
+  EXPECT_EQ(entry_or->disable_vlan_rewrite, true);
+}
+
+TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteHexSuccess) {
+  std::vector<swss::FieldValueTuple> attributes = {
+      swss::FieldValueTuple(p4orch::kAction,
+                            "set_ip_nexthop_and_disable_rewrites"),
+      swss::FieldValueTuple(prependParamField(p4orch::kRouterInterfaceId),
+                            kRouterInterfaceId1),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDecrementTtl),
+                            "0x1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableSrcMacRewrite),
+                            "0x0"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableDstMacRewrite),
+                            "0X1"),
+      swss::FieldValueTuple(prependParamField(p4orch::kDisableVlanRewrite),
+                            "0x0")};
+
+  auto entry_or =
+      DeserializeP4NextHopAppDbEntry(kNextHopP4AppDbKey, attributes);
+  EXPECT_TRUE(entry_or.ok());
+  EXPECT_EQ(entry_or->disable_decrement_ttl, true);
+  EXPECT_EQ(entry_or->disable_src_mac_rewrite, false);
+  EXPECT_EQ(entry_or->disable_dst_mac_rewrite, true);
+  EXPECT_EQ(entry_or->disable_vlan_rewrite, false);
 }
 
 TEST_F(NextHopManagerTest, DeserializeP4NextHopAppDbEntryRewriteFailures) {
@@ -1381,6 +1405,8 @@ TEST_F(NextHopManagerTest, VerifyIpNextHopStateTest)
     // Verification should succeed with vaild key and value.
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kNeighborId), kNeighborId1});
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kRouterInterfaceId), kRouterInterfaceId1});
+    // VerifyStateCache compares the rif and neighbor of an IP next hop only when the action is known.
+    attributes.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kSetIpNexthop});
     EXPECT_EQ(VerifyState(db_key, attributes), "");
 
     // Invalid key should fail verification.

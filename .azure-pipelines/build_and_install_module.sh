@@ -75,6 +75,7 @@ build_and_install_kmodule()
     mv .config .config.bk
     cp /boot/config-$(uname -r) .config
     grep NET_TEAM .config.bk >> .config
+    make olddefconfig
     make VERSION=$VERSION PATCHLEVEL=$PATCHLEVEL SUBLEVEL=$SUBLEVEL EXTRAVERSION=-${EXTRAVERSION} LOCALVERSION=-${LOCALVERSION} modules_prepare
     cp /usr/src/linux-headers-$(uname -r)/Module.symvers .
     make -j$(nproc) M=drivers/net/team

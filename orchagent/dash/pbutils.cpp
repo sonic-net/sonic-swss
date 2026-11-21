@@ -250,7 +250,6 @@ bool to_pb(const std::string &ha_owner, dash::types::HaOwner &pb_ha_owner)
     {
         SWSS_LOG_NOTICE("Unspecified HA Owner %s, defaulting to DPU", ha_owner.c_str());
         pb_ha_owner = dash::types::HA_OWNER_DPU;
-        return false;
     }
 
     return true;

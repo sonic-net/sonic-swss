@@ -1163,30 +1163,34 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
              * so we added a map that will help us to know what was the last command for this port and priority -
              * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
              * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
-            if (op == SET_COMMAND)
+            /* for voq switches the buffer configuration is applied on the VOQ which is applicable on the system ports
+             * system ports are not dynamically created/deleted so no need to maintain ref counter */
+            if (gMySwitchType != "voq")
             {
-                if (queue_port_flags[port_name][ind] != SET_COMMAND)
+                if (op == SET_COMMAND)
                 {
-                    /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
-                    gPortsOrch->increasePortRefCount(port_name);
+                    if (queue_port_flags[port_name][ind] != SET_COMMAND)
+                    {
+                        /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
+                        gPortsOrch->increasePortRefCount(port_name);
+                    }
                 }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (queue_port_flags[port_name][ind] == SET_COMMAND)
-		{
-                    /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
-                    gPortsOrch->decreasePortRefCount(port_name);
+                else if (op == DEL_COMMAND)
+                {
+                    if (queue_port_flags[port_name][ind] == SET_COMMAND)
+                    {
+                        /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
+                        gPortsOrch->decreasePortRefCount(port_name);
+                    }
                 }
+                else
+                {
+                    SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                /* save the last command (set or delete) */
+                queue_port_flags[port_name][ind] = op;
             }
-            else
-            {
-                SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
-                return task_process_status::task_invalid_entry;
-            }
-            /* save the last command (set or delete) */
-            queue_port_flags[port_name][ind] = op;
-
         }
     }
 
@@ -1218,9 +1222,14 @@ task_process_status BufferOrch::processQueuePost(const QueueTask& task)
             }
             else
             {
-                if (gPortsOrch->isPortAdminUp(port_name))
+                /* In the Voq Switch, the admin status is set to True when the system port is added to the m_portList map
+                   and always True for remote System Port, so no need to check for remote system port*/
+                if (gMySwitchType != "voq")
                 {
-                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                    if (gPortsOrch->isPortAdminUp(port_name))
+                    {
+                        SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                    }
                 }
             }
         }

@@ -38,7 +38,9 @@ extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
 constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
+constexpr bool DEFAULT_ENABLE_REPLAY_PROTECT = true;
 constexpr bool DEFAULT_SCI_IN_SECTAG = false;
+constexpr uint32_t DEFAULT_REPLAY_WINDOW = 0;
 constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
 bool saiAclFieldSciMatchSupported = true;
 
@@ -1423,6 +1425,8 @@ bool MACsecOrch::createMACsecPort(
 
     macsec_port.m_enable_encrypt = DEFAULT_ENABLE_ENCRYPT;
     macsec_port.m_sci_in_sectag = DEFAULT_SCI_IN_SECTAG;
+    macsec_port.m_enable_replay_protect = DEFAULT_ENABLE_REPLAY_PROTECT;
+    macsec_port.m_replay_window = DEFAULT_REPLAY_WINDOW;
     macsec_port.m_cipher_suite = DEFAULT_CIPHER_SUITE;
     macsec_port.m_enable = false;
 
@@ -1599,6 +1603,41 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
     if (get_value(port_attr, "send_sci", alpha_boolean))
     {
         macsec_port.m_sci_in_sectag = alpha_boolean.operator bool();
+    }
+    bool replay_updated = false;
+    if (get_value(port_attr, "enable_replay_protect", alpha_boolean))
+    {
+        macsec_port.m_enable_replay_protect = alpha_boolean.operator bool();
+        replay_updated = true;
+    }
+    uint32_t replay_window = 0;
+    if (get_value(port_attr, "replay_window", replay_window))
+    {
+        macsec_port.m_replay_window = replay_window;
+        replay_updated = true;
+    }
+    if (replay_updated)
+    {
+        for (auto sc = macsec_port.m_ingress_scs.begin(); sc != macsec_port.m_ingress_scs.end(); ++sc)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE;
+            attr.value.booldata = macsec_port.m_enable_replay_protect;
+            if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, sc->second.m_sc_id, attr))
+            {
+                SWSS_LOG_WARN("Cannot update MACsec SC 0x%" PRIx64 " replay protection enable",
+                              sc->second.m_sc_id);
+                return false;
+            }
+            attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW;
+            attr.value.u32 = macsec_port.m_replay_window;
+            if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, sc->second.m_sc_id, attr))
+            {
+                SWSS_LOG_WARN("Cannot update MACsec SC 0x%" PRIx64 " replay protection window",
+                              sc->second.m_sc_id);
+                return false;
+            }
+        }
     }
     std::string cipher_suite;
     if (get_value(port_attr, "cipher_suite", cipher_suite))
@@ -1898,7 +1937,7 @@ task_process_status MACsecOrch::updateMACsecSC(
             return task_failed;
         }
     }
-    else
+    else if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
         if (!setEncodingAN(*ctx.get_macsec_sc(), sc_attr, direction))
         {
@@ -1914,19 +1953,32 @@ bool MACsecOrch::setEncodingAN(
     const TaskArgs &sc_attr,
     sai_macsec_direction_t direction)
 {
-    if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-    {
-        if (!get_value(sc_attr, "encoding_an", sc.m_encoding_an))
-        {
-            SWSS_LOG_WARN("Wrong parameter, the encoding AN cannot be found");
-            return false;
-        }
-    }
-    else
+    SWSS_LOG_ENTER();
+
+    if (direction != SAI_MACSEC_DIRECTION_EGRESS)
     {
         SWSS_LOG_WARN("Cannot set encoding AN for the ingress SC");
         return false;
     }
+
+    macsec_an_t new_an;
+    if (!get_value(sc_attr, "encoding_an", new_an))
+    {
+        SWSS_LOG_WARN("setEncodingAN: 'encoding_an' field missing in SET on egress SC");
+        return false;
+    }
+
+    if (sc.m_encoding_an == new_an)
+    {
+        return true;
+    }
+
+    // Only the in-memory encoding AN moves. The previous AN's SA stays until
+    // wpa_supplicant retires it (CP RETIRE, 3 s after the switch); orchagent
+    // never removes an SA it was not told to remove. State left behind by a
+    // supplicant that died is cleared by macsecmgrd before a new session
+    // starts, not inferred here.
+    sc.m_encoding_an = new_an;
     return true;
 }
 
@@ -1996,7 +2048,9 @@ bool MACsecOrch::createMACsecSC(
             sci,
             macsec_port.m_enable_encrypt,
             macsec_port.m_sci_in_sectag,
-            macsec_port.m_cipher_suite))
+            macsec_port.m_cipher_suite,
+            macsec_port.m_enable_replay_protect,
+            macsec_port.m_replay_window))
     {
         SWSS_LOG_WARN("Create MACsec SC %s fail.", port_sci.c_str());
         return false;
@@ -2055,7 +2109,9 @@ bool MACsecOrch::createMACsecSC(
     sai_uint64_t sci,
     bool encryption_enable,
     bool send_sci,
-    sai_macsec_cipher_suite_t cipher_suite)
+    sai_macsec_cipher_suite_t cipher_suite,
+    bool enable_replay_protect,
+    uint32_t replay_window)
 {
     SWSS_LOG_ENTER();
 
@@ -2080,6 +2136,15 @@ bool MACsecOrch::createMACsecSC(
     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
     attr.value.s32 = cipher_suite;
     attrs.push_back(attr);
+    if (direction == SAI_MACSEC_DIRECTION_INGRESS)
+    {
+        attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_ENABLE;
+        attr.value.booldata = enable_replay_protect;
+        attrs.push_back(attr);
+        attr.id = SAI_MACSEC_SC_ATTR_MACSEC_REPLAY_PROTECTION_WINDOW;
+        attr.value.u32 = replay_window;
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_macsec_api->create_macsec_sc(
                                 &sc_id,

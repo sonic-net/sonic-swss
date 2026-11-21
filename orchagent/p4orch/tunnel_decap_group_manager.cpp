@@ -25,7 +25,6 @@ using ::p4orch::kTableKeyDelimiter;
 extern sai_object_id_t gSwitchId;
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_object_id_t gUnderlayIfId;
-static sai_object_id_t dummyTunnelId = SAI_NULL_OBJECT_ID;
 
 namespace {
 
@@ -46,6 +45,10 @@ sai_object_id_t create_dummy_tunnel(void) {
   attr.value.oid = gUnderlayIfId;
   tunnel_attrs.push_back(attr);
 
+  attr.id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
+  attr.value.oid = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+  tunnel_attrs.push_back(attr);
+
   sai_object_id_t tunnel_id = SAI_NULL_OBJECT_ID;
   sai_status_t status = sai_tunnel_api->create_tunnel(
       &tunnel_id, gSwitchId, static_cast<uint32_t>(tunnel_attrs.size()),
@@ -55,7 +58,10 @@ sai_object_id_t create_dummy_tunnel(void) {
   return tunnel_id;
 }
 
-std::vector<sai_attribute_t> prepareSaiAttrs(
+}  // namespace
+
+
+std::vector<sai_attribute_t> TunnelDecapGroupManager::prepareSaiAttrs(
     const Ipv6TunnelTermTableEntry& ipv6_tunnel_term_entry) {
   std::vector<sai_attribute_t> attrs;
   sai_attribute_t attr;
@@ -88,36 +94,31 @@ std::vector<sai_attribute_t> prepareSaiAttrs(
   swss::copy(attr.value.ipaddr, ipv6_tunnel_term_entry.dst_ipv6_mask);
   attrs.push_back(attr);
 
-  // Set the VRF for routing of the inner packet.
-  attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
-  attr.value.oid = ipv6_tunnel_term_entry.vrf_oid;
+  attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_PRIORITY;
+  attr.value.u32 = ipv6_tunnel_term_entry.priority;
   attrs.push_back(attr);
 
-  if (dummyTunnelId == SAI_NULL_OBJECT_ID)
-    dummyTunnelId = create_dummy_tunnel();
+  if (m_dummyTunnelId == SAI_NULL_OBJECT_ID)
+    m_dummyTunnelId = create_dummy_tunnel();
 
   // Currently specifying a tunnel object is mendatory in SAI,
   // but it is unclear for what purpose. Our use case should
   // technically not require it.
   // As a workaround, we use a dummy object ID here.
   attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
-  attr.value.oid = dummyTunnelId;
+  attr.value.oid = m_dummyTunnelId;
   attrs.push_back(attr);
 
   return attrs;
 }
 
-}  // namespace
-
 TunnelDecapGroupManager::TunnelDecapGroupManager(
-    P4OidMapper* p4oidMapper, VRFOrch* vrfOrch,
-    ResponsePublisherInterface* publisher) {
+    P4OidMapper* p4oidMapper, ResponsePublisherInterface* publisher)
+    : m_asic_db("ASIC_DB", 0), m_asic_state_table(&m_asic_db, "ASIC_STATE") {
   SWSS_LOG_ENTER();
 
   assert(p4oidMapper != nullptr);
   m_p4OidMapper = p4oidMapper;
-  assert(vrfOrch != nullptr);
-  m_vrfOrch = vrfOrch;
   assert(publisher != nullptr);
   m_publisher = publisher;
 }
@@ -170,11 +171,10 @@ ReturnCode TunnelDecapGroupManager::validateIpv6TunnelTermAppDbEntry(
     const Ipv6TunnelTermAppDbEntry& app_db_entry,
     const std::string& operation) {
   SWSS_LOG_ENTER();
-
-  Ipv6TunnelTermTableEntry entry = Ipv6TunnelTermTableEntry(
-      app_db_entry.src_ipv6_ip, app_db_entry.src_ipv6_mask,
-      app_db_entry.dst_ipv6_ip, app_db_entry.dst_ipv6_mask,
-      app_db_entry.vrf_id);
+    Ipv6TunnelTermTableEntry entry = Ipv6TunnelTermTableEntry(
+             app_db_entry.src_ipv6_ip, app_db_entry.src_ipv6_mask,
+             app_db_entry.dst_ipv6_ip, app_db_entry.dst_ipv6_mask,
+             app_db_entry.priority);
  
   if (operation == SET_COMMAND) {
     RETURN_IF_ERROR(validateIpv6TunnelTermAppDbEntry(app_db_entry));
@@ -185,18 +185,6 @@ ReturnCode TunnelDecapGroupManager::validateIpv6TunnelTermAppDbEntry(
             "Ipv6 tunnel termination table entry with key "
             << QuotedVar(entry.ipv6_tunnel_term_key)
             << " already exists in centralized mapper");
-      }
-
-      // Check the existence of VRF the Ipv6 tunnel termination table entry
-      // depends on.
-      if (entry.vrf_id != "" && !m_vrfOrch->isVRFexists(entry.vrf_id)) {
-        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-               << "No VRF found with id " << QuotedVar(entry.vrf_id) << " for "
-               << "Ipv6 tunnel termination table entry that matches on "
-               << QuotedVar(entry.src_ipv6_ip.to_string()) << "&"
-               << QuotedVar(entry.src_ipv6_mask.to_string()) << " and "
-               << QuotedVar(entry.dst_ipv6_ip.to_string()) << "&"
-               << QuotedVar(entry.dst_ipv6_mask.to_string());
       }
     }
   } else if (operation == DEL_COMMAND) {
@@ -234,12 +222,12 @@ ReturnCode TunnelDecapGroupManager::validateIpv6TunnelTermAppDbEntry(
 Ipv6TunnelTermTableEntry::Ipv6TunnelTermTableEntry(
     const swss::IpAddress& src_ipv6_ip, const swss::IpAddress& src_ipv6_mask,
     const swss::IpAddress& dst_ipv6_ip, const swss::IpAddress& dst_ipv6_mask,
-    const std::string& vrf_id)
-    : src_ipv6_ip(src_ipv6_ip),
+    const sai_uint32_t& priority)
+     : src_ipv6_ip(src_ipv6_ip),
       src_ipv6_mask(src_ipv6_mask),
       dst_ipv6_ip(dst_ipv6_ip),
       dst_ipv6_mask(dst_ipv6_mask),
-      vrf_id(vrf_id) {
+      priority(priority) {
    SWSS_LOG_ENTER();
    ipv6_tunnel_term_key = KeyGenerator::generateIpv6TunnelTermKey(
        src_ipv6_ip, src_ipv6_mask, dst_ipv6_ip, dst_ipv6_mask);
@@ -390,6 +378,13 @@ TunnelDecapGroupManager::deserializeIpv6TunnelTermAppDbEntry(
       app_db_entry.dst_ipv6_ip = swss::IpAddress(trim(ip_and_mask[0]));
       app_db_entry.dst_ipv6_mask = swss::IpAddress(trim(ip_and_mask[1]));
     }
+    auto priority_j = j[p4orch::kPriority];
+    if (!priority_j.is_number_unsigned()) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Invalid Ipv6 tunnel termination table entry priority type: "
+                "should be uint32_t";
+    }
+    app_db_entry.priority = static_cast<uint32_t>(priority_j);
   } catch (std::exception& ex) {
     return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
            << "Failed to deserialize Ipv6 tunnel termination table entry "
@@ -399,9 +394,7 @@ TunnelDecapGroupManager::deserializeIpv6TunnelTermAppDbEntry(
   for (const auto& it : attributes) {
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
-    if (field == prependParamField(p4orch::kVrfId)) {
-      app_db_entry.vrf_id = value;
-    } else if (field == p4orch::kAction) {
+    if (field == p4orch::kAction) {
       app_db_entry.action_str = value;
     } else if (field != p4orch::kControllerMetadata) {
       return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -417,7 +410,6 @@ std::vector<ReturnCode> TunnelDecapGroupManager::createIpv6TunnelTermEntries(
   SWSS_LOG_ENTER();
 
   std::vector<Ipv6TunnelTermTableEntry> entries;
-  std::vector<std::string> vrf_keys(ipv6_tunnel_term_entries.size());
   std::vector<sai_object_id_t> ipv6_tunnel_term_oids(
       ipv6_tunnel_term_entries.size());
   std::vector<std::vector<sai_attribute_t>> sai_attrs(
@@ -427,15 +419,11 @@ std::vector<ReturnCode> TunnelDecapGroupManager::createIpv6TunnelTermEntries(
 
   for (size_t i = 0; i < ipv6_tunnel_term_entries.size(); ++i) {
     statuses[i] = StatusCode::SWSS_RC_NOT_EXECUTED;
-    entries.push_back(
-        Ipv6TunnelTermTableEntry(ipv6_tunnel_term_entries[i].src_ipv6_ip,
-                                 ipv6_tunnel_term_entries[i].src_ipv6_mask,
-                                 ipv6_tunnel_term_entries[i].dst_ipv6_ip,
-                                 ipv6_tunnel_term_entries[i].dst_ipv6_mask,
-                                 ipv6_tunnel_term_entries[i].vrf_id));
-
-    entries[i].vrf_oid =
-        m_vrfOrch->getVRFid(ipv6_tunnel_term_entries[i].vrf_id);
+    entries.push_back( Ipv6TunnelTermTableEntry(ipv6_tunnel_term_entries[i].src_ipv6_ip,
+                       ipv6_tunnel_term_entries[i].src_ipv6_mask,
+                       ipv6_tunnel_term_entries[i].dst_ipv6_ip,
+                       ipv6_tunnel_term_entries[i].dst_ipv6_mask,
+                       ipv6_tunnel_term_entries[i].priority));
 
     sai_attrs[i] = prepareSaiAttrs(entries[i]);
   }
@@ -451,9 +439,6 @@ std::vector<ReturnCode> TunnelDecapGroupManager::createIpv6TunnelTermEntries(
     if (object_statuses[i] == SAI_STATUS_SUCCESS) {
       statuses[i] = StatusCode::SWSS_RC_SUCCESS;
       entries[i].ipv6_tunnel_term_oid = ipv6_tunnel_term_oids[i];
-
-      // On successful creation, increment ref count.
-      m_vrfOrch->increaseVrfRefCount(entries[i].vrf_id);
 
       // Add created entry to internal table.
       m_ipv6TunnelTermTable.emplace(entries[i].ipv6_tunnel_term_key,
@@ -496,7 +481,7 @@ std::vector<ReturnCode> TunnelDecapGroupManager::removeIpv6TunnelTermEntries(
             ipv6_tunnel_term_entries[i].src_ipv6_mask,
             ipv6_tunnel_term_entries[i].dst_ipv6_ip,
             ipv6_tunnel_term_entries[i].dst_ipv6_mask);
-            
+
     // getIpv6TunnelTermEntry() may return a nullptr.
     // For entry deletion operations validateIpv6TunnelTermAppDbEntry() checks
     // if the getIpv6TunnelTermEntry() function returns nullptr.
@@ -514,9 +499,6 @@ std::vector<ReturnCode> TunnelDecapGroupManager::removeIpv6TunnelTermEntries(
 
     if (object_statuses[i] == SAI_STATUS_SUCCESS) {
       statuses[i] = StatusCode::SWSS_RC_SUCCESS;
-
-      // On successful deletion, decrement ref count.
-      m_vrfOrch->decreaseVrfRefCount(entries[i]->vrf_id);
 
       // Remove the key to OID map to centralized mapper.
       m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
@@ -636,7 +618,7 @@ std::string TunnelDecapGroupManager::verifyStateCache(
           KeyGenerator::generateIpv6TunnelTermKey(
             app_db_entry.src_ipv6_ip, app_db_entry.src_ipv6_mask,
             app_db_entry.dst_ipv6_ip, app_db_entry.dst_ipv6_mask);
-       
+
   ReturnCode status =
       validateIpv6TunnelTermAppDbEntry(app_db_entry, SET_COMMAND);
   if (!status.ok()) {
@@ -653,14 +635,6 @@ std::string TunnelDecapGroupManager::verifyStateCache(
         << QuotedVar(ipv6_tunnel_term_entry_key)
         << " does not match internal cache "
         << QuotedVar(ipv6_tunnel_term_entry->ipv6_tunnel_term_key)
-        << " in Tunnel Decap Group manager.";
-    return msg.str();
-  }
-  if (app_db_entry.vrf_id != ipv6_tunnel_term_entry->vrf_id) {
-    std::stringstream msg;
-    msg << "Ipv6 tunnel termination table entry with vrf_id "
-        << QuotedVar(app_db_entry.vrf_id) << " does not match internal cache "
-        << QuotedVar(ipv6_tunnel_term_entry->vrf_id)
         << " in Tunnel Decap Group manager.";
     return msg.str();
   }
@@ -700,6 +674,14 @@ std::string TunnelDecapGroupManager::verifyStateCache(
         << " in Tunnel Decap Group manager.";
     return msg.str();
   }
+  if (ipv6_tunnel_term_entry->priority != app_db_entry.priority) {
+    std::stringstream msg;
+    msg << "Ipv6 tunnel termination table "
+        << QuotedVar(ipv6_tunnel_term_entry_key) << " with priority "
+        << app_db_entry.priority << " does not match internal cache "
+        << ipv6_tunnel_term_entry->priority << " in IPv6 tunnel decap manager.";
+    return msg.str();
+  }
 
   return m_p4OidMapper->verifyOIDMapping(
       SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY,
@@ -710,9 +692,6 @@ std::string TunnelDecapGroupManager::verifyStateCache(
 
 std::string TunnelDecapGroupManager::verifyStateAsicDb(
     const Ipv6TunnelTermTableEntry* ipv6_tunnel_term_entry) {
-  swss::DBConnector db("ASIC_DB", 0);
-  swss::Table table(&db, "ASIC_STATE");
-
   // Verify Ipv6 tunnel termination table ASIC DB attributes
   std::vector<sai_attribute_t> attrs = prepareSaiAttrs(*ipv6_tunnel_term_entry);
   std::vector<swss::FieldValueTuple> exp =
@@ -723,7 +702,7 @@ std::string TunnelDecapGroupManager::verifyStateAsicDb(
       sai_serialize_object_type(SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY) + ":" +
       sai_serialize_object_id(ipv6_tunnel_term_entry->ipv6_tunnel_term_oid);
   std::vector<swss::FieldValueTuple> values;
-  if (!table.get(key, values)) {
+  if (!m_asic_state_table.get(key, values)) {
     return std::string("ASIC DB key not found ") + key;
   }
 

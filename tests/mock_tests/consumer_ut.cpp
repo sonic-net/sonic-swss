@@ -1,14 +1,40 @@
+// Pre-include standard library headers that conflict with
+// the #define private public hack (they use 'private' internally).
+#include <string>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+#include <memory>
+#include <deque>
+#include <mutex>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+#include "table.h"
+
+#define private public
+#include "recorder.h"
+#undef private
+
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <sstream>
+#include <thread>
+#include <unistd.h>
 
 extern PortsOrch *gPortsOrch;
 
 namespace consumer_test
 {
     using namespace std;
+
+    const int UNKNOWN_EXCEPTION_VALUE = 42;
 
     class TestOrch : public Orch
     {
@@ -27,6 +53,84 @@ namespace consumer_test
         }
 
         long m_notification_count;
+    };
+
+    enum class ThrowType
+    {
+        None,
+        InvalidArgument,
+        LogicError,
+        RuntimeError,
+        UnknownException
+    };
+
+    class ThrowingOrch : public Orch
+    {
+    public:
+        ThrowingOrch(swss::DBConnector *db, string tableName)
+            :Orch(db, tableName),
+            m_throwType(ThrowType::None),
+            m_doTaskCallCount(0)
+        {
+        }
+
+        void doTask(Consumer& consumer)
+        {
+            m_doTaskCallCount++;
+            switch (m_throwType)
+            {
+                case ThrowType::InvalidArgument:
+                    throw std::invalid_argument("test invalid argument");
+                case ThrowType::LogicError:
+                    throw std::logic_error("test logic error");
+                case ThrowType::RuntimeError:
+                    throw std::runtime_error("test runtime error");
+                case ThrowType::UnknownException:
+                    throw UNKNOWN_EXCEPTION_VALUE;
+                case ThrowType::None:
+                default:
+                    consumer.m_toSync.clear();
+                    break;
+            }
+        }
+
+        ThrowType m_throwType;
+        int m_doTaskCallCount;
+    };
+
+    class ThrowingRetryOrch : public Orch
+    {
+    public:
+        ThrowingRetryOrch(swss::DBConnector *db, string tableName)
+            :Orch(db, tableName),
+            m_throwType(ThrowType::None)
+        {
+        }
+
+        void doTask(Consumer& consumer)
+        {
+            consumer.m_toSync.clear();
+        }
+
+        size_t retryToSync(const std::string &executorName, size_t quota) override
+        {
+            switch (m_throwType)
+            {
+                case ThrowType::InvalidArgument:
+                    throw std::invalid_argument("retryToSync invalid argument");
+                case ThrowType::LogicError:
+                    throw std::logic_error("retryToSync logic error");
+                case ThrowType::RuntimeError:
+                    throw std::runtime_error("retryToSync runtime error");
+                case ThrowType::UnknownException:
+                    throw UNKNOWN_EXCEPTION_VALUE;
+                case ThrowType::None:
+                default:
+                    return 0;
+            }
+        }
+
+        ThrowType m_throwType;
     };
 
     struct ConsumerTest : public ::testing::Test
@@ -62,10 +166,12 @@ namespace consumer_test
         virtual void SetUp() override
         {
             ::testing_db::reset();
+            Recorder::Instance().swss.setAsync(false);
         }
 
         virtual void TearDown() override
         {
+            Recorder::Instance().swss.setAsync(false);
             ::testing_db::reset();
         }
 
@@ -88,6 +194,33 @@ namespace consumer_test
                 }
             }
             ASSERT_EQ(sync.size(), exp_sz-1);
+        }
+
+        vector<string> waitForRecordedLines(const string& path, const string& marker, size_t expected)
+        {
+            for (size_t retry = 0; retry < 50; ++retry)
+            {
+                ifstream ifs(path);
+                vector<string> matches;
+                string line;
+
+                while (getline(ifs, line))
+                {
+                    if (line.find(marker) != string::npos)
+                    {
+                        matches.push_back(line);
+                    }
+                }
+
+                if (matches.size() >= expected)
+                {
+                    return matches;
+                }
+
+                this_thread::sleep_for(chrono::milliseconds(20));
+            }
+
+            return {};
         }
     };
 
@@ -367,5 +500,309 @@ namespace consumer_test
 
         test_consumer.execute();
         ASSERT_EQ(test_orch.m_notification_count, consumer_pops_batch_size*2);
+    }
+
+    TEST_F(ConsumerTest, AsyncSwssRecorderWritesBatchRecords)
+    {
+        char dir_template[] = "/tmp/swss-consumer-ut-XXXXXX";
+        auto dir = mkdtemp(dir_template);
+        ASSERT_NE(dir, nullptr);
+
+        const string dirname(dir);
+        const string filename = "swss-recorder-ut.rec";
+        const string fullpath = dirname + "/" + filename;
+        const string key_prefix = "async-swss-recorder-key-";
+
+        Recorder::Instance().swss.setRecord(true);
+        Recorder::Instance().swss.setLocation(dirname);
+        Recorder::Instance().swss.setFileName(filename);
+        Recorder::Instance().swss.setAsync(true);
+        Recorder::Instance().swss.startRec(true);
+
+        deque<KeyOpFieldsValuesTuple> entries;
+        for (int i = 0; i < 3; ++i)
+        {
+            entries.push_back(KeyOpFieldsValuesTuple(
+                { key_prefix + to_string(i),
+                  SET_COMMAND,
+                  { { f1, v1a }, { f2, v2a } } }));
+        }
+
+        consumer->addToSync(entries);
+
+        const auto lines = waitForRecordedLines(fullpath, key_prefix, entries.size());
+        ASSERT_EQ(lines.size(), entries.size());
+
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            EXPECT_NE(lines[i].find(consumer->dumpTuple(entries[i])), string::npos);
+            EXPECT_NE(lines[i].find("|field1:value1_a"), string::npos);
+            EXPECT_NE(lines[i].find("|field2:value2_a"), string::npos);
+        }
+
+        Recorder::Instance().swss.setAsync(false);
+        Recorder::Instance().swss.record_ofs.close();
+        ASSERT_EQ(remove(fullpath.c_str()), 0);
+        ASSERT_EQ(rmdir(dirname.c_str()), 0);
+    }
+
+    /*
+     * Exception handling tests for Consumer::drain() and Orch::doTask()
+     *
+     * These tests verify that exceptions thrown inside doTask(Consumer&)
+     * are caught gracefully and do not crash the process.
+     */
+
+    struct ExceptionHandlingTest : public ::testing::Test
+    {
+        shared_ptr<swss::DBConnector> m_app_db;
+        unique_ptr<ThrowingOrch> m_orch;
+
+        virtual void SetUp() override
+        {
+            ::testing_db::reset();
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_orch = make_unique<ThrowingOrch>(m_app_db.get(), "APP_TEST_TABLE");
+        }
+
+        virtual void TearDown() override
+        {
+            m_orch.reset();
+            ::testing_db::reset();
+        }
+
+        void populateConsumer(Consumer &consumer, int count = 1)
+        {
+            deque<KeyOpFieldsValuesTuple> entries;
+            for (int i = 0; i < count; i++)
+            {
+                entries.push_back({"key" + to_string(i), SET_COMMAND, {{"field", "value"}}});
+            }
+            consumer.addToSync(entries);
+        }
+    };
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesInvalidArgument)
+    {
+        auto *executor = m_orch->getExecutor("APP_TEST_TABLE");
+        auto *consumer = dynamic_cast<Consumer *>(executor);
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        m_orch->m_throwType = ThrowType::InvalidArgument;
+
+        // drain() should catch the exception and not crash
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+
+        // m_toSync is not cleared because the exception prevented it
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesLogicError)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        m_orch->m_throwType = ThrowType::LogicError;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesRuntimeError)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        m_orch->m_throwType = ThrowType::RuntimeError;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainCatchesUnknownException)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+        m_orch->m_throwType = ThrowType::UnknownException;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainNoExceptionClearsSync)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer, 3);
+        m_orch->m_throwType = ThrowType::None;
+
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+
+        // Normal path: doTask clears m_toSync
+        ASSERT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ExceptionHandlingTest, OrchDoTaskCatchesExceptionPerConsumer)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer, 2);
+        m_orch->m_throwType = ThrowType::RuntimeError;
+
+        // Orch::doTask() (no-arg) iterates consumers and should not crash
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+    }
+
+    /*
+     * Tests for Orch::doTask() catch blocks via retryToSync().
+     *
+     * Consumer::drain() has its own catch, so exceptions from doTask(Consumer&)
+     * never reach Orch::doTask()'s catch. To exercise Orch::doTask()'s catches
+     * directly, we override retryToSync() to throw - it runs before drain()
+     * in the Orch::doTask() loop.
+     */
+
+    struct OrchDoTaskExceptionTest : public ::testing::Test
+    {
+        shared_ptr<swss::DBConnector> m_app_db;
+        unique_ptr<ThrowingRetryOrch> m_orch;
+
+        virtual void SetUp() override
+        {
+            ::testing_db::reset();
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_orch = make_unique<ThrowingRetryOrch>(m_app_db.get(), "APP_TEST_TABLE");
+        }
+
+        virtual void TearDown() override
+        {
+            m_orch.reset();
+            ::testing_db::reset();
+        }
+    };
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesInvalidArgumentFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::InvalidArgument;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesLogicErrorFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::LogicError;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesRuntimeErrorFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::RuntimeError;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(OrchDoTaskExceptionTest, DoTaskCatchesUnknownExceptionFromRetry)
+    {
+        m_orch->m_throwType = ThrowType::UnknownException;
+        ASSERT_NO_THROW(static_cast<Orch *>(m_orch.get())->doTask());
+    }
+
+    TEST_F(ExceptionHandlingTest, DrainRecoveryAfterException)
+    {
+        auto *consumer = dynamic_cast<Consumer *>(m_orch->getExecutor("APP_TEST_TABLE"));
+        ASSERT_NE(consumer, nullptr);
+
+        populateConsumer(*consumer);
+
+        // First call throws
+        m_orch->m_throwType = ThrowType::RuntimeError;
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 1);
+        ASSERT_FALSE(consumer->m_toSync.empty());
+
+        // Second call succeeds - orch recovers and processes tasks
+        m_orch->m_throwType = ThrowType::None;
+        ASSERT_NO_THROW(consumer->drain());
+        ASSERT_EQ(m_orch->m_doTaskCallCount, 2);
+        ASSERT_TRUE(consumer->m_toSync.empty());
+    }
+
+    TEST_F(ConsumerTest, SetRecordableDefaultTrue)
+    {
+        EXPECT_TRUE(consumer->isRecordable());
+    }
+
+    TEST_F(ConsumerTest, SetRecordableToggle)
+    {
+        consumer->setRecordable(false);
+        EXPECT_FALSE(consumer->isRecordable());
+
+        consumer->setRecordable(true);
+        EXPECT_TRUE(consumer->isRecordable());
+    }
+
+    TEST_F(ConsumerTest, SetRecordableSkipsRecording)
+    {
+        char dir_template[] = "/tmp/swss-consumer-ut-XXXXXX";
+        auto dir = mkdtemp(dir_template);
+        ASSERT_NE(dir, nullptr);
+
+        const string dirname(dir);
+        const string filename = "swss-recordable-ut.rec";
+        const string fullpath = dirname + "/" + filename;
+        const string recorded_key = "recorded-key";
+        const string skipped_key = "skipped-key";
+        const string resumed_key = "resumed-key";
+
+        Recorder::Instance().swss.setRecord(true);
+        Recorder::Instance().swss.setLocation(dirname);
+        Recorder::Instance().swss.setFileName(filename);
+        Recorder::Instance().swss.setAsync(false);
+        Recorder::Instance().swss.startRec(true);
+
+        // Record a tuple with recording enabled (default)
+        deque<KeyOpFieldsValuesTuple> entries1;
+        entries1.push_back(KeyOpFieldsValuesTuple(
+            { recorded_key, SET_COMMAND, { { f1, v1a } } }));
+        consumer->addToSync(entries1);
+
+        // Disable recording and record another tuple
+        consumer->setRecordable(false);
+        deque<KeyOpFieldsValuesTuple> entries2;
+        entries2.push_back(KeyOpFieldsValuesTuple(
+            { skipped_key, SET_COMMAND, { { f2, v2a } } }));
+        consumer->addToSync(entries2);
+
+        // Re-enable and record a third tuple
+        consumer->setRecordable(true);
+        deque<KeyOpFieldsValuesTuple> entries3;
+        entries3.push_back(KeyOpFieldsValuesTuple(
+            { resumed_key, SET_COMMAND, { { f1, v1a } } }));
+        consumer->addToSync(entries3);
+
+        // Verify file contents
+        ifstream ifs(fullpath);
+        string content((istreambuf_iterator<char>(ifs)),
+                        istreambuf_iterator<char>());
+        EXPECT_NE(content.find(recorded_key), string::npos);
+        EXPECT_EQ(content.find(skipped_key), string::npos);
+        EXPECT_NE(content.find(resumed_key), string::npos);
+
+        Recorder::Instance().swss.record_ofs.close();
+        ASSERT_EQ(remove(fullpath.c_str()), 0);
+        ASSERT_EQ(rmdir(dirname.c_str()), 0);
     }
 }

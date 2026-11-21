@@ -22,10 +22,12 @@ extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
 extern sai_hash_api_t *sai_hash_api;
+extern MacAddress gMacAddress;
 extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
 extern string gMyAsicName;
+extern string gMySwitchType;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -51,13 +53,16 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC},
     {"ecmp_hash_offset",                    SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET},
-    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET}
+    {"lag_hash_offset",                     SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET},
+    {"credit_watchdog",                     SAI_SWITCH_ATTR_CREDIT_WD},
+    {"credit_watchdog_timer",               SAI_SWITCH_ATTR_CREDIT_WD_TIMER}
 };
 
 const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
 {
     {"vxlan_sport", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT},
-    {"vxlan_mask",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK}
+    {"vxlan_mask", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK},
+    {"vxlan_security",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY}
 };
 
 const map<string, sai_packet_action_t> packet_action_map =
@@ -123,6 +128,30 @@ static std::unordered_set<std::string> serializeSwitchCounterStats(const std::ve
 
 // Switch OA ----------------------------------------------------------------------------------------------------------
 
+void SwitchOrch::set_switch_pfc_dldr_capability()
+{
+    vector<FieldValueTuple> fvVector;
+
+    /* Query PFC DLDR capability. SAI_QUEUE_ATTR_ENABLE_PFC_DLDR covers both
+     * deadlock detection and recovery in hardware, so it distinguishes a
+     * complete hardware watchdog from a hybrid one, which only supports
+     * SAI_QUEUE_ATTR_PFC_DLR_INIT. */
+    bool rv = querySwitchCapability(SAI_OBJECT_TYPE_QUEUE, SAI_QUEUE_ATTR_ENABLE_PFC_DLDR);
+    if (rv == false)
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is not supported");
+        m_PfcDldrEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "false");
+    }
+    else
+    {
+        SWSS_LOG_INFO("Queue level PFC DLDR configuration is supported");
+        m_PfcDldrEnable = true;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLDR_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
+}
+
 void SwitchOrch::set_switch_pfc_dlr_init_capability()
 {
     vector<FieldValueTuple> fvVector;
@@ -135,12 +164,49 @@ void SwitchOrch::set_switch_pfc_dlr_init_capability()
         m_PfcDlrInitEnable = false;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
     }
-    else 
+    else
     {
         SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
         m_PfcDlrInitEnable = true;
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
     }
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::set_switch_bfd_next_hop_capability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_attr_capability_t use_next_hop_cap;
+    sai_attr_capability_t next_hop_id_cap;
+    bool capable = false;
+
+    sai_status_t use_nh_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION,
+                                                                SAI_BFD_SESSION_ATTR_USE_NEXT_HOP,
+                                                                &use_next_hop_cap);
+    sai_status_t nh_id_status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_BFD_SESSION,
+                                                               SAI_BFD_SESSION_ATTR_NEXT_HOP_ID,
+                                                               &next_hop_id_cap);
+    if (use_nh_status == SAI_STATUS_SUCCESS && nh_id_status == SAI_STATUS_SUCCESS &&
+        use_next_hop_cap.create_implemented &&
+        next_hop_id_cap.create_implemented && next_hop_id_cap.set_implemented)
+    {
+        capable = true;
+        SWSS_LOG_INFO("SAI_BFD nexthop injection (USE_NEXT_HOP and NEXT_HOP_ID) are implemented");
+    }
+    else
+    {
+        if (use_nh_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_USE_NEXT_HOP %x", use_nh_status);
+        }
+        if (nh_id_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query attribute SAI_BFD_SESSION_ATTR_NEXT_HOP_ID %x", nh_id_status);
+        }
+        SWSS_LOG_INFO("SAI_BFD nexthop injection is not fully implemented");
+    }
+
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_BFD_NEXT_HOP_CAPABLE, capable ? "true" : "false");
     set_switch_capability(fvVector);
 }
 
@@ -161,12 +227,17 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
 
     initAsicSdkHealthEventNotification();
     set_switch_pfc_dlr_init_capability();
+    set_switch_pfc_dldr_capability();
+    set_switch_bfd_next_hop_capability();
     initSensorsTable();
     querySwitchTpidCapability();
     querySwitchPortEgressSampleCapability();
+    querySwitchMirrorOnDropCapability();
     querySwitchPortMirrorCapability();
+    querySwitchSamplePacketCapability();
     querySwitchHashDefaults();
     setSwitchIcmpOffloadCapability();
+    setFastLinkupCapability();
 
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
@@ -333,7 +404,7 @@ ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, refere
     acl_grp_attrs.push_back(acl_grp_attr);
 
     acl_grp_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
-    acl_grp_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    acl_grp_attr.value.s32 = querySupportedAclTableGroupType(gSwitchId);
     acl_grp_attrs.push_back(acl_grp_attr);
 
     acl_grp_attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
@@ -502,6 +573,7 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
         return;
     }
 }
+
 sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 {
     auto attribute = fvField(val);
@@ -519,6 +591,24 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
         attrs.push_back(attr);
+        sai_attr_capability_t capability;
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH_TUNNEL,
+                                                SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY, &capability);
+        if (status == SAI_STATUS_SUCCESS) {
+            if (capability.create_implemented) {
+                attr.id = SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY;
+                attr.value.booldata = false;
+                attrs.push_back(attr);
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("VXLAN UDP sport security attribute not supported for switch tunnel creation, skipping attribute creation");
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("VXLAN UDP sport security attribute query capability failed, rv:%d", status);
+        }
 
         status = sai_switch_api->create_switch_tunnel(&m_switchTunnelId, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
@@ -539,6 +629,21 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             break;
         case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK:
             attr.value.u8 = to_uint<uint8_t>(value);
+            break;
+        case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_SECURITY:
+            if (value == "true")
+            {
+                attr.value.booldata = true;
+            }
+            else if (value == "false")
+            {
+                attr.value.booldata = false;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("vxlan_security invalid value '%s' (use string \"true\" or \"false\"); defaulting to false", value.c_str());
+                attr.value.booldata = false;
+            }
             break;
         default:
             SWSS_LOG_ERROR("Invalid switch tunnel attribute id %d", attr.id);
@@ -634,10 +739,12 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
+                        saveVxlanSwitchAttrDefault(SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT);
                         attr.value.u16 = to_uint<uint16_t>(value);
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
+                        saveVxlanSwitchAttrDefault(SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC);
                         mac_addr = value;
                         gVxlanMacAddress = mac_addr;
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
@@ -663,6 +770,35 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                         else
                         {
                             attr.value.u8 = to_uint<uint8_t>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD:
+                        // SAI gates this attribute to VOQ switches (validonly
+                        // SAI_SWITCH_ATTR_TYPE == SAI_SWITCH_TYPE_VOQ). Skip on
+                        // non-VOQ rather than letting SAI return NOT_SUPPORTED.
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.booldata = to_uint<bool>(value);
+                        }
+                        break;
+
+                    case SAI_SWITCH_ATTR_CREDIT_WD_TIMER:
+                        if (gMySwitchType != "voq")
+                        {
+                            SWSS_LOG_NOTICE("credit_watchdog_timer is VOQ-only; switch type is '%s', skipping",
+                                            gMySwitchType.c_str());
+                            unsupported_attr = true;
+                        }
+                        else
+                        {
+                            attr.value.u32 = to_uint<uint32_t>(value);
                         }
                         break;
 
@@ -703,12 +839,122 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
             }
         }
+        else if (op == DEL_COMMAND)
+        {
+            /*
+             * A DEL removes every field of the SWITCH_TABLE key. The VxLAN attributes are
+             * set and removed at runtime, so return the ones this table set to their
+             * defaults. The other attributes keep their values, as they have no
+             * meaningful "unset" state (e.g. fdb_aging_time 0 disables aging).
+             */
+            if (restoreVxlanSwitchAttrs())
+            {
+                it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
+            }
+        }
         else
         {
             SWSS_LOG_WARN("Unsupported operation");
             it = consumer.m_toSync.erase(it);
         }
     }
+}
+
+void SwitchOrch::saveVxlanSwitchAttrDefault(sai_switch_attr_t attr_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_vxlanSwitchAttrDefaults.find(attr_id) != m_vxlanSwitchAttrDefaults.end())
+    {
+        return;
+    }
+
+    sai_attribute_t attr;
+    attr.id = attr_id;
+
+    if (attr_id == SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT)
+    {
+        attr.value.u16 = VXLAN_DEFAULT_UDP_PORT;
+    }
+    else
+    {
+        // The default router MAC is vendor defined, so read it before it is first changed.
+        sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            // Not every SAI implements GET for it; the switch MAC is the router MAC VxLAN uses by default.
+            if (!gMacAddress)
+            {
+                SWSS_LOG_WARN("Failed to get default of switch attribute %d, rv:%d, and no switch MAC is known; "
+                              "it will not be restored when SWITCH_TABLE is deleted", attr_id, status);
+                return;
+            }
+            SWSS_LOG_NOTICE("Failed to get default of switch attribute %d, rv:%d; "
+                            "the switch MAC %s will be restored when SWITCH_TABLE is deleted",
+                            attr_id, status, gMacAddress.to_string().c_str());
+            memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+        }
+    }
+
+    m_vxlanSwitchAttrDefaults[attr_id] = attr;
+}
+
+bool SwitchOrch::restoreVxlanSwitchAttrs()
+{
+    SWSS_LOG_ENTER();
+
+    bool retry = false;
+
+    for (auto it = m_vxlanSwitchAttrDefaults.begin(); it != m_vxlanSwitchAttrDefaults.end();)
+    {
+        sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &it->second);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to restore default of switch attribute %d, rv:%d", it->first, status);
+            if (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry)
+            {
+                retry = true;
+                it++;
+                continue;
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Restored default of switch attribute %d", it->first);
+            if (it->first == SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC)
+            {
+                gVxlanMacAddress = MacAddress();
+            }
+        }
+        it = m_vxlanSwitchAttrDefaults.erase(it);
+    }
+
+    if (m_vxlanSportUserModeEnabled)
+    {
+        // Removing the switch tunnel returns the VxLAN UDP source port to its default mode.
+        sai_status_t status = sai_switch_api->remove_switch_tunnel(m_switchTunnelId);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch tunnel %" PRIx64 ", rv:%d", m_switchTunnelId, status);
+            if (handleSaiRemoveStatus(SAI_API_SWITCH, status) == task_need_retry)
+            {
+                retry = true;
+            }
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Removed switch tunnel %" PRIx64 ", VxLAN UDP source port mode restored",
+                            m_switchTunnelId);
+            m_switchTunnelId = SAI_NULL_OBJECT_ID;
+            m_vxlanSportUserModeEnabled = false;
+        }
+    }
+
+    return !retry;
 }
 
 bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const
@@ -1476,6 +1722,10 @@ void SwitchOrch::doTask(Consumer &consumer)
     {
         doCfgSwitchTrimmingTableTask(consumer);
     }
+    else if (tableName == CFG_SWITCH_FAST_LINKUP_TABLE_NAME)
+    {
+        doCfgSwitchFastLinkupTableTask(consumer);
+    }
     else if (tableName == CFG_SUPPRESS_ASIC_SDK_HEALTH_EVENT_NAME)
     {
         doCfgSuppressAsicSdkHealthEventTableTask(consumer);
@@ -1860,6 +2110,182 @@ void SwitchOrch::querySwitchPortEgressSampleCapability()
     set_switch_capability(fvVector);
 }
 
+void SwitchOrch::querySwitchMirrorOnDropCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check enum value of SAI_TAM_EVENT_ATTR_TYPE
+    const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_TAM_EVENT,
+                                                      SAI_TAM_EVENT_ATTR_TYPE);
+    if (meta == nullptr || !meta->isenum || meta->enummetadata == nullptr)
+    {
+        SWSS_LOG_WARN("Could not get enum metadata for SAI_TAM_EVENT_ATTR_TYPE");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    vector<int32_t> values_list(meta->enummetadata->valuescount);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                        SAI_OBJECT_TYPE_TAM_EVENT,
+                                                        SAI_TAM_EVENT_ATTR_TYPE,
+                                                        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query TAM Event type capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // check value.list include SAI_TAM_EVENT_TYPE_PACKET_DROP
+    bool tam_event_type_packet_drop_supported = false;
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        if (values.list[i] == SAI_TAM_EVENT_TYPE_PACKET_DROP)
+        {
+            tam_event_type_packet_drop_supported = true;
+            break;
+        }
+    }
+
+    if (!tam_event_type_packet_drop_supported)
+    {
+        SWSS_LOG_WARN("TAM Event type SAI_TAM_EVENT_TYPE_PACKET_DROP not supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check enum value of SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE
+    meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                                      SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE);
+    if (meta == nullptr || !meta->isenum || meta->enummetadata == nullptr)
+    {
+        SWSS_LOG_WARN("Could not get enum metadata for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    values_list.resize(meta->enummetadata->valuescount);
+    values.count = static_cast<uint32_t>(values_list.size());
+    values.list = values_list.data();
+
+    status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                        SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                                        SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TYPE,
+                                                        &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query TAM Hostif User Defined Trap type capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // check value.list include SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM
+    bool hostif_user_defined_trap_type_tam_supported = false;
+    for (uint32_t i = 0; i < values.count; i++)
+    {
+        if (values.list[i] == SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM)
+        {
+            hostif_user_defined_trap_type_tam_supported = true;
+            break;
+        }
+    }
+
+    if (!hostif_user_defined_trap_type_tam_supported)
+    {
+        SWSS_LOG_WARN("TAM Hostif User Defined Trap type SAI_HOSTIF_USER_DEFINED_TRAP_TYPE_TAM not supported");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_SWITCH_ATTR_TAM_OBJECT_ID
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH,
+                                            SAI_SWITCH_ATTR_TAM_OBJECT_ID, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.set_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query switch TAM capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Switch TAM capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM_COLLECTOR,
+                                            SAI_TAM_COLLECTOR_ATTR_HOSTIF_TRAP, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query TAM Collector capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("TAM Collector capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_TAM_ATTR_EVENT_OBJECTS_LIST
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_TAM,
+                                            SAI_TAM_ATTR_EVENT_OBJECTS_LIST, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query TAM event objects list capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("TAM event objects list capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    // Check capability for SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF_USER_DEFINED_TRAP,
+                                            SAI_HOSTIF_USER_DEFINED_TRAP_ATTR_TRAP_GROUP, &capability);
+    if (status != SAI_STATUS_SUCCESS || capability.create_implemented != true)
+    {
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query HOSTIF user defined trap capability %d", status);
+        }
+        else
+        {
+            SWSS_LOG_WARN("HOSTIF user defined trap capability not implemented");
+        }
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_ON_DROP_CAPABLE, "true");
+    SWSS_LOG_NOTICE("Mirror on drop capability is supported");
+    set_switch_capability(fvVector);
+}
+
 void SwitchOrch::querySwitchPortMirrorCapability()
 {
     vector<FieldValueTuple> fvVector;
@@ -1912,6 +2338,87 @@ void SwitchOrch::querySwitchPortMirrorCapability()
             m_portEgressMirrorSupported = false;
         }
         SWSS_LOG_NOTICE("port egress mirror capability %d", capability.set_implemented);
+    }
+
+    set_switch_capability(fvVector);
+}
+
+void SwitchOrch::querySwitchSamplePacketCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port ingress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port ingress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portIngressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portIngressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portIngressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port ingress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling Port egress sample mirror session
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_portEgressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_portEgressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_portEgressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("port egress sample mirror capability %d", capability.set_implemented);
+    }
+
+    // Check if SAI is capable of handling samplepacket truncation
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SAMPLEPACKET,
+                            SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query samplepacket truncation capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+        m_samplepacketTruncationSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "true");
+            m_samplepacketTruncationSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, "false");
+            m_samplepacketTruncationSupported = false;
+        }
+        SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
     set_switch_capability(fvVector);
@@ -2048,6 +2555,190 @@ bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id
         {
             return false;
         }
+    }
+}
+
+void SwitchOrch::setFastLinkupCapability()
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvVector;
+
+    // Determine support by checking create/set capability on polling time attribute (enabled in real SAI)
+    bool supported = querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT);
+    m_fastLinkupCap.supported = supported;
+
+    if (!supported)
+    {
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        return;
+    }
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_FAST_LINKUP_CAPABLE, "true");
+
+    // Query allowed ranges if supported by SAI
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT_RANGE;
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        m_fastLinkupCap.has_polling_range = true;
+        m_fastLinkupCap.polling_min = attr.value.u16range.min;
+        m_fastLinkupCap.polling_max = attr.value.u16range.max;
+        fvVector.emplace_back(
+            SWITCH_CAPABILITY_TABLE_FAST_LINKUP_POLLING_TIMER_RANGE,
+            to_string(m_fastLinkupCap.polling_min) + "," + to_string(m_fastLinkupCap.polling_max));
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to get fast linkup polling range: %s", sai_serialize_status(status).c_str());
+    }
+
+    attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT_RANGE;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        m_fastLinkupCap.has_guard_range = true;
+        m_fastLinkupCap.guard_min = attr.value.u16range.min;
+        m_fastLinkupCap.guard_max = attr.value.u16range.max;
+        fvVector.emplace_back(
+            SWITCH_CAPABILITY_TABLE_FAST_LINKUP_GUARD_TIMER_RANGE,
+            to_string(m_fastLinkupCap.guard_min) + "," + to_string(m_fastLinkupCap.guard_max));
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to get fast linkup guard range: %s", sai_serialize_status(status).c_str());
+    }
+    set_switch_capability(fvVector);
+}
+
+bool SwitchOrch::setSwitchFastLinkup(const FastLinkupConfig &cfg)
+{
+    SWSS_LOG_ENTER();
+
+    if (!m_fastLinkupCap.supported)
+    {
+        SWSS_LOG_NOTICE("Fast link-up is not supported on this platform");
+        return false;
+    }
+
+    // Validate ranges if known
+    if (cfg.has_polling && m_fastLinkupCap.has_polling_range)
+    {
+        if (cfg.polling_time < m_fastLinkupCap.polling_min || cfg.polling_time > m_fastLinkupCap.polling_max)
+        {
+            SWSS_LOG_NOTICE("Invalid polling_time %u; allowed [%u,%u]", cfg.polling_time, m_fastLinkupCap.polling_min, m_fastLinkupCap.polling_max);
+            return false;
+        }
+    }
+    if (cfg.has_guard && m_fastLinkupCap.has_guard_range)
+    {
+        if (cfg.guard_time < m_fastLinkupCap.guard_min || cfg.guard_time > m_fastLinkupCap.guard_max)
+        {
+            SWSS_LOG_NOTICE("Invalid guard_time %u; allowed [%u,%u]", cfg.guard_time, m_fastLinkupCap.guard_min, m_fastLinkupCap.guard_max);
+            return false;
+        }
+    }
+
+    // Apply attributes conditionally
+    sai_status_t status;
+    if (cfg.has_polling)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_POLLING_TIMEOUT;
+        attr.value.u16 = cfg.polling_time;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_POLLING_TIME=%u: %s", cfg.polling_time, sai_serialize_status(status).c_str());
+            return false;
+        }
+    }
+
+    if (cfg.has_guard)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_GUARD_TIMEOUT;
+        attr.value.u8 = cfg.guard_time;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_GUARD_TIME=%u: %s", cfg.guard_time, sai_serialize_status(status).c_str());
+            return false;
+        }
+    }
+
+    if (cfg.has_ber)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_FAST_LINKUP_BER_THRESHOLD;
+        attr.value.u8 = cfg.ber_threshold;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to set FAST_LINKUP_BER_THRESHOLD=%u: %s", cfg.ber_threshold, sai_serialize_status(status).c_str());
+            return false;
+        }
+    }
+    SWSS_LOG_INFO("Fast link-up set: polling_time=%s, guard_time=%s, ber_threshold=%s",
+                    cfg.has_polling ? std::to_string(cfg.polling_time).c_str() : "N/A",
+                    cfg.has_guard   ? std::to_string(cfg.guard_time).c_str()   : "N/A",
+                    cfg.has_ber     ? std::to_string(cfg.ber_threshold).c_str() : "N/A");
+    return true;
+}
+
+void SwitchOrch::doCfgSwitchFastLinkupTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto &map = consumer.m_toSync;
+    auto it = map.begin();
+
+    while (it != map.end())
+    {
+        auto keyOpFieldsValues = it->second;
+        auto key = kfvKey(keyOpFieldsValues);
+        auto op = kfvOp(keyOpFieldsValues);
+
+        if (op == SET_COMMAND)
+        {
+            FastLinkupConfig cfg;
+            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
+            {
+                auto fieldName = fvField(cit);
+                auto fieldValue = fvValue(cit);
+                if (fieldName == "polling_time")
+                {
+                    try { cfg.polling_time = to_uint<uint16_t>(fieldValue); cfg.has_polling = true; }
+                    catch (...) { SWSS_LOG_ERROR("Invalid polling_time value %s", fieldValue.c_str()); }
+                }
+                else if (fieldName == "guard_time")
+                {
+                    try { cfg.guard_time = to_uint<uint8_t>(fieldValue); cfg.has_guard = true; }
+                    catch (...) { SWSS_LOG_ERROR("Invalid guard_time value %s", fieldValue.c_str()); }
+                }
+                else if (fieldName == "ber_threshold")
+                {
+                    try { cfg.ber_threshold = to_uint<uint8_t>(fieldValue); cfg.has_ber = true; }
+                    catch (...) { SWSS_LOG_ERROR("Invalid ber_threshold value %s", fieldValue.c_str()); }
+                }
+                else
+                {
+                    SWSS_LOG_WARN("Unknown field %s in SWITCH_FAST_LINKUP", fieldName.c_str());
+                }
+            }
+
+            if (!setSwitchFastLinkup(cfg))
+            {
+                SWSS_LOG_ERROR("Failed to configure fast link-up from CONFIG_DB");
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unsupported operation %s for SWITCH_FAST_LINKUP", op.c_str());
+        }
+
+        it = map.erase(it);
     }
 }
 

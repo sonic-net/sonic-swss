@@ -7,7 +7,28 @@ The DVS tests work by publishing configuration updates to redis (typically Confi
 
 SWSS, Redis, and all the other required components run inside a virtual switch Docker container, meaning that these test cases can be run on any Linux machine - no special hardware required!
 
+## Prefer C++ mock tests over new VS tests
+
+**When adding test coverage for SWSS, prefer C++/gtest mock tests (in [`tests/mock_tests`](mock_tests)) over new DVS/VS tests. Add a new VS test only when the behavior under test genuinely cannot be exercised by a mock test.**
+
+The mock tests run orchagent (and the other daemons) in-process against `libsaivs`, driving them directly through the same producer/consumer and SAI code paths that a real run uses. Compared to the VS tests they are:
+
+- **Fast** — individual cases run in milliseconds, versus seconds-to-minutes of container/Redis/daemon startup and `time.sleep()`-based polling per VS case.
+- **Deterministic** — no cross-process timing, so they avoid the flakiness that VS tests are prone to (and that `--force-flaky` retries paper over).
+- **Lightweight** — no `docker-sonic-vs` image, privileged container, or 32-port testbed; they build and run as part of the normal package build.
+
+Because there is no syncd and no populated ASIC_DB in the mock harness, a mock test verifies SWSS behavior by **mocking the SAI API and asserting on the attributes SWSS programs** (see the shared framework in [`tests/mock_tests/mock_sai_api.h`](mock_tests/mock_sai_api.h) and existing `*_ut.cpp` suites for the pattern), rather than reading ASIC_DB. This reproduces the same SAI-attribute coverage a VS test's ASIC_DB assertions provide.
+
+A VS test remains the right tool only when the test depends on behavior the mock harness does not include, for example:
+
+- Linux kernel / network-namespace state (interfaces, neighbors, routes, netlink, sysctls such as `proxy_arp`).
+- Real daemon-to-daemon flows and the daemons that feed APP_DB (e.g. `*syncd`, `*mgrd`, zebra/fpmsyncd).
+- Warm/fast-reboot and other whole-system lifecycle behavior.
+
+If your change only verifies SWSS→SAI programming (config in, SAI objects/attributes out), it should be a mock test. When in doubt, default to a mock test and reserve VS tests for the kernel/daemon/dataplane cases above.
+
 ## Contents
+- [Prefer C++ mock tests over new VS tests](#prefer-c-mock-tests-over-new-vs-tests)
 - [Setting up your test environment](#setting-up-your-test-environment)
 - [Running the tests](#running-the-tests)
 - [Setting up a persistent testbed](#setting-up-a-persistent-testbed)

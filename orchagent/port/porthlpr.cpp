@@ -700,6 +700,32 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
+bool PortHelper::parsePortFastLinkup(PortConfig &port, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is not allowed", field.c_str());
+        return false;
+    }
+    if (value == "true")
+    {
+        port.fast_linkup.value = true;
+    }
+    else if (value == "false")
+    {
+        port.fast_linkup.value = false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+    port.fast_linkup.is_set = true;
+    return true;
+}
+
 template<typename T>
 bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
@@ -769,6 +795,8 @@ template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1p) &se
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::regn_bfm1n) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::txpolarity) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rxpolarity) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::tx_precoding) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::rx_precoding) &serdes, const std::string &field, const std::string &value) const;
 template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::custom_collection) &serdes, const std::string &field, const std::string &value) const;
 
 
@@ -1111,6 +1139,13 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (field == PORT_FAST_LINKUP)
+        {
+            if (!this->parsePortFastLinkup(port, field, value))
+            {
+                return false;
+            }
+        }
         else if (field == PORT_UNRELIABLE_LOS)
         {
             if (!this->parsePortUnreliableLos(port, field, value))
@@ -1244,6 +1279,20 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
                 return false;
             }
         }
+        else if (serdes_field == PORT_TX_PRECODING)
+        {
+            if (!this->parsePortSerdes(serdes->tx_precoding, field, value))
+            {
+                return false;
+            }
+        }
+        else if (serdes_field == PORT_RX_PRECODING)
+        {
+            if (!this->parsePortSerdes(serdes->rx_precoding, field, value))
+            {
+                return false;
+            }
+        }
         else if (serdes_field == PORT_REGN_BFM1N)
         {
             if (!this->parsePortSerdes(serdes->regn_bfm1n, field, value))
@@ -1354,6 +1403,21 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
             {
                 return false;
             }
+        }
+        else if (field == PORT_MACSEC)
+        {
+            /* Placeholder to prevent warning. Parsed by macsecorch.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if (field == PORT_ASIC_PORT_NAME)
+        {
+            /* Placeholder to prevent warning. Not used by orchagent.*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
+        }
+        else if ((field == PORT_CORE_ID) || (field == PORT_CORE_PORT_ID) || (field == PORT_NUM_VOQ))
+        {
+            /* Placeholder to prevent warning. These fields are taken from SYSTEM_PORT*/
+            SWSS_LOG_INFO("Parsing %s", field.c_str());
         }
         else
         {

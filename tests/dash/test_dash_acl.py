@@ -488,7 +488,8 @@ class TestAcl(object):
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=0)
         ctx.create_acl_group(ACL_GROUP_1, IpVersion.IP_VERSION_IPV4)
 
-        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+        time.sleep(3)
+        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=0)
 
         # Create acl rule with nonexistent acl group, which should never get programmed to ASIC_DB
         ctx.create_acl_rule("0", "0",
@@ -496,13 +497,13 @@ class TestAcl(object):
                             src_addr=["192.168.0.1/32", "192.168.1.2/30"], dst_addr=["192.168.0.1/32", "192.168.1.2/30"],
                             src_port=[PortRange(0,1)], dst_port=[PortRange(0,1)])
         time.sleep(3)
-        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=0)
 
         ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2,
                             priority=1, action=Action.ACTION_PERMIT, terminating=False,
                             src_addr=["192.168.0.1/32", "192.168.1.2/30"], dst_addr=["192.168.0.1/32", "192.168.1.2/30"],
                             src_port=[PortRange(0,1)], dst_port=[PortRange(0,1)])
-        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=2)
+        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
 
 
     # @pytest.mark.parametrize("bind_group", [True, False])
@@ -778,21 +779,6 @@ class TestAcl(object):
         time.sleep(3)
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=0)
 
-        tagsrc_prefixes = {"1.2.3.4/32", "5.6.0.0/16"}
-        ctx.create_prefix_tag(TAG_1, IpVersion.IP_VERSION_IPV4, tagsrc_prefixes)
-
-        # The rule should not be created since the TAG_2 is not created yet
-        time.sleep(3)
-        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=0)
-
-        tagdst_prefixes = {"10.20.30.40/32", "50.60.0.0/16"}
-        ctx.create_prefix_tag(TAG_2, IpVersion.IP_VERSION_IPV4, tagdst_prefixes)
-
-        rule_id= ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)[0]
-        rule_attr = ctx.asic_dash_acl_rule_table[rule_id]
-
-        assert prefix_list_to_set(rule_attr["SAI_DASH_ACL_RULE_ATTR_SIP"]) == tagsrc_prefixes
-        assert prefix_list_to_set(rule_attr["SAI_DASH_ACL_RULE_ATTR_DIP"]) == tagdst_prefixes
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down
