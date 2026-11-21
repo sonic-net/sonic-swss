@@ -284,6 +284,8 @@ public:
     bool getRecircPort(Port &p, Port::Role role);
 
     const gearbox_phy_t* getGearboxPhy(const Port &port);
+    std::string gearboxInterfaceKey(const Port &port) const;
+    std::string gearboxPortKey(const Port &port) const;
 
     bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
@@ -382,9 +384,9 @@ private:
 
     bool m_gearboxEnabled = false;
     map<int, gearbox_phy_t> m_gearboxPhyMap;
-    map<int, gearbox_interface_t> m_gearboxInterfaceMap;
+    map<std::string, gearbox_interface_t> m_gearboxInterfaceMap;
     map<int, gearbox_lane_t> m_gearboxLaneMap;
-    map<int, gearbox_port_t> m_gearboxPortMap;
+    map<std::string, gearbox_port_t> m_gearboxPortMap;
     map<sai_object_id_t, tuple<sai_object_id_t, sai_object_id_t>> m_gearboxPortListLaneMap;
 
     unordered_set<string> m_vlanPorts;
