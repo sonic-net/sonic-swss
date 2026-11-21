@@ -1,5 +1,8 @@
 #include "sai.h"
 #include "sfloworch.h"
+#include "mirrororch.h"
+#include "directory.h"
+
 #include "tokenize.h"
 #include "warm_restart.h"
 
@@ -17,6 +20,7 @@ extern sai_tam_api_t*          sai_tam_api;
 extern sai_port_api_t*         sai_port_api;
 extern sai_object_id_t         gSwitchId;
 extern PortsOrch*              gPortsOrch;
+extern Directory<Orch*> gDirectory;
 
 // Default CPU queue for sFlow drop monitor.
 // Can be overridden by /usr/share/sonic/templates/sflow_mod.json
@@ -828,8 +832,12 @@ bool SflowOrch::isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_att
 
     sai_attribute_t check_attr;
     check_attr.id = attr_id;
-    if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
-        && check_attr.value.oid != SAI_NULL_OBJECT_ID
+    if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Cannot verify SamplePacket ownership on port 0x%" PRIx64, port_id);
+        return false;
+    }
+    if (check_attr.value.oid != SAI_NULL_OBJECT_ID
         && check_attr.value.oid != sample_id
         && !isSflowSamplePacket(check_attr.value.oid))
     {
@@ -1121,6 +1129,12 @@ void SflowOrch::sflowStatusSet(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             sflowExtractGlobalInfo(kfvFieldsValues(tuple), sflow_status, rate, dir, sflow_drop_monitor_limit);
+            auto mirrorOrch = gDirectory.get<MirrorOrch*>();
+            if (sflow_status && mirrorOrch && mirrorOrch->hasSampleBindings())
+            {
+                SWSS_LOG_WARN("Cannot enable sFlow while sampled bindings or cleanup remain");
+                return;
+            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -1211,6 +1225,10 @@ void SflowOrch::doTask(Consumer &consumer)
         return;
     }
 
+    // hasSampleBindings() scans CONFIG_DB in every namespace, so check it once per batch.
+    auto mirrorOrch = gDirectory.get<MirrorOrch*>();
+    const bool sampleBindingsExist = m_sflowStatus && mirrorOrch && mirrorOrch->hasSampleBindings();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1228,6 +1246,11 @@ void SflowOrch::doTask(Consumer &consumer)
             if (!m_sflowStatus)
             {
                 return;
+            }
+            if (sampleBindingsExist)
+            {
+                ++it;
+                continue;
             }
             auto sflowInfo = m_sflowPortInfoMap.find(port.m_port_id);
             if (sflowInfo != m_sflowPortInfoMap.end())

@@ -1136,6 +1136,7 @@ namespace sflow_test
     /* First SET for a port is not in m_sflowPortInfoMap; debug log must not deref end(). */
     TEST_F(SflowOrchTest, SflowSessionSetOnPortNotInMapDoesNotCrash)
     {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard guard;
         MockSflowOrch mock_orch;
         auto enable = deque<KeyOpFieldsValuesTuple>(
             {

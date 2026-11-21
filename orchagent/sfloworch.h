@@ -109,6 +109,8 @@ class SflowOrch : public Orch
 public:
     SflowOrch(DBConnector* db, std::vector<std::string> &tableNames);
     void onWarmBootEnd() override;
+    // True while any port still has sFlow state, including pending cleanup.
+    bool hasPortSessions() const { return !m_sflowPortInfoMap.empty(); }
 
 private:
     SflowPortInfoMap    m_sflowPortInfoMap;

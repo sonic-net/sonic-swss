@@ -449,6 +449,7 @@ bool OrchDaemon::init()
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch, gSwitchOrch);
+    gDirectory.set(gMirrorOrch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -487,6 +488,7 @@ bool OrchDaemon::init()
             APP_SFLOW_SAMPLE_RATE_TABLE_NAME
     };
     SflowOrch *sflow_orch = new SflowOrch(m_applDb,  sflow_tables);
+    gDirectory.set(sflow_orch);
 
     vector<string> debug_counter_tables = {
         CFG_DEBUG_COUNTER_TABLE_NAME,
