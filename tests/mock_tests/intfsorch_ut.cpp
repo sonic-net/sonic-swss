@@ -16,6 +16,8 @@ namespace intfsorch_test
 
     int create_rif_count = 0;
     int remove_rif_count = 0;
+    sai_status_t create_rif_status = SAI_STATUS_SUCCESS;
+    sai_status_t remove_rif_status = SAI_STATUS_SUCCESS;
     bool saw_loopback_action = false;
     bool fail_next_rif_set = false;
     int loopback_action_set_count = 0;
@@ -29,6 +31,10 @@ namespace intfsorch_test
             _In_ uint32_t attr_count,
             _In_ const sai_attribute_t *attr_list)
     {
+        if (create_rif_status != SAI_STATUS_SUCCESS)
+        {
+            return create_rif_status;
+        }
         ++create_rif_count;
         return pold_sai_rif_api->create_router_interface(
             router_interface_id, switch_id, attr_count, attr_list);
@@ -37,6 +43,10 @@ namespace intfsorch_test
     sai_status_t _ut_remove_router_interface(
             _In_ sai_object_id_t router_interface_id)
     {
+        if (remove_rif_status != SAI_STATUS_SUCCESS)
+        {
+            return remove_rif_status;
+        }
         ++remove_rif_count;
         return pold_sai_rif_api->remove_router_interface(router_interface_id);
     }
@@ -61,6 +71,34 @@ namespace intfsorch_test
             router_interface_id, attr);
     }
 
+    sai_route_api_t *pold_sai_route_api;
+    sai_route_api_t ut_sai_route_api;
+    int create_route_count = 0;
+    int remove_route_count = 0;
+    sai_status_t create_route_status = SAI_STATUS_SUCCESS;
+    sai_status_t remove_route_status = SAI_STATUS_SUCCESS;
+    sai_status_t _ut_create_route_entry(
+            _In_ const sai_route_entry_t *route_entry,
+            _In_ uint32_t attr_count,
+            _In_ const sai_attribute_t *attr_list)
+    {
+        if (create_route_status != SAI_STATUS_SUCCESS)
+        {
+            return create_route_status;
+        }
+        ++create_route_count;
+        return SAI_STATUS_SUCCESS;
+    }
+    sai_status_t _ut_remove_route_entry(
+            _In_ const sai_route_entry_t *route_entry)
+    {
+        if (remove_route_status != SAI_STATUS_SUCCESS)
+        {
+            return remove_route_status;
+        }
+        ++remove_route_count;
+        return SAI_STATUS_SUCCESS;
+    }
     struct IntfsOrchTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -89,6 +127,15 @@ namespace intfsorch_test
             sai_router_intfs_api->set_router_interface_attribute = _ut_set_router_interface_attribute;
             saw_loopback_action = false;
             fail_next_rif_set = false;
+            create_rif_status = SAI_STATUS_SUCCESS;
+            remove_rif_status = SAI_STATUS_SUCCESS;
+            pold_sai_route_api = sai_route_api;
+            ut_sai_route_api = *sai_route_api;
+            sai_route_api = &ut_sai_route_api;
+            sai_route_api->create_route_entry = _ut_create_route_entry;
+            sai_route_api->remove_route_entry = _ut_remove_route_entry;
+            create_route_status = SAI_STATUS_SUCCESS;
+            remove_route_status = SAI_STATUS_SUCCESS;
             loopback_action_set_count = 0;
             last_loopback_action = SAI_PACKET_ACTION_FORWARD;
 
@@ -328,6 +375,7 @@ namespace intfsorch_test
             gFlowCounterRouteOrch = nullptr;
 
             sai_router_intfs_api = pold_sai_rif_api;
+            sai_route_api = pold_sai_route_api;
             ut_helper::uninitSaiApi();
         }
     };
@@ -371,6 +419,148 @@ namespace intfsorch_test
         static_cast<Orch *>(gIntfsOrch)->doTask();
         ASSERT_EQ(current_create_count + 1, create_rif_count);
         ASSERT_EQ(current_remove_count + 1, remove_rif_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchCreateRifTableFullRetries)
+    {
+        create_rif_status = SAI_STATUS_TABLE_FULL;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_create_count = create_rif_count;
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_NO_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer));
+        ASSERT_EQ(current_create_count, create_rif_count);
+        create_rif_status = SAI_STATUS_SUCCESS;
+        static_cast<Orch *>(gIntfsOrch)->doTask(*consumer);
+        ASSERT_EQ(current_create_count + 1, create_rif_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchRemoveRifObjectInUseRetries)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        remove_rif_status = SAI_STATUS_OBJECT_IN_USE;
+        entries.clear();
+        entries.push_back({"Ethernet0", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_remove_count = remove_rif_count;
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_NO_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer));
+        ASSERT_EQ(current_remove_count, remove_rif_count);
+        remove_rif_status = SAI_STATUS_SUCCESS;
+        static_cast<Orch *>(gIntfsOrch)->doTask(*consumer);
+        ASSERT_EQ(current_remove_count + 1, remove_rif_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchCreateRifFatalStatusThrows)
+    {
+        create_rif_status = SAI_STATUS_FAILURE;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_create_count = create_rif_count;
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer), std::runtime_error);
+        ASSERT_EQ(current_create_count, create_rif_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchRemoveRifFatalStatusThrows)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        remove_rif_status = SAI_STATUS_FAILURE;
+        entries.clear();
+        entries.push_back({"Ethernet0", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer), std::runtime_error);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchCreateIp2MeRouteTableFullRetries)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        create_route_status = SAI_STATUS_TABLE_FULL;
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", { {"mtu", "9100"} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_route_count = create_route_count;
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_NO_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer));
+        ASSERT_EQ(current_route_count, create_route_count);
+        create_route_status = SAI_STATUS_SUCCESS;
+        static_cast<Orch *>(gIntfsOrch)->doTask(*consumer);
+        ASSERT_EQ(current_route_count + 1, create_route_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchCreateIp2MeRouteFatalStatusThrows)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        create_route_status = SAI_STATUS_FAILURE;
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", { {"mtu", "9100"} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer), std::runtime_error);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchRemoveIp2MeRouteObjectInUseRetries)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        remove_route_status = SAI_STATUS_OBJECT_IN_USE;
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto current_route_count = remove_route_count;
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_NO_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer));
+        ASSERT_EQ(current_route_count, remove_route_count);
+        remove_route_status = SAI_STATUS_SUCCESS;
+        static_cast<Orch *>(gIntfsOrch)->doTask(*consumer);
+        ASSERT_EQ(current_route_count + 1, remove_route_count);
+    };
+
+    TEST_F(IntfsOrchTest, IntfsOrchRemoveIp2MeRouteFatalStatusThrows)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", { {"mtu", "9100"} }});
+        entries.push_back({"Ethernet0:10.0.0.1/24", "SET", { {"mtu", "9100"} }});
+        auto consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gIntfsOrch)->doTask();
+        remove_route_status = SAI_STATUS_FAILURE;
+        entries.clear();
+        entries.push_back({"Ethernet0:10.0.0.1/24", "DEL", { {} }});
+        consumer = dynamic_cast<Consumer *>(gIntfsOrch->getExecutor(APP_INTF_TABLE_NAME));
+        consumer->addToSync(entries);
+        // drive doTask(Consumer&) directly; the no-arg Orch::doTask() swallows exceptions
+        EXPECT_THROW(static_cast<Orch *>(gIntfsOrch)->doTask(*consumer), std::runtime_error);
     };
 
     TEST_F(IntfsOrchTest, IntfsOrchVrfUpdate)
