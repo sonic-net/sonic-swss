@@ -68,6 +68,7 @@ private:
 
     void createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t);
     void delAppDBTunnelMapTable(std::string vxlanTunnelMapName);
+    void recreateVxlanNetdevices(const std::string &vxlanTunnelName);
     int createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id,
                              std::string src_ip, std::string dst_ip, std::string vlan_id);
     int downVxlanNetdevice(std::string vxlan_dev_name);
