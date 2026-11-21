@@ -3317,7 +3317,7 @@ TEST_F(RouteManagerTest, DrainStopOnFirstFailureCreate) {
   EXPECT_CALL(publisher_,
               publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_3)),
                       FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs_3)),
-                      Eq(StatusCode::SWSS_RC_NOT_EXECUTED), Eq(true)));
+                      Eq(StatusCode::SWSS_RC_UNKNOWN), Eq(true)));
   EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, Drain(/*failure_before=*/false));
   EXPECT_NE(nullptr,
             GetRouteEntry(KeyGenerator::generateRouteKey(gVrfName, prefix_1)));
