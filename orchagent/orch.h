@@ -184,6 +184,13 @@ public:
     // ZmqRouteConsumer's m_ingress staging map) can report it too.
     virtual void dumpPendingTasks(std::vector<std::string> &ts);
 
+    // Whether this consumer has queued work. Lets the idle-sweep stats
+    // gate skip recording no-op drains as runs.
+    virtual bool hasPendingTasks() const
+    {
+        return !m_toSync.empty() || !m_toSyncQueue.empty();
+    }
+
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
@@ -322,6 +329,8 @@ typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector
 #define CACHE "| ++++ |"
 #define DECACHE "| ---- |"
 
+struct ExecutorStat;
+
 class Orch
 {
 public:
@@ -339,6 +348,12 @@ public:
     virtual void detachObservers() {}
 
     static std::shared_ptr<RingBuffer> gRingBuffer;
+
+    // Set once by OrchDaemon so the idle-sweep doTask() path can charge
+    // per-consumer retry/drain work to the same stats slot the select
+    // loop's execute() path uses. Null in daemons and tests that don't
+    // run the stats channel, in which case doTask() skips the timing.
+    static std::unordered_map<std::string, ExecutorStat> *s_taskStats;
 
     std::vector<swss::Selectable*> getSelectables();
 
@@ -378,6 +393,13 @@ public:
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
     ConsumerBase* getConsumerBase(const std::string &executorName);
+
+    // Whether the idle-sweep doTask() iteration for this executor has any
+    // queued work (pending retries or a non-empty to-sync backlog). Gates
+    // the per-consumer stats timer so no-op sweeps are not recorded. The
+    // caller passes the executor it already holds; only the retry cache is
+    // looked up by name.
+    bool sweepHasWork(const std::string &executorName, Executor *executor);
 
     /** 
      * @brief Add the failed task and its constraint to the consumer's RetryCache
