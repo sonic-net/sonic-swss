@@ -16,9 +16,9 @@ local function parse_number(str) return tonumber(str) or 0 end
 
 -- Get the debug counters and port name map
 local debug_counter_to_port_stat_map = redis.call('HGETALL', "COUNTERS_DEBUG_NAME_PORT_STAT_MAP")
-local debug_counter_to_port_stat_map_len = redis.call('HLEN', "COUNTERS_DEBUG_NAME_PORT_STAT_MAP")
+local debug_counter_to_port_stat_map_len = #debug_counter_to_port_stat_map
 local port_name_map = redis.call('HGETALL', "COUNTERS_PORT_NAME_MAP")
-local port_name_map_len = redis.call('HLEN', "COUNTERS_PORT_NAME_MAP")
+local port_name_map_len = #port_name_map
 
 -- Iterate over the debug counter and get their specific configuration
 for debug_counter_index = 1, debug_counter_to_port_stat_map_len, 2 do
