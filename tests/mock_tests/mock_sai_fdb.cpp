@@ -11,6 +11,11 @@ sai_status_t mock_create_fdb_entry(CREATE_PARAMS(fdb))
     return mock_sai_fdb_api->create_fdb_entry(CREATE_ARGS(fdb));
 }
 
+sai_status_t mock_set_fdb_entry_attribute(const sai_fdb_entry_t *entry, const sai_attribute_t *attr)
+{
+    return mock_sai_fdb_api->set_fdb_entry_attribute(entry, attr);
+}
+
 sai_status_t mock_remove_fdb_entry(REMOVE_PARAMS(fdb))
 {
     return mock_sai_fdb_api->remove_fdb_entry(REMOVE_ARGS(fdb));
@@ -32,7 +37,13 @@ void apply_sai_fdb_api_mock()
     ut_sai_fdb_api = *sai_fdb_api;
     sai_fdb_api = &ut_sai_fdb_api;
 
+    ON_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute)
+        .WillByDefault([](const sai_fdb_entry_t *entry, const sai_attribute_t *attr) {
+            return old_sai_fdb_api->set_fdb_entry_attribute(entry, attr);
+        });
+
     sai_fdb_api->create_fdb_entry = mock_create_fdb_entry;
+    sai_fdb_api->set_fdb_entry_attribute = mock_set_fdb_entry_attribute;
     sai_fdb_api->remove_fdb_entry = mock_remove_fdb_entry;
     sai_fdb_api->flush_fdb_entries = mock_flush_fdb_entries;
 }

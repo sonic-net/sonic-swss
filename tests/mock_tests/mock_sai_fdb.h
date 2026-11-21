@@ -17,6 +17,7 @@ extern "C"
 class mock_sai_fdb_api_t {
     public:
         MOCK_METHOD3(create_fdb_entry, sai_status_t(CREATE_PARAMS(fdb)));
+        MOCK_METHOD2(set_fdb_entry_attribute, sai_status_t(const sai_fdb_entry_t *entry, const sai_attribute_t *attr));
         MOCK_METHOD1(remove_fdb_entry, sai_status_t(REMOVE_PARAMS(fdb)));
         MOCK_METHOD3(flush_fdb_entries, sai_status_t(_In_ sai_object_id_t switch_id,
                          _In_ uint32_t attr_count,
@@ -28,6 +29,8 @@ extern sai_fdb_api_t ut_sai_fdb_api;
 extern mock_sai_fdb_api_t *mock_sai_fdb_api;
 
 sai_status_t mock_create_fdb_entry(CREATE_PARAMS(fdb));
+
+sai_status_t mock_set_fdb_entry_attribute(const sai_fdb_entry_t *entry, const sai_attribute_t *attr);
 
 sai_status_t mock_remove_fdb_entry(REMOVE_PARAMS(fdb));
 
