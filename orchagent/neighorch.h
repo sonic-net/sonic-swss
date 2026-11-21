@@ -133,7 +133,8 @@ public:
     bool isPrefixNeighbor(const NeighborEntry &neighborEntry) const;
     bool isPrefixNeighborNh(const NextHopKey &nextHopKey) const;
 
-    void resolveNeighbor(const NeighborEntry &);
+    void resolveNeighbor(const NeighborEntry &, bool cancellable = false);
+    void cancelResolveNeighbor(const NeighborEntry &);
     void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
     bool ifChangeInformRemoteNextHop(const string &, bool);
     void getMuxNeighborsForPort(string port_name, NeighborTable &m_neighbors);
@@ -155,6 +156,8 @@ private:
     std::map<NextHopKey, uint32_t> m_ipinipTunnelNextHopRegRefs;
 
     std::set<NextHopKey> m_neighborToResolve;
+    /* Cancellable requests on an m_neighborToResolve entry; absent once a caller asks without cancellable */
+    std::map<NextHopKey, unsigned> m_cancellableResolves;
     /* Existing neighbors re-resolved by processFDBResolve(), awaiting a kernel update */
     std::set<NeighborEntry> m_neighborToRefresh;
 

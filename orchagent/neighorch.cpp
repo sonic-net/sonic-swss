@@ -132,15 +132,56 @@ bool NeighOrch::resolveNeighborEntry(const NeighborEntry &entry, const MacAddres
     return true;
 }
 
-void NeighOrch::resolveNeighbor(const NeighborEntry &entry)
+/*
+ * Each cancellable call is one request, and cancelResolveNeighbor() withdraws one;
+ * the neighbor stays requested while any is left. A call without cancellable keeps
+ * the request until the neighbor is added. Adding the neighbor's next hop ends every
+ * request, so a caller cancels only what it asked for since it last saw the neighbor added.
+ */
+void NeighOrch::resolveNeighbor(const NeighborEntry &entry, bool cancellable)
 {
     if (m_neighborToResolve.find(entry) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
     {
         resolveNeighborEntry(entry, MacAddress());
         m_neighborToResolve.insert(entry);
+        if (cancellable)
+        {
+            m_cancellableResolves[entry] = 1;
+        }
+    }
+    else if (!cancellable)
+    {
+        m_cancellableResolves.erase(entry);
+    }
+    else
+    {
+        auto it = m_cancellableResolves.find(entry);
+        if (it != m_cancellableResolves.end())
+        {
+            it->second++;
+        }
     }
 
     return;
+}
+
+void NeighOrch::cancelResolveNeighbor(const NeighborEntry &entry)
+{
+    auto it = m_cancellableResolves.find(entry);
+    if (it == m_cancellableResolves.end() || --it->second > 0)
+    {
+        return;
+    }
+
+    m_cancellableResolves.erase(it);
+    m_neighborToResolve.erase(entry);
+    // A pending refresh shares the key; clearNeighborRefresh() deletes it.
+    if (m_neighborToRefresh.find(entry) == m_neighborToRefresh.end())
+    {
+        clearResolvedNeighborEntry(entry);
+    }
+    SWSS_LOG_INFO("Cancelled resolve of neighbor %s on %s",
+                  entry.ip_address.to_string().c_str(), entry.alias.c_str());
 }
 
 void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
@@ -481,6 +522,7 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
     {
         clearResolvedNeighborEntry(nexthop);
         m_neighborToResolve.erase(nexthop);
+        m_cancellableResolves.erase(nexthop);
         SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
     }
 
@@ -580,6 +622,7 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
     {
         clearResolvedNeighborEntry(nexthop);
         m_neighborToResolve.erase(nexthop);
+        m_cancellableResolves.erase(nexthop);
         SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
     }
 

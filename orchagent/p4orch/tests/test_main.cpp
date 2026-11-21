@@ -13,6 +13,8 @@ extern "C"
 #include "dbconnector.h"
 #include "directory.h"
 #include "flowcounterrouteorch.h"
+#include "intfsorch.h"
+#include "neighorch.h"
 #include "gtest/gtest.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
@@ -62,6 +64,8 @@ CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
 RouteOrch *gRouteOrch;
+NeighOrch *gNeighOrch;
+IntfsOrch *gIntfsOrch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
 CoppOrch *gCoppOrch;
