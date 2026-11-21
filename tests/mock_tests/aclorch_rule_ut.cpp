@@ -373,6 +373,246 @@ namespace aclorch_rule_test
         ASSERT_FALSE(gAclOrch->getAclRule(acl_table, acl_rule));
     }
 
+    struct AclMirrorWarmRestoreTest : public AclOrchRuleTest,
+                                     public WithParamInterface<pair<string, string>>
+    {
+        const string table = "RESTORE_TABLE";
+        const string rule = "MIRROR_RULE";
+        const string session = "restore_session";
+        const sai_object_id_t mirrorOid = 0x600000000001;
+        const sai_object_id_t entryOid = 0x500000000001;
+
+        void PostSetUp() override
+        {
+            AclOrchRuleTest::PostSetUp();
+            auto stage = GetParam().first == STAGE_EGRESS ? ACL_STAGE_EGRESS : ACL_STAGE_INGRESS;
+            auto action = GetParam().second == ACTION_MIRROR_EGRESS_ACTION ?
+                SAI_ACL_ACTION_TYPE_MIRROR_EGRESS : SAI_ACL_ACTION_TYPE_MIRROR_INGRESS;
+            gAclOrch->m_aclCapabilities[stage].actionList.insert(action);
+            ASSERT_FALSE(gAclOrch->m_mirrorAclRulesDeferred);
+            gAclOrch->setMirrorAclRulesDeferred(true);
+
+            // Use a custom table name/type to exercise rule-type rather than name-based gating.
+            doAclTableTypeTask({
+                { "RESTORE_TYPE", SET_COMMAND,
+                    { { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                      { ACL_TABLE_TYPE_ACTIONS, string(ACTION_PACKET_ACTION) + "," +
+                          (action == SAI_ACL_ACTION_TYPE_MIRROR_EGRESS ?
+                              ACTION_MIRROR_EGRESS_ACTION : ACTION_MIRROR_INGRESS_ACTION) } } }
+            });
+            doAclTableTask({
+                { table, SET_COMMAND,
+                    { { ACL_TABLE_TYPE, "RESTORE_TYPE" }, { ACL_TABLE_STAGE, GetParam().first } } }
+            });
+            ASSERT_NE(gAclOrch->getTableById(table), SAI_NULL_OBJECT_ID);
+        }
+
+        unique_ptr<Consumer> makeRuleConsumer()
+        {
+            return unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_config_db.get(), CFG_ACL_RULE_TABLE_NAME, 1, 1),
+                gAclOrch, CFG_ACL_RULE_TABLE_NAME));
+        }
+
+        void enqueueMirror(Consumer& consumer, const string& source = "10.0.0.1/32")
+        {
+            consumer.addToSync({
+                { table + "|" + rule, SET_COMMAND,
+                    { { RULE_PRIORITY, "100" }, { MATCH_SRC_IP, source }, { GetParam().second, session } } }
+            });
+        }
+
+        void drain(Consumer& consumer)
+        {
+            static_cast<Orch *>(gAclOrch)->doTask(consumer);
+        }
+
+        void seedSession(bool active)
+        {
+            MirrorEntry entry("");
+            entry.status = active;
+            entry.sessionId = active ? mirrorOid : SAI_NULL_OBJECT_ID;
+            gMirrorOrch->m_syncdMirrors.emplace(session, entry);
+        }
+
+        void expectStatus(const string& expected)
+        {
+            string status;
+            ASSERT_TRUE(gAclOrch->m_aclRuleStateTable.hget(table + "|" + rule, "status", status));
+            EXPECT_EQ(status, expected);
+        }
+    };
+
+    TEST_P(AclMirrorWarmRestoreTest, DefersThreePassesUntilSessionRestore)
+    {
+        auto consumer = makeRuleConsumer();
+        enqueueMirror(*consumer);
+        size_t countersCreated = 0;
+        auto counterSpy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_COUNTER>(&sai_acl_api->create_acl_counter);
+        counterSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t sw,
+                                uint32_t count, const sai_attribute_t *attrs) {
+            ++countersCreated;
+            return counterSpy->original_fn(oid, sw, count, attrs);
+        });
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
+
+        for (int pass = 0; pass < 3; ++pass)
+        {
+            drain(*consumer);
+            EXPECT_EQ(consumer->m_toSync.size(), 1u);
+            EXPECT_EQ(gAclOrch->getAclRule(table, rule), nullptr);
+            expectStatus("Pending creation");
+        }
+        EXPECT_EQ(countersCreated, 0u);
+        Mock::VerifyAndClearExpectations(mock_sai_acl_api);
+
+        seedSession(true);
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(Invoke([&](sai_object_id_t *oid, sai_object_id_t, uint32_t count,
+                                const sai_attribute_t *attrs) {
+                auto action = GetParam().second == ACTION_MIRROR_EGRESS_ACTION ?
+                    SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS : SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS;
+                bool found = false;
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    if (attrs[i].id == action)
+                    {
+                        found = true;
+                        EXPECT_TRUE(attrs[i].value.aclaction.enable);
+                        EXPECT_EQ(attrs[i].value.aclaction.parameter.objlist.count, 1u);
+                        if (attrs[i].value.aclaction.parameter.objlist.count == 1)
+                        {
+                            EXPECT_EQ(attrs[i].value.aclaction.parameter.objlist.list[0], mirrorOid);
+                        }
+                    }
+                }
+                EXPECT_TRUE(found);
+                *oid = entryOid;
+                return SAI_STATUS_SUCCESS;
+            }));
+        gAclOrch->setMirrorAclRulesDeferred(false);
+        drain(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        ASSERT_NE(gAclOrch->getAclRule(table, rule), nullptr);
+        EXPECT_EQ(countersCreated, 1u);
+        EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at(session).refCount, 1);
+        expectStatus("Active");
+    }
+
+    TEST_P(AclMirrorWarmRestoreTest, ReleasePreservesMissingAndInactiveSessionBehavior)
+    {
+        auto consumer = makeRuleConsumer();
+        enqueueMirror(*consumer);
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
+        drain(*consumer);
+        gAclOrch->setMirrorAclRulesDeferred(false);
+        drain(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(gAclOrch->getAclRule(table, rule), nullptr);
+        expectStatus("Pending creation");
+
+        seedSession(false);
+        drain(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        auto aclRule = gAclOrch->getAclRule(table, rule);
+        ASSERT_NE(aclRule, nullptr);
+        EXPECT_EQ(Portal::AclRuleInternal::getRuleOid(aclRule), SAI_NULL_OBJECT_ID);
+        EXPECT_FALSE(aclRule->hasCounter());
+        EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at(session).refCount, 0);
+    }
+
+    TEST_P(AclMirrorWarmRestoreTest, SaiFailureRemainsPendingAfterRelease)
+    {
+        seedSession(true);
+        auto consumer = makeRuleConsumer();
+        enqueueMirror(*consumer);
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
+        drain(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        Mock::VerifyAndClearExpectations(mock_sai_acl_api);
+
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).WillOnce(Return(SAI_STATUS_FAILURE));
+        gAclOrch->setMirrorAclRulesDeferred(false);
+        drain(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(gAclOrch->getAclRule(table, rule), nullptr);
+        EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at(session).refCount, 0);
+        expectStatus("Pending creation");
+
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(DoAll(SetArgPointee<0>(entryOid), Return(SAI_STATUS_SUCCESS)));
+        drain(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_NE(gAclOrch->getAclRule(table, rule), nullptr);
+        expectStatus("Active");
+    }
+
+    TEST_P(AclMirrorWarmRestoreTest, TablesPacketRulesAndDeletesAreNotDeferred)
+    {
+        auto consumer = makeRuleConsumer();
+        enqueueMirror(*consumer);
+        consumer->addToSync({
+            { table + "|PACKET_RULE", SET_COMMAND,
+                { { MATCH_SRC_IP, "10.0.0.2/32" }, { ACTION_PACKET_ACTION, PACKET_ACTION_DROP } } }
+        });
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry)
+            .WillOnce(DoAll(SetArgPointee<0>(entryOid), Return(SAI_STATUS_SUCCESS)));
+        drain(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_NE(gAclOrch->getAclRule(table, "PACKET_RULE"), nullptr);
+        EXPECT_EQ(gAclOrch->getAclRule(table, rule), nullptr);
+
+        EXPECT_CALL(*mock_sai_acl_api, remove_acl_entry).WillOnce(Return(SAI_STATUS_SUCCESS));
+        consumer->addToSync({
+            { table + "|PACKET_RULE", DEL_COMMAND, {} },
+            { table + "|" + rule, DEL_COMMAND, {} }
+        });
+        drain(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(gAclOrch->getAclRule(table, "PACKET_RULE"), nullptr);
+        doAclTableTask({ { table, DEL_COMMAND, {} } });
+        EXPECT_EQ(gAclOrch->getTableById(table), SAI_NULL_OBJECT_ID);
+    }
+
+    TEST_P(AclMirrorWarmRestoreTest, InvalidMirrorRuleIsRejectedBeforeDeferral)
+    {
+        auto consumer = makeRuleConsumer();
+        consumer->addToSync({
+            { table + "|" + rule, SET_COMMAND, { { GetParam().second, session } } }
+        });
+        EXPECT_CALL(*mock_sai_acl_api, create_acl_entry).Times(0);
+        drain(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(gAclOrch->getAclRule(table, rule), nullptr);
+        expectStatus("Inactive");
+    }
+
+    TEST_P(AclMirrorWarmRestoreTest, DeferredUpdateKeepsExistingRuleAndAllowsDelete)
+    {
+        seedSession(false);
+        auto consumer = makeRuleConsumer();
+        enqueueMirror(*consumer);
+        gAclOrch->setMirrorAclRulesDeferred(false);
+        drain(*consumer);
+        auto original = gAclOrch->getAclRule(table, rule);
+        ASSERT_NE(original, nullptr);
+        gAclOrch->setMirrorAclRulesDeferred(true);
+        enqueueMirror(*consumer, "10.0.0.3/32");
+        drain(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        EXPECT_EQ(gAclOrch->getAclRule(table, rule), original);
+
+        consumer->addToSync({ { table + "|" + rule, DEL_COMMAND, {} } });
+        drain(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(gAclOrch->getAclRule(table, rule), nullptr);
+    }
+
+    INSTANTIATE_TEST_SUITE_P(MirrorActions, AclMirrorWarmRestoreTest, Values(
+        make_pair(string(STAGE_INGRESS), string(ACTION_MIRROR_INGRESS_ACTION)),
+        make_pair(string(STAGE_EGRESS), string(ACTION_MIRROR_EGRESS_ACTION)),
+        make_pair(string(STAGE_INGRESS), string(ACTION_MIRROR_ACTION))));
+
     /*
      * Test fixture for ACL rule resource exhaustion and retry cache integration.
      * Validates that when SAI returns SAI_STATUS_INSUFFICIENT_RESOURCES (or similar),

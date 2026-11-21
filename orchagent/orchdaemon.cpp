@@ -1327,6 +1327,8 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      * Third iteration: Drain remaining data that are out of order.
      */
 
+    gAclOrch->setMirrorAclRulesDeferred(true);
+
     for (auto it = 0; it < 3; it++)
     {
         SWSS_LOG_DEBUG("The current doTask iteration is %d", it);
@@ -1349,6 +1351,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // and mirror ACL rules depend on MirrorOrch, so run these two at the end
     // after the rest of the data has been processed.
     gMirrorOrch->doTask();
+    gAclOrch->setMirrorAclRulesDeferred(false);
     gAclOrch->doTask();
 
     // Configure response publisher after warm-boot completes.

@@ -593,6 +593,11 @@ public:
     void update(SubjectType, void *);
     void onWarmBootEnd() override;
 
+    void setMirrorAclRulesDeferred(bool deferred)
+    {
+        m_mirrorAclRulesDeferred = deferred;
+    }
+
     sai_object_id_t getTableById(string table_id);
     const AclTable* getTableByOid(sai_object_id_t oid) const;
     const AclTableType* getAclTableType(const std::string& tableTypeName) const;
@@ -666,6 +671,7 @@ public:
     }
 
 private:
+    bool m_mirrorAclRulesDeferred = false;
     SwitchOrch *m_switchOrch;
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
