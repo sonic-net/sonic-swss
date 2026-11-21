@@ -74,6 +74,7 @@ extern bool gIsNatSupported;
 #define HEART_BEAT_INTERVAL_MSECS_DEFAULT 10 * 1000
 
 string gMySwitchType = "";
+bool gNeighborNexthopOnDemand = false;
 string gMySwitchSubType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
@@ -274,6 +275,27 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type, string &switch_su
         SWSS_LOG_ERROR("System error in parsing switch subtype: %s", e.what());
     }
 
+}
+
+// Read the boot-time gate that defers neighbor next-hop creation until a route
+// or group references the neighbor. Default off, read once at start.
+void getCfgNexthopOnDemand(DBConnector *cfgDb, bool &nexthop_on_demand)
+{
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+
+    nexthop_on_demand = false;
+    try
+    {
+        string value;
+        if (cfgDeviceMetaDataTable.hget("localhost", "nexthop_on_demand", value))
+        {
+            nexthop_on_demand = (value == "true");
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error in parsing nexthop_on_demand: %s", e.what());
+    }
 }
 
 bool isChassisAppDbPresent()
@@ -668,6 +690,12 @@ int main(int argc, char **argv)
         else
             zmq_server = create_zmq_route_server(zmq_server_address);
     }
+
+    // Get switch_type
+    getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);
+
+    // Get the on-demand neighbor next-hop gate (boot-time only)
+    getCfgNexthopOnDemand(&config_db, gNeighborNexthopOnDemand);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
