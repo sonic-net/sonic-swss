@@ -1800,6 +1800,51 @@ namespace routeorch_test
         ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("7.7.7.0/24")));
     }
 
+    /* Resync on the non-ZMQ consumer. The batch touches no default route, so
+     * the drain stops after it; the resync DELs must still be merged. */
+    TEST_F(RouteOrchTest, RouteOrch_ResyncStagesDelsForSyncedRoutes)
+    {
+        auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        ASSERT_NE(routeConsumer, nullptr);
+
+        /* Program one route so m_syncdRoutes has an entry to mark. */
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"8.8.8.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        ASSERT_TRUE(routeConsumer->m_toSync.empty());
+
+        entries.clear();
+        entries.push_back({"resync", "SET", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        bool delStaged = false;
+        for (const auto &kv : routeConsumer->m_toSync)
+        {
+            if (kv.first == "8.8.8.0/24" && kfvOp(kv.second) == DEL_COMMAND)
+            {
+                delStaged = true;
+            }
+        }
+        ASSERT_TRUE(delStaged);
+
+        /* Advertise the route again and end the resync. The first pass clears
+         * m_resync; "8.8.8.0/24" sorts before "resync", so its DEL and SET wait
+         * for the second pass, which removes and adds the route again. */
+        entries.clear();
+        entries.push_back({"8.8.8.0/24", "SET",
+                           {{"ifname", "Ethernet0"}, {"nexthop", "10.0.0.2"}}});
+        entries.push_back({"resync", "DEL", {}});
+        routeConsumer->addToSync(entries);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        ASSERT_TRUE(routeConsumer->m_toSync.empty());
+        ASSERT_TRUE(gRouteOrch->removeRoutePrefix(IpPrefix("8.8.8.0/24")));
+    }
+
     TEST_F(RouteOrchTest, RemoveNhgAfterAllMembersInvalidatedWithoutReplacement)
     {
         auto *routeConsumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
@@ -1981,5 +2026,68 @@ namespace routeorch_test
         feed(route_consumer, gRouteOrch, {prefix.to_string(), "DEL", {}});
         feed(nhg_consumer, gNhgOrch, {index, "DEL", {}});
         ASSERT_FALSE(gNhgOrch->hasNhg(index));
+    }
+
+    /* clear() resets a context for a fresh attempt at the same route: key
+     * and is_set stay, every per-attempt field resets. */
+    TEST(RouteBulkContextClear, PreservesIdentityResetsScratch)
+    {
+        RouteBulkContext ctx("Vrf2:1.2.3.0/24", /*is_set=*/true);
+
+        ctx.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        ctx.nhg_index = "nhg1";
+        ctx.context_index = "ctx1";
+        ctx.ipv = {"10.0.0.1"};
+        ctx.alsv = {"Ethernet0"};
+        ctx.vni_labelv = {"500100"};
+        ctx.rmacv = {"aa:bb:cc:dd:ee:ff"};
+        ctx.vrf_id = 0x1234;
+        ctx.ip_prefix = IpPrefix("1.2.3.0/24");
+        ctx.excp_intfs_flag = true;
+        ctx.using_temp_nhg = true;
+        ctx.vrf_group_flag = true;
+        ctx.protocol = "bgp";
+        ctx.fallback_to_default_route = true;
+
+        ctx.clear();
+
+        EXPECT_EQ(ctx.key, "Vrf2:1.2.3.0/24");
+        EXPECT_TRUE(ctx.is_set);
+
+        EXPECT_TRUE(ctx.object_statuses.empty());
+        EXPECT_TRUE(ctx.nhg_index.empty());
+        EXPECT_TRUE(ctx.context_index.empty());
+        EXPECT_TRUE(ctx.ipv.empty());
+        EXPECT_TRUE(ctx.alsv.empty());
+        EXPECT_TRUE(ctx.vni_labelv.empty());
+        EXPECT_TRUE(ctx.rmacv.empty());
+        EXPECT_EQ(ctx.vrf_id, SAI_NULL_OBJECT_ID);
+        /* IpPrefix has no operator!=, so check the old value is gone. */
+        EXPECT_FALSE(ctx.ip_prefix == IpPrefix("1.2.3.0/24"));
+        EXPECT_FALSE(ctx.excp_intfs_flag);
+        EXPECT_FALSE(ctx.using_temp_nhg);
+        EXPECT_FALSE(ctx.vrf_group_flag);
+        EXPECT_TRUE(ctx.protocol.empty());
+        EXPECT_FALSE(ctx.fallback_to_default_route);
+    }
+
+    TEST(RouteBulkContextClear, LabelContextResetsScratch)
+    {
+        LabelRouteBulkContext ctx;
+        ctx.object_statuses.push_back(SAI_STATUS_SUCCESS);
+        ctx.nhg_index = "nhg1";
+        ctx.vrf_id = 0x1234;
+        ctx.pop_count = 3;
+        ctx.excp_intfs_flag = true;
+        ctx.using_temp_nhg = true;
+
+        ctx.clear();
+
+        EXPECT_TRUE(ctx.object_statuses.empty());
+        EXPECT_TRUE(ctx.nhg_index.empty());
+        EXPECT_EQ(ctx.vrf_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(ctx.pop_count, 0);
+        EXPECT_FALSE(ctx.excp_intfs_flag);
+        EXPECT_FALSE(ctx.using_temp_nhg);
     }
 }
