@@ -23,6 +23,7 @@ extern MacAddress gMacAddress;
 
 // Fields name
 #define VXLAN_TUNNEL "vxlan_tunnel"
+#define VXLAN_TUNNEL_LIST "vxlan_tunnel_list"
 #define SOURCE_IP "src_ip"
 #define VNI "vni"
 #define VNET "vnet"
@@ -33,15 +34,24 @@ extern MacAddress gMacAddress;
 #define VXLAN_ROUTER_MAC "vxlan_router_mac"
 
 #define VXLAN_NAME_PREFIX "Vxlan"
+#define VXLAN_V6_NAME_PREFIX "Vxlan6_"
 #define VXLAN_IF_NAME_PREFIX "Brvxlan"
 
 #define VLAN "vlan"
 #define DST_IP "dst_ip"
 #define SOURCE_VTEP "source_vtep"
 
-static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info)
+// A VNET with a single tunnel keeps the legacy name for either family. Only the
+// IPv6 device of a dual-stack VNET gets its own name, since both share the VNI.
+static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info, bool dualStackIpv6 = false)
 {
-    return std::string("") + VXLAN_NAME_PREFIX + info.m_vni;
+    return std::string("") + (dualStackIpv6 ? VXLAN_V6_NAME_PREFIX : VXLAN_NAME_PREFIX) + info.m_vni;
+}
+
+static bool isIpv6Literal(const std::string &address)
+{
+    struct in6_addr addr6;
+    return inet_pton(AF_INET6, address.c_str(), &addr6) == 1;
 }
 
 static std::string getVxlanIfName(const swss::VxlanMgr::VxlanInfo & info)
@@ -320,6 +330,7 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
 
     VxlanInfo info;
+    std::string vxlanTunnel, vxlanTunnelList;
     info.m_vnet = kfvKey(t);
     for (auto i : kfvFieldsValues(t))
     {
@@ -327,7 +338,11 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         const std::string & value = fvValue(i);
         if (field == VXLAN_TUNNEL)
         {
-            info.m_vxlanTunnel = value;
+            vxlanTunnel = value;
+        }
+        else if (field == VXLAN_TUNNEL_LIST)
+        {
+            vxlanTunnelList = value;
         }
         else if (field == VNI)
         {
@@ -335,8 +350,25 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         }
     }
 
+    // vxlan_tunnel_list takes precedence over vxlan_tunnel, as in VNetOrch.
+    std::vector<std::string> tunnels;
+    if (!vxlanTunnelList.empty())
+    {
+        for (const auto & name : tokenize(vxlanTunnelList, ','))
+        {
+            if (!name.empty() && std::find(tunnels.begin(), tunnels.end(), name) == tunnels.end())
+            {
+                tunnels.push_back(name);
+            }
+        }
+    }
+    else if (!vxlanTunnel.empty())
+    {
+        tunnels.push_back(vxlanTunnel);
+    }
+
     // If all information of vnet has been set
-    if (info.m_vxlanTunnel.empty()
+    if (tunnels.empty()
      || info.m_vni.empty())
     {
         SWSS_LOG_DEBUG("Vnet %s information is incomplete", info.m_vnet.c_str());
@@ -346,13 +378,15 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         return true;
     }
 
-    // If the vxlan tunnel has been created
-    auto it = m_vxlanTunnelCache.find(info.m_vxlanTunnel);
-    if (it == m_vxlanTunnelCache.end())
+    // If the vxlan tunnels have been created
+    for (const auto & tunnel : tunnels)
     {
-        SWSS_LOG_DEBUG("Vxlan tunnel %s has not been created", info.m_vxlanTunnel.c_str());
-        // Suspend this message until the vxlan tunnel is created
-        return false;
+        if (m_vxlanTunnelCache.find(tunnel) == m_vxlanTunnelCache.end())
+        {
+            SWSS_LOG_DEBUG("Vxlan tunnel %s has not been created", tunnel.c_str());
+            // Suspend this message until the vxlan tunnel is created
+            return false;
+        }
     }
 
     // If the VRF(Vnet is a special VRF) has been created
@@ -372,20 +406,50 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         return false;
     }
     info.m_macAddress = macAddress.second;
-
-    auto sourceIp = std::find_if(
-        it->second.fvt.begin(),
-        it->second.fvt.end(),
-        [](const FieldValueTuple & fvt){ return fvt.first == SOURCE_IP; });
-    if (sourceIp  != it->second.fvt.end())
-    {
-        info.m_sourceIp = sourceIp->second;
-    }
-    info.m_vxlan = getVxlanName(info);
     info.m_vxlanIf = getVxlanIfName(info);
 
+    std::vector<VxlanInfo> devices;
+    for (const auto & tunnel : tunnels)
+    {
+        VxlanInfo device = info;
+        device.m_vxlanTunnel = tunnel;
+
+        const auto & tunnelFvt = m_vxlanTunnelCache.at(tunnel).fvt;
+        auto sourceIp = std::find_if(
+            tunnelFvt.begin(),
+            tunnelFvt.end(),
+            [](const FieldValueTuple & fvt){ return fvt.first == SOURCE_IP; });
+        if (sourceIp != tunnelFvt.end())
+        {
+            device.m_sourceIp = sourceIp->second;
+        }
+        devices.push_back(device);
+    }
+
+    // One IPv4 and one IPv6 tunnel at most, matching what VNetOrch accepts.
+    // IPv4 devices go first so the legacy device name stays first.
+    if (devices.size() > 1)
+    {
+        std::stable_partition(devices.begin(), devices.end(),
+            [](const VxlanInfo & device){ return !isIpv6Literal(device.m_sourceIp); });
+
+        if (devices.size() > 2 || isIpv6Literal(devices.front().m_sourceIp)
+            || !isIpv6Literal(devices.back().m_sourceIp))
+        {
+            SWSS_LOG_ERROR("Vnet %s needs one IPv4 and one IPv6 vxlan tunnel at most", info.m_vnet.c_str());
+            return true;
+        }
+    }
+
+    const bool dualStack = devices.size() > 1;
+    for (auto & device : devices)
+    {
+        device.m_vxlan = getVxlanName(device, dualStack && isIpv6Literal(device.m_sourceIp));
+    }
+
     // If this vxlan has been created
-    if (isVxlanStateOk(info.m_vxlan))
+    if (std::any_of(devices.begin(), devices.end(),
+            [this](const VxlanInfo & device){ return isVxlanStateOk(device.m_vxlan); }))
     {
         // Because the vxlan has been create, so this message is to update
         // the information of vxlan.
@@ -394,14 +458,14 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         doVxlanDeleteTask(t);
     }
 
-    if (!createVxlan(info))
+    if (!createVxlans(devices))
     {
-        SWSS_LOG_ERROR("Cannot create vxlan %s", info.m_vxlan.c_str());
+        SWSS_LOG_ERROR("Cannot create vxlan for vnet %s", info.m_vnet.c_str());
         return true;
     }
 
-    m_vnetCache[info.m_vnet] = info;
-    SWSS_LOG_INFO("Create vxlan %s", info.m_vxlan.c_str());
+    m_vnetCache[info.m_vnet] = devices;
+    SWSS_LOG_INFO("Create vxlan for vnet %s", info.m_vnet.c_str());
 
     return true;
 }
@@ -418,21 +482,22 @@ bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
         return true;
     }
 
-    const VxlanInfo & info = it->second;
-    if (isVxlanStateOk(info.m_vxlan))
+    const std::vector<VxlanInfo> & devices = it->second;
+    if (std::any_of(devices.begin(), devices.end(),
+            [this](const VxlanInfo & device){ return isVxlanStateOk(device.m_vxlan); }))
     {
-        if ( ! deleteVxlan(info))
+        if ( ! deleteVxlan(devices))
         {
-            SWSS_LOG_ERROR("Cannot delete vxlan %s", info.m_vxlan.c_str());
+            SWSS_LOG_ERROR("Cannot delete vxlan for vnet %s", vnetName.c_str());
             return false;
         }
     }
     else
     {
-        SWSS_LOG_WARN("Vxlan %s hasn't been created ", info.m_vxlan.c_str());
+        SWSS_LOG_WARN("Vxlan for vnet %s hasn't been created ", vnetName.c_str());
     }
 
-    SWSS_LOG_INFO("Delete vxlan %s", info.m_vxlan.c_str());
+    SWSS_LOG_INFO("Delete vxlan for vnet %s", vnetName.c_str());
     m_vnetCache.erase(it);
     return true;
 }
@@ -938,18 +1003,92 @@ bool VxlanMgr::createVxlan(const VxlanInfo & info)
     return true;
 }
 
-bool VxlanMgr::deleteVxlan(const VxlanInfo & info)
+bool VxlanMgr::addVxlanToVxlanIf(const VxlanInfo & info)
 {
     SWSS_LOG_ENTER();
 
     std::string res;
 
-    cmdDetachVxlanIfFromVnet(info, res);
-    cmdDeleteVxlanFromVxlanIf(info, res);
-    cmdDeleteVxlanIf(info, res);
-    cmdDeleteVxlan(info, res);
+    // The vxlan interface (bridge) and its vnet attachment come from the first device.
+    if (cmdCreateVxlan(info, res) != RET_SUCCESS)
+    {
+        SWSS_LOG_WARN(
+            "Failed to create vxlan %s (vni: %s, source ip %s)",
+            info.m_vxlan.c_str(),
+            info.m_vni.c_str(),
+            info.m_sourceIp.c_str());
+        return false;
+    }
 
-    m_stateVxlanTable.del(info.m_vxlan);
+    if (cmdUpVxlan(info, res) != RET_SUCCESS)
+    {
+        cmdDeleteVxlan(info, res);
+        SWSS_LOG_WARN("Fail to up vxlan %s", info.m_vxlan.c_str());
+        return false;
+    }
+
+    if (cmdAddVxlanIntoVxlanIf(info, res) != RET_SUCCESS)
+    {
+        cmdDeleteVxlan(info, res);
+        SWSS_LOG_WARN(
+            "Fail to add %s into %s",
+            info.m_vxlan.c_str(),
+            info.m_vxlanIf.c_str());
+        return false;
+    }
+
+    std::vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("state", "ok");
+    m_stateVxlanTable.set(info.m_vxlan, fvVector);
+
+    return true;
+}
+
+bool VxlanMgr::createVxlans(const std::vector<VxlanInfo> & infos)
+{
+    SWSS_LOG_ENTER();
+
+    if (infos.empty() || !createVxlan(infos.front()))
+    {
+        return false;
+    }
+
+    for (size_t i = 1; i < infos.size(); ++i)
+    {
+        if (!addVxlanToVxlanIf(infos[i]))
+        {
+            // Leave nothing behind when only some of the devices can be created.
+            deleteVxlan(std::vector<VxlanInfo>(infos.begin(), infos.begin() + i));
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool VxlanMgr::deleteVxlan(const std::vector<VxlanInfo> & infos)
+{
+    SWSS_LOG_ENTER();
+
+    if (infos.empty())
+    {
+        return true;
+    }
+
+    std::string res;
+
+    // All devices of a vnet share one vxlan interface (bridge).
+    cmdDetachVxlanIfFromVnet(infos.front(), res);
+    for (const auto & info : infos)
+    {
+        cmdDeleteVxlanFromVxlanIf(info, res);
+    }
+    cmdDeleteVxlanIf(infos.front(), res);
+    for (const auto & info : infos)
+    {
+        cmdDeleteVxlan(info, res);
+        m_stateVxlanTable.del(info.m_vxlan);
+    }
 
     return true;
 }
