@@ -3779,7 +3779,6 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (platform == BRCM_PLATFORM_SUBSTRING ||
             isCiscoPlatform(platform) ||
             platform == MLNX_PLATFORM_SUBSTRING ||
-            platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PRST_PLATFORM_SUBSTRING ||
             platform == MRVL_TL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||

@@ -546,7 +546,7 @@ bool OrchDaemon::init()
      */
     m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch, gNotifConsumerStatsOrch};
     bool initialize_dtel = false;
-    if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
+    if (platform == VS_PLATFORM_SUBSTRING)
     {
         sai_attr_capability_t capability;
         capability.create_implemented = true;
@@ -728,7 +728,6 @@ bool OrchDaemon::init()
     else if ((platform == MRVL_TL_PLATFORM_SUBSTRING)
 	     || (platform == MRVL_PRST_PLATFORM_SUBSTRING)
              || (platform == CLX_PLATFORM_SUBSTRING)
-             || (platform == BFN_PLATFORM_SUBSTRING)
              || (platform == NPS_PLATFORM_SUBSTRING))
     {
 
@@ -766,16 +765,6 @@ bool OrchDaemon::init()
 	    (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
-                        m_configDb,
-                        pfc_wd_tables,
-                        portStatIds,
-                        queueStatIds,
-                        queueAttrIds,
-                        PFC_WD_POLL_MSECS));
-        }
-        else if (platform == BFN_PLATFORM_SUBSTRING)
-        {
-            m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
