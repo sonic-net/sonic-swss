@@ -285,7 +285,7 @@ auto PbhHashFieldCapabilities::getPbhCap() const -> const decltype(PbhVendorFiel
 
 // PBH capabilities ---------------------------------------------------------------------------------------------------
 
-DBConnector PbhCapabilities::stateDb(PBH_STATE_DB_NAME, PBH_STATE_DB_TIMEOUT);
+DBConnector PbhCapabilities::stateDb(PBH_STATE_DB_NAME, PBH_STATE_DB_TIMEOUT, false, "", true);
 Table PbhCapabilities::capTable(&stateDb, STATE_PBH_CAPABILITIES_TABLE_NAME);
 
 PbhCapabilities::PbhCapabilities() noexcept

@@ -638,7 +638,7 @@ MACsecOrch::MACsecOrch(
                             m_state_macsec_egress_sa(state_db, STATE_MACSEC_EGRESS_SA_TABLE_NAME),
                             m_state_macsec_ingress_sa(state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
                             m_applPortTable(app_db, APP_PORT_TABLE_NAME),
-                            m_counter_db("COUNTERS_DB", 0),
+                            m_counter_db("COUNTERS_DB", 0, false, "", true),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
                             m_gb_counter_db("GB_COUNTERS_DB", 0),
                             m_gb_macsec_counters_map(&m_gb_counter_db, COUNTERS_MACSEC_NAME_MAP),

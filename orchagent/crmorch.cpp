@@ -397,7 +397,7 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
     Orch(db, tableName),
-    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0, false, "", true)),
     m_countersCrmTable(new Table(m_countersDb.get(), COUNTERS_CRM_TABLE)),
     m_timer(new SelectableTimer(timespec { .tv_sec = CRM_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 }))
 {

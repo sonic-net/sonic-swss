@@ -383,11 +383,11 @@ void initFlexCounterTables()
 {
     if (gTraditionalFlexCounter)
     {
-        gFlexCounterDb = std::make_unique<DBConnector>("FLEX_COUNTER_DB", 0);
+        gFlexCounterDb = std::make_unique<DBConnector>("FLEX_COUNTER_DB", 0, false, "", true);
         gFlexCounterTable = std::make_unique<ProducerTable>(gFlexCounterDb.get(), FLEX_COUNTER_TABLE);
         gFlexCounterGroupTable = std::make_unique<ProducerTable>(gFlexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE);
 
-        gGearBoxFlexCounterDb = std::make_unique<DBConnector>("GB_FLEX_COUNTER_DB", 0);
+        gGearBoxFlexCounterDb = std::make_unique<DBConnector>("GB_FLEX_COUNTER_DB", 0, false, "", true);
         gGearBoxFlexCounterTable = std::make_unique<ProducerTable>(gGearBoxFlexCounterDb.get(), FLEX_COUNTER_TABLE);
         gGearBoxFlexCounterGroupTable = std::make_unique<ProducerTable>(gGearBoxFlexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE);
     }
@@ -1189,7 +1189,7 @@ std::vector<sai_stat_id_t> queryAvailableCounterStats(const sai_object_type_t ob
 
 void initSaiFailureTable()
 {
-    gHealthStateDb = make_unique<DBConnector>("STATE_DB", 0);
+    gHealthStateDb = make_unique<DBConnector>("STATE_DB", 0, false, "", true);
     gOrchHealthTable = make_unique<Table>(gHealthStateDb.get(), STATE_PROCESS_HEALTH_TABLE_NAME);
 }
 

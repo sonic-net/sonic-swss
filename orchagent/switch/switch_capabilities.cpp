@@ -150,7 +150,7 @@ static void insertBack(T1 &out, const T2 &in)
 
 // Switch capabilities ------------------------------------------------------------------------------------------------
 
-DBConnector SwitchCapabilities::stateDb(SWITCH_STATE_DB_NAME, SWITCH_STATE_DB_TIMEOUT);
+DBConnector SwitchCapabilities::stateDb(SWITCH_STATE_DB_NAME, SWITCH_STATE_DB_TIMEOUT, false, "", true);
 Table SwitchCapabilities::capTable(&stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
 
 SwitchCapabilities::SwitchCapabilities()

@@ -105,7 +105,7 @@ int main(int argc, char **argv)
         }
     }
 
-    swss::DBConnector db("APPL_DB", 0);
+    swss::DBConnector db("APPL_DB", 0, false, "", true);
     // Send warm restart query via "RESTARTCHECK" notification channel
     swss::NotificationProducer restartQuery(&db, "RESTARTCHECK");
     // Will listen for the reply on "RESTARTCHECKREPLY" channel

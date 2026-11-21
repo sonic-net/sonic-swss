@@ -1013,7 +1013,7 @@ void OrchDaemon::initTaskStatsChannel()
 {
     SWSS_LOG_ENTER();
 
-    m_taskStatsDb = std::make_unique<swss::DBConnector>("APPL_DB", 0);
+    m_taskStatsDb = std::make_unique<swss::DBConnector>("APPL_DB", 0, false, "", true);
     m_taskStatsQuery = std::make_unique<swss::NotificationConsumer>(
             m_taskStatsDb.get(), "ORCH_TASK_STATS_QUERY");
     m_taskStatsReply = std::make_unique<swss::NotificationProducer>(

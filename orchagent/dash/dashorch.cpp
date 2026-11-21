@@ -65,7 +65,7 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, DBConnector *app_
 {
     SWSS_LOG_ENTER();
 
-    m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_counter_db = std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0, false, "", true));
     m_eni_name_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_NAME_MAP);
     m_eni_oid_table = make_unique<Table>(m_counter_db.get(), COUNTERS_ENI_OID_MAP);
     m_dpu_counter_db = std::shared_ptr<DBConnector>(new DBConnector("DPU_COUNTERS_DB", 0, true));

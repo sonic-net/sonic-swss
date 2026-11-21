@@ -42,8 +42,8 @@ int main(int argc, char **argv)
             STATE_OPER_VLAN_MEMBER_TABLE_NAME
         };
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
+        DBConnector stateDb("STATE_DB", 0, false, "", true);
 
         WarmStart::initialize("vlanmgrd", "swss");
         WarmStart::checkWarmStart("vlanmgrd", "swss");

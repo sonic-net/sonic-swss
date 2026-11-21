@@ -29,9 +29,9 @@ static const map<string, sai_packet_action_t> packet_action_map = {
 
 PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0, false, "", true)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
-    m_stateDb(new DBConnector("STATE_DB", 0)),
+    m_stateDb(new DBConnector("STATE_DB", 0, false, "", true)),
     m_stateTable(new Table(m_stateDb.get(), PFC_WD_STATE_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
