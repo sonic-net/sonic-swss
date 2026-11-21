@@ -120,6 +120,29 @@ namespace neighorch_test
             return resolve_table.get(vlan + resolve_table.getTableNameSeparator() + ip, fvs);
         }
 
+        /*
+         * Give the VRF of VLAN_3000 and VLAN_4000 an L3 VNI and add or remove a host
+         * route over a tunnel for ip there, as RouteOrch reports it.
+         */
+        void SetVrf3000HostRoute(const string &ip, bool present = true)
+        {
+            VRFOrch *vrf_orch = gDirectory.get<VRFOrch*>();
+            vrf_orch->vrf_vni_map_table_[VRF_3000] = 5000;
+            gNeighOrch->updateTunnelHostRoute(vrf_orch->getVRFid(VRF_3000), IpAddress(ip), present);
+        }
+
+        FdbEntry VlanFdbEntry(const string &vlan, const string &mac)
+        {
+            Port vlan_port;
+            gPortsOrch->getPort(vlan, vlan_port);
+
+            FdbEntry fdb_entry;
+            fdb_entry.mac = MacAddress(mac);
+            fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
+            fdb_entry.port_name = ETHERNET0;
+            return fdb_entry;
+        }
+
         FdbEntry Vlan1000FdbEntry(const string &mac)
         {
             Port vlan_port;
@@ -631,52 +654,46 @@ namespace neighorch_test
         EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
     }
 
-    TEST_F(NeighOrchTest, ProcessFDBDelete_DisableNeighbor)
+    /* A host route over a tunnel takes the neighbor out of the SAI; its removal puts it back. */
+    TEST_F(NeighOrchTest, TunnelHostRoute_DisablesAndRestoresNeighbor)
     {
-        // Setup: Learn a neighbor first
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
-        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
-        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+        LearnNeighbor(VLAN_3000, TEST_IP, MAC4);
+        ASSERT_TRUE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
 
-        // Create FDB entry to trigger processFDBDelete
-        Port vlan_port;
-        ASSERT_TRUE(gPortsOrch->getPort(VLAN_1000, vlan_port));
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry);
+        SetVrf3000HostRoute(TEST_IP);
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN3000_NEIGH), 1);
+        EXPECT_EQ(gNeighOrch->m_tunnelMacNeighbors.count(VLAN3000_NEIGH), 1);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
 
-        FdbEntry fdb_entry;
-        fdb_entry.mac = MacAddress(MAC1);
-        fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
-        fdb_entry.port_name = ETHERNET0;
+        /* a repeated report changes nothing */
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        SetVrf3000HostRoute(TEST_IP);
+        testing::Mock::VerifyAndClearExpectations(mock_sai_neighbor_api);
 
-        // Test processFDBDelete - should disable the neighbor
-        gNeighOrch->processFDBDelete(fdb_entry);
-
-        // Verify neighbor is disabled but still in cache
-        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        SetVrf3000HostRoute(TEST_IP, false);
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
+        EXPECT_TRUE(gNeighOrch->m_tunnelMacNeighbors.empty());
     }
 
-    TEST_F(NeighOrchTest, ProcessFDBDelete_NoMatchingNeighbor)
+    /* A withdrawn remote MAC re-resolves only the neighbors programmed on it. */
+    TEST_F(NeighOrchTest, ProcessFDBRemoteDelete_ResolvesProgrammedNeighbor)
     {
-        // Setup: Learn a neighbor with MAC1
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
         LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+        auto before = testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME);
 
-        // Create FDB entry with different MAC
-        Port vlan_port;
-        ASSERT_TRUE(gPortsOrch->getPort(VLAN_1000, vlan_port));
+        gNeighOrch->processFDBRemoteDelete(Vlan1000FdbEntry(MAC3));
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), before);
 
-        FdbEntry fdb_entry;
-        fdb_entry.mac = MacAddress(MAC2); // Different MAC
-        fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
-        fdb_entry.port_name = ETHERNET0;
-
-        // Test processFDBDelete with non-matching MAC - should not affect neighbor
-        gNeighOrch->processFDBDelete(fdb_entry);
-
-        // Verify neighbor state unchanged
-        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+        gNeighOrch->processFDBRemoteDelete(Vlan1000FdbEntry(MAC1));
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_NEIGH_RESOLVE_TABLE_NAME), before + 1);
+        EXPECT_EQ(gNeighOrch->m_neighborToRefresh.count(VLAN1000_NEIGH), 1);
     }
 
     TEST_F(NeighOrchTest, ProcessFDBResolve_TriggerArpResolution)
@@ -843,58 +860,60 @@ namespace neighorch_test
     TEST_F(NeighOrchTest, ProcessFDBFunctions_MultipleNeighborsOnSameVlan)
     {
         const string TEST_IP2 = "10.10.10.11";
-        const NeighborEntry VLAN1000_NEIGH2 = NeighborEntry(TEST_IP2, VLAN_1000);
+        const NeighborEntry VLAN3000_NEIGH2 = NeighborEntry(TEST_IP2, VLAN_3000);
 
         // Setup: Learn two neighbors on the same VLAN
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(2);
-        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
-        LearnNeighbor(VLAN_1000, TEST_IP2, MAC3);
+        LearnNeighbor(VLAN_3000, TEST_IP, MAC1);
+        LearnNeighbor(VLAN_3000, TEST_IP2, MAC3);
 
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH2), 1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN3000_NEIGH), 1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN3000_NEIGH2), 1);
 
         // Create FDB entry for first neighbor's MAC
         Port vlan_port;
-        ASSERT_TRUE(gPortsOrch->getPort(VLAN_1000, vlan_port));
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_3000, vlan_port));
 
         FdbEntry fdb_entry;
         fdb_entry.mac = MacAddress(MAC1);
         fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
         fdb_entry.port_name = ETHERNET0;
 
-        // Test processFDBDelete - should only affect the matching neighbor
-        gNeighOrch->processFDBDelete(fdb_entry);
+        // A host route over a tunnel for TEST_IP takes only the first out
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
+        SetVrf3000HostRoute(TEST_IP);
 
         // Verify only first neighbor is disabled, second remains enabled
-        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
-        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH2));
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH2));
     }
 
     TEST_F(NeighOrchTest, ProcessFDBFunctions_DifferentVlansSameMac)
     {
         // Setup: Learn neighbors on different VLANs with different MACs
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
-        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+        LearnNeighbor(VLAN_3000, TEST_IP, MAC1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN3000_NEIGH), 1);
 
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
         LearnNeighbor(VLAN_2000, TEST_IP, MAC2); // Different MAC, different VLAN
         ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN2000_NEIGH), 1);
 
-        // Create FDB entry for VLAN_1000
+        // Create FDB entry for VLAN_3000
         Port vlan_port;
-        ASSERT_TRUE(gPortsOrch->getPort(VLAN_1000, vlan_port));
+        ASSERT_TRUE(gPortsOrch->getPort(VLAN_3000, vlan_port));
 
         FdbEntry fdb_entry;
         fdb_entry.mac = MacAddress(MAC1);
         fdb_entry.bv_id = vlan_port.m_vlan_info.vlan_oid;
         fdb_entry.port_name = ETHERNET0;
 
-        // Test processFDBDelete - should only affect VLAN_1000 neighbor
-        gNeighOrch->processFDBDelete(fdb_entry);
+        // A host route over a tunnel for TEST_IP in VLAN_3000's VRF takes only that neighbor out
+        EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
+        SetVrf3000HostRoute(TEST_IP);
 
-        // Verify only VLAN_1000 neighbor is disabled, VLAN_2000 remains enabled
-        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN1000_NEIGH));
+        // Verify only VLAN_3000 neighbor is disabled, VLAN_2000 remains enabled
+        EXPECT_FALSE(gNeighOrch->isHwConfigured(VLAN3000_NEIGH));
         EXPECT_TRUE(gNeighOrch->isHwConfigured(VLAN2000_NEIGH));
     }
 }
