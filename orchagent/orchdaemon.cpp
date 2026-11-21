@@ -466,14 +466,6 @@ bool OrchDaemon::init()
         appDbAclTableType,
     };
 
-    vector<string> dtel_tables = {
-        CFG_DTEL_TABLE_NAME,
-        CFG_DTEL_REPORT_SESSION_TABLE_NAME,
-        CFG_DTEL_INT_SESSION_TABLE_NAME,
-        CFG_DTEL_QUEUE_REPORT_TABLE_NAME,
-        CFG_DTEL_EVENT_TABLE_NAME
-    };
-
     vector<string> wm_tables = {
         CFG_WATERMARK_TABLE_NAME,
         CFG_FLEX_COUNTER_TABLE_NAME
@@ -545,39 +537,8 @@ bool OrchDaemon::init()
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
     m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gEvpnMhOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gFgNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, gTunneldecapOrch, sflow_orch, gDebugCounterOrch, gMacsecOrch, bgp_global_state_orch, gBfdOrch, gIcmpOrch, gSrv6Orch, gMuxOrch, mux_cb_orch, gMonitorOrch, gBfdMonitorOrch, gStpOrch, gL2NhgOrch, gNotifConsumerStatsOrch};
-    bool initialize_dtel = false;
-    if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
-    {
-        sai_attr_capability_t capability;
-        capability.create_implemented = true;
-
-    /* Will uncomment this when saiobject.h support is added to SONiC */
-    /*
-    sai_status_t status;
-
-        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_DTEL, SAI_DTEL_ATTR_SWITCH_ID, &capability);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Could not query Dataplane telemetry capability %d", status);
-            exit(EXIT_FAILURE);
-        }
-    */
-
-        if (capability.create_implemented)
-        {
-            initialize_dtel = true;
-        }
-    }
-
-    DTelOrch *dtel_orch = NULL;
-    if (initialize_dtel)
-    {
-        dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
-        m_orchList.push_back(dtel_orch);
-    }
-
     gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
-        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
+        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch);
 
     vector<string> mlag_tables = {
         { CFG_MCLAG_TABLE_NAME },

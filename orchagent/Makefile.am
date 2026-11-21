@@ -104,7 +104,6 @@ orchagent_SOURCES = \
             vxlanorch.cpp \
             tunneltermhelper.cpp \
             vnetorch.cpp \
-            dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
             notificationconsumerstatsorch.cpp \
