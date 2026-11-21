@@ -79,6 +79,12 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
         PortUpdate *update = static_cast<PortUpdate *>(cntx);
         Port &port = update->port;
 
+        // LAG updates carry a null port id, which the flex counter helpers treat as all ports
+        if (port.m_type != Port::Type::PHY)
+        {
+            return;
+        }
+
         if (update->add) 
         {
             for (const auto& debug_counter: debug_counters)
@@ -103,9 +109,11 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
                 auto flex_counter_type = getFlexCounterType(counter_type);
                 if (flex_counter_type == CounterType::PORT_DEBUG)
                 {
-                    uninstallDebugFlexCounters(counter_type, counter_stat, port.m_port_id);
+                    uninstallDebugFlexCounters(counter_type, counter_stat, port.m_port_id, debug_counter.first);
                 }
             }
+
+            stopDropMonitorPolling(port.m_port_id);
         }
     }
 }
@@ -219,6 +227,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
             {
                 if (key == "CONFIG")
                 {
+                    task_status = task_process_status::task_success;
                     for (const auto& value : values)
                     {
                         string config_name = value.first;
@@ -237,8 +246,10 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                                     setFlexCounterGroupOperation(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP, "enable");
                                     for (auto const &curr : gPortsOrch->getAllPorts())
                                     {
-                                        string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
-                                        startFlexCounterPolling(gSwitchId, key, monitored_debug_counter_stat, PORT_COUNTER_ID_LIST);
+                                        if (curr.second.m_type == Port::Type::PHY)
+                                        {
+                                            refreshDropMonitorPolling(curr.second.m_port_id);
+                                        }
                                     }
                                 }
                                 else if (config_value == "disabled")
@@ -246,10 +257,10 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                                     debug_monitor_enabled = false;
                                     SWSS_LOG_DEBUG("Disabling debug drop monitor");
                                     setFlexCounterGroupOperation(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP, "disable");
-                                    for (auto const &curr : gPortsOrch->getAllPorts())
+                                    const auto polledPorts = dropMonitorPolledPorts;
+                                    for (auto port_id : polledPorts)
                                     {
-                                        string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
-                                        stopFlexCounterPolling(gSwitchId, key);
+                                        stopDropMonitorPolling(port_id);
                                     }
                                 }
                                 else
@@ -615,10 +626,13 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
 
-    // Track the new counter_stat in debug drop monitor
-    portDebugMonitorStatIds.insert(counter_stat);
-    string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
-    SWSS_LOG_DEBUG("Added %s to: %s", counter_stat.c_str(), monitored_debug_counter_stat.c_str());
+    // Track the new counter_stat in debug drop monitor, which only polls ports
+    if (flex_counter_type == CounterType::PORT_DEBUG)
+    {
+        portDebugMonitorStatIds.insert(counter_stat);
+        string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
+        SWSS_LOG_DEBUG("Added %s to: %s", counter_stat.c_str(), monitored_debug_counter_stat.c_str());
+    }
 
     if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
@@ -646,12 +660,7 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
                     flex_counter_type,
                     counter_stat);
 
-            if (debug_monitor_enabled)
-            {
-                string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
-                stopFlexCounterPolling(gSwitchId, key);
-                startFlexCounterPolling(gSwitchId, key, monitored_debug_counter_stat, PORT_COUNTER_ID_LIST);
-            }
+            refreshDropMonitorPolling(curr.second.m_port_id);
         }
     }
 }
@@ -664,11 +673,13 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
 
-    // Remove the counter_stat from being tracked in debug drop monitor
-    auto counter_stat_iter = portDebugMonitorStatIds.find(counter_stat);
-    portDebugMonitorStatIds.erase(counter_stat_iter);
-    string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
-    SWSS_LOG_DEBUG("Removed %s from: %s", counter_stat.c_str(), monitored_debug_counter_stat.c_str());
+    // Remove the counter_stat from being tracked in debug drop monitor; on port removal the other ports still use it
+    if (flex_counter_type == CounterType::PORT_DEBUG && port_id == SAI_NULL_OBJECT_ID)
+    {
+        portDebugMonitorStatIds.erase(counter_stat);
+        string monitored_debug_counter_stat = counterIdsToStr(portDebugMonitorStatIds);
+        SWSS_LOG_DEBUG("Removed %s from: %s", counter_stat.c_str(), monitored_debug_counter_stat.c_str());
+    }
 
     // Make a vector of keys to delete from COUNTERS_DB, these keys are used by drop counter monitor
     std::vector<std::string> debug_drop_monitor_stats_fields;
@@ -705,17 +716,47 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
 
             debug_drop_monitor_stats_fields.push_back("DEBUG_DROP_MONITOR_STATS|" + counter_name + "|" + curr.first);
 
-            if (debug_monitor_enabled)
+            // On port removal, update() stops drop monitor polling for the port
+            if (port_id == SAI_NULL_OBJECT_ID)
             {
-                string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(curr.second.m_port_id);
-                stopFlexCounterPolling(gSwitchId, key);
-                startFlexCounterPolling(gSwitchId, key, monitored_debug_counter_stat, PORT_COUNTER_ID_LIST);
+                refreshDropMonitorPolling(curr.second.m_port_id);
             }
         }
     }
 
     // Delete DEBUG_DROP_MONITOR_STATS for this debug counter
     m_countersDb->del(debug_drop_monitor_stats_fields);
+}
+
+// syncd's bulk add path does not replace the counter list of a polled port, so stop it first; an
+// empty counter list would be sent to syncd as a stop request, so only start when there are stats.
+void DebugCounterOrch::refreshDropMonitorPolling(sai_object_id_t port_id)
+{
+    SWSS_LOG_ENTER();
+
+    stopDropMonitorPolling(port_id);
+
+    if (!debug_monitor_enabled || portDebugMonitorStatIds.empty())
+    {
+        return;
+    }
+
+    string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(port_id);
+    startFlexCounterPolling(gSwitchId, key, counterIdsToStr(portDebugMonitorStatIds), PORT_COUNTER_ID_LIST);
+    dropMonitorPolledPorts.insert(port_id);
+}
+
+void DebugCounterOrch::stopDropMonitorPolling(sai_object_id_t port_id)
+{
+    SWSS_LOG_ENTER();
+
+    if (dropMonitorPolledPorts.erase(port_id) == 0)
+    {
+        return;
+    }
+
+    string key = string(DEBUG_DROP_MONITOR_FLEX_COUNTER_GROUP) + ":" + sai_serialize_object_id(port_id);
+    stopFlexCounterPolling(gSwitchId, key);
 }
 
 // Debug Counter Initialization Helper Functions START HERE ----------------------------------------
