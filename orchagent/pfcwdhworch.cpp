@@ -38,6 +38,16 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
 
     SWSS_LOG_NOTICE("Initializing hardware-based PFC watchdog");
 
+    // STATE_DB outlives orchagent, so every row here describes the previous
+    // run's programming. Nothing is programmed yet; a row this run never rewrites
+    // would go on reporting a watchdog that no longer exists.
+    vector<string> stalePorts;
+    m_pfcWdHwStateTable->getKeys(stalePorts);
+    for (const auto &portAlias : stalePorts)
+    {
+        m_pfcWdHwStateTable->del(portAlias);
+    }
+
     initializeTimerRanges();
     registerCallbacks();
     recoverWarmReboot(db);
