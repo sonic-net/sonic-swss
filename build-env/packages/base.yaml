@@ -10,3 +10,4 @@ packages:
   - swig
   - libdbus-1-dev
   - libteam-dev
+  - libyaml-cpp-dev
