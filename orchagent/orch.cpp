@@ -2,6 +2,7 @@
 #include <thread>
 #include "timestamp.h"
 #include "orch.h"
+#include "taskstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -18,6 +19,7 @@ int gBatchSize = 0;
 
 std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
 std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
+std::unordered_map<std::string, ExecutorStat> *Orch::s_taskStats = nullptr;
 
 RingBuffer::RingBuffer(int size): buffer(size)
 {
@@ -159,14 +161,14 @@ RetryCache *Orch::getRetryCache(const std::string &executorName)
         return m_retryCaches[executorName].get();
 }
 
-ConsumerBase* Orch::getConsumerBase(const std::string &executorName)
+ConsumerBaseCommon* Orch::getConsumerBase(const std::string &executorName)
 {
     if (m_consumerMap.find(executorName) == m_consumerMap.end())
         return nullptr;
-    return dynamic_cast<ConsumerBase*>(m_consumerMap[executorName].get());
+    return dynamic_cast<ConsumerBaseCommon*>(m_consumerMap[executorName].get());
 }
 
-bool ConsumerBase::addToRetry(const Task &task, const Constraint &cst) {
+bool ConsumerBaseCommon::addToRetry(const Task &task, const Constraint &cst) {
     auto retryCache = getOrch() ? getOrch()->getRetryCache(getName()) : nullptr;
     if (retryCache)
     {
@@ -186,6 +188,17 @@ bool Orch::addToRetry(const std::string &executorName, const Task &task, const C
         return true;
     }
     return false;
+}
+
+bool Orch::sweepHasWork(const std::string &executorName, Executor *executor)
+{
+    RetryCache *cache = getRetryCache(executorName);
+    if (cache != nullptr && !cache->getResolvedConstraints().empty())
+    {
+        return true;
+    }
+    auto *consumer = dynamic_cast<ConsumerBaseCommon *>(executor);
+    return consumer != nullptr && consumer->hasPendingTasks();
 }
 
 /**
@@ -235,16 +248,14 @@ void Orch::notifyRetry(Orch *retryOrch, const std::string &executorName, const C
     }
 }
 
-size_t ConsumerBase::addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry) {
-    return addToSync(*entries, onRetry);
-}
-
-void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
+template <typename MapT, typename MergePolicy>
+void ConsumerBaseTemplate<MapT, MergePolicy>::addToSync(const KeyOpFieldsValuesTuple &entry, bool onRetry)
 {
     addToSyncInternal(entry, onRetry, true);
 }
 
-void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask)
+template <typename MapT, typename MergePolicy>
+void ConsumerBaseTemplate<MapT, MergePolicy>::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask)
 {
     SWSS_LOG_ENTER();
 
@@ -335,23 +346,29 @@ void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool o
         return;
     }
 
+    MergePolicy::apply(m_toSync, key, op, entry);
+}
+
+void MultimapMerge::apply(SyncMap &toSync, const string &key, const string &op,
+                          const KeyOpFieldsValuesTuple &entry)
+{
     /*
-    * m_toSync is a multimap which will allow one key with multiple values,
+    * toSync is a multimap which will allow one key with multiple values,
     * Also, the order of the key-value pairs whose keys compare equivalent
     * is the order of insertion and does not change. (since C++11)
     */
 
     /* If a new task comes we directly put it into getConsumerTable().m_toSync map */
-    if (m_toSync.find(key) == m_toSync.end())
+    if (toSync.find(key) == toSync.end())
     {
-        m_toSync.emplace(key, entry);
+        toSync.emplace(key, entry);
     }
 
     /* if a DEL task comes, we overwrite the old key */
     else if (op == DEL_COMMAND)
     {
-        m_toSync.erase(key);
-        m_toSync.emplace(key, entry);
+        toSync.erase(key);
+        toSync.emplace(key, entry);
     }
     else
     {
@@ -366,7 +383,7 @@ void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool o
         * in such case, we insert the key-value with SET.
         * If there was a SET already (I,E, the pointer still points to the same key), we combine the kfv.
         */
-        auto ret = m_toSync.equal_range(key);
+        auto ret = toSync.equal_range(key);
         auto iter = ret.first;
         for (; iter != ret.second; ++iter)
         {
@@ -376,7 +393,7 @@ void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool o
         }
         if (iter == ret.second)
         {
-            m_toSync.emplace(key, entry);
+            toSync.emplace(key, entry);
         }
         else
         {
@@ -408,7 +425,15 @@ void ConsumerBase::addToSyncInternal(const KeyOpFieldsValuesTuple &entry, bool o
 
 }
 
-size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries, bool onRetry)
+void OverwriteMerge::apply(RouteSyncMap &toSync, const string &key, const string &op,
+                           const KeyOpFieldsValuesTuple &entry)
+{
+    (void)op;
+    toSync[key] = entry;
+}
+
+template <typename MapT, typename MergePolicy>
+size_t ConsumerBaseTemplate<MapT, MergePolicy>::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries, bool onRetry)
 {
     SWSS_LOG_ENTER();
 
@@ -425,8 +450,22 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
     return entries.size();
 }
 
+template <typename MapT, typename MergePolicy>
+size_t ConsumerBaseTemplate<MapT, MergePolicy>::addToSyncNoRecord(const std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto& entry: entries)
+    {
+        addToSyncInternal(entry, /*onRetry=*/false, /*recordTask=*/false);
+    }
+
+    return entries.size();
+}
+
 // TODO: Table should be const
-size_t ConsumerBase::refillToSync(Table* table)
+template <typename MapT, typename MergePolicy>
+size_t ConsumerBaseTemplate<MapT, MergePolicy>::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -448,7 +487,8 @@ size_t ConsumerBase::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t ConsumerBase::refillToSync()
+template <typename MapT, typename MergePolicy>
+size_t ConsumerBaseTemplate<MapT, MergePolicy>::refillToSync()
 {
     auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
@@ -483,7 +523,7 @@ size_t ConsumerBase::refillToSync()
     return 0;
 }
 
-string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
+string ConsumerBaseCommon::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
@@ -495,7 +535,7 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
+void ConsumerBaseCommon::recordTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     if (!m_recordable)
     {
@@ -515,7 +555,7 @@ void ConsumerBase::recordTuple(const KeyOpFieldsValuesTuple &tuple)
         tuple);
 }
 
-void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
+void ConsumerBaseCommon::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     if (!m_recordable)
     {
@@ -538,7 +578,8 @@ void ConsumerBase::recordTuples(const std::deque<KeyOpFieldsValuesTuple> &entrie
         entries);
 }
 
-void ConsumerBase::dumpPendingTasks(vector<string> &ts)
+template <typename MapT, typename MergePolicy>
+void ConsumerBaseTemplate<MapT, MergePolicy>::dumpPendingTasks(vector<string> &ts)
 {
     if (m_orderedQueue)
     {
@@ -572,6 +613,10 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
         }
     }
 }
+
+/* The only two instantiations; see ConsumerBaseTemplate in orch.h. */
+template class ConsumerBaseTemplate<SyncMap, MultimapMerge>;
+template class ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge>;
 
 void Consumer::execute()
 {
@@ -659,7 +704,7 @@ void Consumer::drain()
 
 size_t Orch::addExistingData(const string& tableName)
 {
-    auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
+    auto consumer = dynamic_cast<ConsumerBaseCommon *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -673,7 +718,7 @@ size_t Orch::addExistingData(const string& tableName)
 size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
+    ConsumerBaseCommon* consumer = dynamic_cast<ConsumerBaseCommon *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -691,7 +736,7 @@ bool Orch::bake()
     {
         string executorName = it.first;
         auto executor = it.second;
-        auto consumer = dynamic_cast<ConsumerBase *>(executor.get());
+        auto consumer = dynamic_cast<ConsumerBaseCommon *>(executor.get());
         if (consumer == NULL)
         {
             continue;
@@ -941,6 +986,17 @@ void Orch::doTask()
 
     for (auto &it : m_consumerMap)
     {
+        // Charge the retry promotion and drain to the consumer's own stats
+        // slot -- the same one the select loop's execute() path uses -- so
+        // sweep-driven work (retries, tasks left in m_toSync) shows up under
+        // the task that did it. Only timed when work is actually queued: an
+        // unconditional timer would add a zero-length run per consumer on
+        // every idle sweep and dilute the run-time medians.
+        std::unique_ptr<TaskTimer> timer;
+        if (s_taskStats != nullptr && sweepHasWork(it.first, it.second.get()))
+        {
+            timer.reset(new TaskTimer((*s_taskStats)[it.first]));
+        }
         try
         {
             count += retryToSync(it.first, threshold - count);
@@ -973,7 +1029,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        ConsumerBaseCommon* consumer = dynamic_cast<ConsumerBaseCommon *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");
@@ -1313,7 +1369,7 @@ void Orch::setOrderedQueueForAllConsumers(bool orderedQueue)
 {
     for (auto executor : m_consumerMap)
     {
-        auto *consumer = dynamic_cast<ConsumerBase*>(executor.second.get());
+        auto *consumer = dynamic_cast<ConsumerBaseCommon*>(executor.second.get());
         if (consumer != nullptr)
         {
             consumer->setOrderedQueue(orderedQueue);

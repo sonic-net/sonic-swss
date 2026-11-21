@@ -6,8 +6,9 @@ using namespace std;
 extern int gBatchSize;
 extern size_t gMaxBulkSize;
 
-ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orch *orch, const std::string &name)
-    : ConsumerBase(select, orch, name)
+ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, ZmqRouteOrch *orch, const std::string &name)
+    : ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge>(select, orch, name)
+    , m_routeOrch(orch)
 {
     // mqPollThread delivers bursts of tuples through this callback. Stage them
     // in the plain m_ingress map under m_ingressMutex rather than merging into
@@ -20,8 +21,8 @@ ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orc
             std::lock_guard<std::mutex> lk(m_ingressMutex);
             for (const auto &kco : kcos)
             {
-                // Plain last-writer-wins staging by key. The SyncMap merge into
-                // m_toSync is applied later by execute()'s addToSync().
+                // Plain last-writer-wins staging by key. The OverwriteMerge
+                // into m_toSync is applied later by execute()'s addToSync().
                 m_ingress[kfvKey(*kco)] = *kco;
             }
             if (m_ingress.size() >= gMaxBulkSize)
@@ -34,6 +35,15 @@ ZmqRouteConsumer::ZmqRouteConsumer(swss::ZmqRouteConsumerStateTable *select, Orc
 void ZmqRouteConsumer::execute()
 {
     SWSS_LOG_ENTER();
+
+    /* A drain batch is in flight: only advance it. New tuples keep coalescing
+     * in m_ingress, and the drain re-arms this selectable when the batch ends
+     * with ingress pending. */
+    if (m_routeOrch->drainInFlight(getTableName()))
+    {
+        drain();
+        return;
+    }
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     {
@@ -71,19 +81,26 @@ void ZmqRouteConsumer::dumpPendingTasks(std::vector<std::string> &ts)
             ts.push_back(dumpTuple(kv.second));
         }
     }
-    ConsumerBase::dumpPendingTasks(ts);
+    ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge>::dumpPendingTasks(ts);
 }
 
 void ZmqRouteConsumer::drain()
 {
-    // TODO: doTask() currently walks the whole of m_toSync in one go. Per the
-    // route programming HLD -- doc/orchagent/orchagent_route_redesign.md
-    // sections 7.4 and 7.5 (sonic-net/SONiC#2328) -- this becomes a yieldable
-    // walk bounded by a time quantum, so the main loop returns to execute()
-    // and keeps draining m_ingress (and hence the ZMQ socket) instead of
-    // stalling ingress behind one large batch.
-    if (!m_toSync.empty())
-        (static_cast<ZmqRouteOrch*>(m_orch))->doTask(*this);
+    // RouteOrch drains this table in time quanta (route programming HLD,
+    // doc/orchagent/orchagent_route_redesign.md sections 7.4 and 7.5,
+    // sonic-net/SONiC#2328): each call runs for at most one quantum and
+    // resumes the same batch on the next call. Mid-batch, m_toSync can be
+    // empty because the batch owns its entries.
+    if (hasPendingTasks())
+        m_routeOrch->doTask(*this);
+}
+
+bool ZmqRouteConsumer::hasPendingTasks() const
+{
+    // m_toSyncQueue is left out: the ordered queue is never enabled on the
+    // ZMQ route path.
+    return !m_toSync.empty() ||
+           m_routeOrch->drainInFlight(getTableName());
 }
 
 
