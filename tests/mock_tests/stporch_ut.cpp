@@ -287,4 +287,54 @@ namespace stporch_test
         _unhook_sai_vlan_api();
         _unhook_sai_fdb_api();
     }
+
+    TEST_F(StpOrchTest, StpMalformedFieldsAreDropped) {
+        _hook_sai_stp_api();
+        _hook_sai_vlan_api();
+        _hook_sai_fdb_api();
+
+        StrictMock<MockSaiStp> mock_sai_stp_;
+        mock_sai_stp = &mock_sai_stp_;
+        sai_stp_api->create_stp = mock_create_stp;
+        sai_stp_api->remove_stp = mock_remove_stp;
+        sai_stp_api->create_stp_port = mock_create_stp_port;
+        sai_stp_api->remove_stp_port = mock_remove_stp_port;
+        sai_stp_api->set_stp_port_attribute = mock_set_stp_port_attribute;
+
+        sai_object_id_t stp_oid = 98765;
+
+        // Malformed entries sort ahead of the valid VLAN; a stall would block its create_stp.
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Vlan0100", "SET", { {"stp_instance", "abc"}}});    // non-numeric
+        entries.push_back({"Vlan0200", "SET", { {"stp_instance", "70000"}}});  // overflows uint16
+        entries.push_back({"Vlan0300", "SET", { {"stp_instance", "5xyz"}}});   // trailing garbage
+        entries.push_back({"Vlan0400", "SET", { {"stp_instance", ""}}});       // empty
+        entries.push_back({"Vlan1000", "SET", { {"stp_instance", "1"}}});      // valid
+
+        EXPECT_CALL(mock_sai_stp_,
+            create_stp(_, _, _, _)).WillOnce(::testing::DoAll(::testing::SetArgPointee<0>(stp_oid),
+                                        ::testing::Return(SAI_STATUS_SUCCESS)));
+
+        auto consumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_VLAN_INSTANCE_TABLE"));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        // Malformed instance-in-key and state must drop with no SAI stp-port call (StrictMock).
+        entries.push_back({"Ethernet0:abc", "SET", { {"state", "4"}}});        // bad instance in key
+        entries.push_back({"Ethernet0:1", "SET", { {"state", "xyz"}}});        // bad state value
+        auto stateConsumer = dynamic_cast<Consumer *>(gStpOrch->getExecutor("STP_PORT_STATE_TABLE"));
+        stateConsumer->addToSync(entries);
+        entries.clear();
+
+        // Drain through the production path (Orch::doTask -> Consumer::drain).
+        static_cast<Orch *>(gStpOrch)->doTask();
+
+        std::vector<std::string> pending;
+        static_cast<Orch *>(gStpOrch)->dumpPendingTasks(pending);
+        EXPECT_TRUE(pending.empty());
+
+        _unhook_sai_stp_api();
+        _unhook_sai_vlan_api();
+        _unhook_sai_fdb_api();
+    }
 }
