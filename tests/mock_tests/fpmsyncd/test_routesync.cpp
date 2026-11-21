@@ -33,6 +33,10 @@ using namespace ut_fpmsyncd;
 using ::testing::_;
 
 extern void resetMockWarmStartHelper();
+extern bool getMockWarmStartHelperRefreshEntry(const std::string &tableName,
+                                               const std::string &key,
+                                               swss::KeyOpFieldsValuesTuple &kfv);
+extern size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName);
 
 int rt_build_ret = 0;
 bool nlmsg_alloc_ret = true;
@@ -93,10 +97,12 @@ public:
                    << " exists; failed to load route protocol names required for tests.";
         }
         m_routeSync.setSuppressionEnabled(true);
+        resetMockWarmStartHelper();
     }
 
     void TearDown() override
     {
+        resetMockWarmStartHelper();
         testing_db::reset();
     }
 
@@ -3804,6 +3810,105 @@ TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipathWithRtaVia)
     EXPECT_EQ(intfList, "Vrf10,Vrf10");
 }
 
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopRejectsEncapWithoutRouterMac)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWROUTE, 0);
+
+    struct in_addr gw;
+    ASSERT_EQ(inet_pton(AF_INET, "10.10.50.1", &gw), 1);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_GATEWAY, &gw, static_cast<unsigned int>(sizeof(gw))));
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put32(nlh, MAX_PAYLOAD, RTA_OIF, 10u));
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put16(nlh, MAX_PAYLOAD, RTA_ENCAP_TYPE, 100));
+    struct rtattr *nest = ut_fpmsyncd::nl_attr_nest(nlh, MAX_PAYLOAD, RTA_ENCAP);
+    ASSERT_NE(nest, nullptr);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put32(nlh, MAX_PAYLOAD, 0, 92900u));
+    ut_fpmsyncd::nl_attr_nest_end(nlh, nest);
+
+    struct rtattr *tb[RTA_MAX + 1] = {0};
+    netlink_parse_rtattr(tb, RTA_MAX, reinterpret_cast<rtattr *>(NLMSG_DATA(nlh)),
+                         static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(0)));
+
+    string nexthops, vniList, macList, intfList;
+    EXPECT_FALSE(m_routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vniList, macList, intfList));
+}
+
+// Appends an RTA_MULTIPATH next hop on Vrf10. vni 0 leaves out the encap; a null rmac leaves the router MAC out of it.
+static int appendEvpnMultipathNexthop(char *buffer, int offset, const char *gateway, uint32_t vni, const uint8_t *rmac)
+{
+    auto *rtnh = reinterpret_cast<rtnexthop *>(static_cast<void *>(buffer + offset));
+    memset(rtnh, 0, sizeof(*rtnh));
+    rtnh->rtnh_ifindex = 10;
+
+    struct in_addr gw;
+    EXPECT_EQ(inet_pton(AF_INET, gateway, &gw), 1);
+    int attrOffset = appendRtAttr(buffer, offset + static_cast<int>(sizeof(*rtnh)), RTA_GATEWAY, &gw,
+                                  static_cast<unsigned int>(sizeof(gw)));
+    if (vni != 0)
+    {
+        uint16_t encapType = 100;
+        attrOffset = appendRtAttr(buffer, attrOffset, RTA_ENCAP_TYPE, &encapType,
+                                  static_cast<unsigned int>(sizeof(encapType)));
+
+        auto *encap = reinterpret_cast<rtattr *>(static_cast<void *>(buffer + attrOffset));
+        encap->rta_type = static_cast<unsigned short>(RTA_ENCAP | NLA_F_NESTED);
+        int nestedStart = attrOffset + static_cast<int>(RTA_ALIGN(RTA_LENGTH(0)));
+        int nestedEnd = appendRtAttr(buffer, nestedStart, 0, &vni, static_cast<unsigned int>(sizeof(vni)));
+        if (rmac)
+        {
+            nestedEnd = appendRtAttr(buffer, nestedEnd, 1, rmac, 6);
+        }
+        encap->rta_len = static_cast<unsigned short>(RTA_LENGTH(nestedEnd - nestedStart));
+        attrOffset += static_cast<int>(RTA_ALIGN(encap->rta_len));
+    }
+
+    rtnh->rtnh_len = static_cast<uint16_t>(attrOffset - offset);
+    return offset + static_cast<int>(NLMSG_ALIGN(rtnh->rtnh_len));
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipathRejectsNexthopWithoutEncap)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWROUTE, 0);
+
+    char multipath[512] = {0};
+    const uint8_t rmac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x01};
+    int multipathLen = appendEvpnMultipathNexthop(multipath, 0, "10.10.30.1", 90900, rmac);
+    multipathLen = appendEvpnMultipathNexthop(multipath, multipathLen, "10.10.30.2", 0, nullptr);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_MULTIPATH, multipath,
+                                         static_cast<unsigned int>(multipathLen)));
+
+    struct rtattr *tb[RTA_MAX + 1] = {0};
+    netlink_parse_rtattr(tb, RTA_MAX, reinterpret_cast<rtattr *>(NLMSG_DATA(nlh)),
+                         static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(0)));
+
+    // The second next hop is not an EVPN next hop, so it must not go out with the first one's VNI and router MAC
+    string nexthops, vniList, macList, intfList;
+    EXPECT_FALSE(m_routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vniList, macList, intfList));
+    EXPECT_EQ(vniList.find("90900,90900"), string::npos);
+}
+
+TEST_F(FpmSyncdResponseTest, TestGetEvpnNextHopMultipathRejectsNexthopWithoutRouterMac)
+{
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWROUTE, 0);
+
+    char multipath[512] = {0};
+    const uint8_t rmac[6] = {0x00, 0x11, 0x22, 0x33, 0x44, 0x01};
+    int multipathLen = appendEvpnMultipathNexthop(multipath, 0, "10.10.40.1", 91900, rmac);
+    multipathLen = appendEvpnMultipathNexthop(multipath, multipathLen, "10.10.40.2", 91901, nullptr);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, RTA_MULTIPATH, multipath,
+                                         static_cast<unsigned int>(multipathLen)));
+
+    struct rtattr *tb[RTA_MAX + 1] = {0};
+    netlink_parse_rtattr(tb, RTA_MAX, reinterpret_cast<rtattr *>(NLMSG_DATA(nlh)),
+                         static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(0)));
+
+    string nexthops, vniList, macList, intfList;
+    EXPECT_FALSE(m_routeSync.getEvpnNextHop(nlh, 100, tb, nexthops, vniList, macList, intfList));
+    EXPECT_EQ(macList.find("00:11:22:33:44:01,00:11:22:33:44:01"), string::npos);
+}
+
 TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlAddAndDelete)
 {
     unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
@@ -3859,6 +3964,48 @@ TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlMissingOptions)
     Table shlTable(m_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
     vector<FieldValueTuple> values;
     EXPECT_FALSE(shlTable.get("Vlan0000:Vrf10", values));
+}
+
+TEST_F(FpmSyncdResponseTest, TestOnTcFilterMsgShlDeferredToOwnTableDuringWarmRestart)
+{
+    m_routeSync.getWarmStartHelper().setState(WarmStart::INITIALIZED);
+    ASSERT_TRUE(m_routeSync.getWarmStartHelper().inProgress());
+
+    unsigned char buffer[NLMSG_SPACE(MAX_PAYLOAD)] = {0};
+    nlmsghdr *nlh = initRawNlMsg(buffer, RTM_NEWTFILTER, static_cast<unsigned int>(sizeof(tcmsg)));
+    auto *tcm = reinterpret_cast<tcmsg *>(NLMSG_DATA(nlh));
+    tcm->tcm_ifindex = 10;
+
+    char kind[] = "shl";
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_KIND, kind, static_cast<unsigned int>(sizeof(kind))));
+    struct rtattr *options = ut_fpmsyncd::nl_attr_nest(nlh, MAX_PAYLOAD, TCA_OPTIONS);
+    ASSERT_NE(options, nullptr);
+    struct in_addr vtep4;
+    ASSERT_EQ(inet_pton(AF_INET, "10.20.30.40", &vtep4), 1);
+    ASSERT_TRUE(ut_fpmsyncd::nl_attr_put(nlh, MAX_PAYLOAD, TCA_FLOWER_KEY_IPV4_SRC, &vtep4,
+                                         static_cast<unsigned int>(sizeof(vtep4))));
+    ut_fpmsyncd::nl_attr_nest_end(nlh, options);
+
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+    m_pipeline->flush();
+
+    KeyOpFieldsValuesTuple kfv;
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_EVPN_SPLIT_HORIZON_TABLE_NAME, "Vlan0000:Vrf10", kfv));
+    EXPECT_EQ(kfvOp(kfv), SET_COMMAND);
+    EXPECT_EQ(kfvFieldsValues(kfv), vector<FieldValueTuple>({{"vteps", "10.20.30.40"}}));
+    Table shlTable(m_db.get(), APP_EVPN_SPLIT_HORIZON_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    EXPECT_FALSE(shlTable.get("Vlan0000:Vrf10", values));
+
+    nlh->nlmsg_type = RTM_DELTFILTER;
+    m_routeSync.onTcFilterMsg(nlh, static_cast<int>(nlh->nlmsg_len - NLMSG_LENGTH(sizeof(tcmsg))));
+
+    ASSERT_TRUE(getMockWarmStartHelperRefreshEntry(APP_EVPN_SPLIT_HORIZON_TABLE_NAME, "Vlan0000:Vrf10", kfv));
+    EXPECT_EQ(kfvOp(kfv), DEL_COMMAND);
+    EXPECT_TRUE(kfvFieldsValues(kfv).empty());
+    EXPECT_EQ(getMockWarmStartHelperRefreshMapSize(APP_ROUTE_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerSetCount(APP_EVPN_SPLIT_HORIZON_TABLE_NAME), 0u);
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_EVPN_SPLIT_HORIZON_TABLE_NAME), 0u);
 }
 
 // Helper to create a VNET route with nexthop

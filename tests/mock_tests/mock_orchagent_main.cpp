@@ -25,11 +25,12 @@ bool gEnableFibSuppress = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 
 VRFOrch *gVrfOrch;
+PfcWdHwOrch *gPfcWdHwOrch = nullptr;
 
 void syncd_apply_view() {}
 
 bool gMultiAsicVoq = false;
-bool isChassisDbInUse()
+bool isVoqChassisDbInUse()
 {
     return gMultiAsicVoq;
 }

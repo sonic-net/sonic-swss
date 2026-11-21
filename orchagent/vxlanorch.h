@@ -510,6 +510,12 @@ private:
     virtual bool delOperation(const Request& request);
 
     EvpnRemoteVniRequest request_;
+
+    // (vid, remote VTEP) entries holding a tunnel user reference whose VLAN member
+    // add has not succeeded yet.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_pendingVlanMembers;
+    // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
 };
 
 class EvpnRemoteVnip2mpOrch : public Orch2
@@ -523,6 +529,9 @@ private:
     virtual bool delOperation(const Request& request);
 
     EvpnRemoteVniRequest request_;
+
+    // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
 };
 
 //------------- EVPN_NVO Table -------------------------

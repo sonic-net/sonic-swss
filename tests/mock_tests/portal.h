@@ -8,6 +8,7 @@
 #include "copporch.h"
 #include "sfloworch.h"
 #include "twamporch.h"
+#include "vnetorch.h"
 #include "directory.h"
 
 #undef protected
@@ -111,6 +112,21 @@ struct Portal
             return obj.m_sflowPortInfoMap;
         }
 
+        static bool getSflowDropMonitorStatusEnable(SflowOrch &obj)
+        {
+            return obj.m_sflowDropMonitor.m_enable;
+        }
+
+        static int32_t getSflowDropMonitorLimitRate(SflowOrch &obj)
+        {
+            return obj.m_sflowDropMonitor.m_limitRate;
+        }
+
+        static uint32_t getSflowDropMonitorCpuQueue(SflowOrch &obj, const std::string& path)
+        {
+            return obj.m_sflowDropMonitor.getDropMonitorCpuQueue(path);
+        }
+
         static bool sflowAddPort(SflowOrch &obj, sai_object_id_t sample_id,
                                  sai_object_id_t port_id, std::string direction)
         {
@@ -152,6 +168,25 @@ struct Portal
         static TwampStatsTable getTwampSessionStatistics(TwampOrch &obj)
         {
             return obj.m_twampStatistics;
+        }
+    };
+
+    struct VNetRouteOrchInternal
+    {
+        static void addRoute(VNetRouteOrch &obj, const std::string &vnet,
+                             const IpPrefix &ipPrefix, const nextHop &nh)
+        {
+            obj.addRoute(vnet, ipPrefix, nh);
+        }
+
+        static void delRoute(VNetRouteOrch &obj, const IpPrefix &ipPrefix)
+        {
+            obj.delRoute(ipPrefix);
+        }
+
+        static VNetNextHopObserverTable &getNextHopObservers(VNetRouteOrch &obj)
+        {
+            return obj.next_hop_observers_;
         }
     };
 

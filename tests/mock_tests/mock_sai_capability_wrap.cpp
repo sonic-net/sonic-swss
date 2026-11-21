@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstring>
+#include <utility>
 
 namespace
 {
@@ -42,6 +43,11 @@ namespace
         thread_local bool g_fail_session_capability = false;
     }
 
+    // Generic per-attribute enum-values-capability override (sai_enum_cap_ut),
+    // consulted first in __wrap_sai_query_attribute_enum_values_capability so any
+    // orch UT (e.g. the ACL table group type query) can inject a result.
+    thread_local sai_enum_cap_ut::EnumValuesCapabilityOverride g_enumValuesOverride;
+
     // HFTel capability discovery path (HFTelOrch::isSupportedHFTel).
     namespace hftel
     {
@@ -53,10 +59,37 @@ namespace
             CollectorCreateNotImplemented,
             SwitchNotifySetNotImplemented,
             AllSupported,
+            MixedEnableAttrsAllUnsupported,
+            MixedEnableAttrsMmuUnsupported,
         };
 
         thread_local Hook g_hook = Hook::None;
+
+        // Independent hook driving the SAI_TAM_TEL_TYPE_ATTR_MODE
+        // enum-values capability response. Drives the four advertisement
+        // outcomes plus a NOT_SUPPORTED variant that mirrors saivs's
+        // current behavior.
+        enum class ModeHook
+        {
+            None = 0,
+            SingleOnly,
+            MixedOnly,
+            Both,
+            Neither,
+            QueryNotSupported,
+        };
+
+        thread_local ModeHook g_mode_hook = ModeHook::None;
     }
+
+    // Generic per-attribute capability override (sai_cap_ut), checked first in
+    // __wrap_sai_query_attribute_capability so any orch UT (e.g. the ACL
+    // match-field gate) can inject a result regardless of object type.
+    thread_local sai_cap_ut::AttrCapabilityOverride g_attr_cap_override;
+
+    // Generic object type availability override (sai_availability_ut), checked
+    // first in __wrap_sai_object_type_get_availability.
+    thread_local sai_availability_ut::ObjectTypeAvailabilityOverride g_availability_override;
 }
 
 static const sai_attr_metadata_t g_nonEnumMetadataTest{};
@@ -85,6 +118,38 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Out_ sai_attr_capability_t *attr_capability);
 
+    sai_status_t __real_sai_object_type_get_availability(
+            _In_ sai_object_id_t switch_id,
+            _In_ sai_object_type_t object_type,
+            _In_ uint32_t attr_count,
+            _In_ const sai_attribute_t *attr_list,
+            _Out_ uint64_t *count);
+
+    sai_status_t __wrap_sai_object_type_get_availability(
+            _In_ sai_object_id_t switch_id,
+            _In_ sai_object_type_t object_type,
+            _In_ uint32_t attr_count,
+            _In_ const sai_attribute_t *attr_list,
+            _Out_ uint64_t *count)
+    {
+        if (g_availability_override)
+        {
+            uint64_t availCount = 0;
+            sai_status_t st = SAI_STATUS_SUCCESS;
+            if (g_availability_override(object_type, &availCount, &st))
+            {
+                if (count)
+                {
+                    *count = availCount;
+                }
+                return st;
+            }
+        }
+
+        return __real_sai_object_type_get_availability(
+                switch_id, object_type, attr_count, attr_list, count);
+    }
+
     const sai_attr_metadata_t* __wrap_sai_metadata_get_attr_metadata(
             _In_ sai_object_type_t object_type,
             _In_ sai_attr_id_t attr_id)
@@ -109,6 +174,14 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Inout_ sai_s32_list_t* enum_values_capability)
     {
+        // Generic per-attribute override (any orch UT). Checked first: when set,
+        // its result is used verbatim; otherwise fall through to the icmp hooks.
+        if (g_enumValuesOverride)
+        {
+            return g_enumValuesOverride(switch_id, object_type, attr_id,
+                                        enum_values_capability);
+        }
+
         const bool is_icmp_stats_mode = (object_type == SAI_OBJECT_TYPE_ICMP_ECHO_SESSION)
                 && (attr_id == SAI_ICMP_ECHO_SESSION_ATTR_STATS_COUNT_MODE);
 
@@ -142,6 +215,69 @@ extern "C"
             return SAI_STATUS_SUCCESS;
         }
 
+        // HFTel SAI_TAM_TEL_TYPE_ATTR_MODE enum-values capability.
+        const bool is_hftel_tel_type_mode =
+                (object_type == SAI_OBJECT_TYPE_TAM_TEL_TYPE)
+                && (attr_id == SAI_TAM_TEL_TYPE_ATTR_MODE);
+        if (is_hftel_tel_type_mode && hftel::g_mode_hook != hftel::ModeHook::None)
+        {
+            if (hftel::g_mode_hook == hftel::ModeHook::QueryNotSupported)
+            {
+                return SAI_STATUS_NOT_SUPPORTED;
+            }
+
+            int32_t values[2];
+            uint32_t needed = 0;
+            switch (hftel::g_mode_hook)
+            {
+            case hftel::ModeHook::SingleOnly:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+                break;
+            case hftel::ModeHook::MixedOnly:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+                break;
+            case hftel::ModeHook::Both:
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_SINGLE_TYPE;
+                values[needed++] = SAI_TAM_TEL_TYPE_MODE_MIXED_TYPE;
+                break;
+            case hftel::ModeHook::Neither:
+                break;
+            case hftel::ModeHook::QueryNotSupported:
+            case hftel::ModeHook::None:
+                // Handled above / unreachable.
+                break;
+            }
+
+            if (needed == 0)
+            {
+                // Empty capability set (ModeHook::Neither): return SUCCESS
+                // with count = 0 regardless of how the caller passed the list.
+                if (enum_values_capability)
+                {
+                    enum_values_capability->count = 0;
+                }
+                return SAI_STATUS_SUCCESS;
+            }
+
+            if (!enum_values_capability
+                    || !enum_values_capability->list
+                    || enum_values_capability->count < needed)
+            {
+                if (enum_values_capability)
+                {
+                    enum_values_capability->count = needed;
+                }
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+
+            for (uint32_t i = 0; i < needed; ++i)
+            {
+                enum_values_capability->list[i] = values[i];
+            }
+            enum_values_capability->count = needed;
+            return SAI_STATUS_SUCCESS;
+        }
+
         return __real_sai_query_attribute_enum_values_capability(
                 switch_id, object_type, attr_id, enum_values_capability);
     }
@@ -165,6 +301,24 @@ extern "C"
             _In_ sai_attr_id_t attr_id,
             _Out_ sai_attr_capability_t *attr_capability)
     {
+        // Generic per-attribute override (any orch UT). Checked first: when it
+        // handles the query, its status and capability are used verbatim;
+        // otherwise fall through to the per-orch handling below.
+        if (g_attr_cap_override)
+        {
+            sai_attr_capability_t cap;
+            std::memset(&cap, 0, sizeof(cap));
+            sai_status_t st = SAI_STATUS_SUCCESS;
+            if (g_attr_cap_override(object_type, attr_id, &cap, &st))
+            {
+                if (attr_capability)
+                {
+                    *attr_capability = cap;
+                }
+                return st;
+            }
+        }
+
         // ICMP echo session selective-counter capability (IcmpOrch via the shared
         // SaiOffloadSession base). Fail only the ICMP echo session object; any
         // other object type falls through to the HFTel handling / real impl so
@@ -213,6 +367,32 @@ extern "C"
             }
 
             return __real_sai_query_attribute_capability(switch_id, object_type, attr_id, attr_capability);
+        }
+
+        if (hftel::g_hook == hftel::Hook::MixedEnableAttrsAllUnsupported ||
+            hftel::g_hook == hftel::Hook::MixedEnableAttrsMmuUnsupported)
+        {
+            if (!attr_capability)
+            {
+                return SAI_STATUS_INVALID_PARAMETER;
+            }
+
+            // Everything but the TAM_TEL_TYPE enable attributes behaves as
+            // AllSupported, so isSupportedHFTel reaches the category probe.
+            if (object_type != SAI_OBJECT_TYPE_TAM_TEL_TYPE)
+            {
+                std::memset(attr_capability, 0, sizeof(*attr_capability));
+                attr_capability->create_implemented = true;
+                attr_capability->set_implemented = true;
+                attr_capability->get_implemented = true;
+                return SAI_STATUS_SUCCESS;
+            }
+
+            std::memset(attr_capability, 0, sizeof(*attr_capability));
+            attr_capability->create_implemented =
+                (hftel::g_hook == hftel::Hook::MixedEnableAttrsMmuUnsupported)
+                    && (attr_id != SAI_TAM_TEL_TYPE_ATTR_SWITCH_ENABLE_MMU_STATS);
+            return SAI_STATUS_SUCCESS;
         }
 
         if (hftel::g_hook == hftel::Hook::SwitchNotifySetNotImplemented)
@@ -302,6 +482,7 @@ namespace hftelorch_sai_wrap_ut
     void setSaiHookNone()
     {
         hftel::g_hook = hftel::Hook::None;
+        hftel::g_mode_hook = hftel::ModeHook::None;
     }
 
     void setSaiHookStatsStFail()
@@ -329,6 +510,41 @@ namespace hftelorch_sai_wrap_ut
         hftel::g_hook = hftel::Hook::AllSupported;
     }
 
+    void setSaiHookMixedEnableAttrsAllUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::MixedEnableAttrsAllUnsupported;
+    }
+
+    void setSaiHookMixedEnableAttrsMmuUnsupported()
+    {
+        hftel::g_hook = hftel::Hook::MixedEnableAttrsMmuUnsupported;
+    }
+
+    void setSaiHookModeAdvertisedSingleOnly()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::SingleOnly;
+    }
+
+    void setSaiHookModeAdvertisedMixedOnly()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::MixedOnly;
+    }
+
+    void setSaiHookModeAdvertisedBoth()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::Both;
+    }
+
+    void setSaiHookModeAdvertisedNeither()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::Neither;
+    }
+
+    void setSaiHookModeQueryNotSupported()
+    {
+        hftel::g_mode_hook = hftel::ModeHook::QueryNotSupported;
+    }
+
     HFTelSaiHookGuard::HFTelSaiHookGuard(void (*apply)())
     {
         apply();
@@ -337,5 +553,66 @@ namespace hftelorch_sai_wrap_ut
     HFTelSaiHookGuard::~HFTelSaiHookGuard()
     {
         setSaiHookNone();
+    }
+}
+
+namespace sai_cap_ut
+{
+    void setAttrCapabilityOverride(AttrCapabilityOverride fn)
+    {
+        g_attr_cap_override = std::move(fn);
+    }
+
+    void clearAttrCapabilityOverride()
+    {
+        g_attr_cap_override = nullptr;
+    }
+}
+
+namespace sai_availability_ut
+{
+    void setObjectTypeAvailabilityOverride(ObjectTypeAvailabilityOverride fn)
+    {
+        g_availability_override = std::move(fn);
+    }
+
+    void clearObjectTypeAvailabilityOverride()
+    {
+        g_availability_override = nullptr;
+    }
+
+    ObjectTypeAvailabilityOverrideGuard::ObjectTypeAvailabilityOverrideGuard(
+            ObjectTypeAvailabilityOverride fn)
+    {
+        setObjectTypeAvailabilityOverride(std::move(fn));
+    }
+
+    ObjectTypeAvailabilityOverrideGuard::~ObjectTypeAvailabilityOverrideGuard()
+    {
+        clearObjectTypeAvailabilityOverride();
+    }
+}
+
+namespace sai_enum_cap_ut
+{
+    void setEnumValuesCapabilityOverride(EnumValuesCapabilityOverride fn)
+    {
+        g_enumValuesOverride = std::move(fn);
+    }
+
+    void clearEnumValuesCapabilityOverride()
+    {
+        g_enumValuesOverride = nullptr;
+    }
+
+    EnumValuesCapabilityOverrideGuard::EnumValuesCapabilityOverrideGuard(
+            EnumValuesCapabilityOverride fn)
+    {
+        setEnumValuesCapabilityOverride(std::move(fn));
+    }
+
+    EnumValuesCapabilityOverrideGuard::~EnumValuesCapabilityOverrideGuard()
+    {
+        clearEnumValuesCapabilityOverride();
     }
 }
