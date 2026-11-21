@@ -440,6 +440,19 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         currentAction != action &&
         !isSinglePortReconfiguration)
     {
+        // A stop followed by a start with a new action: once the queued DELs
+        // remove every other port, the action resets and this entry applies.
+        bool othersBeingRemoved = std::all_of(m_pfcwd_ports.begin(), m_pfcwd_ports.end(),
+            [&](const string& alias) { return alias == port.m_alias || isDeletePending(alias); });
+        if (othersBeingRemoved)
+        {
+            SWSS_LOG_NOTICE("PFC watchdog on port %s with action %s waits for the ports using action %s to be removed",
+                            port.m_alias.c_str(),
+                            serializeAction(action).c_str(),
+                            serializeAction(currentAction).c_str());
+            return task_process_status::task_need_retry;
+        }
+
         SWSS_LOG_ERROR("PFC DLR packet action mismatch on port %s: current=%s, requested=%s. "
                       "All ports must use the same action. "
                       "Action can only be changed when no ports are configured or when reconfiguring the only configured port.",

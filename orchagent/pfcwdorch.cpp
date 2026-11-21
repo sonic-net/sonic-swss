@@ -127,6 +127,17 @@ void PfcWdBaseOrch::doTask(Consumer& consumer)
 
     if ((consumer.getDbName() == "CONFIG_DB") && (consumer.getTableName() == CFG_PFC_WD_TABLE_NAME))
     {
+        // m_toSync is ordered by key, not arrival, so a SET can be processed
+        // before DELs queued ahead of it for other ports.
+        m_pendingDeletes.clear();
+        for (const auto& entry : consumer.m_toSync)
+        {
+            if (kfvOp(entry.second) == DEL_COMMAND)
+            {
+                m_pendingDeletes.insert(entry.first);
+            }
+        }
+
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end())
         {
@@ -168,6 +179,7 @@ void PfcWdBaseOrch::doTask(Consumer& consumer)
                     break;
             }
         }
+        m_pendingDeletes.clear();
 
         if (m_pfcwdFlexCounterManager != nullptr)
         {

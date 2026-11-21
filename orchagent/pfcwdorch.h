@@ -121,6 +121,9 @@ protected:
     // software and hardware implementations.
     std::set<std::string> m_pfcwd_ports;
 
+    // True while doTask is processing a batch that still holds a DEL for this key
+    bool isDeletePending(const string& key) const { return m_pendingDeletes.count(key) != 0; }
+
     void updateStateTable(const string &field, const string &value)
     {
         m_stateTable->hset(PFC_WD_STATE_KEY, field, value);
@@ -176,6 +179,7 @@ private:
     shared_ptr<DBConnector> m_stateDb = nullptr;
     shared_ptr<Table> m_stateTable = nullptr;
     PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
+    std::set<std::string> m_pendingDeletes;
 };
 
 #endif
