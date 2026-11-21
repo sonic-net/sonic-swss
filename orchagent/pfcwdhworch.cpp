@@ -1,5 +1,6 @@
 #include "pfcwdhworch.h"
 #include "notifications.h"
+#include "notificationconsumerstatsorch.h"
 #include "notifier.h"
 #include "schema.h"
 #include "switchorch.h"
@@ -119,21 +120,29 @@ void PfcWdHwOrch::registerCallbacks()
     bool supported = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY);
     if (supported)
     {
-        /* The SAI notification runs on a libsairedis thread, so it is forwarded to
-         * the ASIC_DB NOTIFICATIONS channel and consumed here on the orchagent
-         * thread instead, keeping the watchdog state single-threaded. */
+        /* The SAI notification runs on a libsairedis thread.
+         * createSaiNotificationConsumer() returns an in-process consumer in
+         * ZMQ mode, fed by on_queue_pfc_deadlock() through
+         * dispatchSaiNotification(), and a Redis-subscribed consumer
+         * otherwise. Either way doTask() runs on the orchagent thread, so
+         * the watchdog state stays single-threaded. */
         m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-        m_deadlockNotificationConsumer = new swss::NotificationConsumer(
-            m_notificationsDb.get(), "NOTIFICATIONS");
+        m_deadlockNotificationConsumer = createSaiNotificationConsumer(m_notificationsDb.get());
         m_deadlockNotificationConsumer->setOpAllowList({SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK});
         m_deadlockNotificationConsumer->setStatsLabel("PfcWdHwOrch:" SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK);
+        registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK,
+                                        m_deadlockNotificationConsumer);
+        if (gNotifConsumerStatsOrch)
+            gNotifConsumerStatsOrch->registerConsumer(
+                "PfcWdHwOrch:" SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK,
+                m_deadlockNotificationConsumer);
         auto deadlockNotifier = new Notifier(m_deadlockNotificationConsumer, this,
                                              "PFC_WD_HW_DEADLOCK_NOTIFICATIONS");
         Orch::addExecutor(deadlockNotifier);
 
         sai_attribute_t attr;
         attr.id = SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY;
-        attr.value.ptr = (void *)on_queue_pfc_deadlock;   // forwards to ASIC_DB NOTIFICATIONS
+        attr.value.ptr = (void *)on_queue_pfc_deadlock;
 
         sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
         if (status != SAI_STATUS_SUCCESS)
@@ -250,12 +259,12 @@ void PfcWdHwOrch::onQueuePfcDeadlock(uint32_t count, sai_queue_deadlock_notifica
                 SWSS_LOG_WARN("PFC Watchdog detected PFC storm on queue id 0x%" PRIx64 ", port unknown", notification.queue_id);
             }
 
-            // Recovery mode is not selectable from here. This notification reached us over
-            // the ASIC_DB NOTIFICATIONS channel, so `notification` is a local copy that
-            // sai_deserialize_free_queue_deadlock_ntf releases once this handler returns;
-            // writing app_managed_recovery would set a field nothing reads and could not
-            // travel back to SAI. Hardware-managed recovery is what the ASIC already does
-            // for a port configured through configureHwWatchdog.
+            // Recovery mode is not selectable from here. `notification` is a local
+            // copy deserialized from the payload, and
+            // sai_deserialize_free_queue_deadlock_ntf releases it once this handler
+            // returns; writing app_managed_recovery would set a field nothing reads
+            // and could not travel back to SAI. Hardware-managed recovery is what
+            // the ASIC already does for a port configured through configureHwWatchdog.
         }
         else if (notification.event == SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_RECOVERED)
         {

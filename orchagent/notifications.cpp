@@ -156,11 +156,8 @@ void on_queue_pfc_deadlock(uint32_t count, sai_queue_deadlock_notification_data_
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer pfcDeadlockNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_queue_deadlock_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        pfcDeadlockNotifier.send(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK, sdata, values);
+        dispatchSaiNotification(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK,
+                                sai_serialize_queue_deadlock_ntf(count, data));
     }
 }
 

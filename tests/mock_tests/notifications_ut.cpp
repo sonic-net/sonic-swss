@@ -151,6 +151,16 @@ namespace notifications_zmq_test
         ASSERT_NO_THROW(on_tam_tel_type_config_change(tam_tel_id));
     }
 
+    TEST_F(NotificationsZmqForwardingTest, QueuePfcDeadlockForwarding)
+    {
+        sai_queue_deadlock_notification_data_t data;
+        memset(&data, 0, sizeof(data));
+        data.queue_id = 0x600;
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+
+        ASSERT_NO_THROW(on_queue_pfc_deadlock(1, &data));
+    }
+
     // Verify callbacks are no-ops in non-ZMQ mode (no forwarding)
     TEST(NotificationsNonZmqTest, FdbEventNoForwardingInRedisMode)
     {
@@ -196,6 +206,21 @@ namespace notifications_zmq_test
         data.port_state = SAI_PORT_OPER_STATUS_UP;
 
         ASSERT_NO_THROW(on_port_state_change(1, &data));
+
+        gRedisCommunicationMode = oldMode;
+    }
+
+    TEST(NotificationsNonZmqTest, QueuePfcDeadlockNoForwardingInRedisMode)
+    {
+        sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
+        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+
+        sai_queue_deadlock_notification_data_t data;
+        memset(&data, 0, sizeof(data));
+        data.queue_id = 0x600;
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+
+        ASSERT_NO_THROW(on_queue_pfc_deadlock(1, &data));
 
         gRedisCommunicationMode = oldMode;
     }

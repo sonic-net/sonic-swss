@@ -78,7 +78,8 @@ private:
     // STATE_DB for hardware watchdog state
     shared_ptr<Table> m_pfcWdHwStateTable;
 
-    // PFC deadlock notifications, forwarded from the SAI callback thread
+    // PFC deadlock notifications. ZMQ mode uses an in-process consumer fed by
+    // dispatchSaiNotification(); other modes subscribe to ASIC_DB NOTIFICATIONS.
     shared_ptr<DBConnector> m_notificationsDb;
     swss::NotificationConsumer *m_deadlockNotificationConsumer = nullptr;
 
