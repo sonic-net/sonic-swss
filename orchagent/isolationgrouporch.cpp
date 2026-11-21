@@ -19,6 +19,7 @@
 #include "converter.h"
 #include "tokenize.h"
 #include "portsorch.h"
+#include "vxlanorch.h"
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
@@ -26,6 +27,12 @@ extern sai_isolation_group_api_t*  sai_isolation_group_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_port_api_t *sai_port_api;
 extern IsoGrpOrch *gIsoGrpOrch;
+
+static bool isEvpnTunnelPort(const Port &port)
+{
+    return port.m_type == Port::TUNNEL &&
+           0 == port.m_alias.find(EVPN_TUNNEL_PORT_PREFIX);
+}
 
 IsoGrpOrch::IsoGrpOrch(vector<TableConnector> &connectors) : Orch(connectors)
 {
@@ -395,6 +402,16 @@ IsolationGroup::addMember(Port &port)
         status = sai_isolation_group_api->create_isolation_group_member(&mem_id, gSwitchId, 2, mem_attr);
         if (SAI_STATUS_SUCCESS != status)
         {
+            if (port.m_type == Port::TUNNEL && m_name == "MCLAG_ISO_GRP" &&
+                (status == SAI_STATUS_NOT_SUPPORTED ||
+                 status == SAI_STATUS_INVALID_PARAMETER ||
+                 status == SAI_STATUS_INVALID_ATTR_VALUE_0 ||
+                 status == SAI_STATUS_INVALID_ATTR_VALUE_0 + 1))
+            {
+                SWSS_LOG_NOTICE("Tunnel bridge port %s not supported in isolation group %s (rv=%d), skipping",
+                                port.m_alias.c_str(), m_name.c_str(), status);
+                return ISO_GRP_STATUS_SUCCESS;
+            }
             SWSS_LOG_ERROR("Unable to add %s:  0x%" PRIx64 " as member of %s:0x%" PRIx64 , port.m_alias.c_str(), port_id,
                            m_name.c_str(), m_oid);
             return ISO_GRP_STATUS_FAIL;
@@ -469,6 +486,19 @@ IsolationGroup::setMembers(string ports)
     SWSS_LOG_ENTER();
     auto port_list = tokenize(ports, ',');
     set<string> portList(port_list.begin(), port_list.end());
+    portList.erase("");
+
+    if (m_name == "MCLAG_ISO_GRP" && m_type == ISOLATION_GROUP_TYPE_BRIDGE_PORT)
+    {
+        for (const auto &kv : gPortsOrch->getAllPorts())
+        {
+            if (isEvpnTunnelPort(kv.second) && kv.second.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+            {
+                portList.insert(kv.first);
+            }
+        }
+    }
+
     vector<string> old_members = m_pending_members;
 
     for (auto mem : m_members)
@@ -478,7 +508,8 @@ IsolationGroup::setMembers(string ports)
 
     for (auto alias : portList)
     {
-        if ((0 == alias.find("Ethernet")) || (0 == alias.find("PortChannel")))
+        if ((0 == alias.find("Ethernet")) || (0 == alias.find("PortChannel")) ||
+            (m_type == ISOLATION_GROUP_TYPE_BRIDGE_PORT && (0 == alias.find(EVPN_TUNNEL_PORT_PREFIX))))
         {
             auto iter = find(old_members.begin(), old_members.end(), alias);
             if (iter != old_members.end())
@@ -512,7 +543,11 @@ IsolationGroup::setMembers(string ports)
         if (!gPortsOrch->getPort(alias, port))
         {
             SWSS_LOG_ERROR("Port %s not found", alias.c_str());
-            m_pending_members.erase(find(m_pending_members.begin(), m_pending_members.end(), port.m_alias));
+            auto pend = find(m_pending_members.begin(), m_pending_members.end(), alias);
+            if (pend != m_pending_members.end())
+            {
+                m_pending_members.erase(pend);
+            }
         }
         else
         {
@@ -662,6 +697,7 @@ IsolationGroup::setBindPorts(string ports)
     vector<string> old_bindports = m_pending_bind_ports;
     auto port_list = tokenize(ports, ',');
     set<string> portList(port_list.begin(), port_list.end());
+    portList.erase("");
 
     old_bindports.insert(old_bindports.end(), m_bind_ports.begin(), m_bind_ports.end());
     for (auto alias : portList)
@@ -699,7 +735,11 @@ IsolationGroup::setBindPorts(string ports)
         if (!gPortsOrch->getPort(alias, port))
         {
             SWSS_LOG_ERROR("Port %s not found", alias.c_str());
-            m_pending_bind_ports.erase(find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias));
+            auto pend = find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), alias);
+            if (pend != m_pending_bind_ports.end())
+            {
+                m_pending_bind_ports.erase(pend);
+            }
         }
         else
         {
@@ -724,6 +764,11 @@ IsolationGroup::update(SubjectType, void *cntx)
             m_pending_members.erase(mem_node);
             addMember(port);
         }
+        else if (m_name == "MCLAG_ISO_GRP" && m_type == ISOLATION_GROUP_TYPE_BRIDGE_PORT &&
+                 isEvpnTunnelPort(port))
+        {
+            addMember(port);
+        }
 
         auto bind_node = find(m_pending_bind_ports.begin(), m_pending_bind_ports.end(), port.m_alias);
         if (bind_node != m_pending_bind_ports.end())
@@ -743,7 +788,7 @@ IsolationGroup::update(SubjectType, void *cntx)
         auto mem_node = m_members.find(port.m_alias);
         if (mem_node != m_members.end())
         {
-            delMember(port, true);
+            delMember(port, !isEvpnTunnelPort(port));
         }
     }
 }

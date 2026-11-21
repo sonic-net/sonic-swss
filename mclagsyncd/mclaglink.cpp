@@ -195,7 +195,8 @@ void MclagLink::setPortIsolate(char *msg)
         CTC_PLATFORM_SUBSTRING,
         CLX_PLATFORM_SUBSTRING,
         MRVL_PRST_PLATFORM_SUBSTRING,
-        MRVL_TL_PLATFORM_SUBSTRING
+        MRVL_TL_PLATFORM_SUBSTRING,
+        VPP_PLATFORM_SUBSTRING
     };
 
     const char *platform = getenv("platform");
@@ -452,6 +453,21 @@ void MclagLink::setIntfMac(char *msg)
     op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     mac_value.insert(0, (const char*)cur, op_hdr->op_len);
+
+    if (0 == intf_key.find(VLAN_PREFIX))
+    {
+        Table cfgVlanIntfTable(p_config_db.get(), CFG_VLAN_INTF_TABLE_NAME);
+        string sag;
+        string cfg_mac;
+
+        if ((cfgVlanIntfTable.hget(intf_key, "static_anycast_gateway", sag) && sag == "true") ||
+            (cfgVlanIntfTable.hget(intf_key, "mac_addr", cfg_mac) && !cfg_mac.empty()))
+        {
+            SWSS_LOG_NOTICE("skip mac update on %s (static_anycast_gateway=%s, cfg_mac=%s)",
+                    intf_key.c_str(), sag.c_str(), cfg_mac.c_str());
+            return;
+        }
+    }
 
     SWSS_LOG_NOTICE("set mac to chip, intf key name: %s, mac: %s", intf_key.c_str(), mac_value.c_str());
     vector<FieldValueTuple> attrs;

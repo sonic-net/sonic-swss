@@ -110,6 +110,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 hftelorch_notify_ut.cpp \
                 coppstats_sai_wrap.cpp \
                 shlorch_ut.cpp \
+                isolationgrouporch_ut.cpp \
                 mock_sai_fdb.cpp \
                 mock_sai_tunnel.cpp \
                 icmporch_ut.cpp \

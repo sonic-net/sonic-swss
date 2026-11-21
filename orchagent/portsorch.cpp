@@ -7566,6 +7566,12 @@ bool PortsOrch::removeBridgePort(Port &port)
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
+    /* Notify observers while m_bridge_port_id is still valid so isolation-group
+     * bindings and members referencing the bridge port are detached before
+     * sai_bridge_api->remove_bridge_port() checks object reference counts. */
+    PortUpdate update = { port, false };
+    notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
+
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -7575,15 +7581,13 @@ bool PortsOrch::removeBridgePort(Port &port)
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BRIDGE, status);
         if (handle_status != task_success)
         {
+            PortUpdate restore_update = { port, true };
+            notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&restore_update));
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
     saiOidToAlias.erase(port.m_bridge_port_id);
     port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
-
-    /* Remove bridge port */
-    PortUpdate update = { port, false };
-    notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
