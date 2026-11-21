@@ -74,7 +74,12 @@ struct VlanInfo
     sai_vlan_id_t       vlan_id = 0;
     sai_object_id_t     host_intf_id = SAI_NULL_OBJECT_ID;
     sai_vlan_flood_control_type_t uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_vlan_flood_control_type_t umc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
     sai_vlan_flood_control_type_t bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    bool proxy_arp_flood = false;  // proxy ARP forced BC/UMC flooding to NONE
+    // Last per-VLAN configured BC/UMC flood types, restored when proxy ARP is disabled.
+    sai_vlan_flood_control_type_t cfg_umc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_vlan_flood_control_type_t cfg_bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
     sai_object_id_t    l2mc_group_id = SAI_NULL_OBJECT_ID;
     endpoint_ip_l2mc_group_member_map_t l2mc_members;
 };
