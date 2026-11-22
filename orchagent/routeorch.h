@@ -335,8 +335,25 @@ private:
 
     void updateDefRouteState(string ip, bool add=false);
 
-    void doTask(ConsumerBase& consumer);
+    void doTask(ConsumerBase& consumer) override;
     void doLabelTask(ConsumerBase& consumer);
+
+    /* Bulk contexts for one drain batch, keyed by (table key, op). */
+    using RouteBulkContextMap = std::map<std::pair<std::string, std::string>, RouteBulkContext>;
+
+    /* The three phases of one route drain batch.
+     * toBulkTask consumes m_toSync entries from `it` onward, staging SAI
+     * operations into toBulk and gRouteBulker; it advances `it` to one past
+     * the last entry it visited. flushTask ships the staged operations to
+     * syncd. responseHandlerTask walks [m_toSync.begin(), batchEnd) matching
+     * entries against toBulk, consumes the per-entry SAI statuses via
+     * addRoutePost/removeRoutePost, and runs the batch epilogue (NHG, MPLS
+     * next hop and SRv6 refcount cleanup, route state publisher flush,
+     * default-route swap bookkeeping); it returns false when draining should
+     * stop for this invocation. */
+    void toBulkTask(ConsumerBase& consumer, SyncMap::iterator& it, RouteBulkContextMap& toBulk);
+    void flushTask();
+    bool responseHandlerTask(ConsumerBase& consumer, const SyncMap::iterator& batchEnd, RouteBulkContextMap& toBulk);
 
     const NhgBase &getNhg(const std::string& nhg_index);
 
