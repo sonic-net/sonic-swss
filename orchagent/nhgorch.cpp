@@ -966,6 +966,24 @@ bool NhgOrch::replaceNhg(const string &index, const NextHopGroupKey &nhg_key)
 {
     SWSS_LOG_ENTER();
 
+    /* A route staged by an unfinished drain already carries the current ID. */
+    if (gRouteOrch->isRouteDrainInFlight())
+    {
+        /* The retry waits for the next NHG event or select timeout, which a
+         * busy drain can keep missing; make a long run of deferrals visible. */
+        if (++m_drainDeferrals % kDrainDeferralWarnInterval == 0)
+        {
+            SWSS_LOG_WARN("Next hop group %s: replacement deferred by a route drain in flight, "
+                          "%u deferrals in a row", index.c_str(), m_drainDeferrals);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Next hop group %s: route drain in flight, replacement deferred", index.c_str());
+        }
+        return false;
+    }
+    m_drainDeferrals = 0;
+
     auto &entry = m_syncdNextHopGroups.at(index);
     sai_object_id_t old_id = entry.nhg->getId();
 

@@ -16,6 +16,8 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
+#include <chrono>
+#include <functional>
 #include "zmqrouteorch.h"
 #include "zmqrouteserver.h"
 #include <unordered_map>
@@ -138,6 +140,12 @@ struct NextHopObserverEntry
     list<Observer *> observers;
 };
 
+/* What a staged route pins (RouteOrch::pinStagedRoute), named by the
+ * RouteBulkContext field that holds its key: kNhgIndex is nhg_index (with
+ * context_index), kNextHops nhg and kTempNextHop tmp_next_hop. kNone: nothing
+ * is pinned. */
+enum class StagedNextHop { kNone, kNhgIndex, kNextHops, kTempNextHop };
+
 struct RouteBulkContext
 {
     std::deque<sai_status_t>            object_statuses;    // Bulk statuses
@@ -163,6 +171,10 @@ struct RouteBulkContext
 
     Constraint                          retry_cst;
 
+    /* What the route holds a reference on from staging until its status is
+     * handled (RouteOrch::pinStagedRoute). */
+    StagedNextHop                       staged = StagedNextHop::kNone;
+
     RouteBulkContext(const std::string& key, bool is_set)
         : key(key), excp_intfs_flag(false), using_temp_nhg(false), is_set(is_set),
           fallback_to_default_route(false), retry_cst(DUMMY_CONSTRAINT)
@@ -173,19 +185,28 @@ struct RouteBulkContext
     RouteBulkContext(const RouteBulkContext&) = delete;
     RouteBulkContext(RouteBulkContext&&) = delete;
 
+    /* Reset every per-attempt field for a fresh attempt at the same route.
+     * key and is_set are kept: publishRouteState() reads key after parsing. */
     void clear()
     {
         object_statuses.clear();
         tmp_next_hop.clear();
         nhg.clear();
+        nhg_index.clear();
+        context_index.clear();
         ipv.clear();
+        alsv.clear();
+        vni_labelv.clear();
+        rmacv.clear();
         vrf_id = SAI_NULL_OBJECT_ID;
+        ip_prefix = IpPrefix();
         excp_intfs_flag = false;
         using_temp_nhg = false;
-        key.clear();
+        vrf_group_flag = false;
         protocol.clear();
         fallback_to_default_route = false;
         retry_cst = DUMMY_CONSTRAINT;
+        staged = StagedNextHop::kNone;
     }
 };
 
@@ -216,8 +237,11 @@ struct LabelRouteBulkContext
         object_statuses.clear();
         tmp_next_hop.clear();
         nhg.clear();
+        nhg_index.clear();
         excp_intfs_flag = false;
+        using_temp_nhg = false;
         vrf_id = SAI_NULL_OBJECT_ID;
+        pop_count = 0;
     }
 };
 
@@ -236,17 +260,34 @@ public:
     void decreaseNextHopRefCount(const NextHopGroupKey&);
     bool isRefCounterZero(const NextHopGroupKey&) const;
 
-    void flushRouteBulker() { gRouteBulker.flush(); }
     int getNextHopGroupRefCount(const NextHopGroupKey& key) { return m_syncdNextHopGroups[key].ref_count; }
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> &getBulkNhgReducedRefCnt() { return m_bulkNhgReducedRefCnt; }
+    std::set<NextHopKey> &getBulkMplsNhReducedRefCnt() { return m_bulkMplsNhReducedRefCnt; }
 
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&, const bool is_default_route_nh_swap=false);
 
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoute(RouteBulkContext& ctx);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoutePost(const RouteBulkContext& ctx);
+    /* addRoute/removeRoute stage into a route bulker. `bulker` selects
+     * which one: nullptr uses RouteOrch's shared gRouteBulker (the default
+     * for RouteOrch's own route tasks); VNetRouteOrch passes its private
+     * bulker so a VNET flush never touches entries RouteOrch has staged.
+     * The Post functions read ctx.object_statuses and are bulker-agnostic. */
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                  EntityBulker<sai_route_api_t> *bulker = nullptr);
+    bool removeRoute(RouteBulkContext& ctx,
+                     EntityBulker<sai_route_api_t> *bulker = nullptr);
+    /* The Post functions collect the next hop groups, SRv6 next hops and MPLS
+     * next hops whose last route reference they drop, for the caller to tear
+     * down. `sink` selects where: the yielding route drain passes its batch,
+     * which owns them across yields; the other callers (label drain,
+     * VNetRouteOrch) pass nothing and use the shared m_bulk* members, which
+     * they fill and drain in one call. */
+private:
+    struct RouteDrainBatch;
+public:
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                      RouteDrainBatch *sink = nullptr);
+    bool removeRoutePost(const RouteBulkContext& ctx, RouteDrainBatch *sink = nullptr);
 
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
@@ -276,12 +317,21 @@ public:
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
 
+    /* While set, the yielding route drain ignores the quantum and drains to
+     * completion. OrchDaemon::warmRestoreAndSyncUp() sets it for warm restore,
+     * which calls doTask() a fixed number of times with no select loop to
+     * resume a yielded drain. */
+    void setWarmStartDrainToCompletion(bool enable) { m_warmStartDrainToCompletion = enable; }
+
     void increaseNextHopGroupCount();
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
     const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
-    /* Point every route and label route using NhgOrch group nhg_index at nhg_id. */
+    /* Point every route and label route using NhgOrch group nhg_index at
+     * nhg_id. Routes staged by a drain in flight (isRouteDrainInFlight())
+     * still carry the old ID and are missed, so callers wait for it. */
     bool moveNhgIndexRoutes(const std::string& nhg_index, sai_object_id_t nhg_id);
+    bool isRouteDrainInFlight() const { return drainInFlight(APP_ROUTE_TABLE_NAME); }
 
     void flushResponses() override;
 
@@ -335,8 +385,138 @@ private:
 
     void updateDefRouteState(string ip, bool add=false);
 
-    void doTask(ConsumerBase& consumer);
+    void doTask(ConsumerBase& consumer) override;
     void doLabelTask(ConsumerBase& consumer);
+
+    bool drainInFlight(const std::string &tableName) const override
+    {
+        return tableName == APP_ROUTE_TABLE_NAME &&
+               m_zmqDrainBatch.phase != RouteDrainBatch::Phase::kIdle;
+    }
+
+    /* Bulk contexts for one drain batch, keyed by (table key, op). */
+    using RouteBulkContextMap = std::map<std::pair<std::string, std::string>, RouteBulkContext>;
+
+    /* One drain batch. toBulkTask moves the entries it stages out of m_toSync
+     * into `entries`, so no iterator into m_toSync is held across a yield,
+     * while retry cache promotion can still add to m_toSync. */
+    struct RouteDrainBatch
+    {
+        /* The phase the next call resumes; kIdle means no batch in flight.
+         * kStaging resumes its scan of m_toSync (staged entries have left
+         * it), kFlushing resumes gRouteBulker.flush_until(), and kResponding
+         * resumes at respondCursor, or in the epilogue once every status is
+         * handled. */
+        enum class Phase { kIdle, kStaging, kFlushing, kResponding };
+        Phase phase = Phase::kIdle;
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        RouteBulkContextMap toBulk;
+
+        /* Index of the next entry whose bulk status is to be handled. */
+        size_t respondCursor = 0;
+
+        /* Entries to merge back into m_toSync when the batch ends. */
+        std::deque<swss::KeyOpFieldsValuesTuple> retained;
+        /* Resync DELs, merged into m_toSync when the scan ends. */
+        std::deque<swss::KeyOpFieldsValuesTuple> resyncDels;
+        /* Entries the scan found not ready (resync in progress, VRF, L3 VNI
+         * or next hop group index not there yet). Moving them out of m_toSync
+         * lets a scan that restarts at begin() after each yield reach the
+         * end; they merge back when the batch ends. */
+        std::deque<swss::KeyOpFieldsValuesTuple> deferred;
+
+        /* Teardowns the Post functions collect with this batch as sink. A
+         * label or VNET drain running between quanta clears the shared
+         * m_bulk* members, so the batch keeps its own. */
+        std::set<std::pair<NextHopGroupKey, sai_object_id_t>> nhgReducedRefCnt;
+        std::vector<NextHopGroupKey> srv6NhgReducedVec;
+        std::set<NextHopKey> mplsNhReducedRefCnt;
+
+        /* Next entries of srv6NhgReducedVec for the epilogue's VPN SID pass
+         * and next hop pass. The next hop pass starts when the VPN SID pass
+         * has covered every group. */
+        size_t srv6VpnCursor = 0;
+        size_t srv6NexthopCursor = 0;
+
+        NextHopGroupKey v4DefaultNhgKey;
+        NextHopGroupKey v6DefaultNhgKey;
+
+        void clear()
+        {
+            phase = Phase::kIdle;
+            entries.clear();
+            toBulk.clear();
+            respondCursor = 0;
+            retained.clear();
+            resyncDels.clear();
+            deferred.clear();
+            nhgReducedRefCnt.clear();
+            srv6NhgReducedVec.clear();
+            mplsNhReducedRefCnt.clear();
+            srv6VpnCursor = 0;
+            srv6NexthopCursor = 0;
+            v4DefaultNhgKey = NextHopGroupKey();
+            v6DefaultNhgKey = NextHopGroupKey();
+        }
+    };
+
+    /* The batch of the APP_ROUTE_TABLE ZmqRouteConsumer, the only consumer
+     * whose drain yields. */
+    RouteDrainBatch m_zmqDrainBatch;
+
+    /* drainRoutes(ConsumerBase&) runs whole batches without yielding (the
+     * non-ZMQ consumer). drainRoutes(ZmqRouteConsumer&) runs the batch state
+     * machine for one quantum and re-arms the consumer when work is left. */
+    void drainRoutes(ConsumerBase& consumer);
+    void drainRoutes(ZmqRouteConsumer& consumer);
+
+    /* The phases of one batch (route programming HLD section 7.3).
+     * toBulkTask scans m_toSync: entries it stages into gRouteBulker move
+     * into the batch, entries that are done are erased, and entries that are
+     * not ready move to batch.deferred. flushTask ships the staged operations
+     * to syncd. responseHandlerTask handles each entry's SAI status through
+     * addRoutePost/removeRoutePost, adds entries to retry to `retained`, and
+     * runs the batch epilogue; keepDraining is false when the batch updated no
+     * default route, which ends the drain for this call.
+     * toBulkTask and responseHandlerTask check `expired` after each entry and
+     * return false when it is true; each call handles at least one entry
+     * first. The epilogue checks it after each group or next hop it removes.
+     * The non-yielding drain passes kNeverExpired. */
+    static const std::function<bool()> kNeverExpired;
+
+    bool toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                    const std::function<bool()>& expired);
+    void flushTask();
+    bool responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                             std::deque<swss::KeyOpFieldsValuesTuple>& retained,
+                             const std::function<bool()>& expired,
+                             bool& keepDraining);
+
+    /* Time quantum of the yielding drain (orchagent -Q, see
+     * gRouteDrainQuantumMsec); 0 yields at every check. Tests replace
+     * m_drainNow to control expiry. */
+    std::chrono::milliseconds m_drainQuantum{20};
+    std::function<std::chrono::steady_clock::time_point()> m_drainNow =
+        []() { return std::chrono::steady_clock::now(); };
+
+    bool m_warmStartDrainToCompletion = false;
+
+    /* Mux updates re-point routes as neighbors change state and cannot wait
+     * for an idle drain, so a box with mux drains without a quantum. Decided
+     * once, on the first yielding drain after ports are ready: mux configured
+     * after that is not detected. */
+    bool m_muxDrainKnown = false;
+    bool m_muxDrainToCompletion = false;
+
+    /* A staged route carries its next hop's SAI ID before its status is
+     * handled and the Post functions take their references, and other orchs
+     * run between drain quanta. pinStagedRoute() takes a reference on what
+     * was staged so no owner deletes it meanwhile; releaseStagedPin() drops
+     * it before the Post functions run. */
+    void pinStagedNextHop(const RouteBulkContext& ctx, bool pin);
+    void pinStagedRoute(RouteBulkContext& ctx);
+    void releaseStagedPin(RouteBulkContext& ctx);
 
     const NhgBase &getNhg(const std::string& nhg_index);
 

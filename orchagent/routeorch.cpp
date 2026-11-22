@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <time.h>
+#include <ctype.h>
 #include <random>
 #include <inttypes.h>
 #include <algorithm>
@@ -33,12 +34,47 @@ extern TunnelDecapOrch *gTunneldecapOrch;
 
 extern size_t gMaxBulkSize;
 extern string gMySwitchType;
+extern string gMySwitchSubType;
 extern bool gRouteStateAsyncPublish;
 extern bool gEnableFibSuppress;
+
+/* Time quantum of the yielding ZMQ route drain (route programming HLD
+ * section 7.5), in msec. Set from the orchagent -Q argument; 0 yields at
+ * every check. */
+long gRouteDrainQuantumMsec = 20;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
+
+const std::function<bool()> RouteOrch::kNeverExpired = []() { return false; };
+
+static bool isDualTorSubtype()
+{
+    string subtype = gMySwitchSubType;
+    for (char &c : subtype)
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    return subtype == "dualtor";
+}
+
+/* MUX_CABLE / PEER_SWITCH cover a box that has mux without subtype DualToR.
+ * Do not use MuxOrch::mux_cable_tb_: it is empty until handleMuxCfg, and
+ * RouteOrch runs before MuxOrch in the orch list. Call only after
+ * allPortsReady() so the tables are complete. */
+static bool hasMuxCableOrPeerSwitch()
+{
+    DBConnector cfgDb("CONFIG_DB", 0);
+    vector<string> keys;
+
+    Table muxCable(&cfgDb, CFG_MUX_CABLE_TABLE_NAME);
+    muxCable.getKeys(keys);
+    if (!keys.empty())
+        return true;
+
+    Table peerSwitch(&cfgDb, CFG_PEER_SWITCH_TABLE_NAME);
+    peerSwitch.getKeys(keys);
+    return !keys.empty();
+}
 
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch, swss::ZmqRouteServer *zmqRouteServer) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
@@ -56,6 +92,9 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_appTunnelDecapTermProducer(db, APP_TUNNEL_DECAP_TERM_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    m_drainQuantum = std::chrono::milliseconds(gRouteDrainQuantumMsec);
+    SWSS_LOG_NOTICE("Route drain quantum: %ld msec", gRouteDrainQuantumMsec);
 
     m_routeStatePublisher.setBuffered(true);
     m_routeStatePublisher.m_directDbWrite = true;
@@ -606,11 +645,846 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
     return true;
 }
 
+bool RouteOrch::toBulkTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                           const std::function<bool()>& expired)
+{
+    SWSS_LOG_ENTER();
+
+    /* Resync DELs are merged into m_toSync when the scan ends: a yield can
+     * split the scan over several calls. */
+    auto& resyncDels = batch.resyncDels;
+
+    auto& toBulk = batch.toBulk;
+    auto it = consumer.m_toSync.begin();
+
+    /* After a yield the scan restarts at begin(). Every entry it visits
+     * leaves m_toSync (staged into the batch, done, or deferred), so it still
+     * reaches the end. */
+    size_t processedThisQuantum = 0;
+
+    // Add or remove routes with a route bulker
+    while (it != consumer.m_toSync.end())
+    {
+        if (processedThisQuantum > 0 && expired())
+        {
+            return false;
+        }
+        processedThisQuantum++;
+
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+
+        auto rc = toBulk.emplace(std::piecewise_construct,
+                std::forward_as_tuple(key, op),
+                std::forward_as_tuple(key, (op == SET_COMMAND)));
+
+        bool inserted = rc.second;
+        auto& ctx = rc.first->second;
+        if (!inserted)
+        {
+            /* Every entry this batch visited has left m_toSync, so a second
+             * entry for the same (key, op) is not expected. */
+            SWSS_LOG_WARN("Duplicate route task for key %s op %s met an existing "
+                          "bulk context (in flight: %s)",
+                          key.c_str(), op.c_str(),
+                          ctx.object_statuses.empty() ? "no" : "yes");
+            if (!ctx.object_statuses.empty())
+            {
+                /* The bulker holds pointers into this context's statuses, so
+                 * it must not be reset. Leave the duplicate for a later drain. */
+                batch.deferred.push_back(std::move(it->second));
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            ctx.clear();
+        }
+
+        /* Get notification from application */
+        /* resync application:
+         * When routeorch receives 'resync' message, it marks all current
+         * routes as dirty and waits for 'resync complete' message. For all
+         * newly received routes, if they match current dirty routes, it unmarks
+         * them dirty. After receiving 'resync complete' message, it creates all
+         * newly added routes and removes all dirty routes.
+         */
+        if (key == "resync")
+        {
+            if (op == "SET")
+            {
+                /* Mark all current routes as dirty (DEL) in consumer.m_toSync map */
+                SWSS_LOG_NOTICE("Start resync routes\n");
+                for (auto j : m_syncdRoutes)
+                {
+                    string vrf;
+
+                    if (j.first != gVirtualRouterId)
+                    {
+                        vrf = m_vrfOrch->getVRFname(j.first) + ":";
+                    }
+
+                    for (auto i : j.second)
+                    {
+                        vector<FieldValueTuple> v;
+                        resyncDels.emplace_back(vrf + i.first.to_string(), DEL_COMMAND, v);
+                    }
+                }
+                m_resync = true;
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Complete resync routes\n");
+                m_resync = false;
+            }
+
+            toBulk.erase(rc.first);
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (m_resync)
+        {
+            toBulk.erase(rc.first);
+            batch.deferred.push_back(std::move(it->second));
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        sai_object_id_t& vrf_id = ctx.vrf_id;
+        IpPrefix& ip_prefix = ctx.ip_prefix;
+
+        if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+        {
+            size_t found = key.find(':');
+            string vrf_name = key.substr(0, found);
+
+            if (!m_vrfOrch->isVRFexists(vrf_name))
+            {
+                toBulk.erase(rc.first);
+                batch.deferred.push_back(std::move(it->second));
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            vrf_id = m_vrfOrch->getVRFid(vrf_name);
+            ip_prefix = IpPrefix(key.substr(found+1));
+        }
+        else
+        {
+            vrf_id = gVirtualRouterId;
+            ip_prefix = IpPrefix(key);
+        }
+
+        if (op == SET_COMMAND)
+        {
+            string ips;
+            string aliases;
+            string mpls_nhs;
+            string vni_labels;
+            string remote_macs;
+            string weights;
+            string nhg_index;
+            string context_index;
+            bool& excp_intfs_flag = ctx.excp_intfs_flag;
+            bool overlay_nh = false;
+            bool blackhole = false;
+            string srv6_segments;
+            string srv6_source;
+            string srv6_vpn_sids;
+            bool srv6_seg = false;
+            bool srv6_vpn = false;
+            bool srv6_nh = false;
+            bool fallback_to_default_route = false;
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "nexthop" && fvValue(i) != "")
+                    ips = fvValue(i);
+
+                if (fvField(i) == "ifname" && fvValue(i) != "")
+                    aliases = fvValue(i);
+
+                if (fvField(i) == "mpls_nh" && fvValue(i) != "")
+                    mpls_nhs = fvValue(i);
+
+                if (fvField(i) == "vni_label" && fvValue(i) != "") {
+                    vni_labels = fvValue(i);
+                    overlay_nh = true;
+                }
+
+                if (fvField(i) == "router_mac" && fvValue(i) != "")
+                    remote_macs = fvValue(i);
+
+                if (fvField(i) == "blackhole")
+                    blackhole = fvValue(i) == "true";
+
+                if (fvField(i) == "weight" && fvValue(i) != "")
+                    weights = fvValue(i);
+
+                if (fvField(i) == "nexthop_group" && fvValue(i) != "")
+                    nhg_index = fvValue(i);
+
+                if (fvField(i) == "segment" && fvValue(i) != "") {
+                    srv6_segments = fvValue(i);
+                    srv6_seg = true;
+                    srv6_nh = true;
+                }
+
+                if (fvField(i) == "seg_src" && fvValue(i) != "") {
+                    srv6_source = fvValue(i);
+                    srv6_nh = true;
+                }
+
+                if (fvField(i) == "protocol" && fvValue(i) != "")
+                {
+                    ctx.protocol = fvValue(i);
+                }
+
+                if (fvField(i) == "fallback_to_default_route")
+                    fallback_to_default_route = fvValue(i) == "true";
+
+                if (fvField(i) == "vpn_sid" && fvValue(i) != "") {
+                    srv6_vpn_sids = fvValue(i);
+                    srv6_nh = true;
+                    srv6_vpn = true;
+                }
+
+                if (fvField(i) == "pic_context_id" && fvValue(i) != "")
+                {
+                    context_index = fvValue(i);
+                    srv6_vpn = true;
+                }
+            }
+
+            /*
+             * A route should not fill both nexthop_group and ips /
+             * aliases.
+             */
+            if (!nhg_index.empty() && (!ips.empty() || !aliases.empty()))
+            {
+                SWSS_LOG_ERROR("Route %s has both nexthop_group and ips/aliases", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            ctx.fallback_to_default_route = fallback_to_default_route;
+            ctx.nhg_index = nhg_index;
+            ctx.context_index = context_index;
+
+            /*
+             * If the nexthop_group is empty, create the next hop group key
+             * based on the IPs and aliases.  Otherwise, get the key from
+             * the NhgOrch.
+             */
+            vector<string> ipv;
+            vector<string> alsv;
+            vector<string> mpls_nhv;
+            vector<string> vni_labelv;
+            vector<string> rmacv;
+            NextHopGroupKey& nhg = ctx.nhg;
+            vector<string> srv6_segv;
+            vector<string> srv6_src;
+            vector<string> srv6_vpn_sidv;
+            bool l3Vni = true;
+            uint32_t vni = 0;
+
+            /* Check if the next hop group is owned by the NhgOrch. */
+            if (nhg_index.empty())
+            {
+                ipv = tokenize(ips, ',');
+                alsv = tokenize(aliases, ',');
+                mpls_nhv = tokenize(mpls_nhs, ',');
+                vni_labelv = tokenize(vni_labels, ',');
+                rmacv = tokenize(remote_macs, ',');
+                srv6_segv = tokenize(srv6_segments, ',');
+                srv6_src = tokenize(srv6_source, ',');
+                srv6_vpn_sidv = tokenize(srv6_vpn_sids, ',');
+
+                /*
+                * For backward compatibility, adjust ip string from old format to
+                * new format. Meanwhile it can deal with some abnormal cases.
+                */
+
+                /* Resize the ip vector to match ifname vector
+                * as tokenize(",", ',') will miss the last empty segment. */
+                if (alsv.size() == 0 && !blackhole && !srv6_nh)
+                {
+                    SWSS_LOG_WARN("Skip the route %s, for it has an empty ifname field.", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                else if (alsv.size() != ipv.size())
+                {
+                    SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
+                    ipv.resize(alsv.size());
+                }
+
+                for (auto &vni_str: vni_labelv)
+                {
+                    vni = static_cast<uint32_t>(std::stoul(vni_str));
+                    if (!m_vrfOrch->isL3VniVlan(vni))
+                    {
+                        SWSS_LOG_WARN("Route %s is received on non L3 VNI %s", key.c_str(), vni_str.c_str());
+                        l3Vni = false;
+                        break;
+                    }
+                }
+
+                if (!l3Vni)
+                {
+                    toBulk.erase(rc.first);
+                    batch.deferred.push_back(std::move(it->second));
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                /* Set the empty ip(s) to zero
+                 * as IpAddress("") will construct a incorrect ip. */
+                for (auto &ip : ipv)
+                {
+                    if (ip.empty())
+                    {
+                        SWSS_LOG_NOTICE("Route %s: set the empty nexthop ip to zero.", key.c_str());
+                        ip = ip_prefix.isV4() ? "0.0.0.0" : "::";
+                    }
+                }
+
+                for (auto alias : alsv)
+                {
+                    /* skip route to management, docker, loopback
+                    * TODO: for route to loopback interface, the proper
+                    * way is to create loopback interface and then create
+                    * route pointing to it, so that we can traps packets to
+                    * CPU */
+                    if (alias == "eth0" || alias == "docker0" || alias == "usb0" ||
+                        alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
+                    {
+                        excp_intfs_flag = true;
+                        break;
+                    }
+                }
+
+                // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
+                if (excp_intfs_flag)
+                {
+                    /* If any existing routes are updated to point to the
+                    * above interfaces, remove them from the ASIC. */
+                    if (removeRoute(ctx))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                    {
+                        batch.entries.push_back(std::move(t));
+                        it = consumer.m_toSync.erase(it);
+                    }
+
+                    /* Publish route state to advertise routes to Loopback interface */
+                    publishRouteState(ctx);
+                    continue;
+                }
+
+                string nhg_str = "";
+
+                if (blackhole)
+                {
+                    nhg = NextHopGroupKey();
+                }
+                else if (srv6_nh == true)
+                {
+                    if (srv6_vpn && (srv6_vpn_sidv.size() != srv6_src.size()))
+                    {
+                        SWSS_LOG_ERROR("inconsistent number of endpoints and srv6 vpn sids.");
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    if (srv6_seg && (srv6_segv.size() != srv6_src.size()))
+                    {
+                        SWSS_LOG_ERROR("inconsistent number of srv6_segv and srv6_srcs.");
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    for (uint32_t i = 0; i < srv6_src.size(); i++)
+                    {
+                        if (i) nhg_str += NHG_DELIMITER;
+                        nhg_str += (ipv.size() > i ? ipv[i] : "0.0.0.0") + NH_DELIMITER;  // ip address
+                        nhg_str += (srv6_seg ? srv6_segv[i] : "") + NH_DELIMITER;     // srv6 segment
+                        nhg_str += srv6_src[i] + NH_DELIMITER; // srv6 source
+                        nhg_str += (srv6_vpn ? srv6_vpn_sidv[i] : "") + NH_DELIMITER; // srv6 vpn sid
+                    }
+
+                    nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
+                    SWSS_LOG_INFO("SRV6 route with nhg %s", nhg.to_string().c_str());
+                }
+                else if (overlay_nh == false)
+                {
+                    for (uint32_t i = 0; i < ipv.size(); i++)
+                    {
+                        if (i) nhg_str += NHG_DELIMITER;
+                        if (alsv[i] == "tun0" && !(IpAddress(ipv[i]).isZero()))
+                        {
+                            alsv[i] = gIntfsOrch->getRouterIntfsAlias(ipv[i]);
+                        }
+                        if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
+                        {
+                            nhg_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
+                        }
+                        nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
+                    }
+
+                    nhg = NextHopGroupKey(nhg_str, weights);
+                }
+                else
+                {
+                    if(ipv.size() != rmacv.size()){
+                        SWSS_LOG_ERROR("Skip route %s, it has an invalid router mac field %s", key.c_str(), remote_macs.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    if(ipv.size() != vni_labelv.size()){
+                        SWSS_LOG_ERROR("Skip route %s, it has an invalid vni label field %s", key.c_str(), vni_labels.c_str());
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    for (uint32_t i = 0; i < ipv.size(); i++)
+                    {
+                        if (i) nhg_str += NHG_DELIMITER;
+                        nhg_str += ipv[i] + NH_DELIMITER + "vni" + alsv[i] + NH_DELIMITER + vni_labelv[i] + NH_DELIMITER + rmacv[i];
+                    }
+
+                    nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
+                }
+            }
+            else
+            {
+                try
+                {
+                    const NhgBase& nh_group = getNhg(nhg_index);
+                    nhg = nh_group.getNhgKey();
+                    ctx.using_temp_nhg = nh_group.isTemp();
+                }
+                catch (const std::out_of_range& e)
+                {
+                    SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
+                    toBulk.erase(rc.first);
+                    batch.deferred.push_back(std::move(it->second));
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+
+            sai_route_entry_t route_entry;
+            route_entry.vr_id = vrf_id;
+            route_entry.switch_id = gSwitchId;
+            copy(route_entry.destination, ip_prefix);
+
+            if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
+            {
+                if (alsv[0] == "unknown")
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* skip direct routes to tun0 */
+                else if (alsv[0] == "tun0")
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* directly connected route to VRF interface which come from kernel */
+                else if (!alsv[0].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* skip prefix which is linklocal or multicast */
+                else if (ip_prefix.getIp().getAddrScope() != IpAddress::GLOBAL_SCOPE)
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* fullmask subnet route is same as ip2me route */
+                else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
+                {
+                    /* The prefix is full mask (/32 or /128) and it is an interface subnet route, so IntfOrch has already
+                     * created an IP2ME route for it and we skip programming such route here as it already exists.
+                     * However, to keep APPL_DB and APPL_STATE_DB consistent we have to publish it. */
+                    publishRouteState(ctx);
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* subnet route, vrf leaked route, etc */
+                else
+                {
+                    if (addRoute(ctx, nhg))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    else
+                    {
+                        pinStagedRoute(ctx);
+                        batch.entries.push_back(std::move(t));
+                        it = consumer.m_toSync.erase(it);
+                    }
+                }
+            }
+            /*
+             * Check if the route does not exist or needs to be updated or
+             * if the route is using a temporary next hop group owned by
+             * NhgOrch.
+             * With default routes, there may be a setting_entries present in the
+             * bulker due to a previous DEL event, where we automatically add a 
+             * DROP action. So one of the check below (bulk_entry_pending_removal_or_set)
+             * checks for both removal and set entries.
+             */
+            else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
+                m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
+                m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
+                gRouteBulker.bulk_entry_pending_removal_or_set(route_entry) ||
+                ctx.using_temp_nhg)
+            {
+                if (addRoute(ctx, nhg))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    pinStagedRoute(ctx);
+                    batch.entries.push_back(std::move(t));
+                    it = consumer.m_toSync.erase(it);
+                }
+            }
+            else
+            {
+                /* Duplicate entry. Publish route state anyway since there could be multiple DEL, SET operations
+                 * consolidated by ConsumerStateTable leading to orchagent receiving only the last SET update. */
+                publishRouteState(ctx);
+                it = consumer.m_toSync.erase(it);
+            }
+
+            // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
+            // flush the bulker and possibly collect some released nexthop groups
+            if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount &&
+                gRouteBulker.removing_entries_count() > 0)
+            {
+                break;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (removeRoute(ctx))
+                it = consumer.m_toSync.erase(it);
+            else
+            {
+                batch.entries.push_back(std::move(t));
+                it = consumer.m_toSync.erase(it);
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            toBulk.erase(rc.first);
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+
+    if (!resyncDels.empty())
+    {
+        consumer.addToSyncNoRecord(resyncDels);
+        resyncDels.clear();
+    }
+
+    return true;
+}
+
+void RouteOrch::flushTask()
+{
+    // Flush the route bulker, so routes will be written to syncd and ASIC
+    gRouteBulker.flush();
+}
+
+/* Take or drop one reference on a staged next hop, with the same helpers the
+ * Post functions use, so an owner refuses to delete it meanwhile. */
+void RouteOrch::pinStagedNextHop(const RouteBulkContext& ctx, bool pin)
+{
+    switch (ctx.staged)
+    {
+    case StagedNextHop::kNhgIndex:
+        if (pin)
+            incNhgRefCount(ctx.nhg_index, ctx.context_index);
+        else
+            decNhgRefCount(ctx.nhg_index, ctx.context_index);
+        break;
+    case StagedNextHop::kNextHops:
+    case StagedNextHop::kTempNextHop:
+    {
+        const NextHopGroupKey &nexthops =
+            ctx.staged == StagedNextHop::kNextHops ? ctx.nhg : ctx.tmp_next_hop;
+        if (pin)
+            increaseNextHopRefCount(nexthops);
+        else
+            decreaseNextHopRefCount(nexthops);
+        break;
+    }
+    case StagedNextHop::kNone:
+        break;
+    }
+}
+
+/* A route was staged into gRouteBulker for this drain batch: from now until
+ * its status is handled, other orchs may run between drain quanta. Pin what
+ * addRoutePost() will reference, chosen in the same order. A fine grained
+ * route's next hop belongs to FgNhgOrch and is not pinned. */
+void RouteOrch::pinStagedRoute(RouteBulkContext& ctx)
+{
+    if (ctx.object_statuses.empty() || !ctx.is_set ||
+        m_fgNhgOrch->isRouteFineGrained(ctx.vrf_id, ctx.ip_prefix, ctx.nhg))
+    {
+        return;
+    }
+
+    if (!ctx.nhg_index.empty())
+        ctx.staged = StagedNextHop::kNhgIndex;
+    else if (ctx.tmp_next_hop.getSize() > 0)
+        ctx.staged = StagedNextHop::kTempNextHop;
+    else
+        ctx.staged = StagedNextHop::kNextHops;
+    pinStagedNextHop(ctx, true);
+}
+
+void RouteOrch::releaseStagedPin(RouteBulkContext& ctx)
+{
+    pinStagedNextHop(ctx, false);
+    ctx.staged = StagedNextHop::kNone;
+}
+
+bool RouteOrch::responseHandlerTask(ConsumerBase& consumer, RouteDrainBatch& batch,
+                                    std::deque<KeyOpFieldsValuesTuple>& retained,
+                                    const std::function<bool()>& expired,
+                                    bool& keepDraining)
+{
+    SWSS_LOG_ENTER();
+
+    // Go through the bulker results. A yield resumes at respondCursor; the
+    // Post functions put teardowns in the batch, which keeps them across
+    // yields.
+    NextHopGroupKey& v4_default_nhg_key = batch.v4DefaultNhgKey;
+    NextHopGroupKey& v6_default_nhg_key = batch.v6DefaultNhgKey;
+
+    size_t processedThisQuantum = 0;
+    while (batch.respondCursor < batch.entries.size())
+    {
+        if (processedThisQuantum > 0 && expired())
+        {
+            return false;
+        }
+        processedThisQuantum++;
+
+        const auto& t = batch.entries[batch.respondCursor];
+        batch.respondCursor++;
+
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto found = batch.toBulk.find(make_pair(key, op));
+        if (found == batch.toBulk.end())
+        {
+            retained.push_back(t);
+            continue;
+        }
+
+        auto& ctx = found->second;
+
+        // if retry_cst field is set, move this task to retry cache:
+        // - add it to retry cache before executing addRoutePost/removeRoutePost
+        //      - since these functions could modify retrycache status
+        // - leave it out of `retained` to avoid duplicates
+        bool rc_inserted = false;
+        if (ctx.retry_cst != DUMMY_CONSTRAINT)
+            rc_inserted = consumer.addToRetry(t, ctx.retry_cst);
+
+        const auto& object_statuses = ctx.object_statuses;
+        if (object_statuses.empty())
+        {
+            // Something went wrong before the route bulker; retry on a later
+            // drain unless the retry cache owns it now
+            if (!rc_inserted)
+                retained.push_back(t);
+            continue;
+        }
+
+        /* The Post functions take the route's own references, so the staging
+         * pin goes first and they see the counts they always did. */
+        releaseStagedPin(ctx);
+
+        const sai_object_id_t& vrf_id = ctx.vrf_id;
+        const IpPrefix& ip_prefix = ctx.ip_prefix;
+
+        sai_route_entry_t route_entry;
+        route_entry.vr_id = vrf_id;
+        route_entry.switch_id = gSwitchId;
+        copy(route_entry.destination, ip_prefix);
+        
+        if (op == SET_COMMAND)
+        {
+            const bool& excp_intfs_flag = ctx.excp_intfs_flag;
+
+            if (excp_intfs_flag)
+            {
+                /* If any existing routes are updated to point to the
+                 * above interfaces, remove them from the ASIC. */
+                if (!(removeRoutePost(ctx, &batch) || rc_inserted))
+                    retained.push_back(t);
+                continue;
+            }
+
+            const NextHopGroupKey& nhg = ctx.nhg;
+
+            if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
+            {
+                if (!(addRoutePost(ctx, nhg, &batch) || rc_inserted))
+                    retained.push_back(t);
+            }
+            else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
+                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
+                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
+                     gRouteBulker.bulk_entry_pending_removal(route_entry) ||
+                     ctx.using_temp_nhg)
+            {
+                if (!(addRoutePost(ctx, nhg, &batch) || rc_inserted))
+                    retained.push_back(t);
+
+		    // Save the Default Route of Default VRF to be used for 
+		    // enabling fallback to it as needed
+                if (ip_prefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
+                {
+                   if (ip_prefix.isV4())
+                   {
+                        v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                   }
+                   else
+                   {
+                        v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
+                   }
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            /* Cannot locate the route or remove succeed */
+            if (!(removeRoutePost(ctx, &batch) || rc_inserted))
+                retained.push_back(t);
+        }
+    }
+
+    /* Batch epilogue. Its teardown loops check `expired` after each group or
+     * next hop, and a yield resumes them where they stopped: the NHG and
+     * MPLS loops erase what they handled, and the SRv6 loops keep cursors in
+     * the batch. */
+
+    /* Remove next hop group if the reference count decreases to zero */
+    while (!batch.nhgReducedRefCnt.empty())
+    {
+        auto it_nhg = batch.nhgReducedRefCnt.begin();
+        if (it_nhg->first.is_overlay_nexthop() && it_nhg->second != 0)
+        {
+            removeOverlayNextHops(it_nhg->second, it_nhg->first);
+        }
+        else
+        {
+            /* The label or VNET drain may have removed the group while the
+             * epilogue was yielded. */
+            auto nhg_it = m_syncdNextHopGroups.find(it_nhg->first);
+            if (nhg_it != m_syncdNextHopGroups.end() && nhg_it->second.ref_count == 0)
+            {
+                // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
+                removeNextHopGroup(it_nhg->first, nhg_it->second.is_default_route_nh_swap);
+            }
+        }
+        batch.nhgReducedRefCnt.erase(it_nhg);
+
+        if (!batch.nhgReducedRefCnt.empty() && expired())
+        {
+            return false;
+        }
+    }
+    // Failed single-MPLS creates may share a next hop with successful
+    // routes in this bulk. Groups above may also have removed it already.
+    while (!batch.mplsNhReducedRefCnt.empty())
+    {
+        auto it_nh = batch.mplsNhReducedRefCnt.begin();
+        if (m_neighOrch->hasNextHop(*it_nh) &&
+            m_neighOrch->getNextHopRefCount(*it_nh) == 0)
+        {
+            m_neighOrch->removeMplsNextHop(*it_nh);
+        }
+        batch.mplsNhReducedRefCnt.erase(it_nh);
+
+        if (!batch.mplsNhReducedRefCnt.empty() && expired())
+        {
+            return false;
+        }
+    }
+    /* Reduce reference for srv6 next hop group */
+    /* Later delete for increase refcnt early */
+    /* Two passes over the whole set, as in Srv6Orch::removeSrv6Nexthops():
+     * every group's VPN SIDs go before any group's next hops, because the
+     * next hop pass can free shared objects (tunnels, SID lists) that another
+     * group's VPN pass still uses. The vector does not change during the
+     * epilogue; only the status loop above adds to it. */
+    while (batch.srv6VpnCursor < batch.srv6NhgReducedVec.size())
+    {
+        m_srv6Orch->removeSrv6VpnSids(batch.srv6NhgReducedVec[batch.srv6VpnCursor]);
+        batch.srv6VpnCursor++;
+
+        if (batch.srv6VpnCursor < batch.srv6NhgReducedVec.size() && expired())
+        {
+            return false;
+        }
+    }
+    while (batch.srv6NexthopCursor < batch.srv6NhgReducedVec.size())
+    {
+        m_srv6Orch->removeSrv6GroupNexthops(batch.srv6NhgReducedVec[batch.srv6NexthopCursor]);
+        batch.srv6NexthopCursor++;
+
+        if (batch.srv6NexthopCursor < batch.srv6NhgReducedVec.size() && expired())
+        {
+            return false;
+        }
+    }
+    batch.srv6NhgReducedVec.clear();
+    batch.srv6VpnCursor = 0;
+    batch.srv6NexthopCursor = 0;
+
+    // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
+    // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
+    // flush.
+    m_routeStatePublisher.publishAsyncBatch();
+    m_routeStatePublisher.flush();
+
+    /* No Update to Default Route so we can stop */
+    if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
+    {
+        keepDraining = false;
+        return true;
+    }
+	/* Update to v4 Default Route so update the data structure */
+    if (v4_default_nhg_key.getSize())
+    {
+        updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
+    }
+	/* Update to v6 Default Route so update the data structure */
+    if (v6_default_nhg_key.getSize())
+    {
+        updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
+    }
+    keepDraining = true;
+    return true;
+}
+
 void RouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->allPortsReady())
+    /* A batch in flight is finished even if ports went not ready after it
+     * started: stopping here would leave ingress held by drainInFlight(). */
+    if (!gPortsOrch->allPortsReady() && !drainInFlight(consumer.getTableName()))
     {
         return;
     }
@@ -623,662 +1497,213 @@ void RouteOrch::doTask(ConsumerBase& consumer)
         return;
     }
 
-    /* Default handling is for APP_ROUTE_TABLE_NAME */
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
+    /* Default handling is for APP_ROUTE_TABLE_NAME. Only the ZMQ consumer
+     * yields; the label table above and the non-ZMQ consumer drain without
+     * yielding. */
+    auto *zmqConsumer = dynamic_cast<ZmqRouteConsumer *>(&consumer);
+    if (zmqConsumer != nullptr)
     {
-        // Route bulk results will be stored in a map
-        std::map<
-                std::pair<
-                        std::string,            // Key
-                        std::string             // Op
-                >,
-                RouteBulkContext
-        >                                       toBulk;
+        drainRoutes(*zmqConsumer);
+    }
+    else
+    {
+        drainRoutes(consumer);
+    }
+}
 
-        // Add or remove routes with a route bulker
-        while (it != consumer.m_toSync.end())
+/* Runs whole batches back to back, without yielding. */
+void RouteOrch::drainRoutes(ConsumerBase& consumer)
+{
+    /* Entries to retry, and entries that were not ready, merge back into
+     * m_toSync after the loop: merged after each batch, the next scan would
+     * pick them up again in this call and spin on an entry that keeps failing
+     * the same way. The next doTask() retries them. */
+    std::deque<KeyOpFieldsValuesTuple> retained;
+    std::deque<KeyOpFieldsValuesTuple> deferred;
+
+    while (!consumer.m_toSync.empty())
+    {
+        RouteDrainBatch batch;
+
+        toBulkTask(consumer, batch, kNeverExpired);
+        for (auto& entry : batch.deferred)
         {
-            KeyOpFieldsValuesTuple t = it->second;
+            deferred.push_back(std::move(entry));
+        }
+        batch.deferred.clear();
+        flushTask();
 
-            string key = kfvKey(t);
-            string op = kfvOp(t);
+        bool keepDraining = true;
+        responseHandlerTask(consumer, batch, retained, kNeverExpired, keepDraining);
 
-            auto rc = toBulk.emplace(std::piecewise_construct,
-                    std::forward_as_tuple(key, op),
-                    std::forward_as_tuple(key, (op == SET_COMMAND)));
-
-            bool inserted = rc.second;
-            auto& ctx = rc.first->second;
-            if (!inserted)
-            {
-                ctx.clear();
-            }
-
-            /* Get notification from application */
-            /* resync application:
-             * When routeorch receives 'resync' message, it marks all current
-             * routes as dirty and waits for 'resync complete' message. For all
-             * newly received routes, if they match current dirty routes, it unmarks
-             * them dirty. After receiving 'resync complete' message, it creates all
-             * newly added routes and removes all dirty routes.
-             */
-            if (key == "resync")
-            {
-                if (op == "SET")
-                {
-                    /* Mark all current routes as dirty (DEL) in consumer.m_toSync map */
-                    SWSS_LOG_NOTICE("Start resync routes\n");
-                    for (auto j : m_syncdRoutes)
-                    {
-                        string vrf;
-
-                        if (j.first != gVirtualRouterId)
-                        {
-                            vrf = m_vrfOrch->getVRFname(j.first) + ":";
-                        }
-
-                        for (auto i : j.second)
-                        {
-                            vector<FieldValueTuple> v;
-                            key = vrf + i.first.to_string();
-                            auto x = KeyOpFieldsValuesTuple(key, DEL_COMMAND, v);
-                            consumer.addToSync(x);
-                        }
-                    }
-                    m_resync = true;
-                }
-                else
-                {
-                    SWSS_LOG_NOTICE("Complete resync routes\n");
-                    m_resync = false;
-                }
-
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            if (m_resync)
-            {
-                it++;
-                continue;
-            }
-
-            sai_object_id_t& vrf_id = ctx.vrf_id;
-            IpPrefix& ip_prefix = ctx.ip_prefix;
-
-            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
-            {
-                size_t found = key.find(':');
-                string vrf_name = key.substr(0, found);
-
-                if (!m_vrfOrch->isVRFexists(vrf_name))
-                {
-                    it++;
-                    continue;
-                }
-                vrf_id = m_vrfOrch->getVRFid(vrf_name);
-                ip_prefix = IpPrefix(key.substr(found+1));
-            }
-            else
-            {
-                vrf_id = gVirtualRouterId;
-                ip_prefix = IpPrefix(key);
-            }
-
-            if (op == SET_COMMAND)
-            {
-                string ips;
-                string aliases;
-                string mpls_nhs;
-                string vni_labels;
-                string remote_macs;
-                string weights;
-                string nhg_index;
-                string context_index;
-                bool& excp_intfs_flag = ctx.excp_intfs_flag;
-                bool overlay_nh = false;
-                bool blackhole = false;
-                string srv6_segments;
-                string srv6_source;
-                string srv6_vpn_sids;
-                bool srv6_seg = false;
-                bool srv6_vpn = false;
-                bool srv6_nh = false;
-                bool fallback_to_default_route = false;
-
-                for (auto i : kfvFieldsValues(t))
-                {
-                    if (fvField(i) == "nexthop" && fvValue(i) != "")
-                        ips = fvValue(i);
-
-                    if (fvField(i) == "ifname" && fvValue(i) != "")
-                        aliases = fvValue(i);
-
-                    if (fvField(i) == "mpls_nh" && fvValue(i) != "")
-                        mpls_nhs = fvValue(i);
-
-                    if (fvField(i) == "vni_label" && fvValue(i) != "") {
-                        vni_labels = fvValue(i);
-                        overlay_nh = true;
-                    }
-
-                    if (fvField(i) == "router_mac" && fvValue(i) != "")
-                        remote_macs = fvValue(i);
-
-                    if (fvField(i) == "blackhole")
-                        blackhole = fvValue(i) == "true";
-
-                    if (fvField(i) == "weight" && fvValue(i) != "")
-                        weights = fvValue(i);
-
-                    if (fvField(i) == "nexthop_group" && fvValue(i) != "")
-                        nhg_index = fvValue(i);
-
-                    if (fvField(i) == "segment" && fvValue(i) != "") {
-                        srv6_segments = fvValue(i);
-                        srv6_seg = true;
-                        srv6_nh = true;
-                    }
-
-                    if (fvField(i) == "seg_src" && fvValue(i) != "") {
-                        srv6_source = fvValue(i);
-                        srv6_nh = true;
-                    }
-
-                    if (fvField(i) == "protocol" && fvValue(i) != "")
-                    {
-                        ctx.protocol = fvValue(i);
-                    }
-
-                    if (fvField(i) == "fallback_to_default_route")
-                        fallback_to_default_route = fvValue(i) == "true";
-
-                    if (fvField(i) == "vpn_sid" && fvValue(i) != "") {
-                        srv6_vpn_sids = fvValue(i);
-                        srv6_nh = true;
-                        srv6_vpn = true;
-                    }
-
-                    if (fvField(i) == "pic_context_id" && fvValue(i) != "")
-                    {
-                        context_index = fvValue(i);
-                        srv6_vpn = true;
-                    }
-                }
-
-                /*
-                 * A route should not fill both nexthop_group and ips /
-                 * aliases.
-                 */
-                if (!nhg_index.empty() && (!ips.empty() || !aliases.empty()))
-                {
-                    SWSS_LOG_ERROR("Route %s has both nexthop_group and ips/aliases", key.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                ctx.fallback_to_default_route = fallback_to_default_route;
-                ctx.nhg_index = nhg_index;
-                ctx.context_index = context_index;
-
-                /*
-                 * If the nexthop_group is empty, create the next hop group key
-                 * based on the IPs and aliases.  Otherwise, get the key from
-                 * the NhgOrch.
-                 */
-                vector<string> ipv;
-                vector<string> alsv;
-                vector<string> mpls_nhv;
-                vector<string> vni_labelv;
-                vector<string> rmacv;
-                NextHopGroupKey& nhg = ctx.nhg;
-                vector<string> srv6_segv;
-                vector<string> srv6_src;
-                vector<string> srv6_vpn_sidv;
-                bool l3Vni = true;
-                uint32_t vni = 0;
-
-                /* Check if the next hop group is owned by the NhgOrch. */
-                if (nhg_index.empty())
-                {
-                    ipv = tokenize(ips, ',');
-                    alsv = tokenize(aliases, ',');
-                    mpls_nhv = tokenize(mpls_nhs, ',');
-                    vni_labelv = tokenize(vni_labels, ',');
-                    rmacv = tokenize(remote_macs, ',');
-                    srv6_segv = tokenize(srv6_segments, ',');
-                    srv6_src = tokenize(srv6_source, ',');
-                    srv6_vpn_sidv = tokenize(srv6_vpn_sids, ',');
-
-                    /*
-                    * For backward compatibility, adjust ip string from old format to
-                    * new format. Meanwhile it can deal with some abnormal cases.
-                    */
-
-                    /* Resize the ip vector to match ifname vector
-                    * as tokenize(",", ',') will miss the last empty segment. */
-                    if (alsv.size() == 0 && !blackhole && !srv6_nh)
-                    {
-                        SWSS_LOG_WARN("Skip the route %s, for it has an empty ifname field.", key.c_str());
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
-                    else if (alsv.size() != ipv.size())
-                    {
-                        SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
-                        ipv.resize(alsv.size());
-                    }
-
-                    for (auto &vni_str: vni_labelv)
-                    {
-                        vni = static_cast<uint32_t>(std::stoul(vni_str));
-                        if (!m_vrfOrch->isL3VniVlan(vni))
-                        {
-                            SWSS_LOG_WARN("Route %s is received on non L3 VNI %s", key.c_str(), vni_str.c_str());
-                            l3Vni = false;
-                            break;
-                        }
-                    }
-
-                    if (!l3Vni)
-                    {
-                        it++;
-                        continue;
-                    }
-
-                    /* Set the empty ip(s) to zero
-                     * as IpAddress("") will construct a incorrect ip. */
-                    for (auto &ip : ipv)
-                    {
-                        if (ip.empty())
-                        {
-                            SWSS_LOG_NOTICE("Route %s: set the empty nexthop ip to zero.", key.c_str());
-                            ip = ip_prefix.isV4() ? "0.0.0.0" : "::";
-                        }
-                    }
-
-                    for (auto alias : alsv)
-                    {
-                        /* skip route to management, docker, loopback
-                        * TODO: for route to loopback interface, the proper
-                        * way is to create loopback interface and then create
-                        * route pointing to it, so that we can traps packets to
-                        * CPU */
-                        if (alias == "eth0" || alias == "docker0" || alias == "usb0" ||
-                            alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
-                        {
-                            excp_intfs_flag = true;
-                            break;
-                        }
-                    }
-
-                    // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
-                    if (excp_intfs_flag)
-                    {
-                        /* If any existing routes are updated to point to the
-                        * above interfaces, remove them from the ASIC. */
-                        if (removeRoute(ctx))
-                            it = consumer.m_toSync.erase(it);
-                        else
-                            it++;
-
-                        /* Publish route state to advertise routes to Loopback interface */
-                        publishRouteState(ctx);
-                        continue;
-                    }
-
-                    string nhg_str = "";
-
-                    if (blackhole)
-                    {
-                        nhg = NextHopGroupKey();
-                    }
-                    else if (srv6_nh == true)
-                    {
-                        if (srv6_vpn && (srv6_vpn_sidv.size() != srv6_src.size()))
-                        {
-                            SWSS_LOG_ERROR("inconsistent number of endpoints and srv6 vpn sids.");
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-
-                        if (srv6_seg && (srv6_segv.size() != srv6_src.size()))
-                        {
-                            SWSS_LOG_ERROR("inconsistent number of srv6_segv and srv6_srcs.");
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-
-                        for (uint32_t i = 0; i < srv6_src.size(); i++)
-                        {
-                            if (i) nhg_str += NHG_DELIMITER;
-                            nhg_str += (ipv.size() > i ? ipv[i] : "0.0.0.0") + NH_DELIMITER;  // ip address
-                            nhg_str += (srv6_seg ? srv6_segv[i] : "") + NH_DELIMITER;     // srv6 segment
-                            nhg_str += srv6_src[i] + NH_DELIMITER; // srv6 source
-                            nhg_str += (srv6_vpn ? srv6_vpn_sidv[i] : "") + NH_DELIMITER; // srv6 vpn sid
-                        }
-
-                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
-                        SWSS_LOG_INFO("SRV6 route with nhg %s", nhg.to_string().c_str());
-                    }
-                    else if (overlay_nh == false)
-                    {
-                        for (uint32_t i = 0; i < ipv.size(); i++)
-                        {
-                            if (i) nhg_str += NHG_DELIMITER;
-                            if (alsv[i] == "tun0" && !(IpAddress(ipv[i]).isZero()))
-                            {
-                                alsv[i] = gIntfsOrch->getRouterIntfsAlias(ipv[i]);
-                            }
-                            if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
-                            {
-                                nhg_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
-                            }
-                            nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
-                        }
-
-                        nhg = NextHopGroupKey(nhg_str, weights);
-                    }
-                    else
-                    {
-                        if(ipv.size() != rmacv.size()){
-                            SWSS_LOG_ERROR("Skip route %s, it has an invalid router mac field %s", key.c_str(), remote_macs.c_str());
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-
-                        if(ipv.size() != vni_labelv.size()){
-                            SWSS_LOG_ERROR("Skip route %s, it has an invalid vni label field %s", key.c_str(), vni_labels.c_str());
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-
-                        for (uint32_t i = 0; i < ipv.size(); i++)
-                        {
-                            if (i) nhg_str += NHG_DELIMITER;
-                            nhg_str += ipv[i] + NH_DELIMITER + "vni" + alsv[i] + NH_DELIMITER + vni_labelv[i] + NH_DELIMITER + rmacv[i];
-                        }
-
-                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
-                    }
-                }
-                else
-                {
-                    try
-                    {
-                        const NhgBase& nh_group = getNhg(nhg_index);
-                        nhg = nh_group.getNhgKey();
-                        ctx.using_temp_nhg = nh_group.isTemp();
-                    }
-                    catch (const std::out_of_range& e)
-                    {
-                        SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
-                        ++it;
-                        continue;
-                    }
-                }
-
-                sai_route_entry_t route_entry;
-                route_entry.vr_id = vrf_id;
-                route_entry.switch_id = gSwitchId;
-                copy(route_entry.destination, ip_prefix);
-
-                if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
-                {
-                    if (alsv[0] == "unknown")
-                    {
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    /* skip direct routes to tun0 */
-                    else if (alsv[0] == "tun0")
-                    {
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    /* directly connected route to VRF interface which come from kernel */
-                    else if (!alsv[0].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
-                    {
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    /* skip prefix which is linklocal or multicast */
-                    else if (ip_prefix.getIp().getAddrScope() != IpAddress::GLOBAL_SCOPE)
-                    {
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    /* fullmask subnet route is same as ip2me route */
-                    else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
-                    {
-                        /* The prefix is full mask (/32 or /128) and it is an interface subnet route, so IntfOrch has already
-                         * created an IP2ME route for it and we skip programming such route here as it already exists.
-                         * However, to keep APPL_DB and APPL_STATE_DB consistent we have to publish it. */
-                        publishRouteState(ctx);
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    /* subnet route, vrf leaked route, etc */
-                    else
-                    {
-                        if (addRoute(ctx, nhg))
-                        {
-                            it = consumer.m_toSync.erase(it);
-                        }
-                        else
-                            it++;
-                    }
-                }
-                /*
-                 * Check if the route does not exist or needs to be updated or
-                 * if the route is using a temporary next hop group owned by
-                 * NhgOrch.
-                 * With default routes, there may be a setting_entries present in the
-                 * bulker due to a previous DEL event, where we automatically add a 
-                 * DROP action. So one of the check below (bulk_entry_pending_removal_or_set)
-                 * checks for both removal and set entries.
-                 */
-                else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
-                    m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                    m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
-                    gRouteBulker.bulk_entry_pending_removal_or_set(route_entry) ||
-                    ctx.using_temp_nhg)
-                {
-                    if (addRoute(ctx, nhg))
-                    {
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    else
-                        it++;
-                }
-                else
-                {
-                    /* Duplicate entry. Publish route state anyway since there could be multiple DEL, SET operations
-                     * consolidated by ConsumerStateTable leading to orchagent receiving only the last SET update. */
-                    publishRouteState(ctx);
-                    it = consumer.m_toSync.erase(it);
-                }
-
-                // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
-                // flush the bulker and possibly collect some released nexthop groups
-                if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount &&
-                    gRouteBulker.removing_entries_count() > 0)
-                {
-                    break;
-                }
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (removeRoute(ctx))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
-                it = consumer.m_toSync.erase(it);
-            }
+        /* The scan staged nothing: m_toSync has no entry this call can
+         * program. */
+        if (batch.entries.empty())
+        {
+            break;
         }
 
-        // Flush the route bulker, so routes will be written to syncd and ASIC
-        gRouteBulker.flush();
-
-        // Go through the bulker results
-        auto it_prev = consumer.m_toSync.begin();
-        m_bulkNhgReducedRefCnt.clear();
-        m_bulkMplsNhReducedRefCnt.clear();
-        NextHopGroupKey v4_default_nhg_key;
-        NextHopGroupKey v6_default_nhg_key;
-        m_bulkSrv6NhgReducedVec.clear();
-
-        while (it_prev != it)
+        /* A batch that touches no default route ends the drain for this
+         * invocation; entries left in m_toSync wait for the next doTask. */
+        if (!keepDraining)
         {
-            KeyOpFieldsValuesTuple t = it_prev->second;
+            break;
+        }
+    }
 
-            string key = kfvKey(t);
-            string op = kfvOp(t);
-            auto found = toBulk.find(make_pair(key, op));
-            if (found == toBulk.end())
+    if (!retained.empty())
+    {
+        consumer.addToSyncNoRecord(retained);
+    }
+    if (!deferred.empty())
+    {
+        consumer.addToSyncNoRecord(deferred);
+    }
+}
+
+/* Yielding drain (route programming HLD sections 7.4 and 7.5). Each call runs
+ * the batch state machine until the quantum (m_drainQuantum, orchagent -Q)
+ * expires, checking it after each staged entry, each bulk chunk flushed,
+ * each status handled and each group or next hop the epilogue removes, and
+ * moving on to the next phase while time is left.
+ * When it stops with work left, it re-arms the consumer's selectable, so
+ * select() serves other ready selectables of equal or higher priority before
+ * the drain goes on; the daemon's sweep after each select also resumes it.
+ * One select iteration can therefore hold the main loop for about two quanta.
+ *
+ * While a batch is in flight, ZmqRouteConsumer::execute() does not merge
+ * m_ingress, so m_toSync changes only here and through retry cache promotion.
+ * Nothing outside RouteOrch stages into, flushes or clears gRouteBulker while
+ * a batch is in flight; VNetRouteOrch uses its own bulker. */
+void RouteOrch::drainRoutes(ZmqRouteConsumer& consumer)
+{
+    /* m_zmqDrainBatch belongs to the route table; drainInFlight() answers by
+     * table name. */
+    if (consumer.getTableName() != APP_ROUTE_TABLE_NAME)
+    {
+        SWSS_LOG_THROW("Yielding drain invoked for table %s; only %s owns m_zmqDrainBatch",
+                       consumer.getTableName().c_str(), APP_ROUTE_TABLE_NAME);
+    }
+
+    if (!m_muxDrainKnown)
+    {
+        /* Ports are ready before any drain runs, so the mux tables are
+         * complete by now (see hasMuxCableOrPeerSwitch()). */
+        m_muxDrainToCompletion = isDualTorSubtype() || hasMuxCableOrPeerSwitch();
+        m_muxDrainKnown = true;
+        if (m_muxDrainToCompletion)
+        {
+            SWSS_LOG_NOTICE("Mux is configured: route drains run to completion, without a quantum");
+        }
+    }
+
+    /* Warm restore runs before the select loop exists, so nothing would
+     * resume a yielded drain there. */
+    std::function<bool()> expired;
+    if (m_warmStartDrainToCompletion || m_muxDrainToCompletion)
+    {
+        expired = kNeverExpired;
+    }
+    else
+    {
+        const auto deadline = m_drainNow() + m_drainQuantum;
+        expired = [this, deadline]() {
+            return m_drainNow() >= deadline;
+        };
+    }
+
+    while (true)
+    {
+        switch (m_zmqDrainBatch.phase)
+        {
+        case RouteDrainBatch::Phase::kIdle:
+        {
+            if (consumer.m_toSync.empty())
             {
-                it_prev++;
-                continue;
+                return;
+            }
+            m_zmqDrainBatch.phase = RouteDrainBatch::Phase::kStaging;
+            break;
+        }
+        case RouteDrainBatch::Phase::kStaging:
+        {
+            if (!toBulkTask(consumer, m_zmqDrainBatch, expired))
+            {
+                consumer.notifyPending();
+                return;
+            }
+            m_zmqDrainBatch.phase = RouteDrainBatch::Phase::kFlushing;
+            break;
+        }
+        case RouteDrainBatch::Phase::kFlushing:
+        {
+            if (!gRouteBulker.flush_until(expired))
+            {
+                consumer.notifyPending();
+                return;
+            }
+            m_zmqDrainBatch.phase = RouteDrainBatch::Phase::kResponding;
+            break;
+        }
+        case RouteDrainBatch::Phase::kResponding:
+        {
+            bool keepDraining = true;
+            if (!responseHandlerTask(consumer, m_zmqDrainBatch,
+                                     m_zmqDrainBatch.retained, expired,
+                                     keepDraining))
+            {
+                consumer.notifyPending();
+                return;
             }
 
-            const auto& ctx = found->second;
+            bool progressed = !m_zmqDrainBatch.entries.empty();
+            std::deque<KeyOpFieldsValuesTuple> retained;
+            retained.swap(m_zmqDrainBatch.retained);
+            std::deque<KeyOpFieldsValuesTuple> deferred;
+            deferred.swap(m_zmqDrainBatch.deferred);
+            m_zmqDrainBatch.clear();
 
-            // if retry_cst field is set, move this task to retry cache:
-            // - add it to retry cache before executing addRoutePost/removeRoutePost
-            //      - since these functions could modify retrycache status
-            // - delete it from m_toSync after addRoutePost/removeRoutePost to avoid duplicates
-            bool rc_inserted = false;
-            if (ctx.retry_cst != DUMMY_CONSTRAINT)
-                rc_inserted = consumer.addToRetry(it_prev->second, ctx.retry_cst);
-
-            const auto& object_statuses = ctx.object_statuses;
-            if (object_statuses.empty())
+            if (!retained.empty())
             {
-                if (rc_inserted)
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                else
-                    it_prev++;
-                continue;
+                consumer.addToSyncNoRecord(retained);
+            }
+            if (!deferred.empty())
+            {
+                consumer.addToSyncNoRecord(deferred);
             }
 
-            const sai_object_id_t& vrf_id = ctx.vrf_id;
-            const IpPrefix& ip_prefix = ctx.ip_prefix;
-
-            sai_route_entry_t route_entry;
-            route_entry.vr_id = vrf_id;
-            route_entry.switch_id = gSwitchId;
-            copy(route_entry.destination, ip_prefix);
-            
-            if (op == SET_COMMAND)
+            /* The batch is done and execute() merges m_ingress again. Re-arm
+             * when ingress is pending, since its notification may have been
+             * used by an execute() that could not merge, or when m_toSync has
+             * more work and this batch staged something and updated a
+             * default route. */
+            bool moreWork = keepDraining && progressed &&
+                            !consumer.m_toSync.empty();
+            if (consumer.ingressPending() || moreWork)
             {
-                const bool& excp_intfs_flag = ctx.excp_intfs_flag;
-
-                if (excp_intfs_flag)
-                {
-                    /* If any existing routes are updated to point to the
-                     * above interfaces, remove them from the ASIC. */
-                    if (removeRoutePost(ctx) || rc_inserted)
-                        it_prev = consumer.m_toSync.erase(it_prev);
-                    else
-                        it_prev++;
-                    continue;
-                }
-
-                const NextHopGroupKey& nhg = ctx.nhg;
-
-                if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
-                {
-                    if (addRoutePost(ctx, nhg) || rc_inserted)
-                        it_prev = consumer.m_toSync.erase(it_prev);
-                    else
-                        it_prev++;
-                }
-                else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
-                         m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                         m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index, ctx.context_index) ||
-                         gRouteBulker.bulk_entry_pending_removal(route_entry) ||
-                         ctx.using_temp_nhg)
-                {
-                    if (addRoutePost(ctx, nhg) || rc_inserted)
-                        it_prev = consumer.m_toSync.erase(it_prev);
-                    else
-                        it_prev++;
-
-		    // Save the Default Route of Default VRF to be used for 
-		    // enabling fallback to it as needed
-                    if (ip_prefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
-                    {
-                       if (ip_prefix.isV4())
-                       {
-                            v4_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
-                       }
-                       else
-                       {
-                            v6_default_nhg_key = getSyncdRouteNhgKey(gVirtualRouterId, ip_prefix);
-                       }
-                    }
-                }
+                consumer.notifyPending();
             }
-            else if (op == DEL_COMMAND)
+
+            /* Go on to the next batch in this call only when nothing was
+             * merged back: an entry that keeps failing, or stays not ready,
+             * is tried once per call. */
+            if (!moreWork || !retained.empty() || !deferred.empty())
             {
-                /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(ctx) || rc_inserted)
-                    it_prev = consumer.m_toSync.erase(it_prev);
-                else
-                    it_prev++;
+                return;
             }
+            break;
+        }
         }
 
-        /* Remove next hop group if the reference count decreases to zero */
-        for (auto& it_nhg : m_bulkNhgReducedRefCnt)
+        if (expired())
         {
-            if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
+            /* Out of time between phases. A batch that just left kIdle has
+             * not re-armed the selectable yet. */
+            if (m_zmqDrainBatch.phase != RouteDrainBatch::Phase::kIdle)
             {
-                removeOverlayNextHops(it_nhg.second, it_nhg.first);
+                consumer.notifyPending();
             }
-            else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
-            {
-                // Pass the flag to indicate if the NextHop Group as Default Route NH Members as swapped.
-                removeNextHopGroup(it_nhg.first, m_syncdNextHopGroups[it_nhg.first].is_default_route_nh_swap);
-            }
-        }
-        // Failed single-MPLS creates may share a next hop with successful
-        // routes in this bulk. Groups above may also have removed it already.
-        for (const auto& nexthop : m_bulkMplsNhReducedRefCnt)
-        {
-            if (m_neighOrch->hasNextHop(nexthop) &&
-                m_neighOrch->getNextHopRefCount(nexthop) == 0)
-            {
-                m_neighOrch->removeMplsNextHop(nexthop);
-            }
-        }
-        /* Reduce reference for srv6 next hop group */
-        /* Later delete for increase refcnt early */
-        if (!m_bulkSrv6NhgReducedVec.empty())
-        {
-            m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
-        }
-
-        // One async batch + flush per gRouteBulker.flush(): drain batched publishAsync work to the worker,
-        // then enqueue the flush marker so fpmsyncd sees responses without waiting for OrchDaemon periodic 
-        // flush.
-        m_routeStatePublisher.publishAsyncBatch();
-        m_routeStatePublisher.flush();
-
-        /* No Update to Default Route so we can return */
-        if (!(v4_default_nhg_key.getSize()) && !(v6_default_nhg_key.getSize()))
-        {
             return;
-        }
-	/* Update to v4 Default Route so update the data structure */
-        if (v4_default_nhg_key.getSize())
-        {
-            updateDefaultRouteSwapSet(v4_default_nhg_key, v4_active_default_route_nhops);
-        }
-	/* Update to v6 Default Route so update the data structure */
-        if (v6_default_nhg_key.getSize())
-        {
-            updateDefaultRouteSwapSet(v6_default_nhg_key, v6_active_default_route_nhops);
         }
     }
 }
@@ -2068,9 +2493,13 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
     addRoute(ctx, tmp_next_hop);
 }
 
-bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                         EntityBulker<sai_route_api_t> *bulker)
 {
     SWSS_LOG_ENTER();
+
+    /* Stage into the caller's bulker, or RouteOrch's shared one by default. */
+    EntityBulker<sai_route_api_t>& routeBulker = bulker ? *bulker : gRouteBulker;
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2366,7 +2795,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
      * from m_syncdRoutes during the bulk call. Therefore, such entries need to be
      * re-created rather than set attribute.
      */
-    if (it_route == m_syncdRoutes.at(vrf_id).end() || gRouteBulker.bulk_entry_pending_removal(route_entry))
+    if (it_route == m_syncdRoutes.at(vrf_id).end() || routeBulker.bulk_entry_pending_removal(route_entry))
     {
         if (blackhole)
         {
@@ -2390,7 +2819,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
         /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
         object_statuses.emplace_back();
-        sai_status_t status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)route_attrs.size(), route_attrs.data());
+        sai_status_t status = routeBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)route_attrs.size(), route_attrs.data());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s: already exists in bulker",
@@ -2407,7 +2836,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
             object_statuses.emplace_back();
-            gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
 
         if (curNhgIsFineGrained && !isFineGrainedNextHopIdChanged)
@@ -2434,7 +2863,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
                 object_statuses.emplace_back();
-                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+                routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
 
             // Set/update prefix agg id if needed
@@ -2443,7 +2872,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
                 route_attr.value.u32 = ctx.nhg_index.empty() ? m_srv6Orch->getAggId(nextHops) : m_srv6Orch->getAggId(ctx.context_index);
                 object_statuses.emplace_back();
-                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+                routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
 
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
@@ -2451,7 +2880,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
             /* Set the next hop ID to a new value */
             object_statuses.emplace_back();
-            gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
 
         if (blackhole)
@@ -2460,15 +2889,20 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             route_attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
             object_statuses.emplace_back();
-            gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
     }
     return false;
 }
 
-bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops,
+                             RouteDrainBatch *sink)
 {
     SWSS_LOG_ENTER();
+
+    auto& nhgReducedRefCnt = sink ? sink->nhgReducedRefCnt : m_bulkNhgReducedRefCnt;
+    auto& srv6NhgReducedVec = sink ? sink->srv6NhgReducedVec : m_bulkSrv6NhgReducedVec;
+    auto& mplsNhReducedRefCnt = sink ? sink->mplsNhReducedRefCnt : m_bulkMplsNhReducedRefCnt;
 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2546,7 +2980,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             // Previous added an temporary route
             auto& tmp_next_hop = ctx.tmp_next_hop;
             if (tmp_next_hop.getSize() > 0) {
-                addRoutePost(ctx, tmp_next_hop);
+                addRoutePost(ctx, tmp_next_hop, sink);
             }
             return false;
         }
@@ -2592,7 +3026,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 if (it_route->second.nhg_key.getSize() > 1
                     && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
                 {
-                    m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                    nhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
                 }
             }
             SWSS_LOG_INFO("FG Post set route %s with next hop(s) %s",
@@ -2617,23 +3051,23 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     // srv6Nexthops acquires VPN/aggregation references on
                     // every attempt, even when the next hops already exist.
                     // Keep one release per attempt, not one per group.
-                    m_bulkSrv6NhgReducedVec.emplace_back(nextHops);
+                    srv6NhgReducedVec.emplace_back(nextHops);
                 }
                 if (nextHops.getSize() > 1)
                 {
                     // Group removal also releases overlay/MPLS members.
-                    m_bulkNhgReducedRefCnt.emplace(nextHops, 0);
+                    nhgReducedRefCnt.emplace(nextHops, 0);
                 }
                 else if (nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
                 {
-                    m_bulkNhgReducedRefCnt.emplace(nextHops, vrf_id);
+                    nhgReducedRefCnt.emplace(nextHops, vrf_id);
                 }
                 else if (nextHops.getSize() == 1)
                 {
                     const auto& nexthop = *nextHops.getNextHops().begin();
                     if (nexthop.isMplsNextHop())
                     {
-                        m_bulkMplsNhReducedRefCnt.insert(nexthop);
+                        mplsNhReducedRefCnt.insert(nexthop);
                     }
                 }
             }
@@ -2735,14 +3169,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             auto ol_nextHops = it_route->second.nhg_key;
             if (ol_nextHops.is_srv6_nexthop())
             {
-                m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
+                srv6NhgReducedVec.emplace_back(ol_nextHops);
             }
             if (ol_nextHops.getSize() > 1)
             {
                 if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
                 {
                     SWSS_LOG_NOTICE("Update Nexthop Group %s", ol_nextHops.to_string().c_str());
-                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                    nhgReducedRefCnt.emplace(ol_nextHops, 0);
                 }
                 if (mux_orch->isMuxNexthops(ol_nextHops))
                 {
@@ -2764,7 +3198,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
                 {
                     SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                    nhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
                 }
             }
             else if (ol_nextHops.getSize() == 1 && !ol_nextHops.is_srv6_nexthop())
@@ -2877,9 +3311,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     return !ctx.using_temp_nhg;
 }
 
-bool RouteOrch::removeRoute(RouteBulkContext& ctx)
+bool RouteOrch::removeRoute(RouteBulkContext& ctx,
+                            EntityBulker<sai_route_api_t> *bulker)
 {
     SWSS_LOG_ENTER();
+
+    /* Stage into the caller's bulker, or RouteOrch's shared one by default. */
+    EntityBulker<sai_route_api_t>& routeBulker = bulker ? *bulker : gRouteBulker;
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -2897,7 +3335,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     copy(route_entry.destination, ipPrefix);
 
     auto it_route = it_route_table->second.find(ipPrefix);
-    size_t creating = gRouteBulker.creating_entries_count(route_entry);
+    size_t creating = routeBulker.creating_entries_count(route_entry);
     if (it_route == it_route_table->second.end() && creating == 0)
     {
         /*
@@ -2908,7 +3346,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
          * However, we can not do that unless going over all entries in gRouteBulker.
          * So, we use above strict conditions here
          */
-        if (it_route_table->second.size() == 0 && gRouteBulker.creating_entries_count() == 0)
+        if (it_route_table->second.size() == 0 && routeBulker.creating_entries_count() == 0)
         {
             m_syncdRoutes.erase(vrf_id);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
@@ -2929,26 +3367,29 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
         attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
         object_statuses.emplace_back();
-        gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
+        routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
 
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
 
         object_statuses.emplace_back();
-        gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
+        routeBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
     }
     else
     {
         object_statuses.emplace_back();
-        gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
+        routeBulker.remove_entry(&object_statuses.back(), &route_entry);
     }
 
     return false;
 }
 
-bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
+bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx, RouteDrainBatch *sink)
 {
     SWSS_LOG_ENTER();
+
+    auto& nhgReducedRefCnt = sink ? sink->nhgReducedRefCnt : m_bulkNhgReducedRefCnt;
+    auto& srv6NhgReducedVec = sink ? sink->srv6NhgReducedVec : m_bulkSrv6NhgReducedVec;
 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
@@ -3052,7 +3493,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
         if (ol_nextHops.is_srv6_nexthop())
         {
-            m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
+            srv6NhgReducedVec.emplace_back(ol_nextHops);
         }
         
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
@@ -3061,7 +3502,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
             {
                 SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                nhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
             }
             if (mux_orch->isMuxNexthops(ol_nextHops))
             {
@@ -3083,7 +3524,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
             {
                 SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                nhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
             }
         }
         /*
@@ -3381,6 +3822,11 @@ const NhgBase &RouteOrch::getNhg(const std::string &nhg_index)
     }
     catch (const std::out_of_range& e)
     {
+        /* Without CbfNhgOrch the index does not resolve. */
+        if (gCbfNhgOrch == nullptr)
+        {
+            throw;
+        }
         return gCbfNhgOrch->getNhg(nhg_index);
     }
 }
