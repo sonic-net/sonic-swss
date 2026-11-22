@@ -173,6 +173,11 @@ public:
         return !tunnel_list_.empty();
     }
 
+    void eraseTunnel(const string& tunnel)
+    {
+        tunnel_list_.erase(tunnel);
+    }
+
     uint32_t getVni() const
     {
         return vni_;

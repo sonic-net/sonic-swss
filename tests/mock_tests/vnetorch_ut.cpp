@@ -4,6 +4,7 @@
 #include "mock_sai_tunnel.h"
 #include "mock_orch_test.h"
 #include "common/mock_test_helpers.h"
+#include "dash/dashenifwdorch.h"
 #include "mock_table.h"
 #include "macaddress.h"
 #include "sai_serialize.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <memory>
 #include <set>
 
 EXTERN_MOCK_FNS
@@ -2995,6 +2997,25 @@ namespace vnetorch_test
                      std::runtime_error);
     }
 
+    // DASH ENI forwarding picks the VNET tunnel matching the endpoint family.
+    TEST_F(VNetOrchTest, VnetDualStackEniFwdSelectsTunnelByEndpointFamily)
+    {
+        setupDualStackVnet("Vnet_2000");
+        EniFwdCtx ctx(m_config_db.get(), m_app_db.get());
+        ctx.initialize();
+
+        string tunnel;
+        EXPECT_TRUE(ctx.findVnetTunnel("Vnet_2000", IpAddress("10.10.10.1"), tunnel));
+        EXPECT_EQ(tunnel, "tunnel_v4");
+        EXPECT_TRUE(ctx.findVnetTunnel("Vnet_2000", IpAddress("fc00::1"), tunnel));
+        EXPECT_EQ(tunnel, "tunnel_v6");
+        EXPECT_FALSE(ctx.findVnetTunnel("Vnet_missing", IpAddress("10.10.10.1"), tunnel));
+
+        // No tunnel of the endpoint family is a lookup failure, not an exception.
+        m_VxlanTunnelOrch->delTunnel("tunnel_v6");
+        EXPECT_FALSE(ctx.findVnetTunnel("Vnet_2000", IpAddress("fc00::1"), tunnel));
+    }
+
     // A route whose endpoint family has no tunnel in the VNET is dropped without
     // programming anything and does not affect routes of the other family.
     TEST_F(VNetOrchTest, VnetMultiTunnelRouteWithoutMatchingFamilyIsDropped)
@@ -3046,6 +3067,40 @@ namespace vnetorch_test
         EXPECT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
 
         delVnet("Vnet_2000");
+    }
+
+    // If the delete fails after the first tunnel's map was removed, the retry
+    // must only remove the remaining maps (the first tunnel is already inactive
+    // and its map removal would fail forever) and then delete the VNET.
+    TEST_F(VNetOrchTest, VnetMultiTunnelDeleteRetryAfterPartialMapRemoval)
+    {
+        setupDualStackVnet("Vnet_2000");
+        ASSERT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
+
+        // Maps are removed in name order with two map entries each, so the
+        // third remove call is the first one of tunnel_v6.
+        auto calls = std::make_shared<int>(0);
+        ON_CALL(m_tunnelMock, remove_tunnel_map_entry(_))
+            .WillByDefault(Invoke([this, calls](sai_object_id_t id) -> sai_status_t {
+                if (++(*calls) == 3)
+                {
+                    return SAI_STATUS_FAILURE;
+                }
+                m_tun.removedMapEntries.push_back(id);
+                return m_savedRemoveTunnelMapEntry(id);
+            }));
+
+        delVnet("Vnet_2000");
+
+        EXPECT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 2U);
+        EXPECT_EQ(m_tun.removedTunnels.size(), 1U);
+
+        static_cast<Orch *>(m_vnetOrch)->doTask();
+
+        EXPECT_FALSE(m_vnetOrch->isVnetExists("Vnet_2000"));
+        EXPECT_EQ(m_tun.removedMapEntries.size(), 4U);
+        EXPECT_EQ(m_tun.removedTunnels.size(), 2U);
     }
 
     // A route whose endpoint carries an inner MAC programs the tunnel next hop

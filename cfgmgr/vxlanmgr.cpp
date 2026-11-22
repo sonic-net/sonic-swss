@@ -41,14 +41,13 @@ extern MacAddress gMacAddress;
 #define DST_IP "dst_ip"
 #define SOURCE_VTEP "source_vtep"
 
-// A VNET with a single tunnel keeps the legacy name for either family. Only the
-// IPv6 device of a dual-stack VNET gets its own name, since both share the VNI.
+// Dual-stack VNETs share a VNI; the IPv6 device gets its own name
 static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info, bool dualStackIpv6 = false)
 {
     return std::string("") + (dualStackIpv6 ? VXLAN_V6_NAME_PREFIX : VXLAN_NAME_PREFIX) + info.m_vni;
 }
 
-static bool isIpv6Literal(const std::string &address)
+static bool isIpv6SrcIp(const std::string &address)
 {
     struct in6_addr addr6;
     return inet_pton(AF_INET6, address.c_str(), &addr6) == 1;
@@ -409,6 +408,8 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     info.m_vxlanIf = getVxlanIfName(info);
 
     std::vector<VxlanInfo> devices;
+    bool v4Found = false;
+    bool v6Found = false;
     for (const auto & tunnel : tunnels)
     {
         VxlanInfo device = info;
@@ -423,28 +424,31 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
         {
             device.m_sourceIp = sourceIp->second;
         }
-        devices.push_back(device);
+
+        // IPv4 device goes first: it is the one that creates the bridge
+        if (isIpv6SrcIp(device.m_sourceIp))
+        {
+            v6Found = true;
+            devices.push_back(device);
+        }
+        else
+        {
+            v4Found = true;
+            devices.insert(devices.begin(), device);
+        }
     }
 
-    // One IPv4 and one IPv6 tunnel at most, matching what VNetOrch accepts.
-    // IPv4 devices go first so the legacy device name stays first.
-    if (devices.size() > 1)
+    // One IPv4 and one IPv6 tunnel at most, matching what VNetOrch accepts
+    if (devices.size() > 2 || (devices.size() > 1 && (!v4Found || !v6Found)))
     {
-        std::stable_partition(devices.begin(), devices.end(),
-            [](const VxlanInfo & device){ return !isIpv6Literal(device.m_sourceIp); });
-
-        if (devices.size() > 2 || isIpv6Literal(devices.front().m_sourceIp)
-            || !isIpv6Literal(devices.back().m_sourceIp))
-        {
-            SWSS_LOG_ERROR("Vnet %s needs one IPv4 and one IPv6 vxlan tunnel at most", info.m_vnet.c_str());
-            return true;
-        }
+        SWSS_LOG_ERROR("Vnet %s needs one IPv4 and one IPv6 vxlan tunnel at most", info.m_vnet.c_str());
+        return true;
     }
 
     const bool dualStack = devices.size() > 1;
     for (auto & device : devices)
     {
-        device.m_vxlan = getVxlanName(device, dualStack && isIpv6Literal(device.m_sourceIp));
+        device.m_vxlan = getVxlanName(device, dualStack && isIpv6SrcIp(device.m_sourceIp));
     }
 
     // If this vxlan has been created

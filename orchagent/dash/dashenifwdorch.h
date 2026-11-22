@@ -341,7 +341,7 @@ public:
     virtual void resolveNeighbor(const NeighborEntry &) = 0;
     virtual string getRouterIntfsAlias(const IpAddress &, const string & = "") = 0;
     virtual bool findVnetVni(const std::string&, uint64_t& ) = 0;
-    virtual bool findVnetTunnel(const std::string&, string&) = 0;
+    virtual bool findVnetTunnel(const std::string&, const IpAddress&, string&) = 0;
 
     DpuRegistry dpu_info;
 
@@ -382,7 +382,7 @@ public:
     void resolveNeighbor(const NeighborEntry&) override;
     std::string getRouterIntfsAlias(const IpAddress &, const string & = "") override;
     bool findVnetVni(const std::string&, uint64_t&) override;
-    bool findVnetTunnel(const std::string&, string&) override;
+    bool findVnetTunnel(const std::string&, const IpAddress&, string&) override;
     std::map<std::string, Port>& getAllPorts() override;
 
 private:

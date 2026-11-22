@@ -22,7 +22,7 @@ namespace dashenifwdorch_ut
               MOCK_METHOD(bool, isNeighborResolved, (const NextHopKey&), (override));
               MOCK_METHOD(void, resolveNeighbor, (const NextHopKey&), (override));
               MOCK_METHOD(bool, findVnetVni, (const std::string&, uint64_t&), (override));
-              MOCK_METHOD(bool, findVnetTunnel, (const std::string&, std::string&), (override));
+              MOCK_METHOD(bool, findVnetTunnel, (const std::string&, const swss::IpAddress&, std::string&), (override));
               MOCK_METHOD((std::map<std::string, Port>&), getAllPorts, (), (override));
        };
 
@@ -356,9 +356,9 @@ namespace dashenifwdorch_ut
               /* calls to neighOrch expected for tunn termination entries */
               EXPECT_CALL(*ctx, isNeighborResolved(_)).Times(2).WillRepeatedly(Return(true));
 
-              EXPECT_CALL(*ctx, findVnetTunnel(vnet_name, _)).Times(2) // Once per non-tunnel term rules
+              EXPECT_CALL(*ctx, findVnetTunnel(vnet_name, _, _)).Times(2) // Once per non-tunnel term rules
                      .WillRepeatedly(DoAll(
-                     SetArgReferee<1>(tunnel_name),
+                     SetArgReferee<2>(tunnel_name),
                      Return(true)
               ));
 
@@ -427,9 +427,9 @@ namespace dashenifwdorch_ut
               EXPECT_CALL(*ctx, getRouterIntfsAlias(_, _)).WillOnce(Return(alias_dpu));
               /* 1 calls made for tunnel termination rules */
               EXPECT_CALL(*ctx, isNeighborResolved(_)).Times(1).WillRepeatedly(Return(true));
-              EXPECT_CALL(*ctx, findVnetTunnel(vnet_name, _)).Times(1) // Once per non-tunnel term rules
+              EXPECT_CALL(*ctx, findVnetTunnel(vnet_name, _, _)).Times(1) // Once per non-tunnel term rules
                      .WillRepeatedly(DoAll(
-                     SetArgReferee<1>(tunnel_name),
+                     SetArgReferee<2>(tunnel_name),
                      Return(true)
               ));
               EXPECT_CALL(*ctx, findVnetVni(vnet_name, _)).Times(1) // Called once per ENI
@@ -481,9 +481,9 @@ namespace dashenifwdorch_ut
        */
        TEST_F(DashEniFwdOrchTest, RemoteNeighbor_NoTunnelTerm)
        {
-              EXPECT_CALL(*ctx, findVnetTunnel(vnet_name, _)).Times(1) // Only 1 rule is created
+              EXPECT_CALL(*ctx, findVnetTunnel(vnet_name, _, _)).Times(1) // Only 1 rule is created
                      .WillRepeatedly(DoAll(
-                     SetArgReferee<1>(tunnel_name),
+                     SetArgReferee<2>(tunnel_name),
                      Return(true)
               ));
               EXPECT_CALL(*ctx, findVnetVni(vnet_name, _)).Times(1) // Called once per ENI
@@ -618,7 +618,7 @@ namespace mock_orch_test
               uint64_t vni;
               ASSERT_NO_THROW(ctx.findVnetVni("Vnet_1000", vni));
               string tunnel;
-              ASSERT_NO_THROW(ctx.findVnetTunnel("Vnet_1000", tunnel));
+              ASSERT_NO_THROW(ctx.findVnetTunnel("Vnet_1000", IpAddress("10.0.0.1"), tunnel));
               ASSERT_NO_THROW(ctx.getAllPorts());
        }
 }

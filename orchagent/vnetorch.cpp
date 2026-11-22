@@ -742,6 +742,8 @@ bool VNetOrch::delOperation(const Request& request)
                     SWSS_LOG_ERROR("VNET '%s' map delete failed", vnet_name.c_str());
                     return false;
                 }
+                // Drop the unmapped tunnel so a retry does not remove its map again
+                vrf_obj->eraseTunnel(tunnel);
             }
         }
     }
