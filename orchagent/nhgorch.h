@@ -354,4 +354,9 @@ private:
     unordered_map<string, NhgEntry<ProtNhg>> m_protNhgs;
     /* Replace a group whose update changes its SAI ID. */
     bool replaceNhg(const string &index, const NextHopGroupKey &nhg_key);
+
+    /* Consecutive replacements deferred by a route drain in flight; every
+     * kDrainDeferralWarnInterval-th one logs a warning. */
+    unsigned m_drainDeferrals = 0;
+    static constexpr unsigned kDrainDeferralWarnInterval = 30;
 };
