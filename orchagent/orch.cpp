@@ -425,6 +425,18 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
     return entries.size();
 }
 
+size_t ConsumerBase::addToSyncNoRecord(const std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto& entry: entries)
+    {
+        addToSyncInternal(entry, /*onRetry=*/false, /*recordTask=*/false);
+    }
+
+    return entries.size();
+}
+
 // TODO: Table should be const
 size_t ConsumerBase::refillToSync(Table* table)
 {
