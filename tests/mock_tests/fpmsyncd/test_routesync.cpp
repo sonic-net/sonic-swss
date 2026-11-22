@@ -5457,7 +5457,8 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     EXPECT_EQ(fieldNames(route.fieldValueTupleVector()),
               (vector<string>{"protocol", "blackhole", "nexthop", "ifname",
                               "nexthop_group", "mpls_nh", "weight", "vni_label",
-                              "router_mac", "segment", "seg_src"}));
+                              "router_mac", "segment", "seg_src",
+                              "fallback_to_default_route"}));
 
     LabelRouteTableFieldValueTupleWrapper label{"100", "bgp", /*nbZmqEnabled=*/true};
     EXPECT_EQ(fieldNames(label.fieldValueTupleVector()),
@@ -5492,7 +5493,7 @@ TEST_F(FpmSyncdResponseTest, TestZmqWrappersEmitCompleteFieldSet)
     auto zmqKfvs = zmqRoute.KeyOpFieldsValuesTupleVector();
     ASSERT_EQ(zmqKfvs.size(), 1u);
     EXPECT_EQ(kfvOp(zmqKfvs[0]), SET_COMMAND);
-    EXPECT_EQ(kfvFieldsValues(zmqKfvs[0]).size(), 11u);
+    EXPECT_EQ(kfvFieldsValues(zmqKfvs[0]).size(), 12u);
 
     RouteTableFieldValueTupleWrapper redisRoute{"10.1.2.0/24", "bgp", /*nbZmqEnabled=*/false};
     auto redisKfvs = redisRoute.KeyOpFieldsValuesTupleVector();
