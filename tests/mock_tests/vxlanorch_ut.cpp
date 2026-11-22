@@ -1881,6 +1881,35 @@ namespace vxlanorch_test
         *id = g_unknownTunnelMapEntryId;
         return g_tunnelMapEntryCreateStatus;
     }
+    decltype(sai_vlan_api->remove_vlan) g_savedRemoveVlan = nullptr;
+    decltype(sai_hostif_api->remove_hostif) g_savedRemoveHostif = nullptr;
+    decltype(sai_hostif_api->create_hostif) g_savedCreateHostif = nullptr;
+    const sai_object_id_t g_vlanHostifId = 0xd00000000beef;
+    int g_vlanRemoveFailures = 0;
+    int g_vlanHostifRemoves = 0;
+    int g_vlanHostifCreates = 0;
+    sai_status_t stubCreateVlanHostif(sai_object_id_t *id, sai_object_id_t, uint32_t, const sai_attribute_t *)
+    {
+        g_vlanHostifCreates++;
+        *id = g_vlanHostifId;
+        return SAI_STATUS_SUCCESS;
+    }
+    sai_status_t stubRemoveVlanFailsFirst(sai_object_id_t vlan_oid)
+    {
+        if (g_vlanRemoveFailures-- > 0)
+        {
+            return SAI_STATUS_OBJECT_IN_USE;
+        }
+        return g_savedRemoveVlan(vlan_oid);
+    }
+    sai_status_t stubRemoveVlanHostif(sai_object_id_t id)
+    {
+        if (id != g_vlanHostifId)
+        {
+            return g_savedRemoveHostif(id);
+        }
+        return g_vlanHostifRemoves++ ? SAI_STATUS_INVALID_OBJECT_ID : SAI_STATUS_SUCCESS;
+    }
 
     // The EVPN NVO must outlive the remote VTEP users of its source VTEP: their DELs release
     // the VTEP through EvpnNvoOrch::getEVPNVtep(). Each step is the APPL_DB change vxlanmgrd
@@ -1893,9 +1922,35 @@ namespace vxlanorch_test
         const string m_newMapKey = "vtep1:map_2000_Vlan200";
         const string m_vrfMapKey = "vtep1:evpn_map_2000_Vrf1";
         VxlanVrfMapOrch *m_vrfMapOrch = nullptr;
+        StpOrch *m_stpOrch = nullptr;
 
         void PreTearDown() override
         {
+            if (m_stpOrch)
+            {
+                delete m_stpOrch;
+                m_stpOrch = nullptr;
+                gStpOrch = nullptr;
+            }
+            if (g_savedCreateHostif)
+            {
+                sai_hostif_api->create_hostif = g_savedCreateHostif;
+                g_savedCreateHostif = nullptr;
+            }
+            if (g_savedRemoveVlan)
+            {
+                sai_vlan_api->remove_vlan = g_savedRemoveVlan;
+                g_savedRemoveVlan = nullptr;
+            }
+            if (g_savedRemoveHostif)
+            {
+                sai_hostif_api->remove_hostif = g_savedRemoveHostif;
+                g_savedRemoveHostif = nullptr;
+            }
+            Table(m_app_db.get(), APP_STP_VLAN_INSTANCE_TABLE_NAME).del("Vlan200");
+            Table(m_app_db.get(), APP_STP_PORT_STATE_TABLE_NAME).del("Ethernet0:1");
+            Table(m_app_db.get(), APP_INTF_TABLE_NAME).del("Vlan200");
+            Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME).del("Vlan200:Ethernet0");
             if (g_savedRemoveBridgePort)
             {
                 sai_bridge_api->remove_bridge_port = g_savedRemoveBridgePort;
@@ -2499,6 +2554,292 @@ namespace vxlanorch_test
             EXPECT_TRUE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
         }
 
+        void vlanDel()
+        {
+            Table(m_app_db.get(), APP_VLAN_TABLE_NAME).del("Vlan100");
+            consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME)->addToSync(
+                deque<KeyOpFieldsValuesTuple>{{"Vlan100", DEL_COMMAND, {}}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
+
+        bool vlanHeld() { return !consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME)->m_toSync.empty(); }
+
+        void vlanSet()
+        {
+            const vector<FieldValueTuple> fvs = {{"admin_status", "up"}, {"mtu", "9100"}};
+            Table(m_app_db.get(), APP_VLAN_TABLE_NAME).set("Vlan100", fvs);
+            consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME)->addToSync(
+                deque<KeyOpFieldsValuesTuple>{{"Vlan100", SET_COMMAND, fvs}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+        }
+
+        // What orchagent saw in evpn test_l2_config's parent-first case on hardware: the VLAN DEL arrives before the
+        // map DEL and is held, the map's DEL and re-add reach orchagent merged into one SET (so the map is never
+        // removed), the tunnel is re-added the same way, and the VLAN is re-created. The case's teardown then deletes
+        // the map, which must not take the re-created VLAN with it.
+        void parentFirstDeleteMergedWithRecreate()
+        {
+            nvoDel();
+            vlanDel();
+            ASSERT_TRUE(vlanHeld());
+
+            tunnelSet("10.1.1.1");
+            nvoSet();
+            mapSet();
+            vlanSet();
+            EXPECT_FALSE(vlanHeld());
+            Port vlanPort;
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, 1000U);
+            EXPECT_TRUE(vtep()->isActive());
+
+            mapDel();
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            EXPECT_FALSE(vlanHeld());
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, VNID_NONE);
+        }
+
+        // A VLAN DEL held for its map is dropped when the VLAN is re-created, so the later map DEL does not take
+        // the re-created VLAN with it.
+        void heldVlanDelDroppedOnRecreate()
+        {
+            vlanDel();
+            ASSERT_TRUE(vlanHeld());
+
+            vlanSet();
+            EXPECT_FALSE(vlanHeld());
+            Port vlanPort;
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, 1000U);
+
+            mapDel();
+            EXPECT_FALSE(mapHeld());
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, VNID_NONE);
+        }
+
+        // A VNI change adds the VLAN's new map before the old one goes; the VLAN keeps the new map's VNI.
+        void vniChangeKeepsTheNewVni()
+        {
+            const string newKey = "vtep1:map_2000_Vlan100";
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME,
+                  {newKey, SET_COMMAND, {{"vni", "2000"}, {"vlan", "Vlan100"}}});
+            mapDel();
+            Port vlanPort;
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, 2000U);
+
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, {newKey, DEL_COMMAND, {}});
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, VNID_NONE);
+        }
+
+        // A VNI change reverted before orchagent catches up deletes the newer map first; the VLAN keeps the
+        // older map's VNI, so its DEL still waits for that map.
+        void newestMapDeletedFirstKeepsTheOldVni()
+        {
+            const string newKey = "vtep1:map_2000_Vlan100";
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME,
+                  {newKey, SET_COMMAND, {{"vni", "2000"}, {"vlan", "Vlan100"}}});
+            Port vlanPort;
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            ASSERT_EQ(vlanPort.m_vnid, 2000U);
+
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME, {newKey, DEL_COMMAND, {}});
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, 1000U);
+            vlanDel();
+            EXPECT_TRUE(vlanHeld());
+
+            mapDel();
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, VNID_NONE);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            EXPECT_FALSE(vlanHeld());
+            EXPECT_FALSE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+        }
+
+        // Writes the APPL_DB row as the consumer's pop does and queues the entry, without processing it.
+        void queue(Orch *orch, const string &table, const KeyOpFieldsValuesTuple &kfv)
+        {
+            Table t(m_app_db.get(), table);
+            if (kfvOp(kfv) == DEL_COMMAND)
+            {
+                t.del(kfvKey(kfv));
+            }
+            else
+            {
+                t.set(kfvKey(kfv), kfvFieldsValues(kfv));
+            }
+            consumerOf(orch, table)->addToSync(deque<KeyOpFieldsValuesTuple>{kfv});
+        }
+
+        const KeyOpFieldsValuesTuple m_vlan200Set = {
+            "Vlan200", SET_COMMAND, {{"admin_status", "up"}, {"mtu", "9100"}, {"host_ifname", "Vlan200"}}};
+
+        // Vlan200 with a host interface, in STP instance 1 with Ethernet0 forwarding.
+        void addStpVlan200()
+        {
+            vector<string> stpTables = {APP_STP_VLAN_INSTANCE_TABLE_NAME, APP_STP_PORT_STATE_TABLE_NAME};
+            m_stpOrch = new StpOrch(m_app_db.get(), m_state_db.get(), stpTables);
+            gStpOrch = m_stpOrch;
+            // The VS SAI has no SAI_SWITCH_ATTR_MAX_STP_INSTANCE, so StpOrch's combined get leaves the default unset.
+            sai_attribute_t stpAttr;
+            stpAttr.id = SAI_SWITCH_ATTR_DEFAULT_STP_INST_ID;
+            ASSERT_EQ(sai_switch_api->get_switch_attribute(gSwitchId, 1, &stpAttr), SAI_STATUS_SUCCESS);
+            m_stpOrch->m_defaultStpId = stpAttr.value.oid;
+            g_vlanHostifCreates = 0;
+            g_vlanHostifRemoves = 0;
+            g_savedCreateHostif = sai_hostif_api->create_hostif;
+            sai_hostif_api->create_hostif = stubCreateVlanHostif;
+            g_savedRemoveHostif = sai_hostif_api->remove_hostif;
+            sai_hostif_api->remove_hostif = stubRemoveVlanHostif;
+
+            apply(gPortsOrch, APP_VLAN_TABLE_NAME, m_vlan200Set);
+            apply(gStpOrch, APP_STP_VLAN_INSTANCE_TABLE_NAME, {"Vlan200", SET_COMMAND, {{"stp_instance", "1"}}});
+            apply(gStpOrch, APP_STP_PORT_STATE_TABLE_NAME, {"Ethernet0:1", SET_COMMAND, {{"state", "4"}}});
+            Port vlan, port;
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            ASSERT_EQ(vlan.m_vlan_info.host_intf_id, g_vlanHostifId);
+            ASSERT_EQ(vlan.m_stp_id, 1);
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+            ASSERT_EQ(port.m_stp_port_ids.count(1), 1u);
+        }
+
+        // The SAI VLAN remove fails after the VLAN's host interface and STP membership are gone. A VLAN-VNI map
+        // and a router interface then attach to the VLAN, and the VLAN and a member are configured again. The
+        // retried DEL is stale: the VLAN stays with the map, the router interface and the member, and gets its
+        // host interface and STP state back.
+        void partlyRemovedVlanKeptOnRecreate()
+        {
+            ASSERT_NO_FATAL_FAILURE(addStpVlan200());
+            Port vlan, port;
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            const sai_object_id_t vlan_oid = vlan.m_vlan_info.vlan_oid;
+
+            g_vlanRemoveFailures = 1;
+            g_savedRemoveVlan = sai_vlan_api->remove_vlan;
+            sai_vlan_api->remove_vlan = stubRemoveVlanFailsFirst;
+            auto *vlanConsumer = consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME);
+            apply(gPortsOrch, APP_VLAN_TABLE_NAME, {"Vlan200", DEL_COMMAND, {}});
+            EXPECT_EQ(vlanConsumer->m_toSync.size(), 1u);
+            EXPECT_EQ(g_vlanHostifRemoves, 1);
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            EXPECT_EQ(vlan.m_vlan_info.host_intf_id, SAI_NULL_OBJECT_ID);
+            EXPECT_EQ(vlan.m_stp_id, -1);
+
+            apply(m_tunnelMapOrch, APP_VXLAN_TUNNEL_MAP_TABLE_NAME,
+                  {"vtep1:map_2000_Vlan200", SET_COMMAND, {{"vni", "2000"}, {"vlan", "Vlan200"}}});
+            apply(gIntfsOrch, APP_INTF_TABLE_NAME, {"Vlan200", SET_COMMAND, {{"mtu", "9100"}}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            EXPECT_EQ(vlanConsumer->m_toSync.size(), 1u);
+
+            queue(gPortsOrch, APP_VLAN_TABLE_NAME, m_vlan200Set);
+            queue(gPortsOrch, APP_VLAN_MEMBER_TABLE_NAME,
+                  {"Vlan200:Ethernet0", SET_COMMAND, {{"tagging_mode", "untagged"}}});
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            static_cast<Orch *>(gStpOrch)->doTask();
+            EXPECT_TRUE(vlanConsumer->m_toSync.empty());
+            EXPECT_TRUE(consumerOf(gPortsOrch, APP_VLAN_MEMBER_TABLE_NAME)->m_toSync.empty());
+            EXPECT_TRUE(consumerOf(gStpOrch, APP_STP_VLAN_INSTANCE_TABLE_NAME)->m_toSync.empty());
+            EXPECT_TRUE(consumerOf(gStpOrch, APP_STP_PORT_STATE_TABLE_NAME)->m_toSync.empty());
+
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            EXPECT_EQ(vlan.m_vlan_info.vlan_oid, vlan_oid);
+            EXPECT_EQ(vlan.m_vnid, 2000U);
+            EXPECT_NE(vlan.m_rif_id, SAI_NULL_OBJECT_ID);
+            EXPECT_EQ(vlan.m_members.count("Ethernet0"), 1u);
+            EXPECT_EQ(vlan.m_vlan_info.host_intf_id, g_vlanHostifId);
+            EXPECT_EQ(g_vlanHostifCreates, 2);
+            EXPECT_EQ(vlan.m_stp_id, 1);
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+            EXPECT_EQ(port.m_stp_port_ids.count(1), 1u);
+            EXPECT_TRUE(gPortsOrch->m_partlyRemovedVlans.empty());
+
+            // stpd sends the instance and port state again for the re-created VLAN: nothing changes.
+            const sai_object_id_t stp_oid = m_stpOrch->getStpInstanceOid(1);
+            const sai_object_id_t stp_port_oid = port.m_stp_port_ids.at(1);
+            apply(gStpOrch, APP_STP_VLAN_INSTANCE_TABLE_NAME, {"Vlan200", SET_COMMAND, {{"stp_instance", "1"}}});
+            apply(gStpOrch, APP_STP_PORT_STATE_TABLE_NAME, {"Ethernet0:1", SET_COMMAND, {{"state", "4"}}});
+            EXPECT_TRUE(consumerOf(gStpOrch, APP_STP_VLAN_INSTANCE_TABLE_NAME)->m_toSync.empty());
+            EXPECT_TRUE(consumerOf(gStpOrch, APP_STP_PORT_STATE_TABLE_NAME)->m_toSync.empty());
+            EXPECT_EQ(m_stpOrch->getStpInstanceOid(1), stp_oid);
+            EXPECT_EQ(m_stpOrch->m_stpInstToOid.size(), 1u);
+            EXPECT_EQ(m_stpOrch->m_vlanAliasToStpInstanceMap.at(1).stp_inst_vlan_list, set<string>{"Vlan200"});
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            EXPECT_EQ(vlan.m_stp_id, 1);
+            sai_attribute_t attr;
+            attr.id = SAI_VLAN_ATTR_STP_INSTANCE;
+            ASSERT_EQ(sai_vlan_api->get_vlan_attribute(vlan.m_vlan_info.vlan_oid, 1, &attr), SAI_STATUS_SUCCESS);
+            EXPECT_EQ(attr.value.oid, stp_oid);
+            ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+            EXPECT_EQ(port.m_stp_port_ids.size(), 1u);
+            EXPECT_EQ(port.m_stp_port_ids.at(1), stp_port_oid);
+        }
+
+        // The SAI VLAN remove fails once after the VLAN left its STP instance, and the retried DEL removes it.
+        // Nothing stays marked partly removed, so a stale DEL of the VLAN configured again restores no STP state.
+        void partlyRemovedVlanGoneOnRetry()
+        {
+            ASSERT_NO_FATAL_FAILURE(addStpVlan200());
+            g_vlanRemoveFailures = 1;
+            g_savedRemoveVlan = sai_vlan_api->remove_vlan;
+            sai_vlan_api->remove_vlan = stubRemoveVlanFailsFirst;
+            auto *vlanConsumer = consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME);
+            apply(gPortsOrch, APP_VLAN_TABLE_NAME, {"Vlan200", DEL_COMMAND, {}});
+            ASSERT_EQ(vlanConsumer->m_toSync.size(), 1u);
+            ASSERT_EQ(gPortsOrch->m_partlyRemovedVlans.count("Vlan200"), 1u);
+
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            EXPECT_TRUE(vlanConsumer->m_toSync.empty());
+            Port vlan;
+            EXPECT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
+            EXPECT_TRUE(gPortsOrch->m_partlyRemovedVlans.empty());
+
+            apply(gPortsOrch, APP_VLAN_TABLE_NAME, m_vlan200Set);
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            EXPECT_EQ(vlan.m_stp_id, -1);
+            queue(gPortsOrch, APP_VLAN_TABLE_NAME, {"Vlan200", DEL_COMMAND, {}});
+            queue(gPortsOrch, APP_VLAN_TABLE_NAME, m_vlan200Set);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            EXPECT_TRUE(vlanConsumer->m_toSync.empty());
+            EXPECT_TRUE(consumerOf(gStpOrch, APP_STP_VLAN_INSTANCE_TABLE_NAME)->m_toSync.empty());
+            EXPECT_TRUE(consumerOf(gStpOrch, APP_STP_PORT_STATE_TABLE_NAME)->m_toSync.empty());
+            ASSERT_TRUE(gPortsOrch->getPort("Vlan200", vlan));
+            EXPECT_EQ(vlan.m_stp_id, -1);
+        }
+
+        // The VLAN DEL waits for the VLAN's map; the map DEL then releases the tunnel with the VLAN still there.
+        void vlanDelWaitsForMap()
+        {
+            nvoDel();
+            const sai_object_id_t tunnel_id = vtep()->getTunnelId();
+            tunnelDel();
+            ASSERT_TRUE(tunnelHeld());
+
+            vlanDel();
+            EXPECT_TRUE(vlanHeld());
+            Port vlanPort;
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, 1000U);
+
+            mapDel();
+            EXPECT_FALSE(mapHeld());
+            EXPECT_FALSE(vtep()->isActive());
+            EXPECT_FALSE(saiTunnelExists(tunnel_id));
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            EXPECT_EQ(vlanPort.m_vnid, VNID_NONE);
+
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            EXPECT_FALSE(vlanHeld());
+            EXPECT_FALSE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            retryTunnel();
+            EXPECT_FALSE(m_VxlanTunnelOrch->isTunnelExists("vtep1"));
+            EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
+        }
+
         // The VLAN DEL can also come before the map DEL: the map DEL still removes the tunnel hw, so the held
         // tunnel DEL then goes.
         void vlanGoneBeforeMapDel()
@@ -2508,11 +2849,12 @@ namespace vxlanorch_test
             tunnelDel();
             ASSERT_TRUE(tunnelHeld());
 
-            Table(m_app_db.get(), APP_VLAN_TABLE_NAME).del("Vlan100");
-            consumerOf(gPortsOrch, APP_VLAN_TABLE_NAME)->addToSync(
-                deque<KeyOpFieldsValuesTuple>{{"Vlan100", DEL_COMMAND, {}}});
-            static_cast<Orch *>(gPortsOrch)->doTask();
+            // The map holds the VLAN; drop that hold to remove the VLAN first.
             Port vlanPort;
+            ASSERT_TRUE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+            vlanPort.m_vnid = VNID_NONE;
+            gPortsOrch->setPort(vlanPort.m_alias, vlanPort);
+            vlanDel();
             ASSERT_FALSE(gPortsOrch->getVlanByVlanId(100, vlanPort));
 
             mapDel();
@@ -2741,6 +3083,20 @@ namespace vxlanorch_test
     TEST_F(EvpnNvoDelP2mpTest, TunnelDeleteHeldForMapsDroppedOnRecreate) { heldForMapsDroppedOnRecreate(); }
     TEST_F(EvpnNvoDelTest, VlanRemovedBeforeMapDelStillReleasesTheTunnel) { vlanGoneBeforeMapDel(); }
     TEST_F(EvpnNvoDelP2mpTest, VlanRemovedBeforeMapDelStillReleasesTheTunnel) { vlanGoneBeforeMapDel(); }
+    TEST_F(EvpnNvoDelTest, VlanDelWaitsForItsMap) { vlanDelWaitsForMap(); }
+    TEST_F(EvpnNvoDelP2mpTest, VlanDelWaitsForItsMap) { vlanDelWaitsForMap(); }
+    TEST_F(EvpnNvoDelTest, HeldVlanDelDroppedOnRecreate) { heldVlanDelDroppedOnRecreate(); }
+    TEST_F(EvpnNvoDelP2mpTest, HeldVlanDelDroppedOnRecreate) { heldVlanDelDroppedOnRecreate(); }
+    TEST_F(EvpnNvoDelTest, ParentFirstDeleteMergedWithRecreate) { parentFirstDeleteMergedWithRecreate(); }
+    TEST_F(EvpnNvoDelP2mpTest, ParentFirstDeleteMergedWithRecreate) { parentFirstDeleteMergedWithRecreate(); }
+    TEST_F(EvpnNvoDelTest, VniChangeKeepsTheNewVni) { vniChangeKeepsTheNewVni(); }
+    TEST_F(EvpnNvoDelP2mpTest, VniChangeKeepsTheNewVni) { vniChangeKeepsTheNewVni(); }
+    TEST_F(EvpnNvoDelTest, NewestMapDeletedFirstKeepsTheOldVni) { newestMapDeletedFirstKeepsTheOldVni(); }
+    TEST_F(EvpnNvoDelP2mpTest, NewestMapDeletedFirstKeepsTheOldVni) { newestMapDeletedFirstKeepsTheOldVni(); }
+    TEST_F(EvpnNvoDelTest, PartlyRemovedVlanKeptOnRecreate) { partlyRemovedVlanKeptOnRecreate(); }
+    TEST_F(EvpnNvoDelP2mpTest, PartlyRemovedVlanKeptOnRecreate) { partlyRemovedVlanKeptOnRecreate(); }
+    TEST_F(EvpnNvoDelTest, PartlyRemovedVlanGoneOnRetry) { partlyRemovedVlanGoneOnRetry(); }
+    TEST_F(EvpnNvoDelP2mpTest, PartlyRemovedVlanGoneOnRetry) { partlyRemovedVlanGoneOnRetry(); }
     TEST_F(EvpnNvoDelTest, MergedMapSetReattachesToTheNewTunnel) { mergedMapSetReattachesToTheNewTunnel(true); }
     TEST_F(EvpnNvoDelP2mpTest, MergedMapSetReattachesToTheNewTunnel) { mergedMapSetReattachesToTheNewTunnel(true); }
     TEST_F(EvpnNvoDelTest, MergedMapSetBeforeTunnelSetReattaches) { mergedMapSetReattachesToTheNewTunnel(false); }

@@ -808,6 +808,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
+    m_appVlanTable = unique_ptr<Table>(new Table(db, APP_VLAN_TABLE_NAME));
     m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
     m_systemPortTable = unique_ptr<Table>(new Table(db, APP_SYSTEM_PORT_TABLE_NAME));
 
@@ -5970,7 +5971,8 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                         gIntfsOrch->setRouterIntfsMac(vl);
                     }
                 }
-                if (!hostif_name.empty())
+                // A VLAN whose stale DEL was dropped can still have its host interface.
+                if (!hostif_name.empty() && vl.m_vlan_info.host_intf_id == SAI_NULL_OBJECT_ID)
                 {
                     if (!createVlanHostIntf(vl, hostif_name))
                     {
@@ -5990,6 +5992,20 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             if (!getPort(vlan_alias, vlan))
             {
                 SWSS_LOG_WARN("VLAN %s not found in m_portList, skipping removal (likely never created)", vlan_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            // Popping a DEL removes the APPL_DB row, so a row means a later SET wants the VLAN again: this DEL
+            // is stale. The SET re-creates the host interface an earlier attempt removed.
+            vector<FieldValueTuple> row;
+            if (m_appVlanTable->get(key, row))
+            {
+                SWSS_LOG_NOTICE("VLAN %s was re-created, stale delete dropped", vlan_alias.c_str());
+                if (m_partlyRemovedVlans.erase(vlan_alias) && gStpOrch)
+                {
+                    gStpOrch->restoreVlan(vlan_alias);
+                }
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -7692,22 +7708,28 @@ bool PortsOrch::removeVlan(Port vlan)
     // Fail VLAN removal if there is a vnid associated
     if (vlan.m_vnid != VNID_NONE)
     {
-       SWSS_LOG_ERROR("VLAN-VNI mapping not yet removed. VLAN %s VNI %d",
-                      vlan.m_alias.c_str(), vlan.m_vnid);
+       SWSS_LOG_WARN("VLAN-VNI mapping not yet removed. VLAN %s VNI %d",
+                     vlan.m_alias.c_str(), vlan.m_vnid);
        return false;
     }
 
 
-    if (vlan.m_vlan_info.host_intf_id && !removeVlanHostIntf(vlan))
+    if (vlan.m_vlan_info.host_intf_id)
     {
-        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
-        return false;
+        if (!removeVlanHostIntf(vlan))
+        {
+            SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
+            return false;
+        }
+        // A retry after a failed VLAN remove below must not remove the host interface again.
+        m_portList[vlan.m_alias].m_vlan_info.host_intf_id = SAI_NULL_OBJECT_ID;
     }
 
     /* If STP instance is associated with VLAN remove VLAN from STP before deletion */
     if(vlan.m_stp_id != -1)
     {
         gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
+        m_partlyRemovedVlans.insert(vlan.m_alias);
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
@@ -7718,10 +7740,16 @@ bool PortsOrch::removeVlan(Port vlan)
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_VLAN, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            if (parseHandleSaiStatusFailure(handle_status))
+            {
+                m_partlyRemovedVlans.erase(vlan.m_alias);
+                return true;
+            }
+            return false;
         }
     }
 
+    m_partlyRemovedVlans.erase(vlan.m_alias);
     removeAclTableGroup(vlan);
 
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),

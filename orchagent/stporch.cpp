@@ -24,6 +24,8 @@ StpOrch::StpOrch(DBConnector * db, DBConnector * stateDb, vector<string> &tableN
     bool ret = false;
 
     m_stpTable = unique_ptr<Table>(new Table(stateDb, STATE_STP_TABLE_NAME));
+    m_appStpVlanTable = unique_ptr<Table>(new Table(db, APP_STP_VLAN_INSTANCE_TABLE_NAME));
+    m_appStpPortStateTable = unique_ptr<Table>(new Table(db, APP_STP_PORT_STATE_TABLE_NAME));
 
     vector<sai_attribute_t> attrs;
     attr.id = SAI_SWITCH_ATTR_DEFAULT_STP_INST_ID;
@@ -201,6 +203,47 @@ bool StpOrch::removeVlanFromStpInstance(string vlan_alias, sai_uint16_t stp_inst
     vlan.m_stp_id = -1;
     gPortsOrch->setPort(vlan_alias, vlan);
     return true;
+}
+
+void StpOrch::restoreVlan(const string &vlan_alias)
+{
+    SWSS_LOG_ENTER();
+
+    string instance;
+    vector<FieldValueTuple> fvs;
+    if (!m_appStpVlanTable->hget(vlan_alias, "stp_instance", instance) || !m_appStpVlanTable->get(vlan_alias, fvs))
+    {
+        return;
+    }
+
+    // Queued like stpd's own SETs, so a failed step is retried as usual.
+    std::deque<KeyOpFieldsValuesTuple> portStates;
+    vector<string> keys;
+    m_appStpPortStateTable->getKeys(keys);
+    for (const auto &key : keys)
+    {
+        size_t found = key.find(':');
+        if (found == string::npos || key.substr(found + 1) != instance)
+        {
+            continue;
+        }
+        vector<FieldValueTuple> state;
+        if (m_appStpPortStateTable->get(key, state))
+        {
+            portStates.emplace_back(key, SET_COMMAND, state);
+        }
+    }
+
+    auto vlanConsumer = dynamic_cast<Consumer *>(getExecutor(APP_STP_VLAN_INSTANCE_TABLE_NAME));
+    auto stateConsumer = dynamic_cast<Consumer *>(getExecutor(APP_STP_PORT_STATE_TABLE_NAME));
+    if (!vlanConsumer || !stateConsumer)
+    {
+        return;
+    }
+    vlanConsumer->addToSync(std::deque<KeyOpFieldsValuesTuple>{{vlan_alias, SET_COMMAND, fvs}});
+    stateConsumer->addToSync(portStates);
+    SWSS_LOG_NOTICE("Restore VLAN %s to STP instance %s with %zu port states", vlan_alias.c_str(), instance.c_str(),
+                    portStates.size());
 }
 
 /* If STP Port exists return else create a new STP Port */

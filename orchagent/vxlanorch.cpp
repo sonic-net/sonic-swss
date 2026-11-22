@@ -2437,8 +2437,6 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    tempPort.m_vnid = (uint32_t) vni_id;
-
     auto tunnel_name = request.getKeyString(0);
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (!tunnel_orch->isTunnelExists(tunnel_name))
@@ -2526,6 +2524,14 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
 
     tunnel_orch->addVlanMappedToVni(vni_id, vlan_id);
 
+    // Recorded on the VLAN in PortsOrch, so the VLAN is not removed before this map.
+    Port vlanPort;
+    if (gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
+    {
+        vlanPort.m_vnid = (uint32_t) vni_id;
+        gPortsOrch->setPort(vlanPort.m_alias, vlanPort);
+    }
+
     SWSS_LOG_NOTICE("Vxlan tunnel map entry '%s' for tunnel '%s' was created",
                    tunnel_map_entry_name.c_str(), tunnel_name.c_str());
 
@@ -2561,13 +2567,32 @@ bool VxlanTunnelMapOrch::removeMap(const std::string& tunnel_name, const std::st
     }
 
     auto vlan_id = (sai_vlan_id_t) vxlan_tunnel_map_table_[full_tunnel_map_entry_name].vlan_id;
-    if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
+    if (gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
+    {
+        // A VNI change can leave another map of this VLAN (either one deleted first): the VLAN takes its VNI.
+        uint32_t vnid = (uint32_t) VNID_NONE;
+        for (const auto &map : vxlan_tunnel_map_table_)
+        {
+            if (map.second.vlan_id == vlan_id && map.first != full_tunnel_map_entry_name)
+            {
+                vnid = map.second.vni_id;
+                if (vnid == vlanPort.m_vnid)
+                {
+                    break;
+                }
+            }
+        }
+        if (vlanPort.m_vnid != vnid)
+        {
+            vlanPort.m_vnid = vnid;
+            gPortsOrch->setPort(vlanPort.m_alias, vlanPort);
+        }
+    }
+    else
     {
         // The VLAN can be removed first: the map entry, the tunnel's map count and its hw still go.
         SWSS_LOG_NOTICE("Delete VLAN-VNI map: vlan id %d is already removed", vlan_id);
     }
-
-    vlanPort.m_vnid = (uint32_t) VNID_NONE;
 
     auto tunnel_map_entry_id = vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_entry_id;
     try
