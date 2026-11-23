@@ -62,7 +62,7 @@ int main(int argc, char **argv)
             CFG_PORT_TABLE_NAME,
         };
 
-        MACsecMgr macsecmgr(&cfgDb, &appDb, &stateDb, cfg_macsec_tables);
+        MACsecMgr macsecmgr(&cfgDb, &appDb, &stateDb, cfg_macsec_tables, &shutdown_requested);
 
         std::vector<Orch *> cfgOrchList = {&macsecmgr};
 

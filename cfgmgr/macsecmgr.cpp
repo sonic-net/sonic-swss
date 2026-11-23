@@ -446,11 +446,13 @@ MACsecMgr::MACsecMgr(
     DBConnector *cfgDb,
     DBConnector *appDb,
     DBConnector *stateDb,
-    const vector<std::string> &tables) :
+    const vector<std::string> &tables,
+    const volatile sig_atomic_t *shutdownRequested) :
         Orch(cfgDb, tables),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateMkaSessionTable(stateDb, STATE_MACSEC_MKA_SESSION_TABLE_NAME),
         m_stateMkaParticipantTable(stateDb, STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME),
+        m_shutdownRequested(shutdownRequested),
         m_clearStaleTimeoutMs(CLEAR_STALE_TIMEOUT_MS),
         m_sockDir(SOCK_DIR),
         m_stopStaleTimeoutMs(STOP_STALE_TIMEOUT_MS)
@@ -512,6 +514,11 @@ void MACsecMgr::doTask()
     Orch::doTask();
 }
 
+bool MACsecMgr::isShutdownRequested() const
+{
+    return m_shutdownRequested != nullptr && *m_shutdownRequested != 0;
+}
+
 void MACsecMgr::doTask(SelectableTimer &timer)
 {
     if (&timer != m_mkaStatusTimer)
@@ -527,6 +534,10 @@ void MACsecMgr::sweepMKAStatus()
 {
     for (auto &port : m_macsec_ports)
     {
+        if (isShutdownRequested())
+        {
+            break;
+        }
         port.second.query_failure = MKAQueryFailure::None;
         const auto desired = m_profiles.find(port.second.profile_name);
         if (desired != m_profiles.end() &&
@@ -536,7 +547,8 @@ void MACsecMgr::sweepMKAStatus()
             // A failed verification must not trigger another query in this sweep.
             if (!reconcilePort(port.first, port.second, desired->second) &&
                 port.second.pending_old_ckn.empty() &&
-                port.second.query_failure == MKAQueryFailure::None)
+                port.second.query_failure == MKAQueryFailure::None &&
+                !isShutdownRequested())
             {
                 collectMKAStatus(port.first, port.second, nullptr, MKAQueryPurpose::Background);
             }
@@ -570,7 +582,7 @@ void MACsecMgr::doTask(Consumer &consumer)
 
     const std::string & table_name = consumer.getTableName();
     auto itr = consumer.m_toSync.begin();
-    while (itr != consumer.m_toSync.end())
+    while (itr != consumer.m_toSync.end() && !isShutdownRequested())
     {
         task_process_status task_done = task_failed;
         auto & message = itr->second;
@@ -702,15 +714,13 @@ task_process_status MACsecMgr::loadProfile(
             return task_success;
         }
 
-        // Accept desired state; the timer owns retries for deferred runtime.
+        // Accept desired state; the timer owns initial reconciliation and retries.
         existing->second = desired;
         for (auto &port : m_macsec_ports)
         {
-            if (port.second.profile_name == profile_name &&
-                (!sameProfile(port.second.applied_profile, desired) ||
-                 !port.second.pending_old_ckn.empty()))
+            if (port.second.profile_name == profile_name)
             {
-                reconcilePort(port.first, port.second, desired);
+                setConfigState(port.first, port.second, "desired profile is not applied");
             }
         }
 
@@ -1769,7 +1779,8 @@ bool MACsecMgr::reconcilePort(
     // A superseded pending target may need a bridge before the two final roles.
     for (size_t step = 0; step < 3; ++step)
     {
-        if (!reconcileParticipant(port_name, session, desired))
+        // Finish an issued role's bookkeeping and observations before stopping.
+        if (isShutdownRequested() || !reconcileParticipant(port_name, session, desired))
         {
             return false;
         }
@@ -1789,6 +1800,10 @@ bool MACsecMgr::reconcileObservedParticipants(
 {
     for (const auto &participant : status.participants)
     {
+        if (isShutdownRequested())
+        {
+            return false;
+        }
         const auto &expected = participant.isPrimary ?
             desired.primary_ckn : desired.fallback_ckn;
         if (participant.ckn != expected)
@@ -1822,6 +1837,10 @@ bool MACsecMgr::reconcileObservedParticipants(
 
     for (const bool primary : {true, false})
     {
+        if (isShutdownRequested())
+        {
+            return false;
+        }
         const auto &ckn = primary ? desired.primary_ckn : desired.fallback_ckn;
         if (ckn.empty())
         {
@@ -1845,6 +1864,11 @@ bool MACsecMgr::reconcileObservedParticipants(
         if (!addParticipant(port_name, session, desired, primary))
         {
             setConfigState(port_name, session, "failed to add missing participant");
+            return false;
+        }
+        if (isShutdownRequested())
+        {
+            collectMKAStatus(port_name, session);
             return false;
         }
     }

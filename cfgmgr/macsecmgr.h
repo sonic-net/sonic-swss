@@ -14,6 +14,7 @@
 #include <sstream>
 
 #include <sys/types.h>
+#include <signal.h>
 
 #include "macsecmkastatus.h"
 
@@ -31,7 +32,9 @@ class MACsecMgr : public Orch
 {
 public:
     using Orch::doTask;
-    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
+              const std::vector<std::string> &tableNames,
+              const volatile sig_atomic_t *shutdownRequested = nullptr);
     ~MACsecMgr();
     void doTask();
 private:
@@ -109,6 +112,8 @@ private:
     Table m_stateMkaSessionTable;
     Table m_stateMkaParticipantTable;
     SelectableTimer *m_mkaStatusTimer = nullptr;
+    const volatile sig_atomic_t *m_shutdownRequested;
+    bool isShutdownRequested() const;
 
     // APPL_DB MACsec tables, written by wpa_supplicant's macsec_sonic driver
     // and consumed by orchagent. macsecmgrd only touches them to remove what
