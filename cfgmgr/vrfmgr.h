@@ -48,7 +48,7 @@ private:
     std::string m_evpnVxlanNvo;
     VRFNameVNIMapTable m_vrfVniMapTable;
 
-    Table m_stateVrfTable, m_stateVrfObjectTable, m_cfgVrfTable;
+    Table m_stateVrfTable, m_stateVrfObjectTable, m_cfgVrfTable, m_appEvpnNvoTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appVxlanVrfTableProducer;
 };
 

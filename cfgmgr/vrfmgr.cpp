@@ -52,7 +52,8 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_appVxlanVrfTableProducer(appDb, APP_VXLAN_VRF_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME),
-        m_cfgVrfTable(cfgDb, CFG_VRF_TABLE_NAME)
+        m_cfgVrfTable(cfgDb, CFG_VRF_TABLE_NAME),
+        m_appEvpnNvoTable(appDb, APP_VXLAN_EVPN_NVO_TABLE_NAME)
 {
     for (uint32_t i = VRF_TABLE_START; i < VRF_TABLE_END; i++)
     {
@@ -566,6 +567,23 @@ bool VrfMgr::doVrfEvpnNvoDelTask(const KeyOpFieldsValuesTuple & t)
         SWSS_LOG_INFO("Ignoring deletion of inactive EVPN NVO %s; active NVO is %s",
                       nvo_name.c_str(), m_evpnVxlanNvo.c_str());
         return true;
+    }
+
+    string app_nvo_name = nvo_name;
+    replace(app_nvo_name.begin(), app_nvo_name.end(), config_db_key_delimiter, delimiter);
+
+    vector<FieldValueTuple> accepted_nvo;
+    if (m_appEvpnNvoTable.get(app_nvo_name, accepted_nvo))
+    {
+        /*
+         * vxlanmgrd owns NVO acceptance and retains its APP_DB entry while
+         * dependent VXLAN maps still exist.  Keep the active CONFIG_DB delete
+         * pending so derived named- and default-VRF mappings remain aligned
+         * with the NVO lifecycle accepted by that owner.
+         */
+        SWSS_LOG_INFO("EVPN NVO %s deletion pending while accepted APP_DB state remains",
+                      nvo_name.c_str());
+        return false;
     }
 
     const string tunnel_name = m_evpnVxlanTunnel;
