@@ -993,7 +993,7 @@ TEST_F(VrfOrchTest, VxlanVrfMapReaddRecreatesAfterCompletedDeletion)
     EXPECT_EQ(tunnel->vlan_vrf_vni_count, 1u);
 }
 
-TEST_F(VrfOrchTest, LastVrfMapDeleteFailureRetainsTunnelCleanupOwnership)
+TEST_F(VrfOrchTest, LastVrfMapDeleteRetriesFailedTunnelCleanup)
 {
     provisionEvpnVtep();
     addVrf("default");
@@ -1018,7 +1018,10 @@ TEST_F(VrfOrchTest, LastVrfMapDeleteFailureRetainsTunnelCleanupOwnership)
     ASSERT_EQ(tunnel->vlan_vrf_vni_count, 1u);
 
     EXPECT_CALL(m_tunnel_mock, remove_tunnel(_))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
+        .WillOnce(Return(SAI_STATUS_FAILURE))
+        .WillRepeatedly(Invoke([this](sai_object_id_t tunnel_id) {
+            return m_saved_remove_tunnel(tunnel_id);
+        }));
 
     consumer->addToSync({{map_key, "DEL", {}}});
     static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
@@ -1028,6 +1031,54 @@ TEST_F(VrfOrchTest, LastVrfMapDeleteFailureRetainsTunnelCleanupOwnership)
     // remaining hardware cleanup.
     EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
     EXPECT_TRUE(tunnel->del_tnl_hw_pending);
+    ASSERT_FALSE(consumer->m_toSync.empty());
+
+    // The retained DEL is the persistent owner.  Its next retry must finish
+    // cleanup even though no replacement map or remote-reference event occurs.
+    static_cast<Orch *>(m_vxlan_vrf_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(tunnel->isActive());
+    EXPECT_FALSE(tunnel->del_tnl_hw_pending);
+}
+
+TEST_F(VrfOrchTest, LastL2MapDeleteRetriesFailedTunnelCleanup)
+{
+    provisionEvpnVtep();
+    createVlan("Vlan100");
+
+    auto consumer = vxlanTunnelMapConsumer();
+    ASSERT_NE(consumer, nullptr);
+    auto tunnel = m_VxlanTunnelOrch->getVxlanTunnel("EVPN_2.2.2.2");
+    ASSERT_NE(tunnel, nullptr);
+
+    tunnel->updateRemoteEndPointIpRef("2.2.2.2", false);
+    tunnel->eraseRemoteEndPoint("2.2.2.2");
+    ASSERT_FALSE(tunnel->isTunnelReferenced());
+
+    const string map_key = "EVPN_2.2.2.2:map_5951_l2";
+    addL2VniMap(map_key, "Vlan100", 5951);
+    ASSERT_EQ(tunnel->vlan_vrf_vni_count, 1u);
+
+    EXPECT_CALL(m_tunnel_mock, remove_tunnel(_))
+        .WillOnce(Return(SAI_STATUS_FAILURE))
+        .WillRepeatedly(Invoke([this](sai_object_id_t tunnel_id) {
+            return m_saved_remove_tunnel(tunnel_id);
+        }));
+
+    consumer->addToSync({{map_key, "DEL", {}}});
+    static_cast<Orch *>(m_vxlan_tunnel_map_orch)->doTask();
+
+    EXPECT_FALSE(m_vxlan_tunnel_map_orch->isTunnelMapExists(map_key));
+    EXPECT_EQ(tunnel->vlan_vrf_vni_count, 0u);
+    EXPECT_TRUE(tunnel->del_tnl_hw_pending);
+    ASSERT_FALSE(consumer->m_toSync.empty());
+
+    static_cast<Orch *>(m_vxlan_tunnel_map_orch)->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_FALSE(tunnel->isActive());
+    EXPECT_FALSE(tunnel->del_tnl_hw_pending);
 }
 
 TEST_F(VrfOrchTest, VxlanVrfMapDeleteDoesNotRestoreDeletedL2Map)
