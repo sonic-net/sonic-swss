@@ -16,7 +16,6 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
-#include <memory>
 #include <set>
 
 EXTERN_MOCK_FNS
@@ -3077,24 +3076,23 @@ namespace vnetorch_test
         setupDualStackVnet("Vnet_2000");
         ASSERT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
 
-        // Maps are removed in name order with two map entries each, so the
-        // third remove call is the first one of tunnel_v6.
-        auto calls = std::make_shared<int>(0);
-        ON_CALL(m_tunnelMock, remove_tunnel_map_entry(_))
-            .WillByDefault(Invoke([this, calls](sai_object_id_t id) -> sai_status_t {
-                if (++(*calls) == 3)
-                {
-                    return SAI_STATUS_FAILURE;
-                }
-                m_tun.removedMapEntries.push_back(id);
-                return m_savedRemoveTunnelMapEntry(id);
-            }));
+        // Maps are removed in name order, so tunnel_v4 is unmapped first and
+        // the missing tunnel_v6 fails the delete (SAI remove errors are not
+        // propagated, a missing tunnel is).
+        m_VxlanTunnelOrch->delTunnel("tunnel_v6");
 
         delVnet("Vnet_2000");
 
         EXPECT_TRUE(m_vnetOrch->isVnetExists("Vnet_2000"));
         EXPECT_EQ(m_tun.removedMapEntries.size(), 2U);
         EXPECT_EQ(m_tun.removedTunnels.size(), 1U);
+
+        // The tunnel comes back with its map, then the delete is retried.
+        setVxlanTunnel("tunnel_v6", "fc00::10");
+        auto *vrf = m_vnetOrch->getTypePtr<VNetVrfObject>("Vnet_2000");
+        ASSERT_TRUE(m_VxlanTunnelOrch->createVxlanTunnelMap(
+            "tunnel_v6", TUNNEL_MAP_T_VIRTUAL_ROUTER, vrf->getVni(),
+            vrf->getEncapMapId(), vrf->getDecapMapId(), VXLAN_ENCAP_TTL));
 
         static_cast<Orch *>(m_vnetOrch)->doTask();
 
