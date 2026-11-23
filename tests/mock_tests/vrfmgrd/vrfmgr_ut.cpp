@@ -281,6 +281,59 @@ TEST_F(VrfMgrTest, NvoRemovalWithdrawsPublishedMapping)
     EXPECT_FALSE(app_vxlan_vrf.get(map_key, values));
 }
 
+TEST_F(VrfMgrTest, NvoRemovalWaitsForAcceptedStateForAllVrfs)
+{
+    const string default_map_key = "tunnel0:evpn_map_5000_default";
+    const string named_map_key = "tunnel0:evpn_map_6000_VrfTenant";
+
+    /*
+     * vxlanmgrd owns NVO acceptance and retains the APP_DB NVO while
+     * dependent VXLAN maps still reference it.  The active CONFIG_DB delete
+     * must remain pending until that accepted state disappears, and neither
+     * the default nor a named VRF mapping may be withdrawn prematurely.
+     */
+    Table app_nvo(m_app_db.get(), APP_VXLAN_EVPN_NVO_TABLE_NAME);
+    app_nvo.set("nvo0", {{"source_vtep", "tunnel0"}});
+
+    addNvo("tunnel0");
+    addDefaultVrf("5000");
+    addVrf("VrfTenant", "6000");
+
+    Table app_vxlan_vrf(m_app_db.get(), APP_VXLAN_VRF_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    ASSERT_TRUE(app_vxlan_vrf.get(default_map_key, values));
+    values.clear();
+    ASSERT_TRUE(app_vxlan_vrf.get(named_map_key, values));
+
+    auto consumer = dynamic_cast<Consumer *>(
+        m_vrf_mgr->getExecutor(CFG_VXLAN_EVPN_NVO_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    const KeyOpFieldsValuesTuple delete_nvo = {
+        "nvo0", DEL_COMMAND, vector<FieldValueTuple>{}};
+    consumer->addToSync(delete_nvo);
+
+    testing_db::resetOperationCounters();
+    m_vrf_mgr->doTask();
+
+    ASSERT_FALSE(consumer->m_toSync.empty());
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 0u);
+    values.clear();
+    EXPECT_TRUE(app_vxlan_vrf.get(default_map_key, values));
+    values.clear();
+    EXPECT_TRUE(app_vxlan_vrf.get(named_map_key, values));
+
+    /* Once vxlanmgrd removes the accepted NVO, the pending delete completes. */
+    app_nvo.del("nvo0");
+    m_vrf_mgr->doTask();
+
+    EXPECT_TRUE(consumer->m_toSync.empty());
+    EXPECT_EQ(testing_db::getProducerDelCount(APP_VXLAN_VRF_TABLE_NAME), 2u);
+    values.clear();
+    EXPECT_FALSE(app_vxlan_vrf.get(default_map_key, values));
+    values.clear();
+    EXPECT_FALSE(app_vxlan_vrf.get(named_map_key, values));
+}
+
 TEST_F(VrfMgrTest, InactiveNvoDeletionDoesNotWithdrawActiveNvoMappings)
 {
     const string default_map_key = "tunnel0:evpn_map_5000_default";

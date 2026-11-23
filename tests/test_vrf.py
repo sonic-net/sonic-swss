@@ -1283,8 +1283,8 @@ class TestVrf(object):
         app_db.wait_for_deleted_entry("VXLAN_EVPN_NVO_TABLE", nvo_name)
         vxlan.remove_vxlan_tunnel(dvs, tunnel_name)
 
-    def test_VRFMgr_NvoDeleteUsesBaselineIndependentManagerFlow(self, dvs, testlog):
-        """Withdraw VRF intent without coupling vrfmgrd to vxlanmgrd state."""
+    def test_VRFMgr_NvoDeleteWaitsForAcceptedStateForAllVrfs(self, dvs, testlog):
+        """Keep named and default mappings until vxlanmgrd accepts NVO delete."""
         self.setup_db(dvs)
 
         vxlan = VxlanTunnel()
@@ -1344,18 +1344,26 @@ class TestVrf(object):
 
         vxlan.remove_evpn_nvo(dvs, nvo_name)
 
-        # vxlanmgrd cannot remove its NVO row while the L2 maps retain the
-        # tunnel. vrfmgrd retains the baseline independent flow and withdraws
-        # its named/default VRF-map intent immediately.
+        # vxlanmgrd cannot accept the NVO delete while the two L2 maps retain
+        # the tunnel. vrfmgrd must follow that accepted APP_DB state for every
+        # VRF instead of withdrawing either L3VNI mapping prematurely.
         app_db.wait_for_field_match(
             "VXLAN_EVPN_NVO_TABLE", nvo_name,
             {"source_vtep": tunnel_name})
-        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_vrf_map_key)
-        app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", named_vrf_map_key)
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", default_vrf_map_key,
+            {"vni": default_vni, "vrf": "default"})
+        app_db.wait_for_field_match(
+            "VXLAN_VRF_TABLE", named_vrf_map_key,
+            {"vni": named_vni, "vrf": named_vrf})
+        self.wait_for_vrf_tunnel_map_association(
+            default_vni, default_vr, "19.19.19.19")
+        self.wait_for_vrf_tunnel_map_association(
+            named_vni, named_vr, "19.19.19.19")
 
         # Remove the VRF associations and the references that blocked the NVO
-        # deletion. vxlanmgrd can now complete its independently pending NVO
-        # delete; vrfmgrd has no APP_DB dependency on that completion.
+        # deletion. The pending CONFIG_DB delete must then complete in both
+        # vxlanmgrd and vrfmgrd.
         self.delete_entry_tbl(self.cdb, "VRF", "default")
         self.delete_entry_tbl(self.cdb, "VRF", named_vrf)
         app_db.wait_for_deleted_entry("VXLAN_VRF_TABLE", default_vrf_map_key)
@@ -1367,8 +1375,8 @@ class TestVrf(object):
         app_db.wait_for_deleted_entry("VXLAN_EVPN_NVO_TABLE", nvo_name)
 
         # Recreate the NVO on a different tunnel. Publishing the next mapping
-        # under that tunnel proves vrfmgrd cleared its earlier config-driven
-        # NVO state without waiting on vxlanmgrd.
+        # under that tunnel proves vrfmgrd consumed the deferred delete and
+        # cleared the old accepted NVO state.
         vxlan.create_vxlan_tunnel(
             dvs, replacement_tunnel, "19.19.19.20")
         vxlan.create_evpn_nvo(dvs, nvo_name, replacement_tunnel)
