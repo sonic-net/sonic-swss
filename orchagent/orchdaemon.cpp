@@ -488,7 +488,6 @@ bool OrchDaemon::init()
             APP_SFLOW_SAMPLE_RATE_TABLE_NAME
     };
     SflowOrch *sflow_orch = new SflowOrch(m_applDb,  sflow_tables);
-    gDirectory.set(sflow_orch);
 
     vector<string> debug_counter_tables = {
         CFG_DEBUG_COUNTER_TABLE_NAME,

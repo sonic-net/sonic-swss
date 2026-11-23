@@ -11,11 +11,8 @@
 #include "swssnet.h"
 #include "converter.h"
 #include "mirrororch.h"
-#include "sfloworch.h"
-#include "directory.h"
 #include "tokenize.h"
 #include "warm_restart.h"
-#include "timer.h"
 
 #define MIRROR_SESSION_STATUS               "status"
 #define MIRROR_SESSION_STATUS_ACTIVE        "active"
@@ -37,7 +34,6 @@
 #define MIRROR_SESSION_DIRECTION            "direction"
 #define MIRROR_SESSION_TYPE                 "type"
 #define PORT_MIRROR_SAMPLE_TABLE "PORT_MIRROR_SAMPLE"
-#define PORT_MIRROR_SAMPLE_RETRY_SEC 1
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -59,7 +55,6 @@ extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern string           gMySwitchType;
-extern Directory<Orch*> gDirectory;
 
 using namespace std::rel_ops;
 
@@ -97,19 +92,12 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
         m_switchOrch(switchOrch),
         m_mirrorTable(stateDbConnector.first, stateDbConnector.second),
         m_sampleConfigTable(confDbConnector.first, PORT_MIRROR_SAMPLE_TABLE),
-        m_sflowConfigTable(confDbConnector.first, "SFLOW")
+        m_configDb(*confDbConnector.first)
 {
     sai_status_t status;
     sai_attribute_t attr;
 
-    if (swss::SonicDBConfig::isGlobalInit())
-    {
-        for (const auto& ns : swss::SonicDBConfig::getNamespaces())
-        {
-            if (ns != confDbConnector.first->getNamespace())
-                m_otherConfigDbs.emplace_back(new swss::DBConnector("CONFIG_DB", 1000, false, ns));
-        }
-    }
+    m_samplingMode = configuredSamplingMode();
 
     m_portsOrch->attach(this);
     m_neighOrch->attach(this);
@@ -130,11 +118,6 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
     }
 
     m_isWarmRestoreStage = WarmStart::isWarmStart();
-
-    // Retry sampled bindings that are waiting for a resource or failed SAI programming.
-    auto timer = new SelectableTimer(timespec { .tv_sec = PORT_MIRROR_SAMPLE_RETRY_SEC, .tv_nsec = 0 });
-    Orch::addExecutor(new ExecutableTimer(timer, this, "PORT_MIRROR_SAMPLE_RETRY"));
-    timer->start();
 }
 
 void MirrorOrch::onWarmBootEnd()
@@ -215,6 +198,19 @@ void MirrorOrch::update(SubjectType type, void *cntx)
     {
         FdbUpdate *update = static_cast<FdbUpdate *>(cntx);
         updateFdb(*update);
+        break;
+    }
+    case SUBJECT_TYPE_PORT_CHANGE:
+    {
+        const auto& update = *static_cast<PortUpdate*>(cntx);
+        if (update.add && update.port.m_type == Port::PHY)
+        {
+            for (const auto *direction : {"|rx", "|tx"})
+            {
+                auto it = m_sampleBindings.find(update.port.m_alias + direction);
+                if (it != m_sampleBindings.end()) syncSampleBinding(it->first, it->second);
+            }
+        }
         break;
     }
     case SUBJECT_TYPE_LAG_MEMBER_CHANGE:
@@ -533,29 +529,11 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         return task_process_status::task_invalid_entry;
     }
 
-    if (entry.type != MIRROR_SESSION_ERSPAN || entry.sourceConfigured)
+    if (!entry.isSampleExport() && hasSampleBindingForSession(key))
     {
-        vector<string> bindings;
-        m_sampleConfigTable.getKeys(bindings);
-        for (const auto& binding : bindings)
-        {
-            string referenced;
-            if (m_sampleConfigTable.hget(binding, "mirror_session", referenced) && referenced == key)
-            {
-                if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
-                return task_invalid_entry;
-            }
-        }
-    }
-    for (const auto& binding : m_sampleBindings)
-    {
-        if (binding.second.session == key &&
-            (entry.type != MIRROR_SESSION_ERSPAN || entry.sourceConfigured))
-        {
-            SWSS_LOG_ERROR("Export %s is referenced by a sampled binding", key.c_str());
-            if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
-            return task_invalid_entry;
-        }
+        SWSS_LOG_ERROR("Export %s is referenced by a sampled binding", key.c_str());
+        if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
+        return task_invalid_entry;
     }
 
     // A session restored by warm reboot still owns its HW resources, and the
@@ -599,16 +577,7 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
 
     auto& session = sessionIter->second;
 
-    for (const auto& binding : m_sampleBindings)
-        if (binding.second.session == name) return task_need_retry;
-    vector<string> configuredBindings;
-    m_sampleConfigTable.getKeys(configuredBindings);
-    for (const auto& key : configuredBindings)
-    {
-        string referenced;
-        if (m_sampleConfigTable.hget(key, "mirror_session", referenced) && referenced == name)
-            return task_need_retry;
-    }
+    if (hasSampleBindingForSession(name)) return task_need_retry;
 
     if (session.refCount)
     {
@@ -1195,7 +1164,12 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     for (auto& item : m_sampleBindings)
     {
         if (item.second.session != name) continue;
-        if (!clearSampleBinding(item.first, item.second)) { item.second.cleanupPending = true; return false; }
+        if (!clearSampleBinding(item.first, item.second))
+        {
+            m_sampleRetries.insert(item.first);
+            return false;
+        }
+        m_sampleRetries.erase(item.first);
     }
 
     MirrorSessionUpdate update = { name, false };
@@ -1271,59 +1245,72 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 }
 
 
-bool MirrorOrch::hasSampleBindings()
+bool MirrorOrch::hasSampleBindingForSession(const string& name)
 {
+    for (const auto& binding : m_sampleBindings)
+        if (binding.second.session == name) return true;
+    // CONFIG_DB may already contain bindings that this consumer has not processed.
     vector<string> keys;
     m_sampleConfigTable.getKeys(keys);
-    if (!keys.empty() || !m_sampleBindings.empty()) return true;
-    for (const auto& db : m_otherConfigDbs)
-    {
-        Table table(db.get(), PORT_MIRROR_SAMPLE_TABLE);
-        keys.clear();
-        table.getKeys(keys);
-        if (!keys.empty()) return true;
-    }
+    string referenced;
+    for (const auto& key : keys)
+        if (m_sampleConfigTable.hget(key, "mirror_session", referenced) && referenced == name) return true;
     return false;
 }
 
-bool MirrorOrch::hasSflowGlobal()
+MirrorOrch::SamplingMode MirrorOrch::configuredSamplingMode() const
 {
-    vector<string> keys;
-    m_sflowConfigTable.getKeys(keys);
-    if (std::find(keys.begin(), keys.end(), "global") != keys.end()) return true;
-    for (const auto& db : m_otherConfigDbs)
+    bool sflow = false, mirror = false;
+    auto readConfig = [&](swss::DBConnector& db) {
+        vector<FieldValueTuple> fields;
+        vector<string> keys;
+        sflow |= Table(&db, "SFLOW").get("global", fields);
+        Table(&db, PORT_MIRROR_SAMPLE_TABLE).getKeys(keys);
+        mirror |= !keys.empty();
+    };
+    readConfig(m_configDb);
+    if (swss::SonicDBConfig::isGlobalInit())
     {
-        Table table(db.get(), "SFLOW");
-        keys.clear();
-        table.getKeys(keys);
-        if (std::find(keys.begin(), keys.end(), "global") != keys.end()) return true;
+        for (const auto& ns : swss::SonicDBConfig::getNamespaces())
+        {
+            if (ns == m_configDb.getNamespace()) continue;
+            swss::DBConnector db("CONFIG_DB", 1000, false, ns);
+            readConfig(db);
+        }
     }
-    return false;
+    if (sflow && mirror)
+    {
+        SWSS_LOG_ERROR("Both SFLOW|global and PORT_MIRROR_SAMPLE are configured; remove the conflict and restart orchagent");
+        return SamplingMode::CONFLICT;
+    }
+    if (sflow) return SamplingMode::SFLOW;
+    if (mirror) return SamplingMode::SAMPLED_MIRROR;
+    return SamplingMode::NONE;
 }
 
-task_process_status MirrorOrch::createSampleBinding(const string& key, const vector<FieldValueTuple>& fields)
+bool MirrorOrch::claimSamplingMode(SamplingMode requested)
 {
-    auto existing = m_sampleBindings.find(key);
-    if (existing != m_sampleBindings.end() && existing->second.deleting)
-        return task_need_retry;
-    auto separator = key.find('|');
-    if (separator == string::npos || separator == 0 || key.find('|', separator + 1) != string::npos)
-        return task_invalid_entry;
+    if (m_samplingMode == SamplingMode::NONE)
+    {
+        // Config may have arrived since startup. Do not let replay order decide a conflict.
+        m_samplingMode = configuredSamplingMode();
+        if (m_samplingMode == SamplingMode::NONE) m_samplingMode = requested;
+    }
+    return m_samplingMode == requested;
+}
+
+bool MirrorOrch::claimSflowMode()
+{
+    return claimSamplingMode(SamplingMode::SFLOW);
+}
+
+task_process_status MirrorOrch::setSampleBinding(const string& key, const vector<FieldValueTuple>& fields)
+{
+    const auto existing = m_sampleBindings.find(key);
+    SampleBinding* const current = existing == m_sampleBindings.end() ? nullptr : &existing->second;
+    if (current && current->deleting) return task_need_retry;
+
     SampleBinding binding;
-    binding.port = key.substr(0, separator);
-    auto direction = key.substr(separator + 1);
-    if (direction != "rx" && direction != "tx")
-        return task_invalid_entry;
-    binding.ingress = direction == "rx";
-    bool ratePresent = false;
-    if (existing != m_sampleBindings.end())
-    {
-        binding.session = existing->second.session;
-        binding.rate = existing->second.rate;
-        binding.truncate = existing->second.truncate;
-        binding.enabled = existing->second.enabled;
-        ratePresent = true;
-    }
     try
     {
         for (const auto& field : fields)
@@ -1337,16 +1324,9 @@ task_process_status MirrorOrch::createSampleBinding(const string& key, const vec
                 binding.enabled = value == "up";
             }
             else if (name == "sample_rate")
-            {
-                binding.rate = to_uint<uint32_t>(value);
-                ratePresent = true;
-                if (binding.rate < 2) return task_invalid_entry;
-            }
+                binding.rate = to_uint<uint32_t>(value, 2);
             else if (name == "truncate_size")
-            {
                 binding.truncate = to_uint<uint32_t>(value);
-                if (binding.truncate < 64 || binding.truncate > 9216) return task_invalid_entry;
-            }
             else return task_invalid_entry;
         }
     }
@@ -1355,36 +1335,47 @@ task_process_status MirrorOrch::createSampleBinding(const string& key, const vec
         SWSS_LOG_ERROR("Invalid sampled binding %s: %s", key.c_str(), error.what());
         return task_invalid_entry;
     }
-    if (!ratePresent || binding.session.empty()) return task_invalid_entry;
-    if (existing != m_sampleBindings.end())
+    // If a truncate size is configured, without an explicit sample rate,
+    // default the rate to 1 (sample every packet) so a samplepacket object
+    // is still created to carry the truncation.
+    if (binding.rate == 0 && binding.truncate != 0) binding.rate = 1;
+    // A binding needs an export and at least one of sample_rate or truncate_size.
+    if (binding.rate == 0 || binding.session.empty()) return task_invalid_entry;
+    if (current)
     {
-        auto& current = existing->second;
-        if (binding.session != current.session || binding.rate != current.rate ||
-            binding.truncate != current.truncate)
+        if (binding.session != current->session || binding.rate != current->rate ||
+            binding.truncate != current->truncate)
         {
             SWSS_LOG_ERROR("Cannot update policy for sampled binding %s; remove and recreate it", key.c_str());
             return task_invalid_entry;
         }
-        if (binding.enabled == current.enabled)
+        if (binding.enabled == current->enabled)
             return task_duplicated;
-        current.enabled = binding.enabled;
-        syncSampleBindings();
+        current->enabled = binding.enabled;
+        syncSampleBinding(key, *current);
         return task_success;
     }
-    if (hasSflowGlobal())
-    {
-        SWSS_LOG_ERROR("SFLOW global conflicts with sampled binding %s", key.c_str());
-        return task_need_retry;
-    }
+
+    const auto separator = key.find('|');
+    if (separator == string::npos || separator == 0) return task_invalid_entry;
+    const auto direction = key.substr(separator + 1);
+    if (direction != "rx" && direction != "tx") return task_invalid_entry;
+    binding.port = key.substr(0, separator);
+    binding.ingress = direction == "rx";
+
     auto session = m_syncdMirrors.find(binding.session);
-    if (session != m_syncdMirrors.end() &&
-        (session->second.type != MIRROR_SESSION_ERSPAN || session->second.sourceConfigured || !session->second.src_port.empty()))
+    if (session != m_syncdMirrors.end() && !session->second.isSampleExport())
         return task_invalid_entry;
     Port port;
     if (m_portsOrch->getPort(binding.port, port) && port.m_type != Port::PHY && port.m_type != Port::LAG)
         return task_invalid_entry;
-    m_sampleBindings.emplace(key, std::move(binding));
-    syncSampleBindings();
+    if (!claimSamplingMode(SamplingMode::SAMPLED_MIRROR))
+    {
+        SWSS_LOG_ERROR("Cannot configure sampled binding %s in the current sampling mode; remove the conflicting configuration and restart orchagent", key.c_str());
+        return task_invalid_entry;
+    }
+    auto it = m_sampleBindings.emplace(key, std::move(binding)).first;
+    syncSampleBinding(key, it->second);
     return task_success;
 }
 
@@ -1417,6 +1408,7 @@ bool MirrorOrch::createSamplePacket(const string& name, SampleBinding& binding)
         return false;
     }
     binding.samplepacketId = oid;
+    increaseRefCount(binding.session); // The binding holds the export reference for this object's lifetime.
     return true;
 }
 
@@ -1457,12 +1449,13 @@ bool MirrorOrch::clearSampleAttachment(const string& key, SampleBinding& binding
 
 bool MirrorOrch::clearSampleBinding(const string& key, SampleBinding& binding)
 {
-    vector<sai_object_id_t> ports;
-    for (const auto& attachment : binding.attachments) ports.push_back(attachment.first);
-    bool cleared = true;
-    for (auto port : ports)
-        if (!clearSampleAttachment(key, binding, port)) cleared = false;
-    if (!cleared) return false;
+    binding.cleanupPending = true;
+    for (auto it = binding.attachments.begin(); it != binding.attachments.end();)
+    {
+        const auto oid = (it++)->first;
+        clearSampleAttachment(key, binding, oid); // Failed attachments stay in the map for retry.
+    }
+    if (!binding.attachments.empty()) return false;
     if (binding.samplepacketId != SAI_NULL_OBJECT_ID)
     {
         auto status = sai_samplepacket_api->remove_samplepacket(binding.samplepacketId);
@@ -1471,148 +1464,157 @@ bool MirrorOrch::clearSampleBinding(const string& key, SampleBinding& binding)
             SWSS_LOG_ERROR("Failed to remove SamplePacket for binding %s: %d", key.c_str(), status);
             return false;
         }
-        binding.samplepacketId = SAI_NULL_OBJECT_ID;
-    }
-    if (binding.exportReferenced)
-    {
         decreaseRefCount(binding.session);
-        binding.exportReferenced = false;
+        binding.samplepacketId = SAI_NULL_OBJECT_ID;
     }
     binding.cleanupPending = false;
     return true;
 }
 
-void MirrorOrch::syncSampleBindings()
+MirrorOrch::SamplePorts MirrorOrch::resolveSamplePorts(const string& alias) const
 {
-    if (m_sampleBindings.empty())
+    SamplePorts desired;
+    Port source;
+    if (!m_portsOrch->getPort(alias, source)) return desired;
+
+    if (source.m_type == Port::PHY)
     {
-        return;
+        desired.emplace(source.m_port_id, source.m_alias);
+    }
+    else if (source.m_type == Port::LAG)
+    {
+        vector<Port> members;
+        m_portsOrch->getLagMember(source, members);
+        for (const auto& port : members)
+            if (port.m_type == Port::PHY) desired.emplace(port.m_port_id, port.m_alias);
+    }
+    return desired;
+}
+
+bool MirrorOrch::samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports) const
+{
+    for (const auto& port : ports)
+    {
+        const auto owner = m_sampleOwners.find({port.first, binding.ingress});
+        if (owner != m_sampleOwners.end() && owner->second != key) return false;
+        if (binding.attachments.count(port.first) || m_isWarmRestoreStage) continue;
+
+        sai_attribute_t attr{};
+        attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        if (sai_port_api->get_port_attribute(port.first, 1, &attr) != SAI_STATUS_SUCCESS ||
+            attr.value.oid != SAI_NULL_OBJECT_ID) return false;
+    }
+    return true;
+}
+
+bool MirrorOrch::attachSamplePort(const string& key, SampleBinding& binding, sai_object_id_t oid,
+                                  const string& alias, sai_object_id_t sessionId)
+{
+    m_sampleOwners[{oid, binding.ingress}] = key;
+    auto& attachment = binding.attachments[oid];
+    attachment.alias = alias;
+    m_portsOrch->increasePortRefCount(alias);
+
+    sai_attribute_t attr{};
+    attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+    attr.value.oid = binding.samplepacketId;
+    if (sai_port_api->set_port_attribute(oid, &attr) != SAI_STATUS_SUCCESS) return false;
+    attachment.sampleSet = true;
+
+    attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION : SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
+    attr.value.objlist.count = 1;
+    attr.value.objlist.list = &sessionId;
+    if (sai_port_api->set_port_attribute(oid, &attr) != SAI_STATUS_SUCCESS) return false;
+    attachment.mirrorSet = true;
+    return true;
+}
+
+// A missing export or source is an event dependency, not a reason to retry hardware.
+bool MirrorOrch::reconcileSampleBinding(const string& key, SampleBinding& binding)
+{
+    auto session = m_syncdMirrors.find(binding.session);
+    if (!binding.enabled || binding.deleting || session == m_syncdMirrors.end() || !session->second.isActiveSampleExport())
+    {
+        return clearSampleBinding(key, binding);
+    }
+    if (binding.cleanupPending && !clearSampleBinding(key, binding)) return false;
+
+    if ((binding.ingress && !m_switchOrch->isPortIngressSampleMirrorSupported()) ||
+        (!binding.ingress && !m_switchOrch->isPortEgressSampleMirrorSupported()) ||
+        (binding.truncate && !m_switchOrch->isSamplepacketTruncationSupported()))
+    {
+        if (!binding.unsupportedLogged)
+            SWSS_LOG_ERROR("Unsupported sampling capability for binding %s", key.c_str());
+        binding.unsupportedLogged = true;
+        return true;
     }
 
-    // sFlow can still own sample attributes until its per-port cleanup completes.
-    auto sflowOrch = gDirectory.get<SflowOrch*>();
-    const bool sflowConfigured = sflowOrch && sflowOrch->hasPortSessions();
-    for (auto it = m_sampleBindings.begin(); it != m_sampleBindings.end();)
+    const auto desired = resolveSamplePorts(binding.port);
+    if (desired.empty())
     {
-        const auto& key = it->first;
-        auto& binding = it->second;
-        auto session = m_syncdMirrors.find(binding.session);
-        bool ready = binding.enabled && !binding.deleting && !sflowConfigured &&
-                     session != m_syncdMirrors.end() && session->second.status &&
-                     session->second.type == MIRROR_SESSION_ERSPAN && !session->second.sourceConfigured &&
-                     session->second.src_port.empty();
-        if (binding.cleanupPending || !ready)
-        {
-            if (!clearSampleBinding(key, binding))
-            {
-                binding.cleanupPending = true;
-                ++it;
-                continue;
-            }
-            if (binding.deleting)
-            {
-                it = m_sampleBindings.erase(it);
-                continue;
-            }
-            if (!ready) { ++it; continue; }
-        }
-        if ((binding.ingress && !m_switchOrch->isPortIngressSampleMirrorSupported()) ||
-            (!binding.ingress && !m_switchOrch->isPortEgressSampleMirrorSupported()) ||
-            (binding.truncate && !m_switchOrch->isSamplepacketTruncationSupported()))
-        {
-            if (!binding.unsupportedLogged)
-                SWSS_LOG_ERROR("Unsupported sampling capability for binding %s", key.c_str());
-            binding.unsupportedLogged = true;
-            ++it;
-            continue;
-        }
-        map<sai_object_id_t, string> desired;
-        Port source;
-        if (m_portsOrch->getPort(binding.port, source))
-        {
-            vector<Port> ports;
-            if (source.m_type == Port::LAG) m_portsOrch->getLagMember(source, ports);
-            else if (source.m_type == Port::PHY) ports.push_back(source);
-            for (const auto& port : ports)
-                if (port.m_type == Port::PHY) desired.emplace(port.m_port_id, port.m_alias);
-        }
-        vector<sai_object_id_t> obsolete;
-        for (const auto& attachment : binding.attachments)
-            if (!desired.count(attachment.first)) obsolete.push_back(attachment.first);
-        bool clean = true;
-        for (auto port : obsolete)
-            if (!clearSampleAttachment(key, binding, port)) clean = false;
-        if (!clean) { binding.cleanupPending = true; ++it; continue; }
-        if (desired.empty())
-        {
-            if (!clearSampleBinding(key, binding)) binding.cleanupPending = true;
-            ++it;
-            continue;
-        }
-        bool available = true;
-        for (const auto& port : desired)
-        {
-            auto owner = m_sampleOwners.find({port.first, binding.ingress});
-            if (owner != m_sampleOwners.end() && owner->second != key) { available = false; break; }
-            if (binding.attachments.count(port.first)) continue;
-            if (!m_isWarmRestoreStage)
-            {
-                sai_attribute_t attr{};
-                attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
-                                           SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-                auto status = sai_port_api->get_port_attribute(port.first, 1, &attr);
-                if (status != SAI_STATUS_SUCCESS ||
-                    attr.value.oid != SAI_NULL_OBJECT_ID)
-                {
-                    available = false;
-                    break;
-                }
-            }
-        }
-        if (!available) { ++it; continue; }
-        if (!createSamplePacket(key, binding)) { ++it; continue; }
-        if (!binding.exportReferenced)
-        {
-            increaseRefCount(binding.session);
-            binding.exportReferenced = true;
-        }
-        bool success = true;
-        for (const auto& port : desired)
-        {
-            if (binding.attachments.count(port.first)) continue;
-            m_sampleOwners[{port.first, binding.ingress}] = key;
-            auto& attachment = binding.attachments[port.first];
-            attachment.alias = port.second;
-            m_portsOrch->increasePortRefCount(port.second);
-            sai_attribute_t attr{};
-            attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
-                                       SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-            attr.value.oid = binding.samplepacketId;
-            if (sai_port_api->set_port_attribute(port.first, &attr) != SAI_STATUS_SUCCESS)
-            { success = false; break; }
-            attachment.sampleSet = true;
-            attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION :
-                                       SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
-            attr.value.objlist.count = 1;
-            attr.value.objlist.list = &session->second.sessionId;
-            if (sai_port_api->set_port_attribute(port.first, &attr) != SAI_STATUS_SUCCESS)
-            { success = false; break; }
-            attachment.mirrorSet = true;
-        }
-        if (!success)
+        return clearSampleBinding(key, binding);
+    }
+    for (auto it = binding.attachments.begin(); it != binding.attachments.end();)
+    {
+        const auto oid = (it++)->first;
+        if (!desired.count(oid) && !clearSampleAttachment(key, binding, oid))
+            binding.cleanupPending = true;
+    }
+    if (binding.cleanupPending || !samplePortsAvailable(key, binding, desired)) return false;
+
+    if (!createSamplePacket(key, binding)) return false;
+    for (const auto& port : desired)
+    {
+        if (!binding.attachments.count(port.first) &&
+            !attachSamplePort(key, binding, port.first, port.second, session->second.sessionId))
         {
             SWSS_LOG_ERROR("Failed to attach sampled binding %s; rolling back", key.c_str());
-            binding.cleanupPending = true;
             clearSampleBinding(key, binding);
+            return false;
         }
-        ++it;
+    }
+    return true;
+}
+
+void MirrorOrch::syncSampleBinding(const string& key, SampleBinding& binding)
+{
+    // DEL stays in its consumer until clearSampleBinding succeeds.
+    if (!reconcileSampleBinding(key, binding) && !binding.deleting)
+        m_sampleRetries.insert(key);
+    else
+        m_sampleRetries.erase(key);
+}
+
+void MirrorOrch::syncSampleBindings()
+{
+    // Only accepted sampled-mode bindings enter this map; deletion cannot change the mode.
+    for (auto it = m_sampleBindings.begin(); it != m_sampleBindings.end();)
+    {
+        auto& binding = it->second;
+        syncSampleBinding(it->first, binding);
+        if (binding.deleting && !binding.cleanupPending)
+            it = m_sampleBindings.erase(it);
+        else
+            ++it;
     }
 }
 
-void MirrorOrch::doTask(SelectableTimer &timer)
+void MirrorOrch::doTask()
 {
-    if (!m_portsOrch->allPortsReady()) return;
-    syncSampleBindings();
+    // Consume configuration (including deletes) before retrying the current desired state.
+    Orch::doTask();
+    if (m_sampleRetries.empty() || !m_portsOrch->allPortsReady()) return;
+
+    // Each blocked key gets one attempt per normal orchagent retry pass.
+    for (auto it = m_sampleRetries.begin(); it != m_sampleRetries.end();)
+    {
+        const auto& key = *it;
+        auto binding = m_sampleBindings.find(key);
+        if (binding == m_sampleBindings.end() || reconcileSampleBinding(key, binding->second))
+            it = m_sampleRetries.erase(it);
+        else
+            ++it;
+    }
 }
 
 bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
@@ -2031,13 +2033,22 @@ void MirrorOrch::doTask(Consumer& consumer)
             const auto& op = kfvOp(it->second);
             auto result = task_invalid_entry;
             if (op == SET_COMMAND)
-                result = createSampleBinding(key, kfvFieldsValues(it->second));
+            {
+                // Queued SETs merge fields and can retain a field that CONFIG_DB has since removed.
+                vector<FieldValueTuple> row;
+                result = m_sampleConfigTable.get(key, row) ? setSampleBinding(key, row) : task_success;
+            }
             else if (op == DEL_COMMAND)
             {
                 auto binding = m_sampleBindings.find(key);
-                if (binding != m_sampleBindings.end()) binding->second.deleting = true;
-                syncSampleBindings();
-                result = m_sampleBindings.count(key) ? task_need_retry : task_success;
+                result = task_success;
+                if (binding != m_sampleBindings.end())
+                {
+                    binding->second.deleting = true;
+                    m_sampleRetries.erase(key);
+                    if (clearSampleBinding(key, binding->second)) m_sampleBindings.erase(binding);
+                    else result = task_need_retry;
+                }
             }
             if (result == task_need_retry) ++it;
             else it = consumer.m_toSync.erase(it);

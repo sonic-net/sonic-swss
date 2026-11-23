@@ -1,7 +1,7 @@
 """Sampled ERSPAN source binding integration tests (CONFIG_DB -> ASIC_DB)."""
 import pytest
 
-from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 
 @pytest.mark.usefixtures('testlog', 'dvs_mirror_manager', 'dvs_lag_manager')
@@ -124,6 +124,12 @@ class TestSampledMirror:
         self.detached('Ethernet0')
         self.dvs.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET', 0)
         assert self.dvs.config_db.get_entry('PORT_MIRROR_SAMPLE', key) == original
+        self.dvs.config_db.set_field('PORT_MIRROR_SAMPLE', key, 'admin_state', 'up')
+        self.attached('Ethernet0', 'rx', '5000')
+        self.dvs.config_db.delete_field('PORT_MIRROR_SAMPLE', key, 'admin_state')
+        self.detached('Ethernet0')
+        self.dvs.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET', 0)
+        assert 'admin_state' not in self.dvs.config_db.get_entry('PORT_MIRROR_SAMPLE', key)
         self.dvs.state_db.wait_for_field_match('MIRROR_SESSION_TABLE', name, {'status': 'active'})
 
     def test_binding_before_export_and_destination_recovery(self):
@@ -159,13 +165,24 @@ class TestSampledMirror:
         assert self.attached('Ethernet0', 'rx', '5000') == original
         assert list(self.dvs.config_db.get_keys('PORT_MIRROR_SAMPLE')) == ['PortChannel10|rx']
 
-    def test_global_sflow_down_blocks_binding_until_removed(self):
-        self.dvs.config_db.create_entry('SFLOW', 'global', {'admin_state': 'down'})
+    def test_deleting_last_binding_does_not_enable_sflow(self):
         name = self.export()
         self.add_route()
         self.binding(name, 'Ethernet0')
-        self.dvs.state_db.wait_for_field_match('MIRROR_SESSION_TABLE', name, {'status': 'active'})
-        self.dvs.runcmd('sleep 2')
-        self.detached('Ethernet0')
-        self.dvs.config_db.delete_entry('SFLOW', 'global')
         self.attached('Ethernet0', 'rx', '5000')
+        self.dvs_mirror.remove_sample_binding('Ethernet0', 'rx')
+        self.detached('Ethernet0')
+        self.dvs.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET', 0)
+
+        marker = self.dvs.add_log_marker()
+        self.dvs.config_db.create_entry('SFLOW', 'global', {'admin_state': 'up'})
+
+        def rejected():
+            cmd = ("sed -n '/{}/,$p' /var/log/syslog | "
+                   "grep -F 'Cannot configure sFlow in the current sampling mode'").format(marker)
+            rc, _ = self.dvs.runcmd(['sh', '-c', cmd])
+            return rc == 0, None
+
+        wait_for_result(rejected, PollingConfig(polling_interval=0.25))
+        self.dvs.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET', 0)
+        self.dvs.config_db.delete_entry('SFLOW', 'global')

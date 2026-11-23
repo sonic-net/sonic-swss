@@ -1128,13 +1128,14 @@ void SflowOrch::sflowStatusSet(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            sflowExtractGlobalInfo(kfvFieldsValues(tuple), sflow_status, rate, dir, sflow_drop_monitor_limit);
             auto mirrorOrch = gDirectory.get<MirrorOrch*>();
-            if (sflow_status && mirrorOrch && mirrorOrch->hasSampleBindings())
+            if (mirrorOrch && !mirrorOrch->claimSflowMode())
             {
-                SWSS_LOG_WARN("Cannot enable sFlow while sampled bindings or cleanup remain");
-                return;
+                SWSS_LOG_ERROR("Cannot configure sFlow in the current sampling mode; remove the conflicting configuration and restart orchagent");
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
+            sflowExtractGlobalInfo(kfvFieldsValues(tuple), sflow_status, rate, dir, sflow_drop_monitor_limit);
         }
         else if (op == DEL_COMMAND)
         {
@@ -1225,10 +1226,6 @@ void SflowOrch::doTask(Consumer &consumer)
         return;
     }
 
-    // hasSampleBindings() scans CONFIG_DB in every namespace, so check it once per batch.
-    auto mirrorOrch = gDirectory.get<MirrorOrch*>();
-    const bool sampleBindingsExist = m_sflowStatus && mirrorOrch && mirrorOrch->hasSampleBindings();
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1246,11 +1243,6 @@ void SflowOrch::doTask(Consumer &consumer)
             if (!m_sflowStatus)
             {
                 return;
-            }
-            if (sampleBindingsExist)
-            {
-                ++it;
-                continue;
             }
             auto sflowInfo = m_sflowPortInfoMap.find(port.m_port_id);
             if (sflowInfo != m_sflowPortInfoMap.end())

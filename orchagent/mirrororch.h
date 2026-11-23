@@ -16,7 +16,7 @@
 #include "table.h"
 
 #include <map>
-#include <memory>
+#include <set>
 #include <inttypes.h>
 
 #define MIRROR_RX_DIRECTION      "RX"
@@ -69,6 +69,11 @@ struct MirrorEntry
     int64_t refCount;
 
     MirrorEntry(const string& platform);
+    bool isSampleExport() const { return type == MIRROR_SESSION_ERSPAN && !sourceConfigured && src_port.empty(); }
+    bool isActiveSampleExport() const
+    {
+        return status && sessionId != SAI_NULL_OBJECT_ID && isSampleExport();
+    }
 };
 
 struct MirrorSessionUpdate
@@ -95,10 +100,10 @@ public:
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
 
-    bool hasSampleBindings();
+    bool claimSflowMode();
 
     using Orch::doTask;
-    void doTask(swss::SelectableTimer &timer) override;
+    void doTask() override;
 
 private:
     PortsOrch *m_portsOrch;
@@ -164,7 +169,6 @@ private:
         bool enabled = false;
         bool deleting = false;
         bool cleanupPending = false;
-        bool exportReferenced = false;
         bool unsupportedLogged = false;
         uint32_t rate = 0;
         uint32_t truncate = 0;
@@ -172,13 +176,24 @@ private:
         map<sai_object_id_t, SampleAttachment> attachments;
     };
     Table m_sampleConfigTable;
-    Table m_sflowConfigTable;
-    // Other CONFIG_DB namespaces, when available in the global DB configuration.
-    vector<std::unique_ptr<swss::DBConnector>> m_otherConfigDbs;
+    swss::DBConnector& m_configDb;
+    // Set once per orchagent lifetime, even if the selected feature is later disabled or deleted.
+    enum class SamplingMode { NONE, SFLOW, SAMPLED_MIRROR, CONFLICT };
+    SamplingMode m_samplingMode = SamplingMode::NONE;
+    SamplingMode configuredSamplingMode() const;
+    bool claimSamplingMode(SamplingMode requested);
+    bool hasSampleBindingForSession(const string& name);
     map<string, SampleBinding> m_sampleBindings;
+    std::set<string> m_sampleRetries;
     map<std::pair<sai_object_id_t, bool>, string> m_sampleOwners;
-    bool hasSflowGlobal();
-    task_process_status createSampleBinding(const string&, const vector<FieldValueTuple>&);
+    using SamplePorts = map<sai_object_id_t, string>;
+    SamplePorts resolveSamplePorts(const string& alias) const;
+    bool samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports) const;
+    bool attachSamplePort(const string& key, SampleBinding& binding, sai_object_id_t oid, const string& alias,
+                          sai_object_id_t sessionId);
+    bool reconcileSampleBinding(const string& key, SampleBinding& binding);
+    void syncSampleBinding(const string& key, SampleBinding& binding);
+    task_process_status setSampleBinding(const string&, const vector<FieldValueTuple>&);
     bool createSamplePacket(const string&, SampleBinding&);
     bool clearSampleAttachment(const string&, SampleBinding&, sai_object_id_t);
     bool clearSampleBinding(const string&, SampleBinding&);
