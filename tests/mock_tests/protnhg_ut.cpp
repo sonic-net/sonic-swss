@@ -1022,6 +1022,7 @@ namespace protnhg_test
         EXPECT_TRUE(nhg.sync());
         EXPECT_TRUE(nhg.isSynced());
 
+        ASSERT_TRUE(nhg.remove());
         unregisterNextHop(primary_nh);
         unregisterNextHop(standby_nh);
     }
@@ -1449,29 +1450,31 @@ namespace protnhg_test
             NextHopGroupKey("10.0.0.1@Ethernet0,10.0.0.2@Ethernet0"), false);
         ASSERT_TRUE(owned->sync());
 
-        ProtNhg nhg("prot_mixed",
-                    ProtNhgMember::ownedNhg(ProtNhgRole::PRIMARY, move(owned)),
-                    ProtNhgMember::sharedNhg(ProtNhgRole::STANDBY, "ID200"));
+        {
+            ProtNhg nhg("prot_mixed",
+                        ProtNhgMember::ownedNhg(ProtNhgRole::PRIMARY, move(owned)),
+                        ProtNhgMember::sharedNhg(ProtNhgRole::STANDBY, "ID200"));
 
-        ASSERT_TRUE(nhg.sync());
-        EXPECT_EQ(nhg.getSize(), 2u);
+            ASSERT_TRUE(nhg.sync());
+            EXPECT_EQ(nhg.getSize(), 2u);
 
-        const ProtNhgMember *primary = nhg.getPrimaryMember();
-        const ProtNhgMember *standby = nhg.getStandbyMember();
-        ASSERT_NE(primary, nullptr);
-        ASSERT_NE(standby, nullptr);
-        EXPECT_EQ(primary->getType(), ProtNhgMemberType::OWNED_NHG);
-        EXPECT_EQ(standby->getType(), ProtNhgMemberType::SHARED_NHG);
-        EXPECT_TRUE(primary->isSynced());
-        EXPECT_TRUE(standby->isSynced());
-        EXPECT_NE(primary->getNhId(), standby->getNhId());
+            const ProtNhgMember *primary = nhg.getPrimaryMember();
+            const ProtNhgMember *standby = nhg.getStandbyMember();
+            ASSERT_NE(primary, nullptr);
+            ASSERT_NE(standby, nullptr);
+            EXPECT_EQ(primary->getType(), ProtNhgMemberType::OWNED_NHG);
+            EXPECT_EQ(standby->getType(), ProtNhgMemberType::SHARED_NHG);
+            EXPECT_TRUE(primary->isSynced());
+            EXPECT_TRUE(standby->isSynced());
+            EXPECT_NE(primary->getNhId(), standby->getNhId());
 
-        /* Only the shared leg is anyone else's business, so only it takes a
-         * reference. */
-        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID200").ref_count, 1u);
+            /* Only the shared leg is anyone else's business, so only it takes a
+             * reference. */
+            EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID200").ref_count, 1u);
 
-        ASSERT_TRUE(nhg.remove());
-        EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID200").ref_count, 0u);
+            ASSERT_TRUE(nhg.remove());
+            EXPECT_EQ(gNhgOrch->m_syncdNextHopGroups.at("ID200").ref_count, 0u);
+        }
 
         removeEcmpNhg("ID200");
         unregisterNextHop(p1);
