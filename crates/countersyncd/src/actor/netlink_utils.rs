@@ -6,17 +6,18 @@
 #[cfg(not(test))]
 use netlink_sys::Socket;
 
-#[cfg(not(test))]
 use std::io;
 #[cfg(not(test))]
 use std::os::fd::AsRawFd;
+use std::os::fd::RawFd;
 #[cfg(not(test))]
 use std::sync::atomic::{AtomicU32, Ordering};
 #[cfg(not(test))]
 use std::time::{Duration, Instant};
 
+use log::debug;
 #[cfg(not(test))]
-use log::{debug, info, warn};
+use log::{info, warn};
 #[cfg(not(test))]
 use netlink_packet_core::{NetlinkMessage, NetlinkPayload, NLM_F_REQUEST};
 #[cfg(not(test))]
@@ -40,38 +41,114 @@ const MAX_RESOLVER_RESPONSE_SIZE: usize = 1024 * 1024;
 #[cfg(not(test))]
 static NEXT_SEQUENCE: AtomicU32 = AtomicU32::new(1);
 
-/// Sets SO_RCVBUF on a netlink socket to reduce ENOBUFS under high HFT load.
+/// How the receive buffer size was applied to a socket.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct RcvbufOutcome {
+    /// True when SO_RCVBUFFORCE succeeded; false when SO_RCVBUF was used instead.
+    pub forced: bool,
+    /// Receive buffer size reported by the kernel after the update.
+    pub granted: usize,
+}
+
+fn set_int_sockopt(fd: RawFd, option: libc::c_int, value: libc::c_int) -> io::Result<()> {
+    // SAFETY: `value` outlives the call and the length matches its type.
+    let result = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            option,
+            (&value as *const libc::c_int).cast(),
+            std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+fn get_rcvbuf(fd: RawFd) -> io::Result<usize> {
+    let mut value: libc::c_int = 0;
+    let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+    // SAFETY: `value` and `len` are valid for writes and `len` matches `value`.
+    let result = unsafe {
+        libc::getsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            (&mut value as *mut libc::c_int).cast(),
+            &mut len,
+        )
+    };
+    if result < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(value.max(0) as usize)
+    }
+}
+
+/// Applies `bytes` as the socket receive buffer size.
 ///
-/// Logs the actual buffer size granted by the kernel after setting, since Linux
-/// may cap it at net.core.rmem_max and doubles it internally.
+/// SO_RCVBUFFORCE is tried first because SO_RCVBUF is silently capped at
+/// net.core.rmem_max. SO_RCVBUFFORCE needs CAP_NET_ADMIN; without it the call
+/// falls back to SO_RCVBUF. Linux doubles the requested value internally.
+pub(crate) fn apply_socket_rcvbuf(fd: RawFd, bytes: usize) -> io::Result<RcvbufOutcome> {
+    let value = libc::c_int::try_from(bytes).unwrap_or(libc::c_int::MAX);
+    let forced = match set_int_sockopt(fd, libc::SO_RCVBUFFORCE, value) {
+        Ok(()) => true,
+        Err(force_err) => {
+            debug!("SO_RCVBUFFORCE({bytes}) failed ({force_err}); falling back to SO_RCVBUF");
+            set_int_sockopt(fd, libc::SO_RCVBUF, value)?;
+            false
+        }
+    };
+    Ok(RcvbufOutcome {
+        forced,
+        granted: get_rcvbuf(fd)?,
+    })
+}
+
+/// Sets the receive buffer of a netlink socket to absorb HFT bursts.
+///
+/// HFT data arrives at a fixed rate. When countersyncd is briefly starved of
+/// CPU, messages queue in this buffer; once it is full the kernel drops them
+/// (ENOBUFS). Logs the size granted by the kernel.
 #[cfg(not(test))]
 pub fn set_socket_rcvbuf(socket: &Socket, bytes: usize) {
     if bytes == 0 {
         return;
     }
-    let v: libc::c_int = match bytes.try_into() {
-        Ok(v) => v,
-        Err(_) => {
-            warn!(
-                "netlink_rcvbuf {} exceeds c_int::MAX, clamping to {}",
-                bytes,
-                libc::c_int::MAX
-            );
-            libc::c_int::MAX
-        }
-    };
-    if let Err(e) = socket.set_rx_buf_sz(v) {
-        warn!("Failed to set netlink SO_RCVBUF to {}: {:?}", bytes, e);
-        return;
-    }
-    match socket.get_rx_buf_sz() {
-        Ok(actual) => info!(
-            "Netlink SO_RCVBUF: requested={} bytes, actual={} bytes{}",
+    if bytes > libc::c_int::MAX as usize {
+        warn!(
+            "netlink_rcvbuf {} exceeds c_int::MAX, clamping to {}",
             bytes,
-            actual,
-            if actual < bytes { " (capped by net.core.rmem_max — consider raising it)" } else { "" }
-        ),
-        Err(e) => warn!("Failed to read back SO_RCVBUF: {:?}", e),
+            libc::c_int::MAX
+        );
+    }
+    match apply_socket_rcvbuf(socket.as_raw_fd(), bytes) {
+        Ok(RcvbufOutcome { forced, granted }) => {
+            let method = if forced {
+                "SO_RCVBUFFORCE"
+            } else {
+                "SO_RCVBUF"
+            };
+            // Linux stores twice the requested value (see socket(7)).
+            let expected = bytes.min(libc::c_int::MAX as usize / 2) * 2;
+            if granted < expected {
+                warn!(
+                    "Netlink receive buffer: requested={} bytes via {}, kernel granted only {} of {} bytes \
+                     (capped by net.core.rmem_max; raise it or grant CAP_NET_ADMIN)",
+                    bytes, method, granted, expected
+                );
+            } else {
+                info!(
+                    "Netlink receive buffer: requested={} bytes via {}, kernel granted={} bytes",
+                    bytes, method, granted
+                );
+            }
+        }
+        Err(e) => warn!("Failed to set netlink receive buffer to {}: {:?}", bytes, e),
     }
 }
 
@@ -281,4 +358,38 @@ pub fn resolve_family_group(
             )
         })?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::UdpSocket;
+    use std::os::fd::AsRawFd;
+
+    #[test]
+    fn test_apply_socket_rcvbuf_grants_requested_size() {
+        // A UDP socket shares the SOL_SOCKET receive-buffer code path with netlink.
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let requested = 1 << 20;
+        let outcome = apply_socket_rcvbuf(socket.as_raw_fd(), requested).unwrap();
+        assert_eq!(outcome.granted, get_rcvbuf(socket.as_raw_fd()).unwrap());
+        if outcome.forced {
+            // SO_RCVBUFFORCE bypasses net.core.rmem_max; Linux doubles the value.
+            assert!(outcome.granted >= requested * 2, "{outcome:?}");
+        } else {
+            assert!(outcome.granted > 0, "{outcome:?}");
+        }
+    }
+
+    #[test]
+    fn test_apply_socket_rcvbuf_clamps_oversized_request() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let outcome = apply_socket_rcvbuf(socket.as_raw_fd(), usize::MAX).unwrap();
+        assert!(outcome.granted > 0, "{outcome:?}");
+    }
+
+    #[test]
+    fn test_apply_socket_rcvbuf_reports_invalid_fd() {
+        assert!(apply_socket_rcvbuf(-1, 1 << 20).is_err());
+    }
 }
