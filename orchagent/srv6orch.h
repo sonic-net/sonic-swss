@@ -178,6 +178,15 @@ class Srv6Orch : public Orch, public Observer
         bool createSrv6NexthopWithoutVpn(const NextHopKey &nhKey, sai_object_id_t &nexthop_id);
         bool srv6Nexthops(const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id);
         bool removeSrv6NexthopWithoutVpn(const NextHopKey &nhKey);
+        /* Removing a set of SRv6 next hop groups takes two passes over the
+         * whole set: every group's VPN SIDs and prefix agg ID go first, then
+         * every group's next hops, because the second pass can free shared
+         * objects (tunnels, SID lists) that the first pass of another group
+         * still uses. removeSrv6Nexthops() runs both passes; a caller that
+         * yields between groups calls the per-group halves in the same
+         * order. */
+        bool removeSrv6VpnSids(const NextHopGroupKey &nhg);
+        bool removeSrv6GroupNexthops(const NextHopGroupKey &nhg);
         bool removeSrv6Nexthops(const std::vector<NextHopGroupKey> &nhgv);
         void update(SubjectType, void *);
         void notifyVrfAvailable(const std::string &vrf);

@@ -256,8 +256,10 @@ private:
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool removeRoute(RouteBulkContext& ctx);
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&,
+                  EntityBulker<sai_route_api_t> *bulker = nullptr);
+    bool removeRoute(RouteBulkContext& ctx,
+                     EntityBulker<sai_route_api_t> *bulker = nullptr);
     bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoutePost(const RouteBulkContext& ctx);
 

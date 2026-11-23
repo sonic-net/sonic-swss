@@ -104,6 +104,13 @@ typedef std::pair<std::string, sai_object_id_t> object_map_pair;
 // insertion and does not change. (since C++11)
 typedef std::multimap<std::string, swss::KeyOpFieldsValuesTuple> SyncMap;
 
+// Pending-task map with one entry per key, for a consumer whose producer sends
+// full-replace updates only (fpmsyncd route updates over ZMQ, after
+// sonic-swss#3872). Any update replaces the previous one for its key. Not for
+// tables whose producer relies on DEL-then-SET replay or on merging the fields
+// of partial SETs: those need SyncMap.
+typedef std::unordered_map<std::string, swss::KeyOpFieldsValuesTuple> RouteSyncMap;
+
 typedef std::pair<std::string, int> table_name_with_pri_t;
 
 class Orch;
@@ -165,9 +172,15 @@ protected:
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
 
-class ConsumerBase : public Executor {
+/*
+ * The map-agnostic part of a pending-task consumer, and the handle that
+ * daemon-wide code (warm restart refill, Orch::dumpPendingTasks, the retry
+ * cache, the doTask sweep) uses to find consumers by dynamic_cast whatever map
+ * type they keep pending tasks in. The map-typed part is ConsumerBaseTemplate.
+ */
+class ConsumerBaseCommon : public Executor {
 public:
-    ConsumerBase(swss::Selectable *selectable, Orch *orch, const std::string &name)
+    ConsumerBaseCommon(swss::Selectable *selectable, Orch *orch, const std::string &name)
         : Executor(selectable, orch, name)
     {
     }
@@ -182,11 +195,11 @@ public:
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     // virtual so consumers with additional pending state (e.g.
     // ZmqRouteConsumer's m_ingress staging map) can report it too.
-    virtual void dumpPendingTasks(std::vector<std::string> &ts);
+    virtual void dumpPendingTasks(std::vector<std::string> &ts) = 0;
 
-    /* Store the latest 'golden' status */
-    // TODO: hide?
-    SyncMap m_toSync;
+    // Whether this consumer has queued work. Lets the idle-sweep stats
+    // gate skip recording no-op drains as runs.
+    virtual bool hasPendingTasks() const = 0;
 
     // If m_orderedQueue is set, use m_toSyncQueue instead of m_toSync.
     // Note:
@@ -212,11 +225,19 @@ public:
     void setRecordable(bool recordable) { m_recordable = recordable; }
     bool isRecordable() const { return m_recordable; }
 
-    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false);
+    virtual void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false) = 0;
 
-    // Returns: the number of entries added to m_toSync
-    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false);
-    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false); 
+    // Returns: the number of entries added to the pending-task map
+    virtual size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false) = 0;
+    size_t addToSync(std::shared_ptr<std::deque<swss::KeyOpFieldsValuesTuple>> entries, bool onRetry=false)
+    {
+        return addToSync(*entries, onRetry);
+    }
+
+    /* Same merge and retry cache handling as addToSync(entries), but nothing
+     * is written to swss.rec. For entries a consumer took out of m_toSync and
+     * gives back, which were recorded when they first arrived. */
+    virtual size_t addToSyncNoRecord(const std::deque<swss::KeyOpFieldsValuesTuple> &entries) = 0;
 
     /**
      * @brief Add the failed task and its constraint to the consumer's RetryCache
@@ -225,8 +246,8 @@ public:
      */
     bool addToRetry(const Task &task, const Constraint &cst);
 
-    size_t refillToSync();
-    size_t refillToSync(swss::Table* table);
+    virtual size_t refillToSync() = 0;
+    virtual size_t refillToSync(swss::Table* table) = 0;
 
     // Set the m_orderedQueue flag.
     // This will change the ConsumerBase to use m_toSync or m_toSyncQueue.
@@ -236,8 +257,74 @@ public:
     }
 
 private:
-    void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
     bool m_recordable = true;
+};
+
+/* How ConsumerBaseTemplate merges one incoming tuple into its pending-task
+ * map. Recording and retry cache handling around the merge are shared and
+ * live in addToSyncInternal. */
+struct MultimapMerge
+{
+    /* The ConsumerBase semantics: at most two entries per key (DEL then SET),
+     * and the fields of consecutive SETs are merged. */
+    static void apply(SyncMap &toSync, const std::string &key, const std::string &op,
+                      const swss::KeyOpFieldsValuesTuple &entry);
+};
+
+struct OverwriteMerge
+{
+    /* The newest tuple replaces any pending entry for its key. Correct only
+     * for full-replace producers; see RouteSyncMap. */
+    static void apply(RouteSyncMap &toSync, const std::string &key, const std::string &op,
+                      const swss::KeyOpFieldsValuesTuple &entry);
+};
+
+/*
+ * The map-typed part of a pending-task consumer. The method bodies are in
+ * orch.cpp, explicitly instantiated there for exactly:
+ *
+ *   ConsumerBaseTemplate<SyncMap, MultimapMerge>        (ConsumerBase)
+ *   ConsumerBaseTemplate<RouteSyncMap, OverwriteMerge>  (ZmqRouteConsumer)
+ *
+ * Another map or merge policy fails to link until it is added there.
+ */
+template <typename MapT, typename MergePolicy>
+class ConsumerBaseTemplate : public ConsumerBaseCommon {
+public:
+    ConsumerBaseTemplate(swss::Selectable *selectable, Orch *orch, const std::string &name)
+        : ConsumerBaseCommon(selectable, orch, name)
+    {
+    }
+
+    /* Store the latest 'golden' status */
+    // TODO: hide?
+    MapT m_toSync;
+
+    void dumpPendingTasks(std::vector<std::string> &ts) override;
+
+    bool hasPendingTasks() const override
+    {
+        return !m_toSync.empty() || !m_toSyncQueue.empty();
+    }
+
+    using ConsumerBaseCommon::addToSync;    /* keep the shared_ptr overload visible */
+    void addToSync(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry=false) override;
+    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries, bool onRetry=false) override;
+    size_t addToSyncNoRecord(const std::deque<swss::KeyOpFieldsValuesTuple> &entries) override;
+
+    size_t refillToSync() override;
+    size_t refillToSync(swss::Table* table) override;
+
+private:
+    void addToSyncInternal(const swss::KeyOpFieldsValuesTuple &entry, bool onRetry, bool recordTask);
+};
+
+class ConsumerBase : public ConsumerBaseTemplate<SyncMap, MultimapMerge> {
+public:
+    ConsumerBase(swss::Selectable *selectable, Orch *orch, const std::string &name)
+        : ConsumerBaseTemplate<SyncMap, MultimapMerge>(selectable, orch, name)
+    {
+    }
 };
 
 class RingBuffer
@@ -322,6 +409,8 @@ typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector
 #define CACHE "| ++++ |"
 #define DECACHE "| ---- |"
 
+struct ExecutorStat;
+
 class Orch
 {
 public:
@@ -339,6 +428,12 @@ public:
     virtual void detachObservers() {}
 
     static std::shared_ptr<RingBuffer> gRingBuffer;
+
+    // Set once by OrchDaemon so the idle-sweep doTask() path can charge
+    // per-consumer retry/drain work to the same stats slot the select
+    // loop's execute() path uses. Null in daemons and tests that don't
+    // run the stats channel, in which case doTask() skips the timing.
+    static std::unordered_map<std::string, ExecutorStat> *s_taskStats;
 
     std::vector<swss::Selectable*> getSelectables();
 
@@ -377,7 +472,14 @@ public:
     
     void createRetryCache(const std::string &executorName);
     RetryCache* getRetryCache(const std::string &executorName);
-    ConsumerBase* getConsumerBase(const std::string &executorName);
+    ConsumerBaseCommon* getConsumerBase(const std::string &executorName);
+
+    // Whether the idle-sweep doTask() iteration for this executor has any
+    // queued work (pending retries or a non-empty to-sync backlog). Gates
+    // the per-consumer stats timer so no-op sweeps are not recorded. The
+    // caller passes the executor it already holds; only the retry cache is
+    // looked up by name.
+    bool sweepHasWork(const std::string &executorName, Executor *executor);
 
     /** 
      * @brief Add the failed task and its constraint to the consumer's RetryCache
