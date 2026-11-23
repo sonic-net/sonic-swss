@@ -2363,6 +2363,15 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
 
     if (!isTunnelMapExists(full_tunnel_map_entry_name))
     {
+        if (tunnel_orch->isTunnelExists(tunnel_name))
+        {
+            auto tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
+            if (tunnel_obj->del_tnl_hw_pending)
+            {
+                return tunnel_orch->cleanupPendingTunnel(tunnel_name);
+            }
+        }
+
         SWSS_LOG_WARN("Vxlan tunnel map '%s' doesn't exist", full_tunnel_map_entry_name.c_str());
         return true;
     }
@@ -2395,7 +2404,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
         return false;
     }
 
-    tunnel_orch->removeTunnelMapReference(tunnel_name);
+    const bool cleanup_complete = tunnel_orch->removeTunnelMapReference(tunnel_name);
 
     vector<string> map_entries = tokenize(tunnel_map_entry_name, '_');
     SWSS_LOG_INFO("Vxlan tunnel map '%s' size %zu", tunnel_map_entry_name.c_str(), 
@@ -2414,7 +2423,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
     SWSS_LOG_NOTICE("Vxlan tunnel map entry '%s' for tunnel '%s' was removed",
                    tunnel_map_entry_name.c_str(), tunnel_name.c_str());
 
-    return true;
+    return cleanup_complete;
 }
 
 //------------------- VXLAN_VRF_MAP Table --------------------------//
@@ -2622,12 +2631,22 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     VxlanTunnelMapOrch* vxlan_tun_map_orch = gDirectory.get<VxlanTunnelMapOrch*>();
     const auto full_map_entry_name = request.getFullKey();
+    const auto tunnel_name = request.getKeyString(0);
     std::string vniVlanMapName;
     uint32_t vlan_id = 0;
     sai_object_id_t tnl_map_entry_id = SAI_NULL_OBJECT_ID;
 
     if (!isVrfMapExists(full_map_entry_name))
     {
+        if (tunnel_orch->isTunnelExists(tunnel_name))
+        {
+            auto tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
+            if (tunnel_obj->del_tnl_hw_pending)
+            {
+                return tunnel_orch->cleanupPendingTunnel(tunnel_name);
+            }
+        }
+
         /*
          * A delete for an already-absent mapping is complete.  Retrying it
          * can leave an older DEL ahead of a newer SET for the same key and
@@ -2646,8 +2665,8 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         return false;
     }
     SWSS_LOG_NOTICE("VxlanVrfMapOrch VRF VNI mapping '%s' remove vrf %s", full_map_entry_name.c_str(), vrf_name.c_str());
-    auto tunnel_name = request.getKeyString(0);
     auto tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
+    bool cleanup_complete = true;
 
     try
     {
@@ -2692,7 +2711,7 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         vxlan_vrf_table_.erase(full_map_entry_name);
         vxlan_vrf_tunnel_.erase(vrf_name);
 
-        tunnel_orch->removeTunnelMapReference(tunnel_name);
+        cleanup_complete = tunnel_orch->removeTunnelMapReference(tunnel_name);
     }
     catch(const std::runtime_error& error)
     {
@@ -2701,7 +2720,7 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         return false;
     }
 
-    return true;
+    return cleanup_complete;
 }
 
 //------------------- EVPN_REMOTE_VNI Table --------------------------//
