@@ -234,11 +234,13 @@ struct Args {
     )]
     comm_stats_interval: u64,
 
-    /// Netlink socket receive buffer size in bytes (0 = OS default). Increase to reduce ENOBUFS under high HFT load.
+    /// Netlink socket receive buffer size in bytes (0 = OS default). The default
+    /// 64 MiB request becomes a 128 MiB kernel buffer (Linux doubles it), which
+    /// absorbs ~100 ms CPU stalls at a 100 us HFT poll interval without ENOBUFS.
     #[arg(
         long,
-        default_value = "4194304",
-        help = "Netlink SO_RCVBUF size in bytes (0 = default). Use 4MB or higher if you see 'Netlink receive buffer full (ENOBUFS)'"
+        default_value = "67108864",
+        help = "Netlink receive buffer size in bytes (0 = OS default). Set with SO_RCVBUFFORCE (needs CAP_NET_ADMIN), falling back to SO_RCVBUF capped by net.core.rmem_max. Linux doubles the value. Increase if you see 'Netlink receive buffer full (ENOBUFS)'"
     )]
     netlink_rcvbuf: usize,
 
@@ -621,7 +623,7 @@ mod tests {
         assert_eq!(args.otel_capacity, 1024);
         args.normalize_capacities();
         assert_eq!(args.socket_readiness_timeout_ms, None);
-        assert_eq!(args.netlink_rcvbuf, 4194304);
+        assert_eq!(args.netlink_rcvbuf, 67108864);
         assert_eq!(args.comm_stats_interval, 600);
         assert_eq!(args.stats_interval, 10);
         assert_eq!(args.stats_reporter_capacity, 32);

@@ -849,12 +849,12 @@ bool OrchDaemon::init()
         if (pfcWdMode == PfcWdRecoveryMode::Hardware)
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            // The hardware watchdog reads a queue from SAI while that queue is
+            // in storm, so it registers no counters for polling.
             m_orchList.push_back(new PfcWdHwOrch(
                         m_configDb,
                         pfc_wd_tables,
-                        portStatIds,
-                        queueStatIds,
-                        queueAttrIds));
+                        portStatIds));
         }
         else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {
