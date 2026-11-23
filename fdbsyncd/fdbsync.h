@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <arpa/inet.h>
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -71,6 +72,8 @@ public:
 
     bool isIntfRestoreDone();
 
+    void dumpBridgeFdb();
+
     AppRestartAssist *getRestartAssist()
     {
         return m_AppRestartAssist;
@@ -118,6 +121,10 @@ public:
     bool m_isEvpnNvoExist = false;
 
 private:
+    void dumpBridgeFdb(struct nl_sock *sock);
+    void trackKeptEntry(const std::string &tableName, const std::string &key,
+                        const std::vector<FieldValueTuple> &fvVector);
+
     static bool parseFdbStateKey(
         const std::string &key,
         std::string &vlanName,
@@ -164,6 +171,7 @@ private:
     void publishKernelL3Pin(const std::string &key, const KernelL3Pin &pin);
     void releaseKernelL3Pin(const std::string &key);
 
+    Table m_stateVlanMemberTable;
 
     struct m_local_fdb_info
     {
@@ -174,6 +182,9 @@ private:
 
     std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
 
+    /* "port|vlan|type" flushed after the port left the VLAN, until a MAC is added there again or it rejoins */
+    std::unordered_set<std::string> m_leftVlanFlushed;
+
     void macDelVxlanEntry(struct m_fdb_info *info);
 
     void macUpdateCache(struct m_fdb_info *info);
@@ -182,6 +193,7 @@ private:
     bool macCheckMclagRemoteSrcDB(struct m_fdb_info *info);
 
     void updateLocalMac(struct m_fdb_info *info);
+    bool flushLeftVlanMacs(const std::string &port_name, const std::string &vlan, short fdb_type);
 
     void updateAllLocalMac();
 

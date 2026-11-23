@@ -231,6 +231,10 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_warmStartHelper.registerTable(pipeline, &m_srv6MySidTable, APP_SRV6_MY_SID_TABLE_NAME);
+    /* EVPN MH entries must be reconciled into their own tables, not into ROUTE_TABLE */
+    m_warmStartHelper.registerTable(pipeline, &m_evpn_shlTable, m_evpn_shlTable.getTableName());
+    m_warmStartHelper.registerTable(pipeline, &m_evpn_dfTable, m_evpn_dfTable.getTableName());
+    // Protection bindings are flushed/replayed with FPM, not retained by route warm reconciliation.
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
@@ -2285,7 +2289,7 @@ void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
                     const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                        DEL_COMMAND,
                                                                        fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
+                    m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
                 }
             }
             else if (msg_type == RTM_NEWTFILTER)
@@ -2336,7 +2340,7 @@ void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
                     const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                        SET_COMMAND,
                                                                        fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
+                    m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
                 }
             }
         }
@@ -2388,7 +2392,7 @@ void RouteSync::onEvpnShlMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
         }
     }
     else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL)
@@ -2437,7 +2441,7 @@ void RouteSync::onEvpnShlMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                SET_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
         }
     }
 }
@@ -2486,7 +2490,7 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(df_entry_key,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_dfTable.getTableName(), kfv);
         }
     }
     else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF)
@@ -2510,7 +2514,7 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(df_entry_key,
                                                                SET_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_dfTable.getTableName(), kfv);
         }
     }
 }

@@ -94,7 +94,7 @@ int main(int argc, char **argv)
                 SWSS_LOG_ERROR("Error in RTM_GETNEXTHOP dump");
             }
 
-            netlink.dumpRequest(RTM_GETNEIGH);
+            sync.dumpBridgeFdb();
 
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());

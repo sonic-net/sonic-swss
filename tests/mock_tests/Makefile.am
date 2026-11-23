@@ -74,6 +74,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 evpnmhorch_ut.cpp \
                 vxlanorch_ut.cpp \
                 mux_rollback_ut.cpp \
+                protnhg_ut.cpp \
                 mux_subnet_slicing_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
@@ -132,6 +133,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
                 $(top_srcdir)/orchagent/nhgbase.cpp \
                 $(top_srcdir)/orchagent/nhgorch.cpp \
+                $(top_srcdir)/orchagent/protnhg.cpp \
                 $(top_srcdir)/orchagent/l2nhgorch.cpp \
                 $(top_srcdir)/orchagent/l2nhgprotection.cpp \
                 $(top_srcdir)/orchagent/l2nhgref.cpp \
