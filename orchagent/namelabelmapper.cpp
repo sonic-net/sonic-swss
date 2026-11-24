@@ -25,7 +25,7 @@ std::string convertToDBField(_In_ const sai_object_type_t object_type, _In_ cons
 
 } // namespace
 
-NameLabelMapper::NameLabelMapper() : m_db("STATE_DB", 0), m_table(&m_db, "SAI_KEY_LABEL_MAP")
+NameLabelMapper::NameLabelMapper() : m_db("STATE_DB", 0, false, "", true), m_table(&m_db, "SAI_KEY_LABEL_MAP")
 {
 }
 

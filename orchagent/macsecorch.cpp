@@ -638,7 +638,7 @@ MACsecOrch::MACsecOrch(
                             m_applPortTable(app_db, APP_PORT_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0, false, "", true),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
-                            m_gb_counter_db("GB_COUNTERS_DB", 0),
+                            m_gb_counter_db("GB_COUNTERS_DB", 0, false, "", true),
                             m_gb_macsec_counters_map(&m_gb_counter_db, COUNTERS_MACSEC_NAME_MAP),
                             m_macsec_sa_attr_manager(
                                 COUNTERS_MACSEC_SA_ATTR_GROUP,
