@@ -7003,6 +7003,10 @@ struct PfcWdHwOrchStaleStateTest : public PfcWdHwOrchTest
             { "hw_detection_time", "400" },
             { "hw_restoration_time", "400" }
         });
+
+        // A run that used the software watchdog left its per-queue rows too.
+        Table swStateTable(m_state_db.get(), PFC_WD_SW_STATE_TABLE);
+        swStateTable.set("Ethernet4:3", { { "status", "configured" } });
     }
 };
 
@@ -7011,6 +7015,10 @@ TEST_F(PfcWdHwOrchStaleStateTest, ConstructionDropsStaleHwState)
     Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
     vector<FieldValueTuple> hwState;
     ASSERT_FALSE(hwStateTable.get("Ethernet0", hwState));
+
+    Table swStateTable(m_state_db.get(), PFC_WD_SW_STATE_TABLE);
+    vector<FieldValueTuple> swState;
+    ASSERT_FALSE(swStateTable.get("Ethernet4:3", swState));
 }
 
 TEST_F(PfcWdHwOrchTest, IntervalsSet)

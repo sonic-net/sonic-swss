@@ -35,6 +35,9 @@ extern "C" {
 #define PFC_WD_DLR_PACKET_ACTION        "DLR_PACKET_ACTION"
 #define PFC_WD_STATE_KEY                "PFC_WD"
 
+// Software watchdog per-queue state, in STATE_DB
+#define PFC_WD_SW_STATE_TABLE           "PFC_WD_SW_STATE_TABLE"
+
 // Default timer limits in milliseconds, overridable via getTimerRange()
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
 #define PFC_WD_DETECTION_TIME_MIN       100
@@ -170,6 +173,8 @@ protected:
     shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;
 
 private:
+    // Removes both watchdogs' per-port and per-queue STATE_DB rows left by a previous run
+    void clearPreviousRunState();
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
