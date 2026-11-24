@@ -785,6 +785,23 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             for (auto &attribute : attribs_to_retry)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status && m_profileSetInPlace)
+                {
+                    // An in-place update the SAI refuses falls back to the delete and recreate the
+                    // queued DEL asks for, so it is not reported as a SAI failure
+                    SWSS_LOG_NOTICE("Buffer profile %s not updated in place, sai object:%" PRIx64 ", status:%d",
+                                    object_name.c_str(), sai_object, sai_status);
+                    switch (sai_status)
+                    {
+                        case SAI_STATUS_INSUFFICIENT_RESOURCES:
+                        case SAI_STATUS_TABLE_FULL:
+                        case SAI_STATUS_NO_MEMORY:
+                        case SAI_STATUS_NV_STORAGE_FULL:
+                            return task_process_status::task_need_retry;
+                        default:
+                            return task_process_status::task_failed;
+                    }
+                }
                 if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     // A retried attribute can not be "not implemented"
@@ -886,6 +903,65 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         return task_process_status::task_invalid_entry;
     }
     return task_process_status::task_success;
+}
+
+// A merged SET can list the same fields in another order
+static vector<FieldValueTuple> sortedFields(vector<FieldValueTuple> fvs)
+{
+    sort(fvs.begin(), fvs.end());
+    return fvs;
+}
+
+// With the same pool and field names, only settable values change (the threshold mode follows the
+// field names), so applying the SET to the existing SAI profile matches a delete and recreate.
+bool BufferOrch::canApplyProfileSetInPlace(KeyOpFieldsValuesTuple &tuple)
+{
+    const string &object_name = kfvKey(tuple);
+    auto &profiles = *m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+    auto profile = profiles.find(object_name);
+    if (profile == profiles.end() || profile->second.m_saiObjectId == SAI_NULL_OBJECT_ID ||
+        !isObjectBeingReferenced(m_buffer_type_maps, APP_BUFFER_PROFILE_TABLE_NAME, object_name))
+    {
+        return false;
+    }
+
+    // The pool is compared by name rather than resolved, because resolving a pool that is pending
+    // remove logs a NOTICE on every pass
+    auto pool_ref = profile->second.m_objsReferencingByMe.find(buffer_pool_field_name);
+    if (pool_ref == profile->second.m_objsReferencingByMe.end())
+    {
+        return false;
+    }
+    const string &pool_table = buffer_to_ref_table_map.at(buffer_pool_field_name);
+    const auto &fvs = kfvFieldsValues(tuple);
+    auto pool_field = find_if(fvs.begin(), fvs.end(),
+                              [](const FieldValueTuple &fv) { return fvField(fv) == buffer_pool_field_name; });
+    if (pool_field == fvs.end() || pool_table + delimiter + fvValue(*pool_field) != pool_ref->second)
+    {
+        return false;
+    }
+    auto &pools = *m_buffer_type_maps[pool_table];
+    auto pool = pools.find(fvValue(*pool_field));
+    if (pool == pools.end() || pool->second.m_pendingRemove)
+    {
+        return false;
+    }
+
+    BufferProfileConfig cfg;
+    if (!m_bufHlpr.getBufferConfig(cfg, object_name))
+    {
+        return false;
+    }
+    set<string> fields, profile_fields;
+    for (const auto &fv : fvs)
+    {
+        fields.insert(fvField(fv));
+    }
+    for (const auto &fv : cfg.fieldValueMap)
+    {
+        profile_fields.insert(fv.first);
+    }
+    return fields == profile_fields;
 }
 
 /*
@@ -2108,7 +2184,64 @@ void BufferOrch::doTask(Consumer &consumer)
             continue;
         }
 
+        if (map_type_name == APP_BUFFER_PROFILE_TABLE_NAME && kfvOp(it->second) == DEL_COMMAND)
+        {
+            auto next = std::next(it);
+            auto kept = m_profilesKeptForRecreate.find(it->first);
+            if (next != consumer.m_toSync.end() && next->first == it->first &&
+                kfvOp(next->second) == SET_COMMAND &&
+                (kept == m_profilesKeptForRecreate.end() || kept->second != sortedFields(kfvFieldsValues(next->second))) &&
+                canApplyProfileSetInPlace(next->second))
+            {
+                auto &profile = (*(m_buffer_type_maps[map_type_name]))[it->first];
+                profile.m_pendingRemove = false;
+                m_profileSetInPlace = true;
+                task_process_status set_status;
+                try
+                {
+                    set_status = processBufferProfile(next->second);
+                }
+                catch (...)
+                {
+                    // A value that does not parse throws; leave the profile as the queued DEL expects
+                    m_profileSetInPlace = false;
+                    profile.m_pendingRemove = true;
+                    m_profilesKeptForRecreate[it->first] = sortedFields(kfvFieldsValues(next->second));
+                    throw;
+                }
+                m_profileSetInPlace = false;
+                if (set_status == task_process_status::task_success)
+                {
+                    SWSS_LOG_NOTICE("Buffer profile %s is set again while its removal waits for references, updated it in place",
+                                    it->first.c_str());
+                    m_profilesKeptForRecreate.erase(it->first);
+                    consumer.m_toSync.erase(next);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                profile.m_pendingRemove = true;
+                if (set_status == task_process_status::task_need_retry)
+                {
+                    // A transient refusal: the next pass tries the SET in place again, as any SET is retried
+                    SWSS_LOG_INFO("Buffer profile %s could not be updated in place yet, will retry",
+                                  it->first.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Buffer profile %s could not be updated in place, keeping its removal queued",
+                                    it->first.c_str());
+                    m_profilesKeptForRecreate[it->first] = sortedFields(kfvFieldsValues(next->second));
+                }
+            }
+        }
+
         auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(it->second);
+        if (map_type_name == APP_BUFFER_PROFILE_TABLE_NAME && kfvOp(it->second) == DEL_COMMAND &&
+            task_status != task_process_status::task_need_retry)
+        {
+            // The DEL leaves the queue, whether the profile was deleted or the DEL was dropped
+            m_profilesKeptForRecreate.erase(it->first);
+        }
         switch(task_status)
         {
             case task_process_status::task_success :

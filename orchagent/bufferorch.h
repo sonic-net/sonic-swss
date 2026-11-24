@@ -126,6 +126,7 @@ private:
     void initBufferConstants();
     task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);
     task_process_status processBufferProfile(KeyOpFieldsValuesTuple &tuple);
+    bool canApplyProfileSetInPlace(KeyOpFieldsValuesTuple &tuple);
 
     // These methods process input task and add operations to the bulk buffer. This is first stage.
     task_process_status processQueue(KeyOpFieldsValuesTuple &tuple);
@@ -158,6 +159,11 @@ private:
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
     set<string> m_partiallyAppliedQueues;
+    // Profiles whose in-place update failed other than with need retry, with the fields of the SET that
+    // failed. That SET waits for the delete and recreate; a different SET is tried in place again.
+    map<string, vector<FieldValueTuple>> m_profilesKeptForRecreate;
+    // Set while a profile SET is applied to the existing SAI profile in place of a delete and recreate
+    bool m_profileSetInPlace = false;
 
     // Bulk task buffers per DB operation
     std::map<std::string, std::vector<PortBufferProfileListTask>> m_portIngressBufferProfileListBulk;
