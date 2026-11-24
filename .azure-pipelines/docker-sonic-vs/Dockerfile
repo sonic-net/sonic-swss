@@ -7,6 +7,7 @@ ARG build_dir
 ARG include_gcov=y
 ARG include_vpp=y
 ENV BUILD_DIR=$build_dir
+ENV BGPD_GRACEFUL_RESTART_ARG=""
 
 COPY ["debs", "/debs"]
 
