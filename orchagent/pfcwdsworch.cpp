@@ -16,7 +16,6 @@
 #define PFC_WD_IN_STORM                 "storm"
 #define PFC_WD_SW_STATE_TABLE           "PFC_WD_SW_STATE_TABLE"
 #define PFC_WD_POLL_TIMEOUT             5000
-#define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
 
 extern sai_object_id_t gSwitchId;
@@ -321,35 +320,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     // We do NOT need to create ACL table group here. It will be
     // done when ACL tables are bound to ports
     return true;
-}
-
-template <typename DropHandler, typename ForwardHandler>
-unordered_set<string> PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc)
-{
-    SWSS_LOG_ENTER();
-
-    unordered_set<string> filterCounters;
-
-    for (auto &counter : counters)
-    {
-        //auto &counter = it.first;
-        size_t index = 0;
-        index = counter.find(SAI_PORT_STAT_PFC_PREFIX);
-        if (index != 0)
-        {
-            filterCounters.emplace(counter);
-        }
-        else
-        {
-            uint8_t tc = (uint8_t)atoi(counter.substr(index + sizeof(SAI_PORT_STAT_PFC_PREFIX) - 1, 1).c_str());
-            if (losslessTc.count(tc))
-            {
-                filterCounters.emplace(counter);
-            }
-        }
-    }
-
-    return filterCounters;
 }
 
 template <typename DropHandler, typename ForwardHandler>

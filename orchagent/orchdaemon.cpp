@@ -861,11 +861,20 @@ bool OrchDaemon::init()
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
             // The hardware watchdog reads a queue from SAI while that queue is
-            // in storm, so it registers no counters for polling.
+            // in storm. The counters are polled only for the ports that have
+            // PFC stat history enabled. A queue stat is polled only so that
+            // syncd runs the queue plugin; occupancy is one no other group
+            // writes for queues.
+            static const vector<sai_queue_stat_t> hwHistoryQueueStatIds =
+            {
+                SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+            };
             m_orchList.push_back(new PfcWdHwOrch(
                         m_configDb,
                         pfc_wd_tables,
-                        portStatIds));
+                        portStatIds,
+                        hwHistoryQueueStatIds,
+                        queueAttrIds));
         }
         else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {

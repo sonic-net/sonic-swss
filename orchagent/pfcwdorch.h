@@ -27,6 +27,7 @@ extern "C" {
 
 // State and configuration table identifiers
 #define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
+#define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define PFC_WD_GLOBAL                   "GLOBAL"
 
 #define PFC_WD_ACTION                   "action"
@@ -200,6 +201,9 @@ protected:
         }
         return counterIdSet;
     }
+
+    // Keeps the non-PFC counters and the PFC counters of the lossless TCs
+    static unordered_set<string> filterPfcCounters(const unordered_set<string> &counters, const set<uint8_t>& losslessTc);
 
     string m_platform = "";
     shared_ptr<FlexCounterTaggedCachedManager<sai_object_type_t>> m_pfcwdFlexCounterManager;

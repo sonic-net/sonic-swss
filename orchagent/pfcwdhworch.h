@@ -15,6 +15,14 @@ extern "C" {
 #define PFC_WD_HW_RESTORATION_TIME_MIN     "RESTORATION_TIME_MIN"
 #define PFC_WD_HW_RESTORATION_TIME_MAX     "RESTORATION_TIME_MAX"
 
+// PFC stat history plugin for the hardware watchdog, which runs no detection plugin
+#define PFC_STAT_HISTORY_PLUGIN            "pfc_stat_history.lua"
+
+// COUNTERS_DB hash PFC_WD_STAT_HISTORY:PORTS, port OID -> alias: the plugin reads
+// only the queues of the ports listed here
+#define PFC_WD_STAT_HISTORY_TABLE          "PFC_WD_STAT_HISTORY"
+#define PFC_WD_STAT_HISTORY_PORTS          "PORTS"
+
 enum class PfcWdRecoveryMode
 {
     Software,   // software detection and action
@@ -28,8 +36,11 @@ PfcWdRecoveryMode selectPfcWdRecoveryMode(bool dldrCapable, bool dlrInitCapable)
 class PfcWdHwOrch: public PfcWdBaseOrch
 {
 public:
+    // The queue stats and attributes are polled only for PFC stat history.
     PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
-                const vector<sai_port_stat_t> &portStatIds);
+                const vector<sai_port_stat_t> &portStatIds,
+                const vector<sai_queue_stat_t> &queueStatIds = {},
+                const vector<sai_queue_attr_t> &queueAttrIds = {});
     virtual ~PfcWdHwOrch(void);
 
     // Implementation-specific methods
@@ -85,6 +96,9 @@ private:
 
     // Member variables
     const vector<sai_port_stat_t> c_portStatIds;
+    const vector<sai_queue_stat_t> c_queueStatIds;
+    const vector<sai_queue_attr_t> c_queueAttrIds;
+    bool m_statHistoryPluginLoaded = false;
 
     // Hardware timer ranges
     uint32_t m_detectionTimeMin;
@@ -98,6 +112,9 @@ private:
 
     // STATE_DB for hardware watchdog state
     shared_ptr<Table> m_pfcWdHwStateTable;
+
+    // COUNTERS_DB PFC_WD_STAT_HISTORY, the ports the stat history plugin reads
+    shared_ptr<Table> m_statHistoryTable;
 
     // PFC deadlock notifications, forwarded from the SAI callback thread
     shared_ptr<DBConnector> m_notificationsDb;
@@ -132,6 +149,11 @@ private:
     void initializeQueueStats(const Port& port, const set<uint8_t>& losslessTc);
     void clearQueueCounterState(sai_object_id_t queueId);
     bool disableQueueDldr(const Port& port, uint8_t tc, sai_object_id_t queueId);
+
+    // PFC stat history, recorded by the PFC_STAT_HISTORY_PLUGIN flex counter plugin
+    void enableStatHistory(const Port& port);
+    void clearStatHistoryState(sai_object_id_t portId, sai_object_id_t queueId, uint8_t tc);
+    void clearStatHistorySamples(sai_object_id_t portId, sai_object_id_t queueId, uint8_t tc);
 
 
     // Port and queue information

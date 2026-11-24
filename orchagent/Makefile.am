@@ -28,6 +28,7 @@ dist_swss_DATA = \
 		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
+		 pfc_stat_history.lua \
 		 pfc_detect_clounix.lua  \
 		 port_rates.lua \
 		 port_flr.lua \

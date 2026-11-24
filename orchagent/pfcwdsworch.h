@@ -65,7 +65,6 @@ private:
             typename map<sai_object_id_t, PfcWdQueueEntry>::iterator entry, const string &info);
     void doTask(swss::NotificationConsumer &wdNotification);
 
-    unordered_set<string> filterPfcCounters(const unordered_set<string> &counters, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);
 
     void disableBigRedSwitchMode();
