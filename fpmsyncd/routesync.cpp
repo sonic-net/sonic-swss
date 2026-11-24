@@ -10,6 +10,7 @@
 #include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 #include "fpmsyncd/fpm/fpm.h"
 #include "macaddress.h"
 #include "converter.h"
@@ -184,6 +185,10 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_warmStartHelper.registerTable(pipeline, &m_srv6MySidTable, APP_SRV6_MY_SID_TABLE_NAME);
+    /* EVPN MH entries must be reconciled into their own tables, not into ROUTE_TABLE */
+    m_warmStartHelper.registerTable(pipeline, &m_evpn_shlTable, m_evpn_shlTable.getTableName());
+    m_warmStartHelper.registerTable(pipeline, &m_evpn_dfTable, m_evpn_dfTable.getTableName());
+    m_warmStartHelper.registerTable(pipeline, &m_evpn_esBackupNhgTable, m_evpn_esBackupNhgTable.getTableName());
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
@@ -832,7 +837,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s", h->nlmsg_type,
                             nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || rmac.empty() || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
             {
                 return false;
             }
@@ -851,6 +856,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             for (;;) 
             {
                 uint16_t encap = 0;
+                /* A next hop without its own VNI or router MAC must not take the previous one's */
+                encap_value = 0;
+                rmac.clear();
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
                 {
                     break;
@@ -952,7 +960,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || rmac.empty() || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                     {
                         return false;
                     }
@@ -2235,7 +2243,7 @@ void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
                     const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                        DEL_COMMAND,
                                                                        fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
+                    m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
                 }
             }
             else if (msg_type == RTM_NEWTFILTER)
@@ -2286,7 +2294,7 @@ void RouteSync::onTcFilterMsg(struct nlmsghdr *h, int len)
                     const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                        SET_COMMAND,
                                                                        fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
+                    m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
                 }
             }
         }
@@ -2338,7 +2346,7 @@ void RouteSync::onEvpnShlMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
         }
     }
     else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_SHL)
@@ -2387,7 +2395,7 @@ void RouteSync::onEvpnShlMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(shl_entry_key,
                                                                SET_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_shlTable.getTableName(), kfv);
         }
     }
 }
@@ -2436,7 +2444,7 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(df_entry_key,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_dfTable.getTableName(), kfv);
         }
     }
     else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_DF)
@@ -2460,7 +2468,7 @@ void RouteSync::onEvpnDfMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(df_entry_key,
                                                                SET_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_dfTable.getTableName(), kfv);
         }
     }
 }
@@ -2503,7 +2511,7 @@ void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_esBackupNhgTable.getTableName(), kfv);
         }
     }
     else if (h->nlmsg_type == RTM_FPM_ADD_EVPN_ES_BACKUP_NHG)
@@ -2528,7 +2536,7 @@ void RouteSync::onEvpnEsBackupNhgMsg(struct nlmsghdr *h, int len)
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(backup_nhg_entry_key,
                                                                SET_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_warmStartHelper.insertRefreshMap(m_evpn_esBackupNhgTable.getTableName(), kfv);
         }
     }
 }
@@ -2549,6 +2557,8 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
         && (h->nlmsg_type != RTM_NEWTFILTER)
         && (h->nlmsg_type != RTM_DELTFILTER)
+        && (h->nlmsg_type != RTM_NEWNEIGH)
+        && (h->nlmsg_type != RTM_DELNEIGH)
         && !(h->nlmsg_type >= RTM_FPM_FIRST && h->nlmsg_type <= RTM_FPM_LAST))
     {
         return;
@@ -2626,6 +2636,13 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     case RTM_FPM_ADD_EVPN_ES_BACKUP_NHG:
     case RTM_FPM_DEL_EVPN_ES_BACKUP_NHG:
         onEvpnEsBackupNhgMsg(h, len);
+        return;
+    case RTM_NEWNEIGH:
+    case RTM_DELNEIGH:
+        if (m_macsync)
+        {
+            m_macsync->onMacMsg(h, len);
+        }
         return;
     default:
         break;

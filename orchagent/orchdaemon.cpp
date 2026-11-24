@@ -24,7 +24,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define PFC_WD_POLL_MSECS 100
 
 #define APP_FABRIC_MONITOR_PORT_TABLE_NAME      "FABRIC_PORT_TABLE"
 #define APP_FABRIC_MONITOR_DATA_TABLE_NAME      "FABRIC_MONITOR_TABLE"
@@ -383,6 +382,17 @@ bool OrchDaemon::init()
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch, route_zmq_server);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
+
+    /*
+     * Force the protection-NHG capability probe during init. The accessors
+     * self-probe on first call and the probe publishes the NHG_PROTECTION_*
+     * fields to STATE_DB|SWITCH_CAPABILITY; without this they would not appear
+     * until the first protected route arrived. There is no global enable -- the
+     * real gate is the per-call-site isProtectionSupported() check.
+     */
+    SWSS_LOG_NOTICE("Protection NHG capability: protection=%d, hw_switchover=%d",
+                    gNhgOrch->isProtectionSupported() ? 1 : 0,
+                    gNhgOrch->isHwSwitchoverSupported() ? 1 : 0);
 
     gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
 
@@ -819,6 +829,7 @@ bool OrchDaemon::init()
         };
 
         bool pfcDlrInit = gSwitchOrch->checkPfcDlrInitEnable();
+        bool pfcDldrEnable = gSwitchOrch->checkPfcDldrEnable();
 
         // Override pfcDlrInit if needed, and this change is only for PFC tests.
         if(getenv("PFC_DLR_INIT_ENABLE"))
@@ -832,19 +843,31 @@ bool OrchDaemon::init()
             else if(envPfcDlrInit == "0")
             {
                 pfcDlrInit = false;
+                // Asking for a software handler also rules out the hardware
+                // watchdog, which would otherwise take precedence below. The
+                // virtual switch advertises every queue attribute, DLDR
+                // included, so without this the software handlers are
+                // unreachable there and the tests that set this variable cannot
+                // exercise them.
+                pfcDldrEnable = false;
                 SWSS_LOG_NOTICE("Override PfcDlrInitEnable to false");
             }
         }
 
-        // Complete hardware recovery needs deadlock detection and recovery in
-        // hardware, which SAI_QUEUE_ATTR_ENABLE_PFC_DLDR reports. A hybrid
-        // platform only advertises SAI_QUEUE_ATTR_PFC_DLR_INIT.
-        if (gSwitchOrch->checkPfcDldrEnable())
-        {
-            SWSS_LOG_NOTICE("Switch supports PFC hardware watchdog");
-        }
+        // Both DLDR and DLR_INIT select hardware; DLR_INIT alone selects hybrid.
+        const PfcWdRecoveryMode pfcWdMode = selectPfcWdRecoveryMode(pfcDldrEnable, pfcDlrInit);
 
-        if(pfcDlrInit)
+        if (pfcWdMode == PfcWdRecoveryMode::Hardware)
+        {
+            SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            // The hardware watchdog reads a queue from SAI while that queue is
+            // in storm, so it registers no counters for polling.
+            m_orchList.push_back(new PfcWdHwOrch(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds));
+        }
+        else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {
             SWSS_LOG_NOTICE("Starting dlr init handler for pfc watchdog");
             m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
@@ -866,7 +889,7 @@ bool OrchDaemon::init()
                         queueAttrIds,
                         PFC_WD_POLL_MSECS));
         }
-    } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    } else if (isCiscoPlatform(platform))
     {
         static const vector<sai_port_stat_t> portStatIds =
         {

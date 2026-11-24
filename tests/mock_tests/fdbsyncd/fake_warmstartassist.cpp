@@ -1,3 +1,5 @@
+#include <map>
+#include <tuple>
 #include "warmRestartAssist.h"
 
 using namespace std;
@@ -14,8 +16,12 @@ AppRestartAssist::~AppRestartAssist()
 {
 }
 
-void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerStateTable *psTable)
+std::map<std::string, bool> fake_registered_tables;
+
+void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerStateTable *psTable, bool replaceFields)
 {
+    m_psTables[tableName] = psTable;
+    fake_registered_tables[tableName] = replaceFields;
 }
 
 // join the field-value strings for straight printing.
@@ -44,11 +50,28 @@ void AppRestartAssist::readTablesToMap()
 
 void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldValueTuple> fvVector, bool delete_key)
 {
+    appTableCacheMap[tableName][key] = fvVector;
 }
 
 
 void AppRestartAssist::reconcile()
 {
+    m_warmStartInProgress = false;
+}
+
+int fake_keep_stale_entries_calls;
+std::vector<std::tuple<std::string, std::string, std::vector<FieldValueTuple>>> fake_kept_entries;
+
+void AppRestartAssist::keepStaleEntries(const KeptEntryHandler &onKept)
+{
+    fake_keep_stale_entries_calls++;
+    for (auto const &entry : fake_kept_entries)
+    {
+        if (onKept)
+        {
+            onKept(std::get<0>(entry), std::get<1>(entry), std::get<2>(entry));
+        }
+    }
 }
 
 void AppRestartAssist::setReconcileInterval(uint32_t time)

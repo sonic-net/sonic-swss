@@ -1,6 +1,7 @@
 #include <iostream>
 #include <inttypes.h>
 #include <sys/stat.h>
+#include <jemalloc/jemalloc.h>
 #include "logger.h"
 #include "routesync.h"
 #include "select.h"
@@ -12,11 +13,14 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/fpmsyncd.h"
 #include "fpmsyncd/routesync.h"
+#include "fpmsyncd/macsync.h"
 
 #include <netlink/route/route.h>
 
 using namespace std;
 using namespace swss;
+
+const char *malloc_conf = "background_thread:true";
 
 // gSelectTimeout specifies the maximum wait time in milliseconds (-1 == infinite)
 static int gSelectTimeout;
@@ -88,6 +92,9 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
+    MacSync macsync(&pipeline, &stateDb, &cfgDb);
+    sync.setMacSync(&macsync);
+
     NetLink netlink;
 
     netlink.registerGroup(RTNLGRP_LINK);
@@ -141,8 +148,12 @@ int main(int argc, char **argv)
             fpm.accept();
             cout << "Connected!" << endl;
 
+            macsync.onFpmConnected(fpm);
+
             s.addSelectable(&fpm);
             s.addSelectable(&netlink);
+            s.addSelectable(macsync.getStateFdbTable());
+
             if (sync.isSuppressionEnabled())
             {
                 s.addSelectable(routeResponseChannel.get());
@@ -192,8 +203,18 @@ int main(int argc, char **argv)
             {
                 Selectable *temps;
 
-                /* Reading FPM messages forever (and calling "readMe" to read them) */
+                /*
+                 * Wait on every selectable: the FPM connection (whose "readMe" reads the
+                 * FPM messages), netlink, and MacSync's STATE_DB FDB_TABLE for the local
+                 * MACs to send to zebra.
+                 */
                 s.select(&temps, gSelectTimeout);
+
+                if (temps == (Selectable *)macsync.getStateFdbTable())
+                {
+                    macsync.processStateFdb();
+                    continue;
+                }
 
                 /*
                  * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the
@@ -273,6 +294,7 @@ int main(int argc, char **argv)
         }
         catch (FpmLink::FpmConnectionClosedException &e)
         {
+            macsync.onFpmDisconnected();
             cout << "Connection lost, reconnecting..." << endl;
         }
     }

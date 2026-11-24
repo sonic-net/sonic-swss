@@ -47,6 +47,11 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
         m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
     }
 
+    std::vector<std::string> peerSwitchKeys;
+    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
+    m_isDualToR = peerSwitchKeys.size() > 0;
+    SWSS_LOG_NOTICE("neighsyncd: dualtor=%s", m_isDualToR ? "true" : "false");
+
     m_nl_sock = nl_socket_alloc();
     if (!m_nl_sock)
     {
@@ -161,9 +166,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     string key;
     string family;
     string intfName;
-    std::vector<std::string> peerSwitchKeys;
-    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
-    bool is_dualtor = peerSwitchKeys.size() > 0;
+    bool is_dualtor = m_isDualToR;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -238,9 +241,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     int state = rtnl_neigh_get_state(neigh);
     if (is_dualtor && family == IPV6_NAME)
     {
+        bool isVlanInterface = !intfName.compare(0, strlen("Vlan"), "Vlan");
         if (nlmsg_type == RTM_NEWNEIGH && state == NUD_FAILED)
         {
-            if (!intfName.compare(0, strlen("Vlan"), "Vlan"))
+            if (isVlanInterface)
             {
                 std::vector<FieldValueTuple> failedNeighFields = {
                     FieldValueTuple("NULL", "NULL"),
@@ -253,6 +257,17 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
                 m_kernelFailedNeighTable.del(key);
                 SWSS_LOG_INFO("Ignoring failed kernel neighbor '%s' on non-VLAN interface", key.c_str());
             }
+        }
+        else if (nlmsg_type == RTM_DELNEIGH && isVlanInterface)
+        {
+            /*
+             * Deleting a resolved neighbor makes the kernel report NUD_FAILED
+             * immediately followed by RTM_DELNEIGH. nbrmgrd may not have consumed
+             * the entry published for the NUD_FAILED report yet, so a lookup in
+             * NEIGH_FAILED_TABLE would miss it. Always remove the entry instead.
+             */
+            m_kernelFailedNeighTable.del(key);
+            SWSS_LOG_INFO("Removed deleted kernel neighbor '%s' from failed neighbor table", key.c_str());
         }
         else if (nlmsg_type == RTM_DELNEIGH ||
                  ((nlmsg_type == RTM_NEWNEIGH || nlmsg_type == RTM_GETNEIGH) &&

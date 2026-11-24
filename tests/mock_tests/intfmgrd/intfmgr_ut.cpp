@@ -101,6 +101,27 @@ namespace intfmgr_ut
         return false;
     }
 
+    TEST_F(IntfMgrTest, LinkLocalModeDisableMatchesExactInterfaceAlias)
+    {
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        intfmgr.m_statePortTable.set("Ethernet4", {{"state", "ok"}});
+        intfmgr.m_stateIntfTable.set("Ethernet4", {{"vrf", ""}});
+
+        EXPECT_TRUE(intfmgr.doIntfGeneralTask(
+            {"Ethernet4"}, {{"ipv6_use_link_local_only", "enable"}}, SET_COMMAND));
+        intfmgr.m_neighTable.set("Ethernet4:fe80::1", {{"neigh", "00:11:22:33:44:55"}});
+        intfmgr.m_neighTable.set("Ethernet40:fe80::2", {{"neigh", "00:11:22:33:44:66"}});
+        intfmgr.m_neighTable.set("Ethernet4:2001:db8::1", {{"neigh", "00:11:22:33:44:77"}});
+
+        mockCallArgs.clear();
+        EXPECT_TRUE(intfmgr.doIntfGeneralTask(
+            {"Ethernet4"}, {{"ipv6_use_link_local_only", "disable"}}, SET_COMMAND));
+
+        EXPECT_TRUE(commandWasIssued("neigh del dev Ethernet4 fe80::1"));
+        EXPECT_FALSE(commandWasIssued("neigh del dev Ethernet40 fe80::2"));
+        EXPECT_FALSE(commandWasIssued("2001:db8::1"));
+    }
+
     TEST_F(IntfMgrTest, testSettingIpv6Flag){
         Ethernet0IPv6Set = false;
         swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);

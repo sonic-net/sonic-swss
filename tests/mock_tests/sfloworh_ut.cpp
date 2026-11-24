@@ -6,6 +6,9 @@
 #include <set>
 
 #include "ut_helper.h"
+#define private public
+#include "warm_restart.h"
+#undef private
 #include "mock_orchagent_main.h"
 #include "mirrororch_sample_port_sai_wrap.h"
 
@@ -1347,6 +1350,51 @@ namespace sflow_test
         attr.value.oid = SAI_NULL_OBJECT_ID;
         sai_port_api->set_port_attribute(port.m_port_id, &attr);
         sai_samplepacket_api->remove_samplepacket(foreign_oid);
+        sai_samplepacket_api->remove_samplepacket(sflow_sample);
+    }
+
+    TEST_F(SflowOrchTest, SflowAddPortAllowsPreRebootBindingDuringWarmRestore)
+    {
+        mirror_sample_port_wrap_ut::PortSampleSaiGuard saiPortSampleGuard;
+
+        WarmStart::getInstance().m_enabled = true;
+        MockSflowOrch mock_orch;
+        WarmStart::getInstance().m_enabled = false;
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        // Port still bound to the pre-reboot samplepacket, unknown to the rebuilt map.
+        sai_object_id_t old_oid;
+        sai_attribute_t sp_attr;
+        sp_attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+        sp_attr.value.u32 = 7777;
+        ASSERT_EQ(sai_samplepacket_api->create_samplepacket(&old_oid, gSwitchId, 1, &sp_attr),
+                  SAI_STATUS_SUCCESS);
+
+        sai_attribute_t attr;
+        attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
+        attr.value.oid = old_oid;
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &attr), SAI_STATUS_SUCCESS);
+
+        sai_object_id_t sflow_sample;
+        sp_attr.value.u32 = 5678;
+        ASSERT_EQ(sai_samplepacket_api->create_samplepacket(&sflow_sample, gSwitchId, 1, &sp_attr),
+                  SAI_STATUS_SUCCESS);
+
+        ASSERT_TRUE(Portal::SflowOrchInternal::sflowAddPort(
+            mock_orch.get(), sflow_sample, port.m_port_id, "rx"));
+
+        // After warm boot ends the conflict check is enforced again.
+        mock_orch.get().onWarmBootEnd();
+        ASSERT_EQ(sai_port_api->set_port_attribute(port.m_port_id, &attr), SAI_STATUS_SUCCESS);
+        ASSERT_FALSE(Portal::SflowOrchInternal::sflowAddPort(
+            mock_orch.get(), sflow_sample, port.m_port_id, "rx"));
+
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+        sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        sai_samplepacket_api->remove_samplepacket(old_oid);
         sai_samplepacket_api->remove_samplepacket(sflow_sample);
     }
 

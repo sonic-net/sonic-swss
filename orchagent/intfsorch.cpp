@@ -571,9 +571,8 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
      * delete IP with netmask /8. To handle this we in case of overlap
      * we should wait until entry with /8 netmask will be removed.
      * Time frame between those event is quite small.*/
-    /* NOTE: Overlap checking in this interface is not enough.
-     * So extend to check in all interfaces of this VRF */
-    bool overlaps = false;
+    /* Cross-interface overlaps in the same VRF are invalid configuration.
+     * Consume those requests without installing the overlapping address. */
     for (const auto &intfsIt: m_syncdIntfses)
     {
         if (port.m_vr_id != intfsIt.second.vrf_id)
@@ -586,17 +585,18 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             if (prefixIt.isAddressInSubnet(ip_prefix->getIp()) ||
                     ip_prefix->isAddressInSubnet(prefixIt.getIp()))
             {
-                overlaps = true;
-                SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
-                        prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
-                break;
-            }
-        }
+                if (intfsIt.first != alias)
+                {
+                    SWSS_LOG_ERROR("Rejecting interface %s address %s: overlaps with interface %s address %s in the same VRF",
+                            alias.c_str(), ip_prefix->to_string().c_str(),
+                            intfsIt.first.c_str(), prefixIt.to_string().c_str());
+                    return true;
+                }
 
-        if (overlaps)
-        {
-            /* Overlap of IP address network */
-            return false;
+                SWSS_LOG_DEBUG("Deferring interface %s address %s: overlaps with existing address %s",
+                        alias.c_str(), ip_prefix->to_string().c_str(), prefixIt.to_string().c_str());
+                return false;
+            }
         }
     }
 
@@ -1138,6 +1138,11 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (!ip_prefix_in_key)
+            {
+                m_rifWaitingForVlanExit.erase(alias);
+            }
+
             if (is_lo)
             {
                 if (!ip_prefix_in_key)
@@ -1384,6 +1389,24 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         SWSS_LOG_WARN("Router interface already exists on %s",
                       port.m_alias.c_str());
         return true;
+    }
+
+    /* A port is either bridged or routed: wait until portsorch has removed the port's VLAN memberships
+     * (vlanmgrd and intfmgrd write APPL_DB independently, so the INTF SET can arrive first). */
+    if (port.m_type == Port::PHY || port.m_type == Port::LAG)
+    {
+        vlan_members_t vlan_members;
+        gPortsOrch->getPortVlanMembers(port, vlan_members);
+        if (!vlan_members.empty())
+        {
+            if (m_rifWaitingForVlanExit.insert(port.m_alias).second)
+            {
+                SWSS_LOG_NOTICE("Port %s is still a member of %zu VLAN(s), delaying router interface creation",
+                                port.m_alias.c_str(), vlan_members.size());
+            }
+            return false;
+        }
+        m_rifWaitingForVlanExit.erase(port.m_alias);
     }
 
     /* Create router interface if the router interface doesn't exist */
