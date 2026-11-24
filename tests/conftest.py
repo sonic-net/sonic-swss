@@ -728,6 +728,12 @@ class DockerVirtualSwitch:
         ensure_system(f"rm -rf {log_dir}")
         ensure_system(f"mkdir -p {log_dir}")
 
+        self.ctn.reload()
+        with open(os.path.join(log_dir, "docker-state.json"), "w") as state_file:
+            json.dump(self.ctn.attrs["State"], state_file, indent=2)
+        with open(os.path.join(log_dir, "docker.log"), "wb") as log_file:
+            log_file.write(self.ctn.logs(timestamps=True))
+
         p = subprocess.Popen(["tar", "--no-same-owner", "--exclude", "README", "-C", os.path.join("./", log_dir), "-x"], stdin=subprocess.PIPE)
 
         stream, _ = self.ctn.get_archive("/var/log/")
