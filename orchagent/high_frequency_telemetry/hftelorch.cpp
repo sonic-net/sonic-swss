@@ -174,25 +174,35 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
             continue;
         }
 
-        if (msg.m_operation == CounterNameMapUpdater::SET)
+        // Called synchronously from other orchs (e.g. PortsOrch, BufferOrch),
+        // so an HFT failure must not propagate into the caller.
+        try
         {
-            if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+            if (msg.m_operation == CounterNameMapUpdater::SET)
             {
-                continue;
+                if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+                {
+                    continue;
+                }
             }
-        }
-        else if (msg.m_operation == CounterNameMapUpdater::DEL)
-        {
-            if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+            else if (msg.m_operation == CounterNameMapUpdater::DEL)
             {
-                continue;
+                if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+                {
+                    continue;
+                }
             }
+            else
+            {
+                SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+            }
+            profile->tryCommitConfig(counter_itr->second);
         }
-        else
+        catch (const std::exception &e)
         {
-            SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+            SWSS_LOG_ERROR("Failed to update high frequency telemetry profile %s for object %s: %s",
+                           profile->getProfileName().c_str(), counter_name.c_str(), e.what());
         }
-        profile->tryCommitConfig(counter_itr->second);
     }
 }
 
