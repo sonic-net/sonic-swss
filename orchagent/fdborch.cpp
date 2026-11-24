@@ -2429,6 +2429,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
     }
 
+    /* Only after m_entries names the new port: removing a tunnel's bridge port flushes its MACs */
+    if (macUpdate && (oldPort.m_bridge_port_id != port.m_bridge_port_id) &&
+        m_portsOrch->getPort(oldPort.m_alias, oldPort))
+    {
+        notifyTunnelOrch(oldPort);
+    }
+
     FdbUpdate update;
     update.entry = entry;
     update.port = port;
