@@ -69,6 +69,7 @@ int main(int argc, char **argv)
 
         // Open a Unix Domain Socket with STPd for communication
         stpmgr.ipcInitStpd();
+        stpmgr.waitStpdReady();
         stpmgr.isPortInitDone(&app_db);
 
         // Get max STP instances from state DB and send to stpd

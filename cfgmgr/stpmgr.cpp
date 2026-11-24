@@ -7,11 +7,13 @@
 #include <string>
 #include <cstdlib>
 #include <cctype>
+#include <stdexcept>
 
 #include <iostream>
 #include <algorithm>
 #include <sstream>
 #include <thread>
+#include <cerrno>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
@@ -47,6 +49,18 @@ static bool parseInteger(const std::string &value, int &result, const char *fiel
     }
 }
 
+// Each handler wraps its entry in try/catch and drops the entry on any
+// exception, so a bad value is thrown with its field name instead of being
+// returned.
+static int stpParseInt(const std::string &value, const char *what)
+{
+    int result;
+    if (!parseInteger(value, result, what))
+        throw std::invalid_argument(
+            std::string(what) + " has non-integer value '" + value + "'");
+    return result;
+}
+
 StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
     Orch(tables),
@@ -62,13 +76,17 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_stateVlanMemberTable(statDb, STATE_VLAN_MEMBER_TABLE_NAME),
     m_cfgMstGlobalTable(confDb, "STP_MST"),
     m_cfgMstInstTable(confDb, "STP_MST_INST"),
-    m_cfgMstInstPortTable(confDb, "STP_MST_PORT")
+    m_cfgMstInstPortTable(confDb, "STP_MST_PORT"),
+    m_stateStpVlanTable(statDb, STATE_STP_VLAN_TABLE_NAME),
+    m_stateStpMstInstTable(statDb, STATE_STP_MST_INST_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
     stpd_fd = -1;
 
     stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = stpMstInstTask = false;
+    m_globalPriority = m_globalForwardDelay = m_globalHelloTime = m_globalMaxAge = -1;
+    m_sendFailed = false;
 
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
@@ -101,8 +119,6 @@ void StpMgr::doTask(Consumer &consumer)
         doStpMstInstTask(consumer);
     else if (table == "STP_MST_PORT")
         doStpMstInstPortTask(consumer);
-    else if (table == CFG_STP_PORT_TABLE_NAME)
-         doStpPortTask(consumer);
     else
         SWSS_LOG_ERROR("Invalid table %s", table.c_str());
 }
@@ -117,6 +133,8 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         STP_BRIDGE_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_BRIDGE_CONFIG_MSG));
 
@@ -126,103 +144,169 @@ void StpMgr::doStpGlobalTask(Consumer &consumer)
         string op = kfvOp(t);
 
         SWSS_LOG_INFO("STP global key %s op %s", key.c_str(), op.c_str());
-        if (op == SET_COMMAND)
+        if (op == DEL_COMMAND)
         {
-            bool configValid = true;
-            int rootguardTimeout = 0;
-            for (const auto &i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "rootguard_timeout" &&
-                    !parseInteger(fvValue(i), rootguardTimeout, "rootguard_timeout"))
-                {
-                    configValid = false;
-                    SWSS_LOG_ERROR("Invalid STP global configuration for %s, ignoring", key.c_str());
-                    break;
-                }
-            }
-
-            if (!configValid)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            msg.opcode = STP_SET_COMMAND;
-            for (auto i : kfvFieldsValues(t))
-            {
-                SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
-                if (fvField(i) == "mode")
-                {
-                    if (fvValue(i) == "pvst")
-                    {
-                        if (l2ProtoEnabled == L2_NONE)
-                        {
-                            const std::string cmd = std::string("") +
-                                " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                            std::string res;
-                            int ret = swss::exec(cmd, res);
-                            if (ret != 0)
-                                SWSS_LOG_ERROR("ebtables add failed for PVST %d", ret);
-
-                            l2ProtoEnabled = L2_PVSTP;
-                        }
-                        msg.stp_mode = L2_PVSTP;
-                    }
-                    else if (fvValue(i) == "mst")
-                    {
-                        if (l2ProtoEnabled == L2_NONE)
-                        {
-                            l2ProtoEnabled = L2_MSTP;
-                        }
-                        msg.stp_mode = L2_MSTP;
-
-                        // Assign all VLANs to zero instance for MSTP
-                        fill_n(m_vlanInstMap, MAX_VLANS, 0);
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Error: Invalid mode %s", fvValue(i).c_str());
-                    }
-                }
-                else if (fvField(i) == "rootguard_timeout")
-                {
-                    msg.rootguard_timeout = rootguardTimeout;
-                }
-            }
-
-            memcpy(msg.base_mac_addr, macAddress.getMac(), 6);
+            disableProtocol();
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
-        else if (op == DEL_COMMAND)
+
+        bool mstEnabled = false;
+        bool modeChanged = false;
+        L2_PROTO_MODE mode = L2_NONE;
+        msg.opcode = STP_SET_COMMAND;
+        for (auto i : kfvFieldsValues(t))
         {
-            msg.opcode = STP_DEL_COMMAND;
-
-            // Free Up all instances
-            FREE_ALL_INST_ID();
-
-            // Initialize all VLANs to Invalid instance
-            fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
-
-            // Remove ebtables rule based on protocol mode
-            if (l2ProtoEnabled == L2_PVSTP)
+            SWSS_LOG_DEBUG("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+            if (fvField(i) == "mode")
             {
-                const std::string pvst_cmd =
-                    "ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
-                std::string res_pvst;
-                int ret_pvst = swss::exec(pvst_cmd, res_pvst);
-                if (ret_pvst != 0)
-                    SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
+                if (fvValue(i) == "pvst")
+                    mode = L2_PVSTP;
+                else if (fvValue(i) == "mst")
+                    mode = L2_MSTP;
+                else
+                    SWSS_LOG_ERROR("Error: Invalid mode %s", fvValue(i).c_str());
             }
-            l2ProtoEnabled = L2_NONE;
+            else if (fvField(i) == "rootguard_timeout")
+            {
+                msg.rootguard_timeout = stpParseInt(fvValue(i), "STP GLOBAL rootguard_timeout");
+            }
         }
+
+        if (mode != L2_NONE)
+        {
+            // stpd routes a bridge config by the mode in the envelope and
+            // keeps the old protocol running under it, so a mode edited in
+            // place is taken down first, as a row delete would, before the
+            // new mode goes out.
+            if (l2ProtoEnabled != L2_NONE && l2ProtoEnabled != mode)
+            {
+                disableProtocol();
+                modeChanged = true;
+            }
+
+            if (l2ProtoEnabled == L2_NONE)
+            {
+                if (mode == L2_PVSTP)
+                {
+                    const std::string cmd = std::string("") +
+                        " ebtables -A FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+                    std::string res;
+                    int ret = swss::exec(cmd, res);
+                    if (ret != 0)
+                        SWSS_LOG_ERROR("ebtables add failed for PVST %d", ret);
+                }
+                l2ProtoEnabled = mode;
+            }
+            msg.stp_mode = mode;
+
+            if (mode == L2_MSTP)
+            {
+                mstEnabled = true;
+
+                // Assign all VLANs to zero instance for MSTP
+                fill_n(m_vlanInstMap, MAX_VLANS, 0);
+            }
+        }
+
+        memcpy(msg.base_mac_addr, macAddress.getMac(), 6);
 
         // Send the message to the daemon
         sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg);
 
+        // PVST VLANs without their own timers or priority use the global ones,
+        // so a change of one of those is passed on to them. A write that
+        // touches none of them (rootguard_timeout, a mode re-write) is not.
+        bool inheritedChanged = updateGlobalPvstFields(kfvFieldsValues(t));
+        if (inheritedChanged && l2ProtoEnabled == L2_PVSTP && !modeChanged)
+            refreshPvstVlans();
+
+        // Enrol VLAN members that pre-existed this MSTP enable. A mode enable
+        // does not re-fire STATE_VLAN_MEMBER events, so replay the current
+        // membership to stpd now (after the bridge config). Covers first enable
+        // and re-enable after an MSTP -> NONE -> MSTP toggle.
+        if (mstEnabled)
+        {
+            enrolMstVlanMembers();
+        }
+
+        if (modeChanged)
+        {
+            replayModeConfig();
+        }
+
         // Move to the next item
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
+// Take the running protocol down in stpd: the bridge delete goes out under
+// the mode it is for, then stpmgrd forgets the mode and every instance.
+void StpMgr::disableProtocol()
+{
+    STP_BRIDGE_CONFIG_MSG msg;
+    memset(&msg, 0, sizeof(STP_BRIDGE_CONFIG_MSG));
+    msg.opcode = STP_DEL_COMMAND;
+
+    // Free Up all instances
+    FREE_ALL_INST_ID();
+    clearInstanceHolds();
+
+    // Initialize all VLANs to Invalid instance
+    fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
+
+    // Remove ebtables rule based on protocol mode
+    if (l2ProtoEnabled == L2_PVSTP)
+    {
+        const std::string pvst_cmd =
+            "ebtables -D FORWARD -d 01:00:0c:cc:cc:cd -j DROP";
+        std::string res_pvst;
+        int ret_pvst = swss::exec(pvst_cmd, res_pvst);
+        if (ret_pvst != 0)
+            SWSS_LOG_ERROR("ebtables del failed for PVST %d", ret_pvst);
+    }
+
+    // Sent before the mode is cleared: the message is stamped with the
+    // current mode, and stpd ignores a bridge config that arrives under L2_NONE.
+    sendMsgStpd(STP_BRIDGE_CONFIG, sizeof(msg), (void *)&msg);
+    l2ProtoEnabled = L2_NONE;
+}
+
+// After a mode change the rows of the new mode's tables are either still
+// held or already went out under the old mode and were dropped by stpd.
+// Feed them again from CONFIG_DB in the order a start-up takes them.
+void StpMgr::replayModeConfig()
+{
+    vector<Table *> tables = {&m_cfgStpPortTable};
+    if (l2ProtoEnabled == L2_PVSTP)
+    {
+        tables.push_back(&m_cfgStpVlanTable);
+        tables.push_back(&m_cfgStpVlanPortTable);
+    }
+    else if (l2ProtoEnabled == L2_MSTP)
+    {
+        tables.push_back(&m_cfgMstGlobalTable);
+        tables.push_back(&m_cfgMstInstTable);
+        tables.push_back(&m_cfgMstInstPortTable);
+    }
+
+    for (auto *table : tables)
+    {
+        addExistingData(table);
+        auto *executor = getExecutor(table->getTableName());
+        if (executor)
+            executor->drain();
+    }
+}
 
 void StpMgr::doStpVlanTask(Consumer &consumer)
 {
@@ -237,6 +321,8 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         STP_VLAN_CONFIG_MSG *msg = NULL;
         uint32_t len = 0;
         bool stpEnable = false;
@@ -250,13 +336,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
         string op  = kfvOp(t);
 
         string vlanKey = key.substr(4); // Remove Vlan prefix
-        int vlan_id;
-        if (!parseInteger(vlanKey, vlan_id, "STP_VLAN key"))
-        {
-            SWSS_LOG_ERROR("Invalid STP VLAN key %s, ignoring", key.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
+    int vlan_id = stpParseInt(vlanKey, "STP_VLAN key");
 
         SWSS_LOG_INFO("STP vlan key %s op %s", key.c_str(), op.c_str());
         if (op == SET_COMMAND)
@@ -268,43 +348,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
                 continue;
             }
 
-            bool configValid = true;
-            for (auto i : kfvFieldsValues(t))
-            {
-                SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
-
-                if (fvField(i) == "enabled")
-                {
-                    stpEnable = (fvValue(i) == "true") ? true : false;
-                }
-                else if (fvField(i) == "forward_delay")
-                {
-                    configValid = parseInteger(fvValue(i), forwardDelay, "forward_delay");
-                }
-                else if (fvField(i) == "hello_time")
-                {
-                    configValid = parseInteger(fvValue(i), helloTime, "hello_time");
-                }
-                else if (fvField(i) == "max_age")
-                {
-                    configValid = parseInteger(fvValue(i), maxAge, "max_age");
-                }
-                else if (fvField(i) == "priority")
-                {
-                    configValid = parseInteger(fvValue(i), priority, "priority");
-                }
-                if (!configValid)
-                {
-                    SWSS_LOG_ERROR("Invalid STP VLAN configuration for %s, ignoring", key.c_str());
-                    break;
-                }
-            }
-
-            if (!configValid)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
+            readStpVlanFields(kfvFieldsValues(t), stpEnable, forwardDelay, helloTime, maxAge, priority);
         }
         else if (op == DEL_COMMAND)
         {
@@ -329,10 +373,14 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
                     instId  = allocL2Instance(vlan_id);
                     if (instId == -1)
                     {
-                        SWSS_LOG_ERROR("Couldnt allocate instance to VLAN %d", vlan_id);
+                        SWSS_LOG_ERROR("No free STP instance for VLAN %d: the hardware holds %u, "
+                                       "spanning tree stays off for it until one is freed",
+                                       vlan_id, max_stp_instances);
+                        holdForInstance(m_stateStpVlanTable, key, m_vlansWaitingForInstance, vlan_id);
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
+                    releaseHold(m_stateStpVlanTable, key, m_vlansWaitingForInstance, vlan_id);
 
                     portCnt = getAllVlanMem(key, port_list);
                     SWSS_LOG_DEBUG("Port count %d", portCnt);
@@ -376,8 +424,9 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
         {
             if (m_vlanInstMap[vlan_id] == INVALID_INSTANCE)
             {
-                // Already deallocated. NoOp. This can happen when STP
-                // is disabled on a VLAN more than once
+                // Already deallocated, or never allocated because no
+                // instance was free. Nothing to tell stpd either way.
+                releaseHold(m_stateStpVlanTable, key, m_vlansWaitingForInstance, vlan_id);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -393,6 +442,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
             msg->inst_id = m_vlanInstMap[vlan_id];
 
             deallocL2Instance(vlan_id);
+            retryWaitingVlan();
         }
 
         sendMsgStpd(STP_VLAN_CONFIG, len, (void *)msg);
@@ -400,6 +450,151 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
             free(msg);
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+// Read an STP_VLAN row. A timer or priority the row leaves out stays -1 and is
+// filled from STP|GLOBAL, then from the protocol default.
+void StpMgr::readStpVlanFields(const vector<FieldValueTuple> &fvs, bool &enabled,
+                               int &forwardDelay, int &helloTime, int &maxAge, int &priority)
+{
+    enabled = false;
+    forwardDelay = helloTime = maxAge = priority = -1;
+    for (const auto &fv : fvs)
+    {
+        SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(fv).c_str(), fvValue(fv).c_str());
+        if (fvField(fv) == "enabled")
+            enabled = (fvValue(fv) == "true");
+        else if (fvField(fv) == "forward_delay")
+            forwardDelay = stpParseInt(fvValue(fv), "STP_VLAN forward_delay");
+        else if (fvField(fv) == "hello_time")
+            helloTime = stpParseInt(fvValue(fv), "STP_VLAN hello_time");
+        else if (fvField(fv) == "max_age")
+            maxAge = stpParseInt(fvValue(fv), "STP_VLAN max_age");
+        else if (fvField(fv) == "priority")
+            priority = stpParseInt(fvValue(fv), "STP_VLAN priority");
+    }
+
+    vector<FieldValueTuple> global;
+    m_cfgStpGlobalTable.get("GLOBAL", global);
+    auto fill = [this, &global](int &val, const string &field, int dflt) {
+        if (val >= 0)
+            return;
+        val = dflt;
+        for (const auto &fv : global)
+        {
+            if (fvField(fv) == field)
+            {
+                val = parseGlobalInt(field, fvValue(fv), dflt);
+                break;
+            }
+        }
+    };
+    fill(forwardDelay, "forward_delay", STP_DFLT_FORWARD_DELAY);
+    fill(helloTime, "hello_time", STP_DFLT_HELLO_TIME);
+    fill(maxAge, "max_age", STP_DFLT_MAX_AGE);
+    fill(priority, "priority", STP_DFLT_BRIDGE_PRIORITY);
+}
+
+// An integer field of STP|GLOBAL. A value that is not a number falls back to
+// the protocol default and is reported once per value, so one bad global
+// field cannot stop the VLAN rows from being programmed.
+int StpMgr::parseGlobalInt(const string &field, const string &value, int dflt)
+{
+    try
+    {
+        int parsed = stpParseInt(value, ("STP GLOBAL " + field).c_str());
+        m_badGlobalFields.erase(field);
+        return parsed;
+    }
+    catch (const std::exception &e)
+    {
+        auto seen = m_badGlobalFields.find(field);
+        if (seen == m_badGlobalFields.end() || seen->second != value)
+        {
+            SWSS_LOG_ERROR("stpmgr: %s, using %d", e.what(), dflt);
+            m_badGlobalFields[field] = value;
+        }
+        return dflt;
+    }
+}
+
+// Remember the STP|GLOBAL priority and timers the PVST VLANs inherit. True
+// when this row changed one of them; a field the row leaves out counts as
+// the protocol default.
+bool StpMgr::updateGlobalPvstFields(const vector<FieldValueTuple> &fvs)
+{
+    int priority = STP_DFLT_BRIDGE_PRIORITY;
+    int forwardDelay = STP_DFLT_FORWARD_DELAY;
+    int helloTime = STP_DFLT_HELLO_TIME;
+    int maxAge = STP_DFLT_MAX_AGE;
+
+    for (const auto &fv : fvs)
+    {
+        if (fvField(fv) == "priority")
+            priority = parseGlobalInt("priority", fvValue(fv), STP_DFLT_BRIDGE_PRIORITY);
+        else if (fvField(fv) == "forward_delay")
+            forwardDelay = parseGlobalInt("forward_delay", fvValue(fv), STP_DFLT_FORWARD_DELAY);
+        else if (fvField(fv) == "hello_time")
+            helloTime = parseGlobalInt("hello_time", fvValue(fv), STP_DFLT_HELLO_TIME);
+        else if (fvField(fv) == "max_age")
+            maxAge = parseGlobalInt("max_age", fvValue(fv), STP_DFLT_MAX_AGE);
+    }
+
+    bool changed = priority != m_globalPriority || forwardDelay != m_globalForwardDelay ||
+                   helloTime != m_globalHelloTime || maxAge != m_globalMaxAge;
+    m_globalPriority = priority;
+    m_globalForwardDelay = forwardDelay;
+    m_globalHelloTime = helloTime;
+    m_globalMaxAge = maxAge;
+    return changed;
+}
+
+// Re-send the timers and priority of every PVST VLAN that already has an
+// instance, after STP|GLOBAL changed.
+void StpMgr::refreshPvstVlans()
+{
+    vector<string> keys;
+    m_cfgStpVlanTable.getKeys(keys);
+    for (const auto &key : keys)
+    {
+        if (key.compare(0, 4, "Vlan") != 0)
+            continue;
+        try
+        {
+            int vlan_id = stpParseInt(key.substr(4), "STP_VLAN key");
+            if (vlan_id <= 0 || vlan_id >= MAX_VLANS || m_vlanInstMap[vlan_id] == INVALID_INSTANCE)
+                continue;
+
+            vector<FieldValueTuple> fvs;
+            if (!m_cfgStpVlanTable.get(key, fvs))
+                continue;
+
+            STP_VLAN_CONFIG_MSG msg;
+            memset(&msg, 0, sizeof(msg));
+            bool enabled;
+            readStpVlanFields(fvs, enabled, msg.forward_delay, msg.hello_time, msg.max_age, msg.priority);
+            if (!enabled)
+                continue;
+
+            msg.opcode  = STP_SET_COMMAND;
+            msg.vlan_id = vlan_id;
+            msg.inst_id = m_vlanInstMap[vlan_id];
+            sendMsgStpd(STP_VLAN_CONFIG, sizeof(msg), (void *)&msg);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("stpmgr: skipping STP_VLAN '%s' on global refresh: %s", key.c_str(), e.what());
+        }
     }
 }
 
@@ -413,9 +608,19 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
         string op = kfvOp(t);
+
+        // Region config sent before the mode has gone out lands on a bridge
+        // that is re-initialised by the mode message and loses it; wait.
+        if (op == SET_COMMAND && l2ProtoEnabled != L2_MSTP)
+        {
+            it++;
+            continue;
+        }
 
         SWSS_LOG_INFO("STP MST global key %s op %s", key.c_str(), op.c_str());
 
@@ -425,7 +630,6 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             msg.opcode = STP_SET_COMMAND;
-            bool configValid = true;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -437,50 +641,28 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "revision")
                 {
-                    int value = 0;
-                    configValid = parseInteger(fvValue(i), value, "revision");
-                    msg.revision_number = static_cast<uint32_t>(value);
+                    msg.revision_number = static_cast<uint32_t>(stpParseInt(fvValue(i), "STP_MST GLOBAL revision"));
                 }
                 else if (fvField(i) == "forward_delay")
                 {
-                    int value = 0;
-                    configValid = parseInteger(fvValue(i), value, "forward_delay");
-                    msg.forward_delay = static_cast<uint8_t>(value);
+                    msg.forward_delay = static_cast<uint8_t>(stpParseInt(fvValue(i), "STP_MST GLOBAL forward_delay"));
                 }
                 else if (fvField(i) == "hello_time")
                 {
-                    int value = 0;
-                    configValid = parseInteger(fvValue(i), value, "hello_time");
-                    msg.hello_time = static_cast<uint8_t>(value);
+                    msg.hello_time = static_cast<uint8_t>(stpParseInt(fvValue(i), "STP_MST GLOBAL hello_time"));
                 }
                 else if (fvField(i) == "max_age")
                 {
-                    int value = 0;
-                    configValid = parseInteger(fvValue(i), value, "max_age");
-                    msg.max_age = static_cast<uint8_t>(value);
+                    msg.max_age = static_cast<uint8_t>(stpParseInt(fvValue(i), "STP_MST GLOBAL max_age"));
                 }
                 else if (fvField(i) == "max_hops")
                 {
-                    int value = 0;
-                    configValid = parseInteger(fvValue(i), value, "max_hops");
-                    msg.max_hops = static_cast<uint8_t>(value);
+                    msg.max_hops = static_cast<uint8_t>(stpParseInt(fvValue(i), "STP_MST GLOBAL max_hops"));
                 }
                 else
                 {
                     SWSS_LOG_ERROR("Invalid field: %s", fvField(i).c_str());
                 }
-
-                if (!configValid)
-                {
-                    SWSS_LOG_ERROR("Invalid STP MST global configuration for %s, ignoring", key.c_str());
-                    break;
-                }
-            }
-
-            if (!configValid)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
             }
         }
         else if (op == DEL_COMMAND)
@@ -491,6 +673,15 @@ void StpMgr::doStpMstGlobalTask(Consumer &consumer)
         sendMsgStpd(STP_MST_GLOBAL_CONFIG, sizeof(msg), (void *)&msg);
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -514,25 +705,11 @@ void StpMgr::processStpVlanPortAttr(const string op, uint32_t vlan_id, const str
             SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
             if (fvField(i) == "path_cost")
             {
-                int pathCost;
-                if (!parseInteger(fvValue(i), pathCost, "path_cost"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP VLAN port configuration for Vlan%d|%s, ignoring",
-                                   vlan_id, intfName.c_str());
-                    return;
-                }
-                msg.path_cost = pathCost;
+                msg.path_cost = stpParseInt(fvValue(i), "STP_VLAN_PORT path_cost");
             }
             else if (fvField(i) == "priority")
             {
-                int priority;
-                if (!parseInteger(fvValue(i), priority, "priority"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP VLAN port configuration for Vlan%d|%s, ignoring",
-                                   vlan_id, intfName.c_str());
-                    return;
-                }
-                msg.priority = priority;
+                msg.priority = stpParseInt(fvValue(i), "STP_VLAN_PORT priority");
             }
         }
     }
@@ -557,6 +734,8 @@ void StpMgr::doStpVlanPortTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         STP_VLAN_PORT_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_VLAN_PORT_CONFIG_MSG));
 
@@ -572,12 +751,7 @@ void StpMgr::doStpVlanPortTask(Consumer &consumer)
         string intfName;
         if (found != string::npos)
         {
-            if (!parseInteger(vlanKey.substr(0, found), vlan_id, "STP_VLAN_PORT key"))
-            {
-                SWSS_LOG_ERROR("Invalid STP VLAN port key %s, ignoring", key.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
+            vlan_id = stpParseInt(vlanKey.substr(0, found), "STP_VLAN_PORT key");
             intfName = vlanKey.substr(found+1);
         }
         else
@@ -617,6 +791,15 @@ void StpMgr::doStpVlanPortTask(Consumer &consumer)
         processStpVlanPortAttr(op, vlan_id, intfName, kfvFieldsValues(t));
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -702,21 +885,11 @@ void StpMgr::processStpPortAttr(const string op,
             }
             else if (field == "path_cost")
             {
-                if (!parseInteger(value, msg->path_cost, "path_cost"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP port configuration for %s, ignoring", intfName.c_str());
-                    free(msg);
-                    return;
-                }
+                msg->path_cost = stpParseInt(value, "STP_PORT path_cost");
             }
             else if (field == "priority")
             {
-                if (!parseInteger(value, msg->priority, "priority"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP port configuration for %s, ignoring", intfName.c_str());
-                    free(msg);
-                    return;
-                }
+                msg->priority = stpParseInt(value, "STP_PORT priority");
             }
             else if (field == "portfast" && l2ProtoEnabled == L2_PVSTP)
             {
@@ -730,16 +903,17 @@ void StpMgr::processStpPortAttr(const string op,
             {
                 msg->edge_port = (value == "true") ? 1 : 0;
             }
-            else if (field== "link_type" && l2ProtoEnabled == L2_MSTP)
+            else if (field == "link_type" && l2ProtoEnabled == L2_MSTP)
             {
-                int linkType;
-                if (!parseInteger(value, linkType, "link_type"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP port configuration for %s, ignoring", intfName.c_str());
-                    free(msg);
-                    return;
-                }
-                msg->link_type = static_cast<LinkType>(linkType);
+                // Map the link_type value string to the LinkType enum.
+                // (Previously this called stoi(field) which parsed the field
+                //  name "link_type" and threw std::invalid_argument.)
+                if (value == "point-to-point" || value == "p2p")
+                    msg->link_type = POINT_TO_POINT;
+                else if (value == "shared")
+                    msg->link_type = SHARED;
+                else
+                    msg->link_type = AUTO;
             }
         }
     }
@@ -769,6 +943,8 @@ void StpMgr::doStpPortTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
@@ -802,6 +978,86 @@ void StpMgr::doStpPortTask(Consumer &consumer)
         processStpPortAttr(op, kfvFieldsValues(t), key);
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+// Send stpd the MSTP per-VLAN member port list (STP_MST_VLAN_PORT_LIST_CONFIG).
+// stpd resolves the owning instance (CIST for VLANs not mapped to an MSTI) and
+// enrols/removes the ports. Shared by the STATE_VLAN_MEMBER event path and the
+// enable-time replay (enrolMstVlanMembers).
+void StpMgr::sendMstVlanPortList(int vlan_id, const vector<PORT_ATTR> &memPorts, bool add)
+{
+    uint32_t cnt = static_cast<uint32_t>(memPorts.size());
+    uint32_t mlen = sizeof(STP_MST_VLAN_PORT_MAP) + static_cast<uint32_t>(cnt * sizeof(PORT_LIST));
+    STP_MST_VLAN_PORT_MAP *vpmsg = (STP_MST_VLAN_PORT_MAP *)calloc(1, mlen);
+    if (!vpmsg)
+    {
+        SWSS_LOG_ERROR("Memory allocation failed for STP_MST_VLAN_PORT_MAP");
+        return;
+    }
+    vpmsg->vlan_id    = static_cast<uint16_t>(vlan_id);
+    vpmsg->port_count = static_cast<uint16_t>(cnt);
+    vpmsg->stp_mode   = L2_MSTP;
+    vpmsg->add        = add ? 1 : 0;
+    for (uint32_t i = 0; i < cnt; i++)
+    {
+        strncpy(vpmsg->port_list[i].intf_name, memPorts[i].intf_name, IFNAMSIZ-1);
+        vpmsg->port_list[i].tagging_mode = memPorts[i].mode;
+    }
+    SWSS_LOG_INFO("MST vlan-port-list vlan:%d add:%d ports:%u", vlan_id, vpmsg->add, cnt);
+    sendMsgStpd(STP_MST_VLAN_PORT_LIST_CONFIG, mlen, (void *)vpmsg);
+    free(vpmsg);
+}
+
+// Replay the current VLAN->member mapping to stpd. Called when MSTP is enabled
+// so that VLAN members which pre-existed the enable are enrolled. A member's
+// STATE_VLAN_MEMBER event is delivered only once (at stpmgrd start / member
+// add); enabling MSTP later does NOT re-fire those events, so without this the
+// pre-existing members never reach stpd and their ports never enrol in the CIST
+// (previously masked by a manual VLAN-membership flap). This reads STATE_DB
+// directly, so it recovers members regardless of whether their event was
+// consumed while STP was disabled.
+void StpMgr::enrolMstVlanMembers()
+{
+    if (l2ProtoEnabled != L2_MSTP)
+        return;
+
+    vector<string> vmKeys;
+    m_stateVlanMemberTable.getKeys(vmKeys);
+
+    set<int> vlans;
+    for (const auto &key : vmKeys)
+    {
+        size_t found = key.find(CONFIGDB_KEY_SEPARATOR);
+        if (found == string::npos)
+            continue;
+        string vlanName = key.substr(0, found);   // "Vlan<id>"
+        if (vlanName.compare(0, 4, "Vlan") != 0)
+            continue;
+        try
+        {
+            vlans.insert(stoi(vlanName.substr(4)));
+        }
+        catch (const exception &e)
+        {
+            SWSS_LOG_ERROR("enrolMstVlanMembers: bad VLAN key %s: %s", key.c_str(), e.what());
+        }
+    }
+
+    for (int vlan_id : vlans)
+    {
+        vector<PORT_ATTR> memPorts;
+        if (getAllVlanMem("Vlan" + to_string(vlan_id), memPorts) > 0)
+            sendMstVlanPortList(vlan_id, memPorts, /*add=*/true);
     }
 }
 
@@ -812,6 +1068,8 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         STP_VLAN_MEM_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
 
@@ -827,12 +1085,7 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
         string intfName;
         if (found != string::npos)
         {
-            if (!parseInteger(vlanKey.substr(0, found), vlan_id, "VLAN member key"))
-            {
-                SWSS_LOG_ERROR("Invalid VLAN member key %s, ignoring", key.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
+            vlan_id = stpParseInt(vlanKey.substr(0, found), "VLAN_MEMBER key");
             intfName = vlanKey.substr(found+1);
         }
         else
@@ -842,13 +1095,36 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
             continue;
         }
 
+        // MSTP: stpd programs MST port state from STP_MST_VLAN_PORT_LIST_CONFIG
+        // (a per-VLAN member port list); it resolves the owning instance itself
+        // (CIST for VLANs not mapped to an MSTI). stpd ignores the PVST
+        // STP_VLAN_MEM_CONFIG path below when running MSTP.
+        if (l2ProtoEnabled == L2_MSTP)
+        {
+            vector<PORT_ATTR> memPorts;
+            if (op == SET_COMMAND)
+            {
+                getAllVlanMem("Vlan" + to_string(vlan_id), memPorts);
+            }
+            else
+            {
+                PORT_ATTR pa;
+                memset(&pa, 0, sizeof(pa));
+                strncpy(pa.intf_name, intfName.c_str(), IFNAMSIZ-1);
+                pa.mode = getVlanMemMode(key);
+                memPorts.push_back(pa);
+            }
+
+            sendMstVlanPortList(vlan_id, memPorts, /*add=*/(op == SET_COMMAND));
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         SWSS_LOG_INFO("STP vlan mem key:%s op:%s inst:%d", key.c_str(), op.c_str(), m_vlanInstMap[vlan_id]);
         // If STP is running on this VLAN, notify STPd
         if (m_vlanInstMap[vlan_id] != INVALID_INSTANCE && !isLagEmpty(intfName))
         {
             int8_t tagging_mode = TAGGED_MODE;
-            msg.priority = -1;
-            msg.path_cost = 0;
 
             if (op == SET_COMMAND)
             {
@@ -865,37 +1141,15 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
                 msg.enabled = isStpEnabled(intfName);
 
                 vector<FieldValueTuple> stpVlanPortEntry;
-                bool configValid = true;
                 if (m_cfgStpVlanPortTable.get(key, stpVlanPortEntry))
                 {
                     for (auto entry : stpVlanPortEntry)
                     {
                         if (entry.first == "priority")
-                        {
-                            if (!parseInteger(entry.second, msg.priority, "priority"))
-                            {
-                                SWSS_LOG_ERROR("Invalid STP VLAN port configuration for %s, "
-                                               "skipping VLAN member update", key.c_str());
-                                configValid = false;
-                                break;
-                            }
-                        }
+                            msg.priority = stpParseInt(entry.second, "STP_VLAN_PORT priority");
                         else if (entry.first == "path_cost")
-                        {
-                            if (!parseInteger(entry.second, msg.path_cost, "path_cost"))
-                            {
-                                SWSS_LOG_ERROR("Invalid STP VLAN port configuration for %s, "
-                                               "skipping VLAN member update", key.c_str());
-                                configValid = false;
-                                break;
-                            }
-                        }
+                            msg.path_cost = stpParseInt(entry.second, "STP_VLAN_PORT path_cost");
                     }
-                }
-                if (!configValid)
-                {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
                 }
             }
 
@@ -903,13 +1157,128 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
             msg.vlan_id = vlan_id;
             msg.inst_id = m_vlanInstMap[vlan_id];
             msg.mode    = tagging_mode;
+            msg.priority  = -1;
+            msg.path_cost = 0;
 
             strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ-1);
 
             sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg);
         }
+        else
+        {
+            // Dropping this is legitimate, but silence here is the single
+            // most common reason a port looks like it never enrolled.
+            SWSS_LOG_WARN("STP not notified of vlan member change %s op:%s: %s",
+                          key.c_str(), op.c_str(),
+                          (m_vlanInstMap[vlan_id] == INVALID_INSTANCE)
+                              ? "STP is not enabled on this VLAN"
+                              : "port channel has no members");
+        }
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+// PVST: tell stpd that intfName is a member of vlan_id, the same message
+// doVlanMemUpdateTask() sends when the membership first appears.
+void StpMgr::sendVlanMemConfig(int vlan_id, const string &intfName, const string &vlanMemKey, bool add)
+{
+    if (m_vlanInstMap[vlan_id] == INVALID_INSTANCE)
+    {
+        // Dropping this is legitimate, but silence here is the single
+        // most common reason a port looks like it never enrolled.
+        SWSS_LOG_WARN("STP not notified of vlan member change %s op:%s: STP is not enabled on this VLAN",
+                      vlanMemKey.c_str(), add ? "add" : "del");
+        return;
+    }
+
+    // No mode means the CONFIG_DB row is gone; its delete reaches stpd on
+    // its own, so there is nothing to send.
+    int8_t tagging_mode = getVlanMemMode(vlanMemKey);
+    if (tagging_mode == INVALID_MODE)
+    {
+        return;
+    }
+
+    STP_VLAN_MEM_CONFIG_MSG msg;
+    memset(&msg, 0, sizeof(STP_VLAN_MEM_CONFIG_MSG));
+    msg.opcode    = add ? STP_SET_COMMAND : STP_DEL_COMMAND;
+    msg.vlan_id   = vlan_id;
+    msg.inst_id   = m_vlanInstMap[vlan_id];
+    msg.mode      = tagging_mode;
+    msg.enabled   = isStpEnabled(intfName);
+    msg.priority  = -1;
+    msg.path_cost = 0;
+    strncpy(msg.intf_name, intfName.c_str(), IFNAMSIZ-1);
+
+    sendMsgStpd(STP_VLAN_MEM_CONFIG, sizeof(msg), (void *)&msg);
+}
+
+// Replay every VLAN membership of a PortChannel to stpd, with the STP_VLAN_PORT
+// row for each. Used when the LAG gets its first member back: while it had
+// none, isLagEmpty() made the membership and per-VLAN tasks skip it.
+void StpMgr::reenrolLagVlans(const string &po_name)
+{
+    vector<string> vmKeys;
+    m_stateVlanMemberTable.getKeys(vmKeys);
+
+    for (const auto &key : vmKeys)
+    {
+        size_t found = key.find(CONFIGDB_KEY_SEPARATOR);
+        if (found == string::npos || key.compare(0, 4, "Vlan") != 0)
+        {
+            continue;
+        }
+
+        string vlanName = key.substr(0, found);
+        if (key.substr(found + 1) != po_name)
+        {
+            continue;
+        }
+
+        int vlan_id;
+        try
+        {
+            vlan_id = stpParseInt(vlanName.substr(4), "VLAN_MEMBER key");
+        }
+        catch (const exception &e)
+        {
+            SWSS_LOG_ERROR("reenrolLagVlans: bad VLAN key %s: %s", key.c_str(), e.what());
+            continue;
+        }
+
+        if (l2ProtoEnabled == L2_MSTP)
+        {
+            PORT_ATTR pa;
+            memset(&pa, 0, sizeof(pa));
+            strncpy(pa.intf_name, po_name.c_str(), IFNAMSIZ-1);
+            pa.mode = getVlanMemMode(key);
+            if (pa.mode == INVALID_MODE)
+            {
+                continue;
+            }
+            vector<PORT_ATTR> memPorts = { pa };
+            sendMstVlanPortList(vlan_id, memPorts, /*add=*/true);
+        }
+        else
+        {
+            sendVlanMemConfig(vlan_id, po_name, key, /*add=*/true);
+        }
+
+        vector<FieldValueTuple> vlanPortTup;
+        if (m_cfgStpVlanPortTable.get(key, vlanPortTup))
+        {
+            processStpVlanPortAttr(SET_COMMAND, vlan_id, po_name, vlanPortTup);
+        }
     }
 }
 
@@ -920,6 +1289,8 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         KeyOpFieldsValuesTuple t = it->second;
         bool notifyStpd = false;
 
@@ -982,25 +1353,21 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
 
         if (notifyStpd && l2ProtoEnabled != L2_NONE)
         {
-            vector<VLAN_ATTR> vlan_list;
             vector<FieldValueTuple> tupEntry;
 
-            if (m_cfgStpPortTable.get(po_name, tupEntry))
-            {
-                //Push STP_PORT configs for this port
-                processStpPortAttr(op, tupEntry, po_name);
+            // stpd dropped the PortChannel node with its last member and
+            // re-creates it on STP_PORT_CONFIG, or later from netlink once the
+            // member is enslaved. The port's own config goes first, with
+            // defaults when it has no row, so the membership that follows on
+            // the same socket finds the port.
+            m_cfgStpPortTable.get(po_name, tupEntry);
+            processStpPortAttr(op, tupEntry, po_name);
 
-                getAllPortVlan(po_name, vlan_list);
-                //Push STP_VLAN_PORT configs for this port
-                for (auto p = vlan_list.begin(); p != vlan_list.end(); p++)
-                {
-                    vector<FieldValueTuple> vlanPortTup;
-
-                    string vlanPortKey = "Vlan" + to_string(p->vlan_id) + "|" + po_name;
-                    if (m_cfgStpVlanPortTable.get(vlanPortKey, vlanPortTup))
-                        processStpVlanPortAttr(op, p->vlan_id, po_name, vlanPortTup);
-                }
-            }
+            // The LAG left spanning tree with its last member, so its VLAN
+            // membership and per-VLAN settings have to reach stpd again.
+            // STP_PORT alone carries only the port's own settings, and a
+            // PortChannel with no STP_PORT row is still a VLAN member.
+            reenrolLagVlans(po_name);
         }
 
         SWSS_LOG_DEBUG("LagMap");
@@ -1009,6 +1376,15 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -1085,6 +1461,87 @@ void StpMgr::deallocL2Instance(uint32_t vlan_id)
     SWSS_LOG_INFO("Deallocated Id: %d Vlan %d", m_vlanInstMap[vlan_id], vlan_id);
 }
 
+bool StpMgr::mstInstanceLimitReached()
+{
+    size_t count = m_mstInstances.size() + (m_mstInstances.count(0) ? 0 : 1);
+    return count >= max_stp_instances;
+}
+
+void StpMgr::holdForInstance(Table &stateTable, const string &key, set<int> &waiting, int id)
+{
+    waiting.insert(id);
+    stateTable.set(key, {{STP_INSTANCE_STATE_FIELD, STP_INSTANCE_UNAVAILABLE},
+                         {"reason", "hardware limit of " + to_string(max_stp_instances) +
+                                    " spanning tree instances reached"}});
+}
+
+void StpMgr::releaseHold(Table &stateTable, const string &key, set<int> &waiting, int id)
+{
+    if (waiting.erase(id))
+        stateTable.del(key);
+}
+
+// An instance was freed: queue the lowest waiting VLAN's row again, as if it
+// had just been written.
+void StpMgr::retryWaitingVlan()
+{
+    while (!m_vlansWaitingForInstance.empty())
+    {
+        int vlan_id = *m_vlansWaitingForInstance.begin();
+        string key = "Vlan" + to_string(vlan_id);
+        vector<FieldValueTuple> fvs;
+
+        if (!m_cfgStpVlanTable.get(key, fvs))
+        {
+            releaseHold(m_stateStpVlanTable, key, m_vlansWaitingForInstance, vlan_id);
+            continue;
+        }
+
+        Consumer *consumer = dynamic_cast<Consumer *>(getExecutor(CFG_STP_VLAN_TABLE_NAME));
+        if (consumer)
+        {
+            SWSS_LOG_NOTICE("STP instance freed, retrying VLAN %d", vlan_id);
+            consumer->addToSync(KeyOpFieldsValuesTuple(key, SET_COMMAND, fvs));
+        }
+        return;
+    }
+}
+
+void StpMgr::retryWaitingMstInstance()
+{
+    while (!m_mstInstancesWaiting.empty())
+    {
+        int instance_id = *m_mstInstancesWaiting.begin();
+        string key = to_string(instance_id);
+        vector<FieldValueTuple> fvs;
+
+        if (!m_cfgMstInstTable.get(key, fvs))
+        {
+            releaseHold(m_stateStpMstInstTable, key, m_mstInstancesWaiting, instance_id);
+            continue;
+        }
+
+        Consumer *consumer = dynamic_cast<Consumer *>(getExecutor("STP_MST_INST"));
+        if (consumer)
+        {
+            SWSS_LOG_NOTICE("STP instance freed, retrying MST instance %d", instance_id);
+            consumer->addToSync(KeyOpFieldsValuesTuple(key, SET_COMMAND, fvs));
+        }
+        return;
+    }
+}
+
+void StpMgr::clearInstanceHolds()
+{
+    for (int vlan_id : m_vlansWaitingForInstance)
+        m_stateStpVlanTable.del("Vlan" + to_string(vlan_id));
+    for (int instance_id : m_mstInstancesWaiting)
+        m_stateStpMstInstTable.del(to_string(instance_id));
+    m_vlansWaitingForInstance.clear();
+    m_mstInstancesWaiting.clear();
+    m_mstInstances.clear();
+}
+
 
 int StpMgr::getAllVlanMem(const string &vlanKey, vector<PORT_ATTR>&port_list)
 {
@@ -1151,11 +1608,7 @@ int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
         string intfName;
         if (found != string::npos)
         {
-            if (!parseInteger(vlanKey.substr(0, found), vlan_id, "VLAN member key"))
-            {
-                SWSS_LOG_ERROR("Invalid VLAN member key %s, ignoring", key.c_str());
-                continue;
-            }
+            vlan_id = stpParseInt(vlanKey.substr(0, found), "VLAN_MEMBER key");
             intfName = vlanKey.substr(found+1);
 
             if (intfName == intfKey)
@@ -1194,6 +1647,8 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         STP_MST_INST_CONFIG_MSG *msg = NULL;
         uint32_t len = 0;
 
@@ -1202,56 +1657,86 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        string instance = key.substr(13); // Remove "MST_INSTANCE|" prefix
-        int parsedInstance;
-        if (!parseInteger(instance, parsedInstance, "MST_INSTANCE key"))
-        {
-            SWSS_LOG_ERROR("Invalid STP MST instance key %s, ignoring", key.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-        uint16_t instance_id = static_cast<uint16_t>(parsedInstance);
+        string instance = key; // Key is "<id>" (YANG STP_MST_INST_LIST key "instance")
+        uint16_t instance_id = static_cast<uint16_t>(stpParseInt(instance, "STP_MST_INST id"));
 
         uint16_t priority = 32768; // Default bridge priority
         string vlan_list_str;
         vector<uint16_t> vlan_ids;
+        // The YANG model defines the mapping as leaf-list "vlan", stored as
+        // "vlan@" and read back as "vlan". Rows written by older images
+        // carry "vlan_list" instead.
+        // Both are collected here and chosen between after the loop, so the
+        // result does not depend on the order the fields arrive in.
+        string legacyVlanStr;
+        bool haveYangVlans = false;
+        bool haveLegacyVlans = false;
 
         SWSS_LOG_INFO("STP_MST instance key %s op %s", key.c_str(), op.c_str());
+        if (op == SET_COMMAND && l2ProtoEnabled != L2_MSTP)
+        {
+            // An instance sent before the mode has gone out is wiped by it; wait.
+            it++;
+            continue;
+        }
         if (op == SET_COMMAND)
         {
-            bool configValid = true;
+            if (instance_id != 0 && !m_mstInstances.count(instance_id) && mstInstanceLimitReached())
+            {
+                SWSS_LOG_ERROR("No free STP instance for MST instance %u: the hardware holds %u "
+                               "including the CIST, it stays down until one is deleted",
+                               instance_id, max_stp_instances);
+                holdForInstance(m_stateStpMstInstTable, key, m_mstInstancesWaiting, instance_id);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            m_mstInstances.insert(instance_id);
+            releaseHold(m_stateStpMstInstTable, key, m_mstInstancesWaiting, instance_id);
+
             for (auto i : kfvFieldsValues(t))
             {
                 SWSS_LOG_DEBUG("Field: %s Val: %s", fvField(i).c_str(), fvValue(i).c_str());
 
                 if (fvField(i) == "bridge_priority")
                 {
-                    int parsedPriority;
-                    configValid = parseInteger(fvValue(i), parsedPriority, "bridge_priority");
-                    if (configValid)
-                    {
-                        priority = static_cast<uint16_t>(parsedPriority);
-                    }
+                    priority = static_cast<uint16_t>(stpParseInt(fvValue(i), "STP_MST_INST bridge_priority"));
                 }
-                else if (fvField(i) == "vlan_list")
+                else if (fvField(i) == STP_MST_INST_VLAN_FIELD)
                 {
                     vlan_list_str = fvValue(i);
-                    configValid = parseVlanList(vlan_list_str, vlan_ids);
+                    haveYangVlans = true;
                 }
-
-                if (!configValid)
+                else if (fvField(i) == STP_MST_INST_VLAN_FIELD_LEGACY)
                 {
-                    SWSS_LOG_ERROR("Invalid STP MST instance configuration for %s, ignoring", key.c_str());
-                    break;
+                    legacyVlanStr = fvValue(i);
+                    haveLegacyVlans = true;
                 }
             }
 
-            if (!configValid)
+            if (!haveYangVlans && haveLegacyVlans)
             {
-                it = consumer.m_toSync.erase(it);
-                continue;
+                // Accept the old spelling so a mapping written by an older
+                // image is not dropped, and say so rather than acting on it
+                // in silence.
+                vlan_list_str = legacyVlanStr;
+                SWSS_LOG_WARN("STP_MST_INST|%s uses the pre-YANG field '%s'; "
+                              "rewrite the mapping to '%s'",
+                              key.c_str(), STP_MST_INST_VLAN_FIELD_LEGACY,
+                              STP_MST_INST_VLAN_FIELD);
+            }
+            else if (haveYangVlans && haveLegacyVlans)
+            {
+                // A row can carry both when an old image wrote it and a new
+                // one touched it since. That is data, not a bug in here, so
+                // it is said and the current spelling wins.
+                SWSS_LOG_WARN("STP_MST_INST|%s carries both '%s' and the pre-YANG '%s'; "
+                              "using '%s', delete the other",
+                              key.c_str(), STP_MST_INST_VLAN_FIELD,
+                              STP_MST_INST_VLAN_FIELD_LEGACY, STP_MST_INST_VLAN_FIELD);
             }
 
+            if (!parseVlanList(vlan_list_str, vlan_ids))
+                throw std::invalid_argument("STP_MST_INST " + key + " has an invalid VLAN list '" + vlan_list_str + "'");
             updateVlanInstanceMap(instance_id, vlan_ids, true);
 
             uint32_t vlan_count = static_cast<uint32_t>(vlan_ids.size());
@@ -1279,6 +1764,14 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (m_mstInstancesWaiting.count(instance_id))
+            {
+                // stpd never had it
+                releaseHold(m_stateStpMstInstTable, key, m_mstInstancesWaiting, instance_id);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             len = sizeof(STP_MST_INST_CONFIG_MSG);
             msg = (STP_MST_INST_CONFIG_MSG *)calloc(1, len);
             if (!msg)
@@ -1290,6 +1783,7 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             msg->opcode = STP_DEL_COMMAND;
             msg->mst_id = instance_id;
             updateVlanInstanceMap(instance_id, vlan_ids, false);
+            m_mstInstances.erase(instance_id);
         }
 
         sendMsgStpd(STP_MST_INST_CONFIG, len, (void *)msg);
@@ -1297,6 +1791,17 @@ void StpMgr::doStpMstInstTask(Consumer &consumer)
             free(msg);
 
         it = consumer.m_toSync.erase(it);
+        if (op == DEL_COMMAND)
+            retryWaitingMstInstance();
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -1314,7 +1819,11 @@ void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const s
     if (op == SET_COMMAND)
     {
         msg.opcode = STP_SET_COMMAND;
-        msg.priority = -1;
+        // Both attributes are optional on the row and the memset leaves them
+        // at 0, which stpd reads as an explicit value in MST mode. A row
+        // carrying only one of them would otherwise pin the other to zero.
+        msg.priority = STP_MST_PORT_ATTR_UNSET;
+        msg.path_cost = STP_MST_PORT_ATTR_UNSET;
 
         for (auto i : tupEntry)
         {
@@ -1322,25 +1831,11 @@ void StpMgr::processStpMstInstPortAttr(const string op, uint16_t mst_id, const s
 
             if (fvField(i) == "path_cost")
             {
-                int pathCost;
-                if (!parseInteger(fvValue(i), pathCost, "path_cost"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP MST instance port configuration for %s, ignoring",
-                                   intfName.c_str());
-                    return;
-                }
-                msg.path_cost = pathCost;
+                msg.path_cost = stpParseInt(fvValue(i), "STP_MST_INST_PORT path_cost");
             }
             else if (fvField(i) == "priority")
             {
-                int priority;
-                if (!parseInteger(fvValue(i), priority, "priority"))
-                {
-                    SWSS_LOG_ERROR("Invalid STP MST instance port configuration for %s, ignoring",
-                                   intfName.c_str());
-                    return;
-                }
-                msg.priority = priority;
+                msg.priority = stpParseInt(fvValue(i), "STP_MST_INST_PORT priority");
             }
         }
     }
@@ -1364,6 +1859,8 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        try
+        {
         STP_MST_INST_PORT_CONFIG_MSG msg;
         memset(&msg, 0, sizeof(STP_MST_INST_PORT_CONFIG_MSG));
 
@@ -1372,21 +1869,21 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        string mstKey = key.substr(9);//Remove INSTANCE keyword
+        if (op == SET_COMMAND && l2ProtoEnabled != L2_MSTP)
+        {
+            // Sent before the mode has gone out it is wiped by the mode message; wait.
+            it++;
+            continue;
+        }
+
+        string mstKey = key; // Key is "<id>|<intf>" (YANG STP_MST_PORT_LIST key "inst_id ifname")
         size_t found = mstKey.find(CONFIGDB_KEY_SEPARATOR);
 
         uint16_t mst_id;
         string intfName;
         if (found != string::npos)
         {
-            int parsedMstId;
-            if (!parseInteger(mstKey.substr(0, found), parsedMstId, "MST instance port key"))
-            {
-                SWSS_LOG_ERROR("Invalid STP MST instance port key %s, ignoring", key.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-            mst_id = static_cast<uint16_t>(parsedMstId);
+            mst_id = static_cast<uint16_t>(stpParseInt(mstKey.substr(0, found), "STP_MST_INST_PORT key"));
             intfName = mstKey.substr(found + 1);
         }
         else
@@ -1419,6 +1916,15 @@ void StpMgr::doStpMstInstPortTask(Consumer &consumer)
         processStpMstInstPortAttr(op, mst_id, intfName, kfvFieldsValues(t));
 
         it = consumer.m_toSync.erase(it);
+        }
+        catch (const std::exception &e)
+        {
+            // A malformed field/key value threw during processing;
+            // log the offending entry and drop it instead of exiting stpmgrd.
+            SWSS_LOG_ERROR("stpmgr: dropping unparseable CONFIG_DB entry '%s': %s",
+                           kfvKey(it->second).c_str(), e.what());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -1448,24 +1954,77 @@ int StpMgr::sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data)
 
     tx_msg->msg_type = msgType;
     tx_msg->msg_len  = msgLen;
+    // stpd gates several handlers on proto_mode (e.g. STP_VLAN_MEM_CONFIG for
+    // PVST, STP_MST_VLAN_PORT_LIST_CONFIG for MST). Populate it with the active
+    // protocol mode; previously it was left 0 (L2_NONE) so those handlers were
+    // silently skipped and port state was never programmed.
+    tx_msg->proto_mode = l2ProtoEnabled;
     memcpy(tx_msg->data, data, msgLen);
 
     bzero(&addr, sizeof(addr));
     addr.sun_family = AF_UNIX;
     strncpy(addr.sun_path, STPD_SOCK_NAME, sizeof(addr.sun_path)-1);
 
-    rc = (int)sendto(stpd_fd, (void*)tx_msg, len, 0, (struct sockaddr *)&addr, sizeof(addr));
+    // A send that finds no listener (stpd not bound yet, or its queue full)
+    // is retried for a short while instead of dropping the message. The retry
+    // budget is spent once per backoff window: while stpd stays away every
+    // further message costs one sendto, so a queue of pending updates cannot
+    // hold the event loop for minutes.
+    bool mayRetry = !m_sendFailed ||
+        std::chrono::steady_clock::now() - m_lastSendFailure >= std::chrono::seconds(STPD_SEND_BACKOFF_S);
+    for (int attempt = 0; ; attempt++)
+    {
+        rc = (int)sendto(stpd_fd, (void*)tx_msg, len, 0, (struct sockaddr *)&addr, sizeof(addr));
+        if (rc != -1 || !mayRetry || attempt >= STPD_SEND_RETRIES ||
+            (errno != ENOENT && errno != ECONNREFUSED && errno != EAGAIN && errno != ENOBUFS))
+            break;
+        usleep(STPD_SEND_RETRY_US);
+    }
     if (rc == -1)
     {
-		SWSS_LOG_ERROR("tx_msg send error\n");
+        m_sendFailed = true;
+        m_lastSendFailure = std::chrono::steady_clock::now();
+        SWSS_LOG_ERROR("tx_msg send error: %s", strerror(errno));
     }
     else
     {
+        m_sendFailed = false;
         SWSS_LOG_INFO("tx_msg sent %d", rc);
     }
 
     free(tx_msg);
     return rc;
+}
+
+// Wait until stpd has bound its socket, so the first messages are not lost.
+// A datagram connect() succeeds only once something is bound to the path; a
+// stale socket file from an earlier run is refused.
+bool StpMgr::waitStpdReady(int timeout_ms)
+{
+    struct sockaddr_un addr;
+    bzero(&addr, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, STPD_SOCK_NAME, sizeof(addr.sun_path)-1);
+
+    for (int waited = 0; waited <= timeout_ms; waited += STPD_READY_POLL_MS)
+    {
+        int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+        if (fd < 0)
+        {
+            SWSS_LOG_ERROR("probe socket error %s", strerror(errno));
+            return false;
+        }
+        int rc = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
+        close(fd);
+        if (rc == 0)
+        {
+            SWSS_LOG_NOTICE("stpd ready after %d ms", waited);
+            return true;
+        }
+        usleep(STPD_READY_POLL_MS * 1000);
+    }
+    SWSS_LOG_ERROR("stpd not ready after %d ms", timeout_ms);
+    return false;
 }
 
 bool StpMgr::isPortInitDone(DBConnector *app_db)
@@ -1579,15 +2138,20 @@ int8_t StpMgr::getVlanMemMode(const string &key)
 
     if (m_cfgVlanMemberTable.get(key, vmEntry))
     {
+        // vlanmgrd adds a member with no tagging_mode as untagged.
+        mode = UNTAGGED_MODE;
         for (auto entry : vmEntry)
         {
+            // vlanmgrd programs priority_tagged like untagged: the port keeps
+            // the PVID and sends untagged, so spanning tree treats it the same.
             if (entry.first == "tagging_mode")
-                mode = (entry.second == "untagged") ? UNTAGGED_MODE : TAGGED_MODE;
+                mode = (entry.second == "untagged" || entry.second == "priority_tagged")
+                       ? UNTAGGED_MODE : TAGGED_MODE;
             SWSS_LOG_INFO("mode %d for %s", mode, key.c_str());
         }
     }
     else
-        SWSS_LOG_ERROR("config vlan_member table fetch failed %s", key.c_str());
+        SWSS_LOG_WARN("no CONFIG_DB VLAN_MEMBER row for %s, the member is being removed", key.c_str());
 
     return mode;
 }
@@ -1608,12 +2172,16 @@ uint16_t StpMgr::getStpMaxInstances(void)
             {
                 if (entry.first == "max_stp_inst")
                 {
-                    int parsedMaxInstances;
-                    if (parseInteger(entry.second, parsedMaxInstances, "max_stp_inst"))
+                    try
                     {
-                        max_stp_instances = static_cast<uint16_t>(parsedMaxInstances);
-                        SWSS_LOG_NOTICE("max stp instance %d count %d", max_stp_instances, (60-max_delay));
+                        max_stp_instances = (uint16_t)std::stoi(entry.second);
                     }
+                    catch (const std::exception &e)
+                    {
+                        SWSS_LOG_ERROR("stpmgr: invalid max_stp_inst '%s': %s; keeping default",
+                                       entry.second.c_str(), e.what());
+                    }
+                    SWSS_LOG_NOTICE("max stp instance %d count %d", max_stp_instances, (60-max_delay));
                 }
             }
             break;

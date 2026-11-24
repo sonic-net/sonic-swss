@@ -5,6 +5,7 @@
 #include <iostream>
 #include <mutex>
 #include <algorithm>
+#include <chrono>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -73,6 +74,11 @@ int main(int argc, char **argv)
         }
 
         SWSS_LOG_NOTICE("starting main loop");
+        // A task that is not ready yet stays queued and is retried by the
+        // full doTask() below. Run it at least once per SELECT_TIMEOUT even
+        // while events keep arriving, or steady updates on any table hold
+        // the retry off and a parked VLAN member is never applied.
+        auto lastRetry = std::chrono::steady_clock::now();
         while (true)
         {
             Selectable *sel;
@@ -84,14 +90,19 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
-            if (ret == Select::TIMEOUT)
+            if (ret != Select::TIMEOUT)
             {
-                vlanmgr.doTask();
-                continue;
+                auto *c = (Executor *)sel;
+                c->execute();
             }
 
-            auto *c = (Executor *)sel;
-            c->execute();
+            auto now = std::chrono::steady_clock::now();
+            if (ret == Select::TIMEOUT ||
+                now - lastRetry >= std::chrono::milliseconds(SELECT_TIMEOUT))
+            {
+                vlanmgr.doTask();
+                lastRetry = now;
+            }
         }
     }
     catch(const std::exception &e)

@@ -10,6 +10,8 @@
 #include <vector>
 #include <string>
 #include <unordered_set>
+#include <chrono>
+#include <map>
 
 #include "dbconnector.h"
 #include "netmsg.h"
@@ -25,7 +27,11 @@
 #define ALIGNED(x)
 #endif
 
+// Socket paths default to /var/run but can be overridden at compile time
+// (e.g. component tests point them at a writable temp dir).
+#ifndef STPMGRD_SOCK_NAME
 #define STPMGRD_SOCK_NAME "/var/run/stpmgrd.sock"
+#endif
 
 #define TAGGED_MODE    1
 #define UNTAGGED_MODE  0
@@ -36,6 +42,17 @@
 // Maximum number of instances supported
 #define L2_INSTANCE_MAX             MAX_VLANS
 #define STP_DEFAULT_MAX_INSTANCES   255
+#define STP_DFLT_FORWARD_DELAY      15
+#define STP_DFLT_HELLO_TIME         2
+#define STP_DFLT_MAX_AGE            20
+#define STP_DFLT_BRIDGE_PRIORITY    32768
+
+// STATE_DB rows for a VLAN or MST instance spanning tree is configured for
+// but the hardware has no instance left for.
+#define STATE_STP_VLAN_TABLE_NAME     "STP_VLAN_TABLE"
+#define STATE_STP_MST_INST_TABLE_NAME "STP_MST_INST_TABLE"
+#define STP_INSTANCE_STATE_FIELD      "instance_state"
+#define STP_INSTANCE_UNAVAILABLE      "unavailable"
 #define INVALID_INSTANCE            -1
 
 #define GET_FIRST_FREE_INST_ID(_idx) \
@@ -46,7 +63,25 @@
 #define FREE_ALL_INST_ID() l2InstPool.reset()
 #define IS_INST_ID_AVAILABLE() (l2InstPool.count() < max_stp_instances)
 
+#ifndef STPD_SOCK_NAME
 #define STPD_SOCK_NAME "/var/run/stpipc.sock"
+#endif
+
+// Retry budget for a send that finds stpd not listening: 20 x 100 ms, spent
+// once per backoff window; while stpd stays away every further send is one
+// attempt.
+#define STPD_SEND_RETRIES   20
+#define STPD_SEND_RETRY_US  100000
+#define STPD_SEND_BACKOFF_S 5
+#define STPD_READY_POLL_MS  100
+#define STPD_READY_WAIT_MS  30000
+
+/* STP_MST_INST VLAN mapping. The YANG model defines leaf-list "vlan", which
+ * ConfigDBConnector stores as "vlan@"; swss::Table strips the "@" on read, so
+ * the consumer sees "vlan". _LEGACY is the spelling older images wrote, still
+ * read so an existing mapping is not dropped. */
+#define STP_MST_INST_VLAN_FIELD        "vlan"
+#define STP_MST_INST_VLAN_FIELD_LEGACY "vlan_list"
 
 // Enumerations must match stp_ipc.h
 typedef enum L2_PROTO_MODE {
@@ -73,6 +108,7 @@ typedef enum STP_MSG_TYPE {
     STP_STPCTL_MSG,
     STP_MST_GLOBAL_CONFIG,
     STP_MST_INST_CONFIG,
+    STP_MST_VLAN_PORT_LIST_CONFIG,
     STP_MST_INST_PORT_CONFIG,
     STP_MAX_MSG
 } STP_MSG_TYPE;
@@ -226,6 +262,24 @@ typedef struct STP_MST_INST_PORT_CONFIG_MSG {
     int         priority;       // Port priority
 } __attribute__((packed)) STP_MST_INST_PORT_CONFIG_MSG;
 
+/* Layout must match sonic-stp include/stp_ipc.h */
+typedef struct PORT_LIST {
+    char        intf_name[IFNAMSIZ];
+    int8_t      tagging_mode;
+} PORT_LIST;
+
+typedef struct STP_MST_VLAN_PORT_MAP {
+    uint16_t    vlan_id;
+    uint16_t    port_count;
+    int8_t      stp_mode;
+    uint8_t     add;
+    PORT_LIST   port_list[0];
+} STP_MST_VLAN_PORT_MAP;
+
+/* A per-instance port attribute the row did not carry. stpd falls back to
+ * the port-wide value for this exact value. */
+#define STP_MST_PORT_ATTR_UNSET (-1)
+
 namespace swss {
 
 class StpMgr : public Orch
@@ -239,6 +293,7 @@ public:
     int  sendMsgStpd(STP_MSG_TYPE msgType, uint32_t msgLen, void *data);
     MacAddress macAddress;
     bool isPortInitDone(DBConnector *app_db);
+    bool waitStpdReady(int timeout_ms = STPD_READY_WAIT_MS);
     uint16_t getStpMaxInstances(void);    
 
 private:
@@ -255,6 +310,8 @@ private:
     Table m_cfgMstGlobalTable;
     Table m_cfgMstInstTable;
     Table m_cfgMstInstPortTable;
+    Table m_stateStpVlanTable;
+    Table m_stateStpMstInstTable;
 
     std::bitset<L2_INSTANCE_MAX> l2InstPool;
     int stpd_fd;
@@ -264,6 +321,26 @@ private:
     uint16_t max_stp_instances;
     std::map<std::string, int> m_lagMap;
 
+    // MST instance rows handed to stpd, so the count against the hardware
+    // limit is known; the CIST takes one whether or not its row exists.
+    std::set<int> m_mstInstances;
+    // Spanning tree is configured for these but no instance was free; each
+    // gets the next instance that is freed, lowest first.
+    std::set<int> m_vlansWaitingForInstance;
+    std::set<int> m_mstInstancesWaiting;
+
+    // STP|GLOBAL priority and timers the PVST VLANs inherit, as last seen;
+    // -1 until the first row.
+    int m_globalPriority;
+    int m_globalForwardDelay;
+    int m_globalHelloTime;
+    int m_globalMaxAge;
+    // STP|GLOBAL fields already reported as unparseable, with the bad value.
+    std::map<std::string, std::string> m_badGlobalFields;
+    // Whether the last send found no listener, and when.
+    bool m_sendFailed;
+    std::chrono::steady_clock::time_point m_lastSendFailure;
+
     bool stpGlobalTask;
     bool stpVlanTask;
     bool stpVlanPortTask;
@@ -271,6 +348,8 @@ private:
     bool stpMstInstTask;
 
     void doTask(Consumer &consumer);
+    void disableProtocol();
+    void replayModeConfig();
     void doStpGlobalTask(Consumer &consumer);
     void doStpVlanTask(Consumer &consumer);
     void doStpVlanPortTask(Consumer &consumer);
@@ -280,6 +359,15 @@ private:
     void doStpMstGlobalTask(Consumer &consumer);
     void doStpMstInstTask(Consumer &consumer);
     void doStpMstInstPortTask(Consumer &consumer);
+    void sendMstVlanPortList(int vlan_id, const std::vector<PORT_ATTR> &memPorts, bool add);
+    void sendVlanMemConfig(int vlan_id, const std::string &intfName, const std::string &vlanMemKey, bool add);
+    void reenrolLagVlans(const std::string &po_name);
+    void enrolMstVlanMembers();
+    void readStpVlanFields(const std::vector<swss::FieldValueTuple> &fvs, bool &enabled,
+                           int &forwardDelay, int &helloTime, int &maxAge, int &priority);
+    void refreshPvstVlans();
+    int  parseGlobalInt(const std::string &field, const std::string &value, int dflt);
+    bool updateGlobalPvstFields(const std::vector<swss::FieldValueTuple> &fvs);
 
     bool isVlanStateOk(const std::string &alias);
     bool isLagStateOk(const std::string &alias);
@@ -290,6 +378,12 @@ private:
     int8_t getVlanMemMode(const std::string &key);
     int allocL2Instance(uint32_t vlan_id);
     void deallocL2Instance(uint32_t vlan_id);
+    bool mstInstanceLimitReached();
+    void holdForInstance(Table &stateTable, const std::string &key, std::set<int> &waiting, int id);
+    void releaseHold(Table &stateTable, const std::string &key, std::set<int> &waiting, int id);
+    void retryWaitingVlan();
+    void retryWaitingMstInstance();
+    void clearInstanceHolds();
     bool isLagEmpty(const std::string &key);
     void processStpPortAttr(const std::string op, std::vector<FieldValueTuple>&tupEntry, const std::string intfName);
     void processStpVlanPortAttr(const std::string op, uint32_t vlan_id, const std::string intfName,
