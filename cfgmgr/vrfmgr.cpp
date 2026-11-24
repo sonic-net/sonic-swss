@@ -7,6 +7,7 @@
 #include "vrfmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "vrf.h"
 #include "warm_restart.h"
 
 #define VRF_TABLE_START 1001
@@ -81,7 +82,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                     SWSS_LOG_NOTICE("Remove vrf device %s", vrfName.c_str());
                     cmd.str("");
                     cmd.clear();
-                    cmd << IP_CMD << " link del " << vrfName;
+                    cmd << IP_CMD << " link del " << shellquote(vrfName);
                     int ret = swss::exec(cmd.str(), res);
                     if (ret)
                     {
@@ -167,6 +168,12 @@ bool VrfMgr::setLink(const string& vrfName)
 
     stringstream cmd;
     string res;
+
+    if (!isVrfNameValid(vrfName))
+    {
+        SWSS_LOG_ERROR("Invalid VRF device name '%s', skipping", vrfName.c_str());
+        return false;
+    }
 
     if (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end())
     {
@@ -278,9 +285,18 @@ void VrfMgr::doTask(Consumer &consumer)
             }
             else
             {
+                if (!isVrfNameValid(vrfName))
+                {
+                    SWSS_LOG_ERROR("Invalid VRF device name '%s', skipping", vrfName.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
                 if (!setLink(vrfName))
                 {
                     SWSS_LOG_ERROR("Failed to create vrf netdev %s", vrfName.c_str());
+                    it++;
+                    continue;
                 }
 
                 bool status = true;
@@ -552,4 +568,3 @@ uint32_t VrfMgr::getVRFmappedVNI(const std::string& vrf_name)
         return 0;
     }
 }
-
