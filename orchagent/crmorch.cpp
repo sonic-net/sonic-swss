@@ -1165,7 +1165,13 @@ void CrmOrch::checkCrmThresholds()
                     throw runtime_error("Unknown threshold type for CRM resource");
             }
 
-            if ((utilization >= res.highThreshold) && (cnt.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
+            // Free entries fall as a resource fills, so a free threshold is
+            // exceeded at or below low and clears at or above high
+            bool isFree = (res.thresholdType == CrmThresholdType::CRM_FREE);
+            bool exceeded = isFree ? (utilization <= res.lowThreshold) : (utilization >= res.highThreshold);
+            bool cleared = isFree ? (utilization >= res.highThreshold) : (utilization <= res.lowThreshold);
+
+            if (exceeded && (cnt.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
             {
                 event_params_t params = {
                     { "percent", to_string(percentageUtil) },
@@ -1178,7 +1184,7 @@ void CrmOrch::checkCrmThresholds()
                 event_publish(g_events_handle, "chk_crm_threshold", &params);
                 cnt.exceededLogCounter++;
             }
-            else if ((utilization <= res.lowThreshold) && (cnt.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))
+            else if (cleared && (cnt.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))
             {
                 SWSS_LOG_WARN("%s THRESHOLD_CLEAR for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
