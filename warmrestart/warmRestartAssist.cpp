@@ -24,7 +24,7 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB, const std::stri
     m_dockerName(dockerName),
     m_warmStartTimer(timespec{0, 0})
 {
-    WarmStart::initialize(m_appName, m_dockerName);
+    WarmStart::initialize(m_appName, m_dockerName, 0, false, true);
     WarmStart::checkWarmStart(m_appName, m_dockerName);
 
     /*

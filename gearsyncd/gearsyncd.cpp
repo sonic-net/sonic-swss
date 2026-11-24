@@ -52,7 +52,7 @@ static void notifyGearboxConfigDone(ProducerStateTable &p, bool success)
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("gearsyncd");
+    Logger::linkToDbNative("gearsyncd", "NOTICE", true);
     int opt;
     string gearbox_config_file;
     map<string, KeyOpFieldsValuesTuple> gearbox_cfg_map;
@@ -78,7 +78,7 @@ int main(int argc, char **argv)
     DBConnector applDb("APPL_DB", 0, false, "", true);
     ProducerStateTable producerStateTable(&applDb, APP_GEARBOX_TABLE_NAME);
 
-    WarmStart::initialize("gearsyncd", "swss");
+    WarmStart::initialize("gearsyncd", "swss", 0, false, true);
     WarmStart::checkWarmStart("gearsyncd", "swss");
     const bool warm = WarmStart::isWarmStart();
 

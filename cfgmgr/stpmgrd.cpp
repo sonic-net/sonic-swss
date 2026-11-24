@@ -18,7 +18,7 @@ string gRecordFile;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("stpmgrd");
+    Logger::linkToDbNative("stpmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting stpmgrd ---");
@@ -36,7 +36,7 @@ int main(int argc, char **argv)
         DBConnector app_db("APPL_DB", 0, false, "", true);
         DBConnector state_db("STATE_DB", 0, false, "", true);
 
-        WarmStart::initialize("stpmgrd", "stpd");
+        WarmStart::initialize("stpmgrd", "stpd", 0, false, true);
         WarmStart::checkWarmStart("stpmgrd", "stpd");
 
         // Config DB Tables

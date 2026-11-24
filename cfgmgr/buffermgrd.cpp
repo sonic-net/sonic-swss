@@ -96,7 +96,7 @@ int main(int argc, char **argv)
     string asic_table_file = "";
     string peripherial_table_file = "";
     string zero_profile_file = "";
-    Logger::linkToDbNative("buffermgrd");
+    Logger::linkToDbNative("buffermgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
@@ -166,7 +166,7 @@ int main(int argc, char **argv)
 
         if (dynamicMode)
         {
-            WarmStart::initialize("buffermgrd", "swss");
+            WarmStart::initialize("buffermgrd", "swss", 0, false, true);
             WarmStart::checkWarmStart("buffermgrd", "swss");
 
             DBConnector applStateDb("APPL_STATE_DB", 0, false, "", true);

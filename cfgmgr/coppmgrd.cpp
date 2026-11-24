@@ -18,7 +18,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("coppmgrd");
+    Logger::linkToDbNative("coppmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting coppmgrd ---");
@@ -31,7 +31,7 @@ int main(int argc, char **argv)
             CFG_FEATURE_TABLE_NAME,
         };
 
-        WarmStart::initialize("coppmgrd", "swss");
+        WarmStart::initialize("coppmgrd", "swss", 0, false, true);
         WarmStart::checkWarmStart("coppmgrd", "swss");
 
         DBConnector cfgDb("CONFIG_DB", 0);

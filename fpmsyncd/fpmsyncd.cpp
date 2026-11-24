@@ -76,7 +76,7 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative("fpmsyncd");
+    swss::Logger::linkToDbNative("fpmsyncd", "NOTICE", true);
 
     const auto routeResponseChannelName = std::string("APPL_DB_") + APP_ROUTE_TABLE_NAME + "_RESPONSE_CHANNEL";
 

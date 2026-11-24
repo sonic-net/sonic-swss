@@ -17,7 +17,7 @@ WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
     m_dockName(dockerName),
     m_appName(appName)
 {
-    WarmStart::initialize(appName, dockerName);
+    WarmStart::initialize(appName, dockerName, 0, false, true);
     registerTable(pipeline, syncTable, syncTableName);
 }
 

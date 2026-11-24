@@ -21,7 +21,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("tunnelmgrd");
+    Logger::linkToDbNative("tunnelmgrd", "NOTICE", true);
 
     SWSS_LOG_NOTICE("--- Starting Tunnelmgrd ---");
 
@@ -35,7 +35,7 @@ int main(int argc, char **argv)
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0, false, "", true);
 
-        WarmStart::initialize("tunnelmgrd", "swss");
+        WarmStart::initialize("tunnelmgrd", "swss", 0, false, true);
         WarmStart::checkWarmStart("tunnelmgrd", "swss");
 
         TunnelMgr tunnelmgr(&cfgDb, &appDb, cfgTunTables);

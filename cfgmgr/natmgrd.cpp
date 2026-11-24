@@ -99,7 +99,7 @@ void cleanup()
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("natmgrd");
+    Logger::linkToDbNative("natmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting natmgrd ---");

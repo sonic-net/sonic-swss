@@ -15,7 +15,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("fdbsyncd");
+    Logger::linkToDbNative("fdbsyncd", "NOTICE", true);
 
     DBConnector appDb("APPL_DB", 0, false, "", true);
     RedisPipeline pipelineAppDB(&appDb);

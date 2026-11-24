@@ -27,7 +27,7 @@ void sig_handler(int signo)
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative(TEAMSYNCD_APP_NAME);
+    swss::Logger::linkToDbNative(TEAMSYNCD_APP_NAME, "NOTICE", true);
     DBConnector db("APPL_DB", 0, false, "", true);
     DBConnector stateDb("STATE_DB", 0, false, "", true);
     Select s;

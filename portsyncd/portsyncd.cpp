@@ -49,7 +49,7 @@ int main(int argc, char **argv)
 {
     try
     {
-        Logger::linkToDbNative("portsyncd");
+        Logger::linkToDbNative("portsyncd", "NOTICE", true);
         int opt;
 
         while ((opt = getopt(argc, argv, "v:h")) != -1 )
@@ -77,7 +77,7 @@ int main(int argc, char **argv)
             g_switchType = "switch";
         }
 
-        WarmStart::initialize("portsyncd", "swss");
+        WarmStart::initialize("portsyncd", "swss", 0, false, true);
         WarmStart::checkWarmStart("portsyncd", "swss");
         const bool warm = WarmStart::isWarmStart();
 

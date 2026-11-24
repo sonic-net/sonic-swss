@@ -426,11 +426,11 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative("orchagent");
+    swss::Logger::linkToDbNative("orchagent", "NOTICE", true);
 
     SWSS_LOG_ENTER();
 
-    WarmStart::initialize("orchagent", "swss");
+    WarmStart::initialize("orchagent", "swss", 0, false, true);
     WarmStart::checkWarmStart("orchagent", "swss");
 
     /*

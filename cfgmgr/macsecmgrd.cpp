@@ -47,7 +47,7 @@ int main(int argc, char **argv)
 
     try
     {
-        Logger::linkToDbNative("macsecmgrd");
+        Logger::linkToDbNative("macsecmgrd", "NOTICE", true);
         SWSS_LOG_NOTICE("--- Starting macsecmgrd ---");
 
         /* Register the signal handler for SIGTERM */

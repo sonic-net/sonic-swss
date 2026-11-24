@@ -25,7 +25,7 @@ MacAddress gMacAddress;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("vxlanmgrd");
+    Logger::linkToDbNative("vxlanmgrd", "NOTICE", true);
 
     SWSS_LOG_NOTICE("--- Starting vxlanmgrd ---");
 
@@ -36,7 +36,7 @@ int main(int argc, char **argv)
         DBConnector appDb("APPL_DB", 0, false, "", true);
         DBConnector stateDb("STATE_DB", 0, false, "", true);
 
-        WarmStart::initialize("vxlanmgrd", "swss");
+        WarmStart::initialize("vxlanmgrd", "swss", 0, false, true);
         WarmStart::checkWarmStart("vxlanmgrd", "swss");
         if (WarmStart::isWarmStart())
         {

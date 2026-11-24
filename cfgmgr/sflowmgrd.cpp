@@ -17,7 +17,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("sflowmgrd");
+    Logger::linkToDbNative("sflowmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting sflowmgrd ---");

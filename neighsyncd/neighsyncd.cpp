@@ -13,7 +13,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("neighsyncd");
+    Logger::linkToDbNative("neighsyncd", "NOTICE", true);
 
     DBConnector appDb("APPL_DB", 0, false, "", true);
     RedisPipeline pipelineAppDB(&appDb);
