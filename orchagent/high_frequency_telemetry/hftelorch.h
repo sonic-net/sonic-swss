@@ -117,6 +117,7 @@ private:
     sai_object_id_t m_sai_tam_transport_obj;
     sai_object_id_t m_sai_tam_collector_obj;
     sai_object_id_t m_sai_tam_obj;
+    std::vector<sai_object_id_t> m_sai_tam_telemetry_list;
 
     sai_tam_tel_type_mode_t m_tel_type_mode;
 
