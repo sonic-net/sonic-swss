@@ -300,7 +300,7 @@ def main():
     log_info ("restore_neighbors service is started")
     # Use warmstart python binding to check warmstart information
     warmstart = swsscommon.WarmStart()
-    warmstart.initialize("neighsyncd", "swss")
+    warmstart.initialize("neighsyncd", "swss", 0, False, True)
     warmstart.checkWarmStart("neighsyncd", "swss", False)
 
     # if swss or system warm reboot not enabled, don't run

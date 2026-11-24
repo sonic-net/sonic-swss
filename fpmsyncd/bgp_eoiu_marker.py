@@ -189,7 +189,7 @@ def main():
 
     # Use warmstart python binding to check warmstart information
     warmstart = swsscommon.WarmStart()
-    warmstart.initialize("bgp", "bgp")
+    warmstart.initialize("bgp", "bgp", 0, False, True)
     warmstart.checkWarmStart("bgp", "bgp", False)
 
     # if bgp or system warm reboot not enabled, don't run
