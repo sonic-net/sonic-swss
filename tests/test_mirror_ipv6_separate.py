@@ -1,9 +1,80 @@
 # This test suite covers the functionality of mirror feature in SwSS
 import time
 
+import pytest
+
 from swsscommon import swsscommon
 
 DVS_ENV = ["HWSKU=Mellanox-SN2700"]
+
+# Platforms on which aclorch keeps the v4 and v6 ACL mirror tables SEPARATE
+# (a v4-only MIRROR table + a distinct MIRRORV6 table). This mirrors the
+# m_isCombinedMirrorV6Table=false branch in AclOrch::setMirrorTableCapabilities():
+#   mellanox | cisco-8000 | marvell-prestera | xsight | clounix
+#   | (broadcom && sub_platform==broadcom-dnx)
+# Every other platform (including the default Virtual Switch, platform=vs) uses a
+# single COMBINED v4+v6 MIRROR table, for which test_mirror_ipv6_combined.py is
+# the correct coverage.
+SEPARATE_MIRROR_PLATFORMS = {
+    "mellanox",
+    "cisco-8000",
+    "marvell-prestera",
+    "xsight",
+    "clounix",
+}
+
+
+def _read_orchagent_env(dvs, name):
+    # aclorch reads the lowercase `platform`/`sub_platform` env via getenv(); that
+    # env is injected into the orchagent process (not the default container
+    # shell), so read it straight from the running orchagent's environment.
+    res = dvs.ctn.exec_run(
+        ["sh", "-c",
+         'p=$(pgrep -x orchagent | head -1); '
+         f'tr "\\0" "\\n" < /proc/$p/environ 2>/dev/null | sed -n "s/^{name}=//p" | head -1'])
+    return res.output.decode("utf-8").strip() if res.output else ""
+
+
+def get_orchagent_platform(dvs):
+    platform = _read_orchagent_env(dvs, "platform")
+    if not platform:
+        # Fall back to the orchagent init NOTICE: "<platform> switch capability:".
+        res = dvs.ctn.exec_run(
+            ["sh", "-c",
+             'grep -hoE "[a-z0-9_-]+ switch capability:" /var/log/syslog 2>/dev/null '
+             '| tail -1 | sed "s/ switch capability://"'])
+        platform = res.output.decode("utf-8").strip() if res.output else ""
+    return platform
+
+
+def uses_combined_mirror_table(dvs):
+    # True when the image programs a single combined v4+v6 MIRROR table (i.e. the
+    # separate-mode assertions in this module do not apply). Default VS images
+    # report platform=vs -> combined. Mellanox/Cisco/Marvell/etc. report their
+    # vendor platform -> separate. Mirrors aclorch's m_isCombinedMirrorV6Table.
+    platform = get_orchagent_platform(dvs)
+    if not platform:
+        # Could not determine platform; do not skip so a real misconfig surfaces.
+        return False
+    sub_platform = _read_orchagent_env(dvs, "sub_platform")
+    if platform == "broadcom" and sub_platform == "broadcom-dnx":
+        return False
+    return platform not in SEPARATE_MIRROR_PLATFORMS
+
+
+@pytest.fixture(scope="class", autouse=True)
+def skip_if_combined_mirror(dvs):
+    # Guard the whole separate-mode suite: skip when the image programs a
+    # combined v4+v6 mirror table (e.g. the default VS SAI image, platform=vs).
+    # This keeps the suite meaningful on split-table platforms while preventing
+    # false failures on combined-capability images. Combined-mode coverage lives
+    # in test_mirror_ipv6_combined.py.
+    if uses_combined_mirror_table(dvs):
+        platform = get_orchagent_platform(dvs)
+        pytest.skip(
+            f"platform={platform!r} programs a combined v4+v6 mirror table; "
+            "separate-mode mirror tests do not apply. "
+            "See test_mirror_ipv6_combined.py.")
 
 
 class TestMirror(object):
