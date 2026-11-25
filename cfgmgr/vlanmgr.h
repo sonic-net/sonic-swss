@@ -51,6 +51,9 @@ private:
     void doVlanPacVlanMemberTask(Consumer &consumer);
     void addPortToVlan(const std::string& port_alias, const std::string& vlan_alias, const std::string& tagging_mode);
     void removePortFromVlan(const std::string& port_alias, const std::string& vlan_alias);
+    void parseLearnDisable(const KeyOpFieldsValuesTuple& t, std::string& learn_disable);
+    void forwardLearnDisableToApplDb(const std::string& key, const std::string& learn_disable, 
+                                     std::vector<FieldValueTuple>& fvVector);
 };
 
 }
