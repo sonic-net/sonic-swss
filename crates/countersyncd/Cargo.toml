@@ -49,7 +49,7 @@ tracing-opentelemetry = "0.25"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 opentelemetry = { version = "0.25", features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
+opentelemetry_sdk = { version = "0.32.1", features = ["rt-tokio"]}
 opentelemetry-stdout = "0.25"
 opentelemetry-semantic-conventions = "0.25"
 opentelemetry-http = "0.25"
