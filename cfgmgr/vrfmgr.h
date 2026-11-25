@@ -27,6 +27,8 @@ public:
 private:
     bool delLink(const std::string& vrfName);
     bool setLink(const std::string& vrfName);
+    bool delIsolateRoute(const string& vrfName);
+    bool setIsolateRoute(const string& vrfName);
     bool isVrfObjExist(const std::string& vrfName);
     void recycleTable(uint32_t table);
     uint32_t getFreeTable(void);
