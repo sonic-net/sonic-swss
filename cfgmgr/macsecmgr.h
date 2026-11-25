@@ -8,11 +8,23 @@
 
 #include <cinttypes>
 #include <map>
+#include <set>
 #include <memory>
 #include <vector>
 #include <sstream>
 
 #include <sys/types.h>
+#include <signal.h>
+
+#include "macsecmkastatus.h"
+
+#ifndef STATE_MACSEC_MKA_SESSION_TABLE_NAME
+#define STATE_MACSEC_MKA_SESSION_TABLE_NAME "MACSEC_MKA_SESSION_TABLE"
+#endif
+
+#ifndef STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME
+#define STATE_MACSEC_MKA_PARTICIPANT_TABLE_NAME "MACSEC_MKA_PARTICIPANT_TABLE"
+#endif
 
 namespace swss {
 
@@ -20,8 +32,11 @@ class MACsecMgr : public Orch
 {
 public:
     using Orch::doTask;
-    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
+              const std::vector<std::string> &tableNames,
+              const volatile sig_atomic_t *shutdownRequested = nullptr);
     ~MACsecMgr();
+    void doTask();
 private:
     void doTask(Consumer &consumer);
 
@@ -29,14 +44,14 @@ public:
     using TaskArgs = std::vector<FieldValueTuple>;
     struct MACsecProfile
     {
-        std::uint32_t       priority;
+        std::uint32_t       priority = 255;
         enum CipherSuite
         {
             GCM_AES_128,
             GCM_AES_256,
             GCM_AES_XPN_128,
             GCM_AES_XPN_256,
-        }                   cipher_suite;
+        }                   cipher_suite = GCM_AES_128;
         std::string         primary_cak;
         std::string         primary_ckn;
         std::string         fallback_cak;
@@ -45,12 +60,20 @@ public:
         {
             INTEGRITY_ONLY,
             SECURITY,
-        }                   policy;
-        swss::AlphaBoolean  enable_replay_protect;
-        std::uint32_t       replay_window;
-        swss::AlphaBoolean  send_sci;
-        std::uint32_t       rekey_period;
+        }                   policy = SECURITY;
+        swss::AlphaBoolean  enable_replay_protect = false;
+        std::uint32_t       replay_window = 0;
+        swss::AlphaBoolean  send_sci = true;
+        std::uint32_t       rekey_period = 0;
         bool update(const TaskArgs & ta);
+    };
+
+    enum class MKAQueryFailure
+    {
+        None,
+        Timeout,
+        Command,
+        Malformed,
     };
 
     struct MKASession
@@ -59,7 +82,20 @@ public:
         // wpa_supplicant communication socket
         std::string sock;
         // wpa_supplicant process id
-        pid_t       wpa_supplicant_pid;
+        pid_t       wpa_supplicant_pid = 0;
+        std::string network_id;
+        MACsecProfile applied_profile;
+        std::string pending_old_ckn;
+        bool pending_primary = false;
+        // An ambiguous add must remain recognizable even if desired state changes.
+        std::string pending_new_ckn;
+        std::string pending_new_cak;
+        bool participants_verified = false;
+        bool status_published = false;
+        std::string config_error;
+        MKAQueryFailure query_failure = MKAQueryFailure::None;
+        std::uint64_t background_timeout_streak = 0;
+        bool background_timeout_warned = false;
     };
 
 private:
@@ -73,6 +109,11 @@ private:
 
 
     Table m_statePortTable;
+    Table m_stateMkaSessionTable;
+    Table m_stateMkaParticipantTable;
+    SelectableTimer *m_mkaStatusTimer = nullptr;
+    const volatile sig_atomic_t *m_shutdownRequested;
+    bool isShutdownRequested() const;
 
     // APPL_DB MACsec tables, written by wpa_supplicant's macsec_sonic driver
     // and consumed by orchagent. macsecmgrd only touches them to remove what
@@ -97,8 +138,84 @@ private:
     virtual bool terminateWPASupplicant(const std::string & sock) const;
     pid_t startWPASupplicant(const std::string & sock) const;
     bool stopWPASupplicant(pid_t pid) const;
-    bool configureMACsec(const std::string & port_name, const MKASession & session, const MACsecProfile & profile) const;
+    bool configureMACsec(const std::string & port_name, MKASession & session, const MACsecProfile & profile) const;
     bool unconfigureMACsec(const std::string & port_name, const MKASession & session) const;
+
+    enum class MKAQueryPurpose
+    {
+        Verification,
+        Background,
+    };
+    bool collectMKAStatus(
+        const std::string &port_name,
+        MKASession &session,
+        MKASessionStatus *status = nullptr,
+        MKAQueryPurpose purpose = MKAQueryPurpose::Verification);
+    bool queryMKAStatus(
+        const std::string &port_name,
+        const MKASession &session,
+        MKASessionStatus &status,
+        std::string &error,
+        MKAQueryFailure *failure = nullptr) const;
+    bool observeRemovalTarget(
+        const std::string &port_name,
+        MKASession &session,
+        const std::string &ckn,
+        bool primary,
+        MKASessionStatus &status);
+    bool validateExpectedParticipants(
+        const MKASession &session,
+        const MKASessionStatus &status,
+        std::string &error) const;
+    void publishMKAStatus(
+        const std::string &port_name,
+        MKASession &session,
+        const MKASessionStatus &status);
+    void handleMKAQueryFailure(
+        const std::string &port_name,
+        MKASession &session,
+        const std::string &reason,
+        MKAQueryPurpose purpose);
+    void setConfigState(
+        const std::string &port_name,
+        MKASession &session,
+        const std::string &error);
+    void deleteOperationalState(const std::string &port_name);
+    void clearMKAState();
+    void doTask(SelectableTimer &timer) override;
+    void sweepMKAStatus();
+    bool selectParticipantToUpdate(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired,
+        bool &primary);
+    bool reconcilePort(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired);
+    bool reconcileObservedParticipants(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired,
+        const MKASessionStatus &status);
+    bool reconcileParticipant(
+        const std::string &port_name,
+        MKASession &session,
+        const MACsecProfile &desired);
+    bool removeParticipant(
+        const std::string &port_name,
+        const MKASession &session,
+        const std::string &ckn) const;
+    bool updateNetworkParticipant(
+        const std::string &port_name,
+        const MKASession &session,
+        const MACsecProfile &desired,
+        bool primary) const;
+    bool addParticipant(
+        const std::string &port_name,
+        const MKASession &session,
+        const MACsecProfile &desired,
+        bool primary) const;
 };
 
 }
