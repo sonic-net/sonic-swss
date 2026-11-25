@@ -4,6 +4,7 @@
 #include "mock_table.h"
 #include <set>
 #include <memory>
+#include <vector>
 
 using TableDataT = std::map<std::string, std::vector<swss::FieldValueTuple>>;
 using TablesT = std::map<std::string, TableDataT>;
@@ -37,6 +38,78 @@ namespace testing_db
     std::size_t getProducerDelCount(const std::string &tableName)
     {
         return gProducerDelCounts[tableName];
+    }
+
+    static bool redisGlobMatch(const std::string &pattern, const std::string &text)
+    {
+        std::size_t pi = 0;
+        std::size_t ti = 0;
+        std::size_t star = std::string::npos;
+        std::size_t mark = 0;
+        while (ti < text.size())
+        {
+            if (pi < pattern.size() && (pattern[pi] == '?' || pattern[pi] == text[ti]))
+            {
+                ++pi;
+                ++ti;
+            }
+            else if (pi < pattern.size() && pattern[pi] == '*')
+            {
+                star = pi++;
+                mark = ti;
+            }
+            else if (star != std::string::npos)
+            {
+                pi = star + 1;
+                ti = ++mark;
+            }
+            else
+            {
+                return false;
+            }
+        }
+        while (pi < pattern.size() && pattern[pi] == '*')
+        {
+            ++pi;
+        }
+        return pi == pattern.size();
+    }
+
+    std::vector<std::string> matchingRedisKeys(int dbId, const std::string &pattern)
+    {
+        std::vector<std::string> list;
+        auto db = gDB.find(dbId);
+        if (db == gDB.end())
+        {
+            return list;
+        }
+        for (const auto &table : db->second)
+        {
+            const std::string bar = table.first + "|";
+            const std::string colon = table.first + ":";
+            std::string sep;
+            if (pattern.compare(0, bar.size(), bar) == 0)
+            {
+                sep = "|";
+            }
+            else if (pattern.compare(0, colon.size(), colon) == 0)
+            {
+                sep = ":";
+            }
+            else
+            {
+                continue;
+            }
+            for (const auto &row : table.second)
+            {
+                const std::string full = table.first + sep + row.first;
+                if (redisGlobMatch(pattern, full))
+                {
+                    list.push_back(full);
+                }
+            }
+        }
+        return list;
     }
 }
 
