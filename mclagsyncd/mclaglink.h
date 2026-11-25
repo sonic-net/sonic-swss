@@ -212,6 +212,7 @@ namespace swss {
             bool is_iccp_up = false;
             std::string m_system_mac;
             std::set<vlan_mbr> m_vlan_mbrship; //set of vlan,mbr tuples
+            static const int MSG_BATCH_SIZE = 256;
 
             std::map<std::string, std:: string> *p_learn;
 
