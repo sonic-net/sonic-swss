@@ -246,13 +246,13 @@ void TeamMgr::doLagTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             int min_links = 0;
+            bool fallback = false;
             bool fast_rate = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
             string sys_mac;
-            string fallback;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -265,15 +265,9 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "fallback")
                 {
-                    fallback = fvValue(i);
-                    // Transition mechanism for the fallback field, going from a boolean to a string
-                    if (fallback == "true") {
-                        fallback = "single";
-                    } else if (fallback != "single" && fallback != "static") {
-                        fallback = "none";
-                    }
-                    SWSS_LOG_INFO("Get fallback %s",
-                            fallback.c_str());
+                    fallback = fvValue(i) == "true";
+                    SWSS_LOG_INFO("Get fallback option %s",
+                            fallback ? "true" : "false");
                 }
                 else if (fvField(i) == "admin_status")
                 {
@@ -696,7 +690,7 @@ bool TeamMgr::setLagSysmac(const string &alias, string &sys_mac)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, const string &fallback, bool fast_rate)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)
 {
     SWSS_LOG_ENTER();
 
@@ -748,9 +742,9 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, const st
         conf << ",\"min_ports\":" << min_links;
     }
 
-    if (!fallback.empty())
+    if (fallback)
     {
-        conf << ",\"fallback\":\"" << fallback << "\"";
+        conf << ",\"fallback\":true";
     }
 
     if (fast_rate)

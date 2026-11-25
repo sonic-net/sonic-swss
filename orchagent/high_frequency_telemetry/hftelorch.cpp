@@ -174,25 +174,35 @@ void HFTelOrch::locallyNotify(const CounterNameMapUpdater::Message &msg)
             continue;
         }
 
-        if (msg.m_operation == CounterNameMapUpdater::SET)
+        // The caller publishes the counter name map after this returns, so an
+        // HFT failure must not propagate into it.
+        try
         {
-            if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+            if (msg.m_operation == CounterNameMapUpdater::SET)
             {
-                continue;
+                if (!profile->setObjectSAIID(counter_itr->second, counter_name.c_str(), msg.m_oid))
+                {
+                    continue;
+                }
             }
-        }
-        else if (msg.m_operation == CounterNameMapUpdater::DEL)
-        {
-            if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+            else if (msg.m_operation == CounterNameMapUpdater::DEL)
             {
-                continue;
+                if (!profile->delObjectSAIID(counter_itr->second, counter_name.c_str()))
+                {
+                    continue;
+                }
             }
+            else
+            {
+                SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+            }
+            profile->tryCommitConfig(counter_itr->second);
         }
-        else
+        catch (const std::exception &e)
         {
-            SWSS_LOG_THROW("Unknown operation type %d", msg.m_operation);
+            SWSS_LOG_ERROR("Failed to update the high frequency telemetry profile %s for the object %s: %s",
+                           profile->getProfileName().c_str(), counter_name.c_str(), e.what());
         }
-        profile->tryCommitConfig(counter_itr->second);
     }
 }
 
@@ -777,6 +787,7 @@ shared_ptr<HFTelProfile> HFTelOrch::getProfile(const string &profile_name)
             make_shared<HFTelProfile>(
                 profile_name,
                 m_sai_tam_obj,
+                m_sai_tam_telemetry_list,
                 m_sai_tam_collector_obj,
                 m_counter_name_cache,
                 m_tel_type_mode,
