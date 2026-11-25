@@ -8,6 +8,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "mock_response_publisher.h"
+#include "mock_sai_capability_wrap.h"
 #include "switchorch.h"
 
 extern void on_switch_asic_sdk_health_event(sai_object_id_t switch_id,
@@ -61,6 +62,7 @@ namespace switchorch_test
     // Last value set for each VxLAN switch attribute, and the vendor default the
     // get stub reports for SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC.
     map<sai_attr_id_t, sai_attribute_t> _ut_vxlan_switch_attrs_set;
+    map<sai_attr_id_t, sai_attribute_t> _ut_hash_switch_attrs_set;
     // Number of sets of each VxLAN switch attribute, and an attribute whose next
     // set fails once with a retryable status (-1 for none).
     map<sai_attr_id_t, int> _ut_vxlan_switch_attr_set_count;
@@ -90,6 +92,12 @@ namespace switchorch_test
     {
         switch (attr[0].id)
         {
+        case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED:
+        case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED:
+        case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET:
+        case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET:
+            _ut_hash_switch_attrs_set[attr[0].id] = attr[0];
+            return SAI_STATUS_SUCCESS;
         case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
         case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
             _ut_vxlan_switch_attr_set_count[attr[0].id]++;
@@ -173,6 +181,7 @@ namespace switchorch_test
             _ut_create_switch_tunnel_called = false;
             _ut_create_switch_tunnel_has_security_attr = false;
             _ut_vxlan_switch_attrs_set.clear();
+            _ut_hash_switch_attrs_set.clear();
             _ut_vxlan_switch_attr_set_count.clear();
             _ut_vxlan_switch_attr_fail_once = -1;
             _ut_vxlan_router_mac_get_fails = false;
@@ -472,6 +481,66 @@ namespace switchorch_test
 
         ASSERT_TRUE(_ut_create_switch_tunnel_called);
         ASSERT_TRUE(consumer->m_toSync.empty());
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(SwitchOrchTest, SwitchHashValuesRequireUnsignedDecimal)
+    {
+        sai_cap_ut::AttrCapabilityOverrideGuard capabilityGuard(
+            [](sai_object_type_t objectType, sai_attr_id_t attrId,
+               sai_attr_capability_t *capability, sai_status_t *status) {
+                if (objectType != SAI_OBJECT_TYPE_SWITCH ||
+                    (attrId != SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET &&
+                     attrId != SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET))
+                {
+                    return false;
+                }
+
+                *capability = {};
+                capability->set_implemented = true;
+                *status = SAI_STATUS_SUCCESS;
+                return true;
+            });
+
+        _hook_sai_apis();
+        initSwitchOrch();
+
+        auto consumer = dynamic_cast<Consumer *>(gSwitchOrch->getExecutor(APP_SWITCH_TABLE_NAME));
+        const vector<pair<string, string>> invalidValues = {
+            {"ecmp_hash_seed", "not-a-number"},
+            {"lag_hash_seed", "12suffix"},
+            {"ecmp_hash_offset", "-1"},
+            {"lag_hash_offset", " 1"},
+            {"ecmp_hash_seed", "4294967296"},
+            {"lag_hash_offset", "256"},
+        };
+
+        for (const auto &fieldValue : invalidValues)
+        {
+            consumer->addToSync({{"switch", SET_COMMAND,
+                                  {{fieldValue.first, fieldValue.second}}}});
+            static_cast<Orch *>(gSwitchOrch)->doTask();
+            EXPECT_TRUE(consumer->m_toSync.empty());
+        }
+
+        EXPECT_TRUE(_ut_hash_switch_attrs_set.empty());
+
+        consumer->addToSync({{"switch", SET_COMMAND,
+                              {
+                                  {"ecmp_hash_seed", "4294967295"},
+                                  {"lag_hash_seed", "0"},
+                                  {"ecmp_hash_offset", "255"},
+                                  {"lag_hash_offset", "0"},
+                              }}});
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        ASSERT_EQ(4u, _ut_hash_switch_attrs_set.size());
+        EXPECT_EQ(UINT32_MAX, _ut_hash_switch_attrs_set.at(SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED).value.u32);
+        EXPECT_EQ(0u, _ut_hash_switch_attrs_set.at(SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED).value.u32);
+        EXPECT_EQ(UINT8_MAX, _ut_hash_switch_attrs_set.at(SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_OFFSET).value.u8);
+        EXPECT_EQ(0u, _ut_hash_switch_attrs_set.at(SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_OFFSET).value.u8);
 
         _unhook_sai_apis();
     }
