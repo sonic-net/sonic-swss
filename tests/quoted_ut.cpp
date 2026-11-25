@@ -100,6 +100,12 @@ TEST(quoted, copy1_v6)
     EXPECT_EQ(cmd4.str(), "cat /sys/class/net/\"\\$(echo hi)\"/operstate");
 }
 
+TEST(quoted, escapesBackslashes)
+{
+    EXPECT_EQ(shellquote("Ethernet0\\tag"), "\"Ethernet0\\\\tag\"");
+    EXPECT_EQ(shellquote("Ethernet0\\"), "\"Ethernet0\\\\\"");
+}
+
 TEST(recorder, preservesProvidedTimestamp)
 {
     char dir_template[] = "/tmp/swss-recorder-ut-XXXXXX";
