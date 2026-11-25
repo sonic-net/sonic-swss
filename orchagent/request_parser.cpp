@@ -1,5 +1,6 @@
 #include <net/ethernet.h>
 #include <cassert>
+#include <cstddef>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -90,8 +91,9 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
         or request_description_.key_item_types.back() == REQ_T_MAC_ADDRESS or request_description_.key_item_types.back() == REQ_T_STRING))
     {
         // Remove key_items so that key_items.size() is correct, then assemble the removed items into an IPv6 address
-        std::vector<std::string> ip_addr_groups(--key_items.begin() + number_of_key_items_, key_items.end());
-        key_items.erase(--key_items.begin() + number_of_key_items_, key_items.end());
+        const auto ip_key_start = key_items.begin() + static_cast<std::ptrdiff_t>(number_of_key_items_ - 1);
+        std::vector<std::string> ip_addr_groups(ip_key_start, key_items.end());
+        key_items.erase(ip_key_start, key_items.end());
 
         std::string ip_string;
 

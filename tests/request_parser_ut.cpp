@@ -1360,6 +1360,18 @@ public:
     TestRequestIpv6Prefix() : Request(request_description_ipv6_prefix, ':') { }
 };
 
+const request_description_t request_description_ipv6_addr_with_two_prefix_keys = {
+    { REQ_T_STRING, REQ_T_STRING, REQ_T_IP },
+    { },
+    { }
+};
+
+class TestRequestIpv6AddrWithTwoPrefixKeys : public Request
+{
+public:
+    TestRequestIpv6AddrWithTwoPrefixKeys() : Request(request_description_ipv6_addr_with_two_prefix_keys, ':') { }
+};
+
 const request_description_t request_desc_ipv6_addr_only = {
     { REQ_T_IP },
     { },
@@ -1418,6 +1430,37 @@ TEST(request_parser, ipv6_addr_key_item)
         {
             FAIL() << "Got unexpected exception";
         }
+    }
+}
+
+TEST(request_parser, ipv6_addr_key_item_with_two_prefix_keys)
+{
+    const std::string ipv6_addr = "2001:db8::1";
+    const std::string key_string = "prefix1:prefix2:" + ipv6_addr;
+    KeyOpFieldsValuesTuple t {key_string, "SET",
+                                { }
+                            };
+
+    try
+    {
+        TestRequestIpv6AddrWithTwoPrefixKeys request;
+
+        EXPECT_NO_THROW(request.parse(t));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), key_string.c_str());
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "prefix1");
+        EXPECT_STREQ(request.getKeyString(1).c_str(), "prefix2");
+        EXPECT_EQ(request.getKeyIpAddress(2), IpAddress(ipv6_addr));
+        EXPECT_FALSE(request.getKeyIpAddress(2).isV4());
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
     }
 }
 
