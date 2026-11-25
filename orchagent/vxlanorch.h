@@ -114,7 +114,8 @@ struct nh_tunnel_t
 typedef enum {
     TUNNEL_USER_IMR,
     TUNNEL_USER_MAC,
-    TUNNEL_USER_IP
+    TUNNEL_USER_IP,
+    TUNNEL_USER_PROTECTION
 } tunnel_user_t;
 
 class VxlanTunnel;
@@ -126,6 +127,7 @@ typedef struct tunnel_refcnts_s
    uint32_t      ip_refcnt;
    uint32_t      spurious_add_imr_refcnt;
    uint32_t      spurious_del_imr_refcnt;
+   uint32_t      protection_refcnt;
 } tunnel_refcnt_t;
 
 typedef struct tunnel_map_entry_s
@@ -206,6 +208,16 @@ public:
     bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
     bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
+    bool setProtectionRmac(uint32_t owner, const MacAddress &mac);
+    bool updateProtectionRmac(const std::set<uint32_t> &owners, const MacAddress &mac);
+    bool releaseProtectionRmac(uint32_t owner);
+    bool hasProtectionTunnelUsers() const
+    {
+        for (const auto &user : tnl_users_)
+            if (user.second.protection_refcnt) return true;
+        return false;
+    }
+    bool hasProtectionRmacUsers() const { return !protection_rmac_users_.empty(); }
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
@@ -239,6 +251,7 @@ private:
     IpAddress dst_ip_ = 0x0;
 
     TunnelUsers tnl_users_;
+    std::map<uint32_t, MacAddress> protection_rmac_users_;
     VxlanTunnel* vtep_ptr=NULL;
     tunnel_creation_src_t src_creation_;
     VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)

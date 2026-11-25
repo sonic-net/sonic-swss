@@ -115,6 +115,12 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_stateFdbSyncTableRead(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(config_db, CFG_FDB_SYNC_TABLE_NAME),
+    m_cfgPortChannelRead(config_db, "PORTCHANNEL"),
+    m_cfgVlanRead(config_db, "VLAN"),
+    m_cfgVlanMemberRead(config_db, "VLAN_MEMBER"),
+    m_fdbStateTableRead(stateDb, STATE_FDB_TABLE_NAME),
+    m_mclagStateRead(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
+    m_cfgVxlanMapRead(config_db, "VXLAN_TUNNEL_MAP"),
     m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME)
 {
     string subtype;
@@ -191,6 +197,17 @@ void FdbSync::setMacSyncMode(const string& mode)
     }
     else
     {
+        /* HSET writers merge fields: never leave kernel-only authority on
+         * a row subsequently owned by fpmsyncd. Do not rewrite its MAC data. */
+        for (const auto &pin : m_kernelL3Pins)
+        {
+            m_fdbTableRead.hdel(pin.first, "kernel_l3vni_sync");
+            m_fdbTableRead.hdel(pin.first, "l3vni_neigh_sync");
+        }
+        /* A mode transition is not kernel evidence for future re-adoption.
+         * A new kernel pin/dump must establish ownership again. */
+        m_kernelL3Pins.clear();
+        m_kernelL3WarmBaseline.clear();
         /* fpmsyncd writes APP_VXLAN_FDB_TABLE in this mode. */
         m_mac.clear();
     }
@@ -198,6 +215,8 @@ void FdbSync::setMacSyncMode(const string& mode)
 
 void FdbSync::applyPendingMacSyncMode()
 {
+    if (!m_AppRestartAssist || !m_AppRestartAssist->isWarmStartInProgress())
+        m_kernelL3WarmBaseline.clear();
     if (!m_macSyncModePending)
     {
         return;
@@ -696,6 +715,34 @@ void FdbSync::processStateFdbEntry(
     {
         SWSS_LOG_ERROR("Invalid FDB fields, skipping entry");
         return;
+    }
+
+    const string pinKey = info.vid + ":" + info.mac;
+    auto pin = m_kernelL3Pins.find(pinKey);
+    if (!remote && pin != m_kernelL3Pins.end() && !m_fpmMacSync)
+    {
+        string currentPort, currentType;
+        bool currentLocal = m_fdbStateTableRead.hget(pinKey, "port", currentPort) &&
+            m_fdbStateTableRead.hget(pinKey, "type", currentType) &&
+            currentType == "dynamic";
+        if (pin->second.stage == "local" && currentLocal &&
+            currentPort == pin->second.port)
+        {
+            // Orch has acknowledged local dynamic ownership. A later control
+            // DEL now sees LEARN ownership and cannot remove that hardware FDB.
+            releaseKernelL3Pin(pinKey);
+            m_fdb_mac[pinKey] = {currentPort, FDB_TYPE_DYNAMIC};
+            return;
+        }
+        if (pin->second.stage == "peer" &&
+            (!currentLocal || currentPort == pin->second.port))
+        {
+            if (info.op_type == FDB_OPER_ADD) macUpdateCache(&info);
+            else m_fdb_mac.erase(pinKey);
+            return;
+        }
+        if (currentLocal && currentPort != pin->second.port)
+            releaseKernelL3Pin(pinKey); // Genuine hardware-local move wins.
     }
 
     bool exists = remote ?
@@ -1443,6 +1490,177 @@ void FdbSync::macDelVxlan(string key)
     }
 }
 
+
+bool FdbSync::validKernelL3Port(int ifindex, int master, const string &vlan)
+{
+    auto port = m_kernelL3Links.find(ifindex), bridge = m_kernelL3Links.find(master);
+    if (port == m_kernelL3Links.end() || bridge == m_kernelL3Links.end() ||
+        (port->second.kind != "team" && port->second.kind != "bond") ||
+        port->second.master != master || bridge->second.kind != "bridge")
+        return false;
+    vector<string> maps;
+    m_cfgVxlanMapRead.getKeys(maps);
+    for (const auto &map : maps)
+    {
+        string mappedVlan;
+        if (m_cfgVxlanMapRead.hget(map, "vlan", mappedVlan) && mappedVlan == vlan)
+            return false; // Ordinary L2VNI FDB ownership is a separate path.
+    }
+    vector<FieldValueTuple> fields;
+    return m_cfgPortChannelRead.get(port->second.name, fields) &&
+        m_cfgVlanRead.get(vlan, fields) &&
+        m_cfgVlanMemberRead.get(vlan + "|" + port->second.name, fields);
+}
+
+bool FdbSync::restoreKernelL3Owner(const string &key, const KernelL3Pin &pin)
+{
+    // A plain local FDB event is not provenance. Cold replay additionally
+    // requires this producer's durable prior-peer lease and matching topology.
+    string owner, stage, port, vni, type, remote;
+    if (!m_fdbTableRead.hget(key, "kernel_l3vni_sync", owner) || owner != "true" ||
+        !m_fdbTableRead.hget(key, "l3vni_neigh_sync", stage) ||
+        (stage != "peer" && stage != "local") ||
+        !m_fdbTableRead.hget(key, "ifname", port) || port != pin.port ||
+        !m_fdbTableRead.hget(key, "vni", vni) || vni != "0" ||
+        !m_fdbTableRead.hget(key, "type", type) ||
+        type != (stage == "peer" ? "static" : "dynamic") ||
+        m_fdbTableRead.hget(key, "remote_vtep", remote) ||
+        m_fdbTableRead.hget(key, "nexthop_group", remote))
+        return false;
+    string statePort, stateType;
+    if (m_fdbStateTableRead.hget(key, "port", statePort) &&
+        (!m_fdbStateTableRead.hget(key, "type", stateType) ||
+         statePort != pin.port || stateType != "dynamic"))
+        return false;
+    return true;
+}
+
+void FdbSync::publishKernelL3Pin(const string &key, const KernelL3Pin &pin)
+{
+    vector<FieldValueTuple> fields{{"ifname", pin.port}, {"vni", "0"},
+        {"type", pin.stage == "peer" ? "static" : "dynamic"},
+        {"kernel_l3vni_sync", "true"}, {"l3vni_neigh_sync", pin.stage}};
+    if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+    {
+        if (!m_kernelL3WarmBaseline.count(key))
+            m_fdbTableRead.get(key, m_kernelL3WarmBaseline[key]);
+        m_AppRestartAssist->insertToMap(APP_VXLAN_FDB_TABLE_NAME, key, fields, false);
+    }
+    else
+        m_fdbTable.set(key, fields);
+}
+
+void FdbSync::releaseKernelL3Pin(const string &key)
+{
+    auto pin = m_kernelL3Pins.find(key);
+    if (pin == m_kernelL3Pins.end()) return;
+    if (!m_fpmMacSync)
+    {
+        // A cached lease is not authority over a row another producer or a
+        // newer stage has replaced. Revalidate the current APP identity.
+        string owner, stage, port, type, vni, remote;
+        bool owned = m_fdbTableRead.hget(key, "kernel_l3vni_sync", owner) && owner == "true" &&
+            m_fdbTableRead.hget(key, "l3vni_neigh_sync", stage) && stage == pin->second.stage &&
+            m_fdbTableRead.hget(key, "ifname", port) && port == pin->second.port &&
+            m_fdbTableRead.hget(key, "type", type) &&
+            type == (stage == "peer" ? "static" : "dynamic") &&
+            m_fdbTableRead.hget(key, "vni", vni) && vni == "0" &&
+            !m_fdbTableRead.hget(key, "remote_vtep", remote) &&
+            !m_fdbTableRead.hget(key, "nexthop_group", remote);
+        if (m_AppRestartAssist && m_AppRestartAssist->isWarmStartInProgress())
+        {
+            vector<FieldValueTuple> current;
+            bool exists = m_fdbTableRead.get(key, current);
+            auto baseline = m_kernelL3WarmBaseline.find(key);
+            bool unchanged = false;
+            if (baseline != m_kernelL3WarmBaseline.end())
+            {
+                auto before = baseline->second, now = current;
+                sort(before.begin(), before.end());
+                sort(now.begin(), now.end());
+                unchanged = before == now;
+            }
+            if (owned || unchanged || !exists)
+                // Also cancel our queued SET, even when it is not in APP yet.
+                m_AppRestartAssist->insertToMap(APP_VXLAN_FDB_TABLE_NAME, key, {}, true);
+            else
+                // Do not let our earlier queued SET resurrect over a replacement.
+                // Preserve exactly the replacement already present in APP.
+                m_AppRestartAssist->insertToMap(APP_VXLAN_FDB_TABLE_NAME, key, current, false);
+        }
+        else if (owned)
+            m_fdbTable.del(key);
+    }
+    m_kernelL3WarmBaseline.erase(key);
+    m_kernelL3Pins.erase(pin);
+}
+
+bool FdbSync::handleKernelL3Pin(struct nlmsghdr *h, struct rtattr **tb)
+{
+    const auto *nm = static_cast<const struct ndmsg *>(NLMSG_DATA(h));
+    // The VXLAN cache is populated only by actual VXLAN link messages.
+    // Its Zebra routes (including DELs) must retain the existing dispatch.
+    if (m_intf_info.count(nm->ndm_ifindex)) return false;
+    if (nm->ndm_family != AF_BRIDGE ||
+        !tb[NDA_LLADDR] || RTA_PAYLOAD(tb[NDA_LLADDR]) != 6 ||
+        !tb[NDA_VLAN] || RTA_PAYLOAD(tb[NDA_VLAN]) != 2 ||
+        !tb[NDA_PROTOCOL] || RTA_PAYLOAD(tb[NDA_PROTOCOL]) != 1 ||
+        *static_cast<const uint8_t *>(RTA_DATA(tb[NDA_PROTOCOL])) != RTPROT_ZEBRA)
+        return false;
+    const auto *mac = static_cast<const uint8_t *>(RTA_DATA(tb[NDA_LLADDR]));
+    if ((mac[0] & 1) || !(mac[0]|mac[1]|mac[2]|mac[3]|mac[4]|mac[5])) return false;
+    uint16_t vid;
+    memcpy(&vid, RTA_DATA(tb[NDA_VLAN]), sizeof(vid));
+    if (!vid || vid > 4094) return false;
+    string vlan = "Vlan" + to_string(vid), key = vlan + ":" + MacAddress(mac).to_string();
+    auto owner = m_kernelL3Pins.find(key);
+    int master = 0;
+    if (tb[NDA_MASTER])
+    {
+        if (RTA_PAYLOAD(tb[NDA_MASTER]) != 4) return true;
+        memcpy(&master, RTA_DATA(tb[NDA_MASTER]), sizeof(master));
+    }
+    if (h->nlmsg_type == RTM_DELNEIGH)
+    {
+        // Linux DEL need not retain NUD_NOARP. Never match only on MAC/VLAN:
+        // delayed old-port/old-bridge deletes must not revoke the new owner.
+        if (owner != m_kernelL3Pins.end() && owner->second.ifindex == nm->ndm_ifindex &&
+            (!master || master == owner->second.master)) releaseKernelL3Pin(key);
+        return true;
+    }
+    if (!validKernelL3Port(nm->ndm_ifindex, master, vlan) ||
+        tb[NDA_DST] || tb[NDA_NH_ID] || m_mclag_remote_fdb_mac.count(key))
+        return true;
+    vector<FieldValueTuple> mclag;
+    if (m_mclagStateRead.get(key, mclag) || m_fpmMacSync) return true;
+    KernelL3Pin pin{nm->ndm_ifindex, master, m_kernelL3Links.at(nm->ndm_ifindex).name,
+                    (nm->ndm_state & NUD_NOARP) ? "peer" : "local"};
+    if (pin.stage == "peer")
+    {
+        if (nm->ndm_state & (NUD_PERMANENT | NUD_INCOMPLETE | NUD_FAILED)) return true;
+        string statePort, stateType;
+        if (m_fdbStateTableRead.hget(key, "port", statePort) &&
+            m_fdbStateTableRead.hget(key, "type", stateType) && stateType == "dynamic")
+            return true; // Hardware-local ownership is authoritative.
+        vector<FieldValueTuple> row;
+        if (owner == m_kernelL3Pins.end() && m_fdbTableRead.get(key, row) &&
+            !restoreKernelL3Owner(key, pin)) return true;
+    }
+    else
+    {
+        if (nm->ndm_state & (NUD_PERMANENT | NUD_INCOMPLETE | NUD_FAILED)) return true;
+        if (owner != m_kernelL3Pins.end())
+        {
+            if (owner->second.ifindex != pin.ifindex || owner->second.master != pin.master)
+                return true;
+        }
+        else if (!restoreKernelL3Owner(key, pin)) return true;
+    }
+    m_kernelL3Pins[key] = pin;
+    if (!m_fpmMacSync) publishKernelL3Pin(key, pin);
+    return true;
+}
+
 void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h)
 {
     char buf[MAX_ADDR_SIZE + 1] = {0};
@@ -1479,6 +1697,9 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj, struct nlmsghdr *h
         if (rta->rta_type <= NDA_MAX)
             tb[rta->rta_type] = rta;
     }
+
+    if (handleKernelL3Pin(h, tb))
+        return;
 
     int state = rtnl_neigh_get_state(neigh);
     if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
@@ -1667,6 +1888,52 @@ void FdbSync::onMsgLink(int nlmsg_type, struct nl_object *obj)
     link = (struct rtnl_link *)obj;
     ifname = rtnl_link_get_name(link);
     ifindex = rtnl_link_get_ifindex(link);
+    if (nlmsg_type == RTM_DELLINK)
+    {
+        for (auto it = m_kernelL3Pins.begin(); it != m_kernelL3Pins.end(); )
+        {
+            if (it->second.ifindex == ifindex || it->second.master == ifindex)
+            {
+                const string key = it->first;
+                ++it;
+                releaseKernelL3Pin(key);
+            }
+            else ++it;
+        }
+        m_kernelL3Links.erase(ifindex);
+        return;
+    }
+    const char *kind = rtnl_link_get_type(link);
+    auto previous = m_kernelL3Links.find(ifindex);
+    if (kind || previous != m_kernelL3Links.end())
+    {
+        KernelL3Link current = previous == m_kernelL3Links.end() ?
+            KernelL3Link{"", "", 0} : previous->second;
+        if (ifname) current.name = ifname;
+        if (kind) current.kind = kind;
+        // get_master()==0 alone cannot distinguish an omitted attribute from
+        // an explicit detach. The public libnl attribute list preserves that.
+        char attributes[1024] = {};
+        const string present = "," + string(nl_object_attr_list(obj, attributes, sizeof(attributes))) + ",";
+        if (present.find(",master,") != string::npos)
+            current.master = rtnl_link_get_master(link);
+        if (previous != m_kernelL3Links.end() &&
+            (previous->second.name != current.name || previous->second.kind != current.kind ||
+             previous->second.master != current.master))
+        {
+            for (auto it = m_kernelL3Pins.begin(); it != m_kernelL3Pins.end(); )
+            {
+                if (it->second.ifindex == ifindex || it->second.master == ifindex)
+                {
+                    const string key = it->first;
+                    ++it;
+                    releaseKernelL3Pin(key);
+                }
+                else ++it;
+            }
+        }
+        m_kernelL3Links[ifindex] = current;
+    }
     if (rtnl_link_is_vxlan(link) == 0)
     {
         return;
@@ -1688,7 +1955,7 @@ void FdbSync::onMsgLink(int nlmsg_type, struct nl_object *obj)
 
 void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
-    if (nlmsg_type != RTM_NEWLINK)
+    if (nlmsg_type != RTM_NEWLINK && nlmsg_type != RTM_DELLINK)
     {
         SWSS_LOG_DEBUG("netlink: unhandled event: %d", nlmsg_type);
         return;

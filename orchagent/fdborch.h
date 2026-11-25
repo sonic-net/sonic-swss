@@ -142,11 +142,12 @@ public:
 
     static const int fdborch_pri;
     void flushFDBEntries(sai_object_id_t bridge_port_oid,
-                         sai_object_id_t vlan_oid);
+                         sai_object_id_t vlan_oid, sai_status_t *flushStatus = nullptr);
     void flushAllFDBEntries(sai_object_id_t bridge_port_oid,
                             sai_object_id_t vlan_oid);
     void flushFdbByVlan(const string &);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
+    void flushProtectedPortOnWithdraw(const std::string &ifname);
 
     MacMoveGuard* getMacMoveGuard() { return m_macMoveGuard.get(); }
 
@@ -178,6 +179,9 @@ private:
     void updatePortOperState(const PortOperStateUpdate&);
 
     bool addFdbEntry(const FdbEntry&, const string&, FdbData fdbData);
+    bool addFdbEntry(const FdbEntry&, const string&, FdbData, bool kernelL3LocalHandoff);
+    /* Only validated kernel pure-L3 peer leases may request a local handoff. */
+    map<FdbEntry, string> m_kernelL3PeerOwners;
     void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, FdbOrigin origin, const string portName="");
     void removeFdbEntryFromPortCache(const FdbEntry& entry, const Port& port);
 

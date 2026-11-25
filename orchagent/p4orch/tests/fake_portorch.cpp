@@ -40,6 +40,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 {
 }
 
+uint64_t PortsOrch::bridgePortRemovalClock()
+{
+    return 0;
+}
+
 bool PortsOrch::allPortsReady()
 {
     return true;
@@ -451,8 +456,12 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     return true;
 }
 
-bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
+bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip, sai_status_t *failure)
 {
+    if (failure)
+    {
+        *failure = SAI_STATUS_SUCCESS;
+    }
     return true;
 }
 

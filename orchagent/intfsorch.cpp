@@ -1391,18 +1391,18 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
         return true;
     }
 
-    /* A port is either bridged or routed: wait until portsorch has removed the port's VLAN memberships
-     * (vlanmgrd and intfmgrd write APPL_DB independently, so the INTF SET can arrive first). */
+    /* Wait for both VLAN membership and the bridge port to leave. Their removal can
+     * finish on different task passes, and INTF SET is produced independently. */
     if (port.m_type == Port::PHY || port.m_type == Port::LAG)
     {
         vlan_members_t vlan_members;
         gPortsOrch->getPortVlanMembers(port, vlan_members);
-        if (!vlan_members.empty())
+        if (!vlan_members.empty() || port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
         {
             if (m_rifWaitingForVlanExit.insert(port.m_alias).second)
             {
-                SWSS_LOG_NOTICE("Port %s is still a member of %zu VLAN(s), delaying router interface creation",
-                                port.m_alias.c_str(), vlan_members.size());
+                SWSS_LOG_NOTICE("Port %s is still bridged (VLANs:%zu bridge:0x%" PRIx64 "), delaying router interface creation",
+                                port.m_alias.c_str(), vlan_members.size(), port.m_bridge_port_id);
             }
             return false;
         }

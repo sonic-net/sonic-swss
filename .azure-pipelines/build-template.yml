@@ -105,6 +105,15 @@ jobs:
       sudo apt-get update
       sudo apt-get install -qq -y python3-yaml python3-requests jq
 
+      PYTHONPATH=$(Pipeline.Workspace)/s/sonic-swss-common/ci \
+        python3 -m unittest discover -s $(Build.SourcesDirectory)/build-env/tests -v
+
+      PYTHONPATH=$(Pipeline.Workspace)/s/sonic-swss-common/ci \
+        python3 $(Build.SourcesDirectory)/build-env/stage_abi_dependencies.py \
+          --arch ${{ parameters.arch }} \
+          --debian-version ${{ parameters.debian_version }} \
+          --staged-dir $(Pipeline.Workspace)/staged
+
       REQ_ARGS=$(echo "$STAGED_UPSTREAMS_JSON" \
         | jq -r '.[] | .name' \
         | xargs -I{} echo --required-staged-upstream {} \

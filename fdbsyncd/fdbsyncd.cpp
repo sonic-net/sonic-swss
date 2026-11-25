@@ -27,6 +27,7 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+    NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
     NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWNEXTHOP, &sync);
     NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELNEXTHOP, &sync);
 
