@@ -99,12 +99,18 @@ private:
     // STATE_DB for hardware watchdog state
     shared_ptr<Table> m_pfcWdHwStateTable;
 
+    // CONFIG_DB PFC_WD, read to tell a refused timer from one already replaced
+    shared_ptr<Table> m_cfgPfcWdTable;
+
     // PFC deadlock notifications, forwarded from the SAI callback thread
     shared_ptr<DBConnector> m_notificationsDb;
     swss::NotificationConsumer *m_deadlockNotificationConsumer = nullptr;
 
     // Write failure status to STATE_DB
     void writeFailureStatus(const Port& port);
+
+    // True, after logging it, when CONFIG_DB no longer holds the refused timer
+    bool timerSuperseded(const string& key, const string& field, const string& value);
 
     // Check if port has any queue in stormed state
     bool isPortInStormedState(const Port& port);

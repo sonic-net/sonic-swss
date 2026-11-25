@@ -174,6 +174,10 @@ void PfcWdBaseOrch::doTask(Consumer& consumer)
                     SWSS_LOG_ERROR("Failed to process PFC watchdog %s task, invalid entry", op.c_str());
                     consumer.m_toSync.erase(it++);
                     break;
+                case task_process_status::task_ignore:
+                    // Dropped on purpose and already logged: neither applied nor an error
+                    consumer.m_toSync.erase(it++);
+                    break;
                 default:
                     SWSS_LOG_ERROR("Invalid task status %d", task_status);
                     consumer.m_toSync.erase(it++);
