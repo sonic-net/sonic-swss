@@ -43,10 +43,33 @@ class DVSMirror(object):
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
 
+    def create_hwsflow_session(self, name, src, dst, dscp, ttl, sample_rate=None, truncate_size=None,
+                               udp_src_port=None, udp_dst_port=None, **fields):
+        mirror_entry = {
+            "type": "HWSFLOW",
+            "src_ip": src,
+            "dst_ip": dst,
+            "dscp": dscp,
+            "ttl": ttl
+        }
+
+        if sample_rate:
+            mirror_entry["sample_rate"] = sample_rate
+        if truncate_size:
+            mirror_entry["truncate_size"] = truncate_size
+        if udp_src_port:
+            mirror_entry["udp_src_port"] = udp_src_port
+        if udp_dst_port:
+            mirror_entry["udp_dst_port"] = udp_dst_port
+        mirror_entry.update(fields)
+
+        self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
+
     def create_sample_binding(self, session, port, direction, sample_rate,
                               truncate_size=None, admin_state="up"):
-        entry = {"mirror_session": session, "sample_rate": sample_rate,
-                 "admin_state": admin_state}
+        entry = {"mirror_session": session, "admin_state": admin_state}
+        if sample_rate is not None:
+            entry["sample_rate"] = sample_rate
         if truncate_size is not None:
             entry["truncate_size"] = truncate_size
         self.config_db.create_entry("PORT_MIRROR_SAMPLE", port + "|" + direction, entry)

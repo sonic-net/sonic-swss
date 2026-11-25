@@ -33,10 +33,16 @@
 #define MIRROR_SESSION_DST_PORT             "dst_port"
 #define MIRROR_SESSION_DIRECTION            "direction"
 #define MIRROR_SESSION_TYPE                 "type"
+#define MIRROR_SESSION_UDP_SRC_PORT         "udp_src_port"
+#define MIRROR_SESSION_UDP_DST_PORT         "udp_dst_port"
+#define MIRROR_SESSION_SAMPLE_RATE          "sample_rate"
+#define MIRROR_SESSION_TRUNCATE_SIZE        "truncate_size"
+#define MIRROR_SESSION_DEFAULT_TRUNCATE_SIZE 128
 #define PORT_MIRROR_SAMPLE_TABLE "PORT_MIRROR_SAMPLE"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
+#define MIRROR_SESSION_HWSFLOW_UDP_PORT 6343
 #define MIRROR_SESSION_IP_HDR_VER_4     4
 #define MIRROR_SESSION_IP_HDR_VER_6     6
 #define MIRROR_SESSION_DSCP_SHIFT       2
@@ -50,6 +56,7 @@
 extern sai_switch_api_t *sai_switch_api;
 extern sai_mirror_api_t *sai_mirror_api;
 extern sai_port_api_t *sai_port_api;
+extern sai_lag_api_t *sai_lag_api;
 extern sai_samplepacket_api_t *sai_samplepacket_api;
 
 extern sai_object_id_t  gSwitchId;
@@ -61,6 +68,10 @@ using namespace std::rel_ops;
 MirrorEntry::MirrorEntry(const string& platform) :
         status(false),
         type(MIRROR_SESSION_ERSPAN),
+        udpSrcPort(MIRROR_SESSION_HWSFLOW_UDP_PORT),
+        udpDstPort(MIRROR_SESSION_HWSFLOW_UDP_PORT),
+        sampleRate(0),
+        truncateSize(0),
         dscp(8),
         ttl(255),
         queue(0),
@@ -422,6 +433,9 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
 
     bool src_ip_initialized = false;
     bool dst_ip_initialized = false;
+    bool gre_type_initialized = false;
+    bool queue_initialized = false;
+    bool hwsflow_field_initialized = false;
 
     string platform = getenv("platform") ? getenv("platform") : "";
     MirrorEntry entry(platform);
@@ -442,6 +456,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
             {
                 entry.greType = to_uint<uint16_t>(fvValue(i));
+                gre_type_initialized = true;
             }
             else if (fvField(i) == MIRROR_SESSION_DSCP)
             {
@@ -454,6 +469,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             else if (fvField(i) == MIRROR_SESSION_QUEUE)
             {
                 entry.queue = to_uint<uint8_t>(fvValue(i));
+                queue_initialized = true;
                 if (entry.queue >= m_maxNumTC)
                 {
                     SWSS_LOG_ERROR("Failed to get valid queue %s", fvValue(i).c_str());
@@ -505,6 +521,31 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             {
                 entry.type = fvValue(i);
             }
+            else if (fvField(i) == MIRROR_SESSION_UDP_SRC_PORT)
+            {
+                entry.udpSrcPort = to_uint<uint16_t>(fvValue(i));
+                hwsflow_field_initialized = true;
+            }
+            else if (fvField(i) == MIRROR_SESSION_UDP_DST_PORT)
+            {
+                entry.udpDstPort = to_uint<uint16_t>(fvValue(i));
+                hwsflow_field_initialized = true;
+            }
+            else if (fvField(i) == MIRROR_SESSION_SAMPLE_RATE)
+            {
+                // stoul() wraps "-1" to UINT32_MAX on 32-bit platforms.
+                if (fvValue(i).find('-') != string::npos)
+                {
+                    throw invalid_argument("negative sample_rate " + fvValue(i));
+                }
+                entry.sampleRate = to_uint<uint32_t>(fvValue(i));
+                hwsflow_field_initialized = true;
+            }
+            else if (fvField(i) == MIRROR_SESSION_TRUNCATE_SIZE)
+            {
+                entry.truncateSize = to_uint<uint32_t>(fvValue(i), 64, 9216);
+                hwsflow_field_initialized = true;
+            }
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s", key.c_str(), fvField(i).c_str());
@@ -526,6 +567,36 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     if (src_ip_initialized && dst_ip_initialized && entry.srcIp.getIp().family != entry.dstIp.getIp().family)
     {
         SWSS_LOG_ERROR("Address family of source and destination IPs is different");
+        return task_process_status::task_invalid_entry;
+    }
+
+    if (entry.type == MIRROR_SESSION_HWSFLOW)
+    {
+        if (!m_switchOrch->isMirrorSessionHwsflowCapable())
+        {
+            SWSS_LOG_ERROR("HWSFLOW mirror session type not reported by SAI, rejecting session %s", key.c_str());
+            if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
+            return task_process_status::task_invalid_entry;
+        }
+        if (!src_ip_initialized || !dst_ip_initialized || entry.sampleRate < 2 ||
+            gre_type_initialized || queue_initialized || !entry.policer.empty() || !entry.direction.empty() ||
+            entry.sourceConfigured || !entry.dst_port.empty())
+        {
+            SWSS_LOG_ERROR("Invalid HWSFLOW session %s configuration", key.c_str());
+            if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
+            return task_process_status::task_invalid_entry;
+        }
+        if (!m_switchOrch->isMirrorSessionSampleRateSupported() || !m_switchOrch->isMirrorSessionTruncationSupported())
+        {
+            SWSS_LOG_ERROR("Mirror session sample rate or truncation not reported by SAI, rejecting session %s", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        if (!entry.truncateSize) entry.truncateSize = MIRROR_SESSION_DEFAULT_TRUNCATE_SIZE;
+    }
+    else if (hwsflow_field_initialized)
+    {
+        SWSS_LOG_ERROR("udp_src_port, udp_dst_port, sample_rate and truncate_size apply to HWSFLOW sessions only, rejecting session %s", key.c_str());
+        if (!entry.policer.empty()) m_policerOrch->decreaseRefCount(entry.policer);
         return task_process_status::task_invalid_entry;
     }
 
@@ -633,7 +704,7 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     if (attr.empty() || attr == MIRROR_SESSION_MONITOR_PORT)
     {
         Port port;
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_HWSFLOW))
         {
              if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
              {
@@ -650,7 +721,7 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
 
     if (attr.empty() || attr == MIRROR_SESSION_DST_MAC_ADDRESS)
     {
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_HWSFLOW))
         {
              value = gMacAddress.to_string();
         } else
@@ -1034,12 +1105,15 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         }
         attrs.push_back(attr);
 
+        const bool hwsflow = session.type == MIRROR_SESSION_HWSFLOW;
+
         attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
-        attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+        attr.value.s32 = hwsflow ? SAI_MIRROR_SESSION_TYPE_SFLOW : SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
         attrs.push_back(attr);
 
         // Add the VLAN header when the packet is sent out from a VLAN
-        if (session.neighborInfo.port.m_type == Port::VLAN)
+        // (VLAN_HEADER_VALID is valid only on ENHANCED_REMOTE, see saimirror.h)
+        if (!hwsflow && session.neighborInfo.port.m_type == Port::VLAN)
         {
             attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
             attr.value.booldata = true;
@@ -1062,9 +1136,12 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
             attrs.push_back(attr);
         }
 
-        attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
-        attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
-        attrs.push_back(attr);
+        if (!hwsflow)
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+            attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+            attrs.push_back(attr);
+        }
 
         attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
         attr.value.u8 = session.dstIp.isV4() ? MIRROR_SESSION_IP_HDR_VER_4 : MIRROR_SESSION_IP_HDR_VER_6;
@@ -1094,7 +1171,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
         attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
         // Use router mac as mirror dst mac in voq switch.
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_HWSFLOW))
         {
              memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
         }
@@ -1104,9 +1181,30 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         }
         attrs.push_back(attr);
 
-        attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
-        attr.value.u16 = session.greType;
-        attrs.push_back(attr);
+        if (hwsflow)
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_UDP_SRC_PORT;
+            attr.value.u16 = session.udpSrcPort;
+            attrs.push_back(attr);
+
+            attr.id = SAI_MIRROR_SESSION_ATTR_UDP_DST_PORT;
+            attr.value.u16 = session.udpDstPort;
+            attrs.push_back(attr);
+
+            attr.id = SAI_MIRROR_SESSION_ATTR_SAMPLE_RATE;
+            attr.value.u32 = session.sampleRate;
+            attrs.push_back(attr);
+
+            attr.id = SAI_MIRROR_SESSION_ATTR_TRUNCATE_SIZE;
+            attr.value.u16 = (uint16_t)session.truncateSize;
+            attrs.push_back(attr);
+        }
+        else
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+            attr.value.u16 = session.greType;
+            attrs.push_back(attr);
+        }
     }
 
     if (!session.policer.empty())
@@ -1240,7 +1338,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 
     sai_attribute_t attr;
     attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_HWSFLOW))
     {
          memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
     } else
@@ -1347,10 +1445,14 @@ task_process_status MirrorOrch::setSampleBinding(const string& key, const vector
                 if (value != "up" && value != "down") return task_invalid_entry;
                 binding.enabled = value == "up";
             }
-            else if (name == "sample_rate")
-                binding.rate = to_uint<uint32_t>(value, 2);
-            else if (name == "truncate_size")
-                binding.truncate = to_uint<uint32_t>(value);
+            else if (name == "sample_rate" || name == "truncate_size")
+            {
+                // stoul() wraps "-1" to UINT32_MAX on 32-bit platforms.
+                if (value.find('-') != string::npos)
+                    throw invalid_argument("negative " + name + " " + value);
+                if (name == "sample_rate") binding.rate = to_uint<uint32_t>(value, 2);
+                else binding.truncate = to_uint<uint32_t>(value);
+            }
             else return task_invalid_entry;
         }
     }
@@ -1363,7 +1465,11 @@ task_process_status MirrorOrch::setSampleBinding(const string& key, const vector
     // default the rate to 1 (sample every packet) so a samplepacket object
     // is still created to carry the truncation.
     if (binding.rate == 0 && binding.truncate != 0) binding.rate = 1;
-    if (binding.rate == 0 || binding.session.empty()) return task_invalid_entry;
+    if (binding.session.empty()) return task_invalid_entry;
+    auto session = m_syncdMirrors.find(binding.session);
+    // Only an HWSFLOW session allows a binding without a rate. An unknown session is checked when it arrives.
+    if (binding.rate == 0 && session != m_syncdMirrors.end() && session->second.type != MIRROR_SESSION_HWSFLOW)
+        return task_invalid_entry;
     if (current)
     {
         if (binding.session != current->session || binding.rate != current->rate ||
@@ -1386,7 +1492,6 @@ task_process_status MirrorOrch::setSampleBinding(const string& key, const vector
     binding.port = key.substr(0, separator);
     binding.ingress = direction == "rx";
 
-    auto session = m_syncdMirrors.find(binding.session);
     if (session != m_syncdMirrors.end() && !session->second.isSampleExport())
         return task_invalid_entry;
     Port port;
@@ -1402,13 +1507,15 @@ task_process_status MirrorOrch::setSampleBinding(const string& key, const vector
     return task_success;
 }
 
-bool MirrorOrch::createSamplePacket(const string& name, SampleBinding& binding)
+bool MirrorOrch::createSamplePacket(const string& name, SampleBinding& binding, const MirrorEntry& session)
 {
     if (binding.samplepacketId != SAI_NULL_OBJECT_ID) return true;
+    // An HWSFLOW binding carries no rate or truncation; it takes the session rate and the session truncates.
+    uint32_t rate = session.type == MIRROR_SESSION_HWSFLOW ? session.sampleRate : binding.rate;
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr{};
     attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
-    attr.value.u32 = binding.rate;
+    attr.value.u32 = rate;
     attrs.push_back(attr);
     attr.id = SAI_SAMPLEPACKET_ATTR_TYPE;
     attr.value.s32 = SAI_SAMPLEPACKET_TYPE_MIRROR_SESSION;
@@ -1448,19 +1555,29 @@ bool MirrorOrch::clearSampleAttachment(const string& key, SampleBinding& binding
     sai_attribute_t attr{};
     if (attachment.mirrorSet)
     {
-        attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION :
-                                   SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
+        if (attachment.lag)
+            attr.id = binding.ingress ? SAI_LAG_ATTR_INGRESS_SAMPLE_MIRROR_SESSION_LIST :
+                                       SAI_LAG_ATTR_EGRESS_SAMPLE_MIRROR_SESSION_LIST;
+        else
+            attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION :
+                                       SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
         attr.value.objlist.count = 0;
         attr.value.objlist.list = nullptr;
-        if (sai_port_api->set_port_attribute(port, &attr) != SAI_STATUS_SUCCESS) return false;
+        if ((attachment.lag ? sai_lag_api->set_lag_attribute(port, &attr) :
+                              sai_port_api->set_port_attribute(port, &attr)) != SAI_STATUS_SUCCESS) return false;
         attachment.mirrorSet = false;
     }
     if (attachment.sampleSet)
     {
-        attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
-                                   SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        if (attachment.lag)
+            attr.id = binding.ingress ? SAI_LAG_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
+                                       SAI_LAG_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        else
+            attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE :
+                                       SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
         attr.value.oid = SAI_NULL_OBJECT_ID;
-        if (sai_port_api->set_port_attribute(port, &attr) != SAI_STATUS_SUCCESS) return false;
+        if ((attachment.lag ? sai_lag_api->set_lag_attribute(port, &attr) :
+                              sai_port_api->set_port_attribute(port, &attr)) != SAI_STATUS_SUCCESS) return false;
         attachment.sampleSet = false;
     }
     m_portsOrch->decreasePortRefCount(attachment.alias);
@@ -1494,7 +1611,29 @@ bool MirrorOrch::clearSampleBinding(const string& key, SampleBinding& binding)
     return true;
 }
 
-MirrorOrch::SamplePorts MirrorOrch::resolveSamplePorts(const string& alias) const
+// The SAI samples at the LAG if the LAG sample attributes are set_implemented.
+// Otherwise each LAG member port is bound.
+bool MirrorOrch::bindsLagObject(const SampleBinding& binding, const MirrorEntry& session) const
+{
+    Port source;
+    return session.type == MIRROR_SESSION_HWSFLOW &&
+           m_portsOrch->getPort(binding.port, source) && source.m_type == Port::LAG &&
+           (binding.ingress ? m_switchOrch->isLagIngressSampleMirrorSupported() :
+                              m_switchOrch->isLagEgressSampleMirrorSupported());
+}
+
+// Where the SAI samples at the LAG, a member port cannot be bound on its own.
+bool MirrorOrch::isSampledLagMember(const SampleBinding& binding, const MirrorEntry& session) const
+{
+    Port source;
+    return session.type == MIRROR_SESSION_HWSFLOW &&
+           m_portsOrch->getPort(binding.port, source) && source.m_type == Port::PHY &&
+           source.m_lag_member_id != SAI_NULL_OBJECT_ID &&
+           (binding.ingress ? m_switchOrch->isLagIngressSampleMirrorSupported() :
+                              m_switchOrch->isLagEgressSampleMirrorSupported());
+}
+
+MirrorOrch::SamplePorts MirrorOrch::resolveSamplePorts(const string& alias, bool lagBind) const
 {
     SamplePorts desired;
     Port source;
@@ -1503,6 +1642,10 @@ MirrorOrch::SamplePorts MirrorOrch::resolveSamplePorts(const string& alias) cons
     if (source.m_type == Port::PHY)
     {
         desired.emplace(source.m_port_id, source.m_alias);
+    }
+    else if (lagBind)
+    {
+        desired.emplace(source.m_lag_id, source.m_alias);
     }
     else if (source.m_type == Port::LAG)
     {
@@ -1514,7 +1657,8 @@ MirrorOrch::SamplePorts MirrorOrch::resolveSamplePorts(const string& alias) cons
     return desired;
 }
 
-bool MirrorOrch::samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports) const
+bool MirrorOrch::samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports,
+                                      bool lagBind) const
 {
     for (const auto& port : ports)
     {
@@ -1523,31 +1667,45 @@ bool MirrorOrch::samplePortsAvailable(const string& key, const SampleBinding& bi
         if (binding.attachments.count(port.first) || m_isWarmRestoreStage) continue;
 
         sai_attribute_t attr{};
-        attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port.first, 1, &attr) == SAI_STATUS_SUCCESS &&
+        if (lagBind)
+            attr.id = binding.ingress ? SAI_LAG_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_LAG_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        else
+            attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+        if ((lagBind ? sai_lag_api->get_lag_attribute(port.first, 1, &attr) :
+                       sai_port_api->get_port_attribute(port.first, 1, &attr)) == SAI_STATUS_SUCCESS &&
             attr.value.oid != SAI_NULL_OBJECT_ID && attr.value.oid != binding.samplepacketId) return false;
     }
     return true;
 }
 
 bool MirrorOrch::attachSamplePort(const string& key, SampleBinding& binding, sai_object_id_t oid,
-                                  const string& alias, sai_object_id_t sessionId)
+                                  const string& alias, sai_object_id_t sessionId, bool lagBind)
 {
     m_sampleOwners[{oid, binding.ingress}] = key;
     auto& attachment = binding.attachments[oid];
     attachment.alias = alias;
+    attachment.lag = lagBind;
     m_portsOrch->increasePortRefCount(alias);
 
     sai_attribute_t attr{};
-    attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+    if (lagBind)
+        attr.id = binding.ingress ? SAI_LAG_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_LAG_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
+    else
+        attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
     attr.value.oid = binding.samplepacketId;
-    if (sai_port_api->set_port_attribute(oid, &attr) != SAI_STATUS_SUCCESS) return false;
+    if ((lagBind ? sai_lag_api->set_lag_attribute(oid, &attr) :
+                   sai_port_api->set_port_attribute(oid, &attr)) != SAI_STATUS_SUCCESS) return false;
     attachment.sampleSet = true;
 
-    attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION : SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
+    if (lagBind)
+        attr.id = binding.ingress ? SAI_LAG_ATTR_INGRESS_SAMPLE_MIRROR_SESSION_LIST :
+                                   SAI_LAG_ATTR_EGRESS_SAMPLE_MIRROR_SESSION_LIST;
+    else
+        attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION : SAI_PORT_ATTR_EGRESS_SAMPLE_MIRROR_SESSION;
     attr.value.objlist.count = 1;
     attr.value.objlist.list = &sessionId;
-    if (sai_port_api->set_port_attribute(oid, &attr) != SAI_STATUS_SUCCESS) return false;
+    if ((lagBind ? sai_lag_api->set_lag_attribute(oid, &attr) :
+                   sai_port_api->set_port_attribute(oid, &attr)) != SAI_STATUS_SUCCESS) return false;
     attachment.mirrorSet = true;
     return true;
 }
@@ -1562,9 +1720,21 @@ bool MirrorOrch::reconcileSampleBinding(const string& key, SampleBinding& bindin
     }
     if (binding.cleanupPending && !clearSampleBinding(key, binding)) return false;
 
-    if ((binding.ingress && !m_switchOrch->isPortIngressSampleMirrorSupported()) ||
-        (!binding.ingress && !m_switchOrch->isPortEgressSampleMirrorSupported()) ||
-        (binding.truncate && !m_switchOrch->isSamplepacketTruncationSupported()))
+    if (isSampledLagMember(binding, session->second))
+    {
+        if (!binding.lagMemberLogged)
+            SWSS_LOG_ERROR("Sampled binding %s: %s is a PortChannel member; bind the PortChannel",
+                           key.c_str(), binding.port.c_str());
+        binding.lagMemberLogged = true;
+        return clearSampleBinding(key, binding);
+    }
+    binding.lagMemberLogged = false;
+
+    const bool lagBind = bindsLagObject(binding, session->second);
+    if ((!lagBind && binding.ingress && !m_switchOrch->isPortIngressSampleMirrorSupported()) ||
+        (!lagBind && !binding.ingress && !m_switchOrch->isPortEgressSampleMirrorSupported()) ||
+        (binding.truncate && !m_switchOrch->isSamplepacketTruncationSupported()) ||
+        (session->second.type == MIRROR_SESSION_HWSFLOW ? (binding.rate || binding.truncate) : !binding.rate))
     {
         if (!binding.unsupportedLogged)
             SWSS_LOG_ERROR("Unsupported sampling capability for binding %s", key.c_str());
@@ -1572,7 +1742,7 @@ bool MirrorOrch::reconcileSampleBinding(const string& key, SampleBinding& bindin
         return true;
     }
 
-    const auto desired = resolveSamplePorts(binding.port);
+    const auto desired = resolveSamplePorts(binding.port, lagBind);
     if (desired.empty())
     {
         return clearSampleBinding(key, binding);
@@ -1583,13 +1753,13 @@ bool MirrorOrch::reconcileSampleBinding(const string& key, SampleBinding& bindin
         if (!desired.count(oid) && !clearSampleAttachment(key, binding, oid))
             binding.cleanupPending = true;
     }
-    if (binding.cleanupPending || !samplePortsAvailable(key, binding, desired)) return false;
+    if (binding.cleanupPending || !samplePortsAvailable(key, binding, desired, lagBind)) return false;
 
-    if (!createSamplePacket(key, binding)) return false;
+    if (!createSamplePacket(key, binding, session->second)) return false;
     for (const auto& port : desired)
     {
         if (!binding.attachments.count(port.first) &&
-            !attachSamplePort(key, binding, port.first, port.second, session->second.sessionId))
+            !attachSamplePort(key, binding, port.first, port.second, session->second.sessionId, lagBind))
         {
             SWSS_LOG_ERROR("Failed to attach sampled binding %s; rolling back", key.c_str());
             clearSampleBinding(key, binding);
@@ -1657,7 +1827,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     sai_attribute_t attr;
     attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     // Set monitor port to recirc port in voq switch.
-    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
+    if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN || session.type == MIRROR_SESSION_HWSFLOW))
     {
          if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
          {
@@ -1700,6 +1870,13 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
+
+    // VLAN_HEADER_VALID is valid only on ENHANCED_REMOTE, see saimirror.h
+    if (session.type == MIRROR_SESSION_HWSFLOW)
+    {
+        setSessionState(name, session, MIRROR_SESSION_VLAN_ID);
+        return true;
+    }
 
     if (session.neighborInfo.port.m_type == Port::VLAN)
     {

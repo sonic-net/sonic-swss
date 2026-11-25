@@ -43,6 +43,11 @@
 #define SWITCH_CAPABILITY_TABLE_COPP_POLICER_STATS_SUPPORTED           "COPP_POLICER_STATS_SUPPORTED"
 #define SWITCH_CAPABILITY_TABLE_PORT_INGRESS_SAMPLE_MIRROR_CAPABLE  "PORT_INGRESS_SAMPLE_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_MIRROR_CAPABLE   "PORT_EGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_HWSFLOW_CAPABLE       "MIRROR_SESSION_HWSFLOW_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SAMPLE_RATE_CAPABLE   "MIRROR_SESSION_SAMPLE_RATE_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_TRUNCATION_CAPABLE    "MIRROR_SESSION_TRUNCATION_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_LAG_INGRESS_SAMPLE_MIRROR_CAPABLE    "LAG_INGRESS_SAMPLE_MIRROR_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_LAG_EGRESS_SAMPLE_MIRROR_CAPABLE     "LAG_EGRESS_SAMPLE_MIRROR_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE     "SAMPLEPACKET_TRUNCATION_CAPABLE"
 
 #define SWITCH_STAT_COUNTER_FLEX_COUNTER_GROUP "SWITCH_STAT_COUNTER"
@@ -105,6 +110,11 @@ public:
     bool isPortIngressSampleMirrorSupported() const { return m_portIngressSampleMirrorSupported; }
     bool isPortEgressSampleMirrorSupported() const { return m_portEgressSampleMirrorSupported; }
     bool isSamplepacketTruncationSupported() const { return m_samplepacketTruncationSupported; }
+    bool isMirrorSessionHwsflowCapable() const { return m_mirrorSessionHwsflowSupported; }
+    bool isMirrorSessionSampleRateSupported() const { return m_mirrorSessionSampleRateSupported; }
+    bool isMirrorSessionTruncationSupported() const { return m_mirrorSessionTruncationSupported; }
+    bool isLagIngressSampleMirrorSupported() const { return m_lagIngressSampleMirrorSupported; }
+    bool isLagEgressSampleMirrorSupported() const { return m_lagEgressSampleMirrorSupported; }
 
 private:
     void doTask(Consumer &consumer);
@@ -212,6 +222,11 @@ private:
     bool m_portIngressSampleMirrorSupported = false;
     bool m_portEgressSampleMirrorSupported = false;
     bool m_samplepacketTruncationSupported = false;
+    bool m_mirrorSessionHwsflowSupported = false;
+    bool m_mirrorSessionSampleRateSupported = false;
+    bool m_mirrorSessionTruncationSupported = false;
+    bool m_lagIngressSampleMirrorSupported = false;
+    bool m_lagEgressSampleMirrorSupported = false;
 
     // ASIC SDK health event
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;

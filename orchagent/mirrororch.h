@@ -24,6 +24,7 @@
 #define MIRROR_BOTH_DIRECTION    "BOTH"
 #define MIRROR_SESSION_SPAN      "SPAN"
 #define MIRROR_SESSION_ERSPAN    "ERSPAN"
+#define MIRROR_SESSION_HWSFLOW   "HWSFLOW"
 
 /*
  * Contains session data specified by user in config file
@@ -44,6 +45,10 @@ struct MirrorEntry
     bool sourceConfigured = false;
     string direction;
     string type;
+    uint16_t udpSrcPort;
+    uint16_t udpDstPort;
+    uint32_t sampleRate;
+    uint32_t truncateSize;
 
     struct
     {
@@ -79,7 +84,10 @@ struct MirrorEntry
     int64_t refCount;
 
     MirrorEntry(const string& platform);
-    bool isSampleExport() const { return type == MIRROR_SESSION_ERSPAN && !sourceConfigured && src_port.empty(); }
+    bool isSampleExport() const
+    {
+        return (type == MIRROR_SESSION_ERSPAN || type == MIRROR_SESSION_HWSFLOW) && !sourceConfigured && src_port.empty();
+    }
     bool isActiveSampleExport() const
     {
         return status && sessionId != SAI_NULL_OBJECT_ID && isSampleExport();
@@ -168,6 +176,7 @@ private:
     struct SampleAttachment
     {
         string alias;
+        bool lag = false;
         bool sampleSet = false;
         bool mirrorSet = false;
     };
@@ -180,6 +189,7 @@ private:
         bool deleting = false;
         bool cleanupPending = false;
         bool unsupportedLogged = false;
+        bool lagMemberLogged = false;
         uint32_t rate = 0;
         uint32_t truncate = 0;
         sai_object_id_t samplepacketId = SAI_NULL_OBJECT_ID;
@@ -199,14 +209,17 @@ private:
     bool isRemovingExport(const string& name) const;
     map<std::pair<sai_object_id_t, bool>, string> m_sampleOwners;
     using SamplePorts = map<sai_object_id_t, string>;
-    SamplePorts resolveSamplePorts(const string& alias) const;
-    bool samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports) const;
+    bool bindsLagObject(const SampleBinding& binding, const MirrorEntry& session) const;
+    bool isSampledLagMember(const SampleBinding& binding, const MirrorEntry& session) const;
+    SamplePorts resolveSamplePorts(const string& alias, bool lagBind) const;
+    bool samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports,
+                              bool lagBind) const;
     bool attachSamplePort(const string& key, SampleBinding& binding, sai_object_id_t oid, const string& alias,
-                          sai_object_id_t sessionId);
+                          sai_object_id_t sessionId, bool lagBind);
     bool reconcileSampleBinding(const string& key, SampleBinding& binding);
     void syncSampleBinding(const string& key, SampleBinding& binding);
     task_process_status setSampleBinding(const string&, const vector<FieldValueTuple>&);
-    bool createSamplePacket(const string&, SampleBinding&);
+    bool createSamplePacket(const string&, SampleBinding&, const MirrorEntry&);
     bool clearSampleAttachment(const string&, SampleBinding&, sai_object_id_t);
     bool clearSampleBinding(const string&, SampleBinding&);
     void syncSampleBindings();

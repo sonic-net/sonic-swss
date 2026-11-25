@@ -2421,6 +2421,140 @@ void SwitchOrch::querySwitchSamplePacketCapability()
         SWSS_LOG_NOTICE("samplepacket truncation capability %d", capability.set_implemented);
     }
 
+    // Check if SAI supports the SFLOW mirror session type.
+    m_mirrorSessionHwsflowSupported = false;
+    const auto* mirrorTypeMeta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_MIRROR_SESSION,
+                                                                SAI_MIRROR_SESSION_ATTR_TYPE);
+    if (mirrorTypeMeta && mirrorTypeMeta->isenum)
+    {
+        vector<int32_t> values_list(mirrorTypeMeta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(values_list.size());
+        values.list = values_list.data();
+
+        status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                            SAI_OBJECT_TYPE_MIRROR_SESSION,
+                                                            SAI_MIRROR_SESSION_ATTR_TYPE,
+                                                            &values);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query mirror session type capability %d", status);
+        }
+        else
+        {
+            for (uint32_t i = 0; i < values.count; i++)
+            {
+                if (values.list[i] == SAI_MIRROR_SESSION_TYPE_SFLOW)
+                {
+                    m_mirrorSessionHwsflowSupported = true;
+                    break;
+                }
+            }
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Could not read mirror session type enum metadata");
+    }
+    SWSS_LOG_NOTICE("mirror session SFLOW type capability %d", m_mirrorSessionHwsflowSupported);
+    fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_HWSFLOW_CAPABLE,
+                          m_mirrorSessionHwsflowSupported ? "true" : "false");
+
+    // HWSFLOW needs both attributes create_implemented on the mirror session.
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MIRROR_SESSION,
+                            SAI_MIRROR_SESSION_ATTR_SAMPLE_RATE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query mirror session sample rate capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SAMPLE_RATE_CAPABLE, "false");
+        m_mirrorSessionSampleRateSupported = false;
+    }
+    else
+    {
+        if (capability.create_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SAMPLE_RATE_CAPABLE, "true");
+            m_mirrorSessionSampleRateSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SAMPLE_RATE_CAPABLE, "false");
+            m_mirrorSessionSampleRateSupported = false;
+        }
+        SWSS_LOG_NOTICE("mirror session sample rate capability %d", capability.create_implemented);
+    }
+
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_MIRROR_SESSION,
+                            SAI_MIRROR_SESSION_ATTR_TRUNCATE_SIZE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query mirror session truncation capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_TRUNCATION_CAPABLE, "false");
+        m_mirrorSessionTruncationSupported = false;
+    }
+    else
+    {
+        if (capability.create_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_TRUNCATION_CAPABLE, "true");
+            m_mirrorSessionTruncationSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_TRUNCATION_CAPABLE, "false");
+            m_mirrorSessionTruncationSupported = false;
+        }
+        SWSS_LOG_NOTICE("mirror session truncation capability %d", capability.create_implemented);
+    }
+
+    // The SAI samples at the LAG if the LAG sample attributes are
+    // set_implemented. Otherwise MirrorOrch binds each LAG member port.
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_LAG,
+                            SAI_LAG_ATTR_INGRESS_SAMPLE_MIRROR_SESSION_LIST, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query LAG ingress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_lagIngressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_INGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_lagIngressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_INGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_lagIngressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("LAG ingress sample mirror capability %d", capability.set_implemented);
+    }
+
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_LAG,
+                            SAI_LAG_ATTR_EGRESS_SAMPLE_MIRROR_SESSION_LIST, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query LAG egress sample mirror capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+        m_lagEgressSampleMirrorSupported = false;
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_EGRESS_SAMPLE_MIRROR_CAPABLE, "true");
+            m_lagEgressSampleMirrorSupported = true;
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_EGRESS_SAMPLE_MIRROR_CAPABLE, "false");
+            m_lagEgressSampleMirrorSupported = false;
+        }
+        SWSS_LOG_NOTICE("LAG egress sample mirror capability %d", capability.set_implemented);
+    }
+
     set_switch_capability(fvVector);
 }
 

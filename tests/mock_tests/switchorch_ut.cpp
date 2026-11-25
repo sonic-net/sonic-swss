@@ -390,6 +390,13 @@ namespace switchorch_test
         ASSERT_TRUE(egress_sample_exists);
         bool truncation_exists = gSwitchOrch->m_switchTable.hget("switch", SWITCH_CAPABILITY_TABLE_SAMPLEPACKET_TRUNCATION_CAPABLE, value);
         ASSERT_TRUE(truncation_exists);
+        for (const char *field : { SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_SAMPLE_RATE_CAPABLE,
+                                   SWITCH_CAPABILITY_TABLE_MIRROR_SESSION_TRUNCATION_CAPABLE,
+                                   SWITCH_CAPABILITY_TABLE_LAG_INGRESS_SAMPLE_MIRROR_CAPABLE,
+                                   SWITCH_CAPABILITY_TABLE_LAG_EGRESS_SAMPLE_MIRROR_CAPABLE })
+        {
+            ASSERT_TRUE(gSwitchOrch->m_switchTable.hget("switch", field, value)) << field;
+        }
     }
 
     TEST_F(SwitchOrchTest, SwitchOrchTestCheckCapabilityUnsupported)

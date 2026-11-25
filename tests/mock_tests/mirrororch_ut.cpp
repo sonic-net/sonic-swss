@@ -19,6 +19,7 @@
 extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_mirror_api_t *sai_mirror_api;
+extern sai_lag_api_t *sai_lag_api;
 
 namespace mirrororch_test
 {
@@ -748,6 +749,318 @@ TEST_F(SampleBindingTest, LagMemberRemovalSkipsInactiveExport)
     EXPECT_EQ(session.neighborInfo.portId, portOid("Ethernet8"));
     string error;
     EXPECT_FALSE(getSaiFailureStatus(error)) << error;
+}
+
+struct MirrorSessionCreate
+{
+    sai_object_id_t oid;
+    vector<sai_attribute_t> attrs;
+    const sai_attribute_t* find(sai_attr_id_t id) const
+    {
+        for (const auto& attr : attrs)
+            if (attr.id == id) return &attr;
+        return nullptr;
+    }
+};
+static vector<MirrorSessionCreate> g_mirror_creates;
+static vector<pair<sai_object_id_t, sai_attribute_t>> g_lag_sets;
+static sai_status_t g_mirror_create_status;
+
+static sai_status_t recordCreateMirrorSession(sai_object_id_t *oid, sai_object_id_t, uint32_t count,
+                                              const sai_attribute_t *attrs)
+{
+    if (g_mirror_create_status != SAI_STATUS_SUCCESS) return g_mirror_create_status;
+    *oid = 0x9000 + g_mirror_creates.size();
+    g_mirror_creates.push_back({*oid, vector<sai_attribute_t>(attrs, attrs + count)});
+    return SAI_STATUS_SUCCESS;
+}
+
+static sai_status_t recordSetLagAttribute(sai_object_id_t lag, const sai_attribute_t *attr)
+{
+    g_lag_sets.emplace_back(lag, *attr);
+    return SAI_STATUS_SUCCESS;
+}
+
+static sai_status_t nullGetLagAttribute(sai_object_id_t, uint32_t count, sai_attribute_t *attrs)
+{
+    for (uint32_t i = 0; i < count; i++) attrs[i].value.oid = SAI_NULL_OBJECT_ID;
+    return SAI_STATUS_SUCCESS;
+}
+
+class HwsflowSessionTest : public SampleBindingTest
+{
+protected:
+    const sai_object_id_t lagOid = 0x2000000000abcdULL;
+    sai_mirror_api_t savedMirrorApi;
+    sai_lag_api_t savedLagApi;
+    void PostSetUp() override
+    {
+        SampleBindingTest::PostSetUp();
+        savedMirrorApi = *sai_mirror_api;
+        savedLagApi = *sai_lag_api;
+        sai_mirror_api->create_mirror_session = recordCreateMirrorSession;
+        sai_lag_api->set_lag_attribute = recordSetLagAttribute;
+        sai_lag_api->get_lag_attribute = nullGetLagAttribute;
+        g_mirror_creates.clear();
+        g_lag_sets.clear();
+        g_mirror_create_status = SAI_STATUS_SUCCESS;
+        gSwitchOrch->m_mirrorSessionHwsflowSupported = true;
+        gSwitchOrch->m_mirrorSessionSampleRateSupported = true;
+        gSwitchOrch->m_mirrorSessionTruncationSupported = true;
+        gSwitchOrch->m_lagIngressSampleMirrorSupported = true;
+        gSwitchOrch->m_lagEgressSampleMirrorSupported = false;
+    }
+    void PreTearDown() override
+    {
+        SampleBindingTest::PreTearDown();
+        *sai_mirror_api = savedMirrorApi;
+        *sai_lag_api = savedLagApi;
+    }
+    // An inactive HWSFLOW session with a resolved next hop.
+    MirrorEntry& addSession()
+    {
+        MirrorEntry entry("");
+        entry.type = MIRROR_SESSION_HWSFLOW;
+        entry.srcIp = IpAddress("10.0.0.1");
+        entry.dstIp = IpAddress("10.0.0.2");
+        entry.udpSrcPort = 6400;
+        entry.udpDstPort = 6344;
+        entry.sampleRate = 1024;
+        entry.truncateSize = 128;
+        entry.neighborInfo.portId = portOid("Ethernet8");
+        entry.neighborInfo.port.m_type = Port::PHY;
+        entry.sessionId = SAI_NULL_OBJECT_ID;
+        return gMirrorOrch->m_syncdMirrors.emplace("hws1", entry).first->second;
+    }
+    vector<FieldValueTuple> hwsflowFields()
+    {
+        return {{"mirror_session", "hws1"}, {"admin_state", "up"}};
+    }
+    uint32_t samplepacketRate(const string& port)
+    {
+        sai_attribute_t attr{};
+        attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
+        EXPECT_EQ(sai_samplepacket_api->get_samplepacket_attribute(sampleOn(port), 1, &attr), SAI_STATUS_SUCCESS);
+        return attr.value.u32;
+    }
+    // Returns 0 for a samplepacket created without truncation: libsaivs has no value to return.
+    uint32_t samplepacketTruncate(const string& port)
+    {
+        sai_attribute_t attr{};
+        attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
+        return sai_samplepacket_api->get_samplepacket_attribute(sampleOn(port), 1, &attr) == SAI_STATUS_SUCCESS ?
+               attr.value.u32 : 0;
+    }
+};
+
+TEST_F(HwsflowSessionTest, SessionSamplesAndTruncatesAndSamplePacketsCarryTheSessionRate)
+{
+    auto& session = addSession();
+    ASSERT_TRUE(gMirrorOrch->activateSession("hws1", session));
+    ASSERT_EQ(g_mirror_creates.size(), 1u);
+    const auto& created = g_mirror_creates[0];
+    EXPECT_EQ(created.find(SAI_MIRROR_SESSION_ATTR_TYPE)->value.s32, SAI_MIRROR_SESSION_TYPE_SFLOW);
+    EXPECT_EQ(created.find(SAI_MIRROR_SESSION_ATTR_UDP_SRC_PORT)->value.u16, 6400);
+    EXPECT_EQ(created.find(SAI_MIRROR_SESSION_ATTR_UDP_DST_PORT)->value.u16, 6344);
+    EXPECT_EQ(created.find(SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE), nullptr);
+    ASSERT_NE(created.find(SAI_MIRROR_SESSION_ATTR_SAMPLE_RATE), nullptr);
+    ASSERT_NE(created.find(SAI_MIRROR_SESSION_ATTR_TRUNCATE_SIZE), nullptr);
+    EXPECT_EQ(created.find(SAI_MIRROR_SESSION_ATTR_SAMPLE_RATE)->value.u32, 1024u);
+    EXPECT_EQ(created.find(SAI_MIRROR_SESSION_ATTR_TRUNCATE_SIZE)->value.u16, 128);
+
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", hwsflowFields()), task_success);
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet4|rx", hwsflowFields()), task_success);
+    EXPECT_EQ(g_mirror_creates.size(), 1u);
+    EXPECT_NE(sampleOn("Ethernet0"), sampleOn("Ethernet4"));
+    for (const string port : {"Ethernet0", "Ethernet4"})
+    {
+        EXPECT_EQ(samplepacketRate(port), 1024u);
+        EXPECT_EQ(samplepacketTruncate(port), 0u);
+    }
+}
+
+// activateSession returns false to ask for a retry and true when a retry will not help.
+TEST_F(HwsflowSessionTest, SessionCreateRetriesOnlyWhenTheSaiIsOutOfResources)
+{
+    const sai_status_t retried[] = {SAI_STATUS_INSUFFICIENT_RESOURCES, SAI_STATUS_TABLE_FULL, SAI_STATUS_NO_MEMORY};
+    const sai_status_t failed[] = {SAI_STATUS_NOT_SUPPORTED, SAI_STATUS_INVALID_PARAMETER, SAI_STATUS_INVALID_ATTR_VALUE_0};
+    auto& session = addSession();
+    for (sai_status_t status : retried)
+    {
+        g_mirror_create_status = status;
+        EXPECT_FALSE(gMirrorOrch->activateSession("hws1", session)) << status;
+        EXPECT_FALSE(session.status);
+    }
+    for (sai_status_t status : failed)
+    {
+        g_mirror_create_status = status;
+        EXPECT_TRUE(gMirrorOrch->activateSession("hws1", session)) << status;
+        EXPECT_FALSE(session.status);
+    }
+    EXPECT_TRUE(g_mirror_creates.empty());
+
+    g_mirror_create_status = SAI_STATUS_SUCCESS;
+    ASSERT_TRUE(gMirrorOrch->activateSession("hws1", session));
+    EXPECT_TRUE(session.status);
+    EXPECT_EQ(g_mirror_creates.size(), 1u);
+}
+
+TEST_F(HwsflowSessionTest, LagBindsTheLagObjectOnlyWhenCapable)
+{
+    auto& session = addSession();
+    session.status = true;
+    session.sessionId = 0x9000;
+    Port lag("PortChannel9", Port::LAG);
+    lag.m_lag_id = lagOid;
+    lag.m_members.insert("Ethernet0");
+    gPortsOrch->setPort(lag.m_alias, lag);
+    auto lagSet = [&](sai_attr_id_t id) {
+        for (const auto& set : g_lag_sets)
+            if (set.first == lagOid && set.second.id == id) return true;
+        return false;
+    };
+
+    // Port sampling capability is not needed when the LAG object is bound.
+    gSwitchOrch->m_portIngressSampleMirrorSupported = false;
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("PortChannel9|rx", hwsflowFields()), task_success);
+    EXPECT_TRUE(lagSet(SAI_LAG_ATTR_INGRESS_SAMPLEPACKET_ENABLE));
+    EXPECT_TRUE(lagSet(SAI_LAG_ATTR_INGRESS_SAMPLE_MIRROR_SESSION_LIST));
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(gMirrorOrch->m_sampleBindings.at("PortChannel9|rx").attachments.count(lagOid), 1u);
+
+    g_lag_sets.clear();
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("PortChannel9|tx", hwsflowFields()), task_success);
+    EXPECT_TRUE(g_lag_sets.empty());
+    EXPECT_NE(sampleOn("Ethernet0", false), SAI_NULL_OBJECT_ID);
+
+    // An ERSPAN session binds the member ports.
+    gSwitchOrch->m_portIngressSampleMirrorSupported = true;
+    remove("PortChannel9|rx");
+    g_lag_sets.clear();
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("PortChannel9|rx", fields()), task_success);
+    EXPECT_TRUE(g_lag_sets.empty());
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(HwsflowSessionTest, LagMemberStaysUnboundWhereTheLagIsSampled)
+{
+    auto& session = addSession();
+    session.status = true;
+    session.sessionId = 0x9000;
+    Port member;
+    ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", member));
+    member.m_lag_member_id = 0x1b00;
+    gPortsOrch->setPort(member.m_alias, member);
+
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", hwsflowFields()), task_success);
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    EXPECT_TRUE(gMirrorOrch->m_sampleRetries.empty());
+
+    // The tx direction has no LAG sampling here, so the member port is bound.
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|tx", hwsflowFields()), task_success);
+    EXPECT_NE(sampleOn("Ethernet0", false), SAI_NULL_OBJECT_ID);
+
+    member.m_lag_member_id = SAI_NULL_OBJECT_ID;
+    gPortsOrch->setPort(member.m_alias, member);
+    gMirrorOrch->syncSampleBindings();
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(HwsflowSessionTest, SessionRejectedWithoutSaiCapabilityOrWithErspanFields)
+{
+    const vector<FieldValueTuple> valid{{"type", "HWSFLOW"}, {"src_ip", "1.1.1.1"}, {"dst_ip", "2.2.2.2"},
+                                        {"sample_rate", "1024"}, {"truncate_size", "128"},
+                                        {"udp_src_port", "6400"}, {"udp_dst_port", "6344"}};
+    gSwitchOrch->m_mirrorSessionHwsflowSupported = false;
+    EXPECT_EQ(gMirrorOrch->createEntry("hws2", valid), task_invalid_entry);
+    gSwitchOrch->m_mirrorSessionHwsflowSupported = true;
+    gSwitchOrch->m_mirrorSessionSampleRateSupported = false;
+    EXPECT_EQ(gMirrorOrch->createEntry("hws2", valid), task_invalid_entry);
+    gSwitchOrch->m_mirrorSessionSampleRateSupported = true;
+    gSwitchOrch->m_mirrorSessionTruncationSupported = false;
+    EXPECT_EQ(gMirrorOrch->createEntry("hws2", valid), task_invalid_entry);
+    gSwitchOrch->m_mirrorSessionTruncationSupported = true;
+
+    gPolicerOrch->m_syncdPolicers["policer1"] = 0x1;
+    gPolicerOrch->m_policerRefCounts["policer1"] = 0;
+    for (const FieldValueTuple& field : vector<FieldValueTuple>{{"gre_type", "0x88be"}, {"policer", "policer1"},
+                                                               {"queue", "0"}, {"direction", "RX"},
+                                                               {"src_port", "Ethernet0"}})
+    {
+        auto fields = valid;
+        fields.push_back(field);
+        EXPECT_EQ(gMirrorOrch->createEntry("hws2", fields), task_invalid_entry) << fvField(field);
+    }
+    EXPECT_EQ(gPolicerOrch->m_policerRefCounts["policer1"], 0);
+
+    auto withoutRate = valid;
+    withoutRate.erase(withoutRate.begin() + 3);
+    EXPECT_EQ(gMirrorOrch->createEntry("hws2", withoutRate), task_invalid_entry);
+    auto negativeRate = valid;
+    fvValue(negativeRate[3]) = "-1";
+    EXPECT_EQ(gMirrorOrch->createEntry("hws2", negativeRate), task_invalid_entry);
+    EXPECT_EQ(gMirrorOrch->createEntry("erspan2", {{"type", "ERSPAN"}, {"src_ip", "1.1.1.1"}, {"dst_ip", "2.2.2.2"},
+                                                   {"sample_rate", "1024"}}), task_invalid_entry);
+    EXPECT_FALSE(gMirrorOrch->sessionExists("hws2"));
+
+    ASSERT_EQ(gMirrorOrch->createEntry("hws2", valid), task_success);
+    const auto& session = gMirrorOrch->m_syncdMirrors.at("hws2");
+    EXPECT_EQ(session.sampleRate, 1024u);
+    EXPECT_EQ(session.truncateSize, 128u);
+    EXPECT_EQ(session.udpSrcPort, 6400);
+    EXPECT_EQ(session.udpDstPort, 6344);
+    EXPECT_EQ(gMirrorOrch->deleteEntry("hws2"), task_success);
+
+    auto withoutTruncate = valid;
+    withoutTruncate.erase(withoutTruncate.begin() + 4);
+    ASSERT_EQ(gMirrorOrch->createEntry("hws2", withoutTruncate), task_success);
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("hws2").truncateSize, 128u);
+    EXPECT_EQ(gMirrorOrch->deleteEntry("hws2"), task_success);
+}
+
+TEST_F(HwsflowSessionTest, BindingTakesItsRateFromTheSession)
+{
+    auto& session = addSession();
+    session.status = true;
+    session.sessionId = 0x9000;
+
+    // Only an HWSFLOW session allows a binding without a rate.
+    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", {{"mirror_session", "export1"}, {"admin_state", "up"}}),
+              task_invalid_entry);
+
+    // The session of a binding can arrive later. On an ERSPAN one, a binding without a rate stays unattached.
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet4|rx", {{"mirror_session", "late"}, {"admin_state", "up"}}),
+              task_success);
+    MirrorEntry late("");
+    late.type = MIRROR_SESSION_ERSPAN;
+    late.status = true;
+    late.sessionId = 0x9001;
+    gMirrorOrch->m_syncdMirrors.emplace("late", late);
+    gMirrorOrch->syncSampleBindings();
+    EXPECT_EQ(sampleOn("Ethernet4"), SAI_NULL_OBJECT_ID);
+    gMirrorOrch->m_syncdMirrors.at("late") = session;
+    gMirrorOrch->m_sampleBindings.at("Ethernet4|rx").unsupportedLogged = false;
+    gMirrorOrch->syncSampleBindings();
+    EXPECT_NE(sampleOn("Ethernet4"), SAI_NULL_OBJECT_ID);
+    remove("Ethernet4|rx");
+
+    // A binding with its own rate or truncation is not attached to an HWSFLOW session.
+    auto withRate = hwsflowFields();
+    withRate.emplace_back("sample_rate", "512");
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", withRate), task_success);
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    remove("Ethernet0|rx");
+
+    Table(m_config_db.get(), "PORT_MIRROR_SAMPLE").set("Ethernet0|rx", hwsflowFields());
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", hwsflowFields()), task_success);
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    const auto sessionOid = gMirrorOrch->m_syncdMirrors.at("hws1").sessionId;
+    setAdmin("Ethernet0|rx", "down");
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").samplepacketId, SAI_NULL_OBJECT_ID);
+    setAdmin("Ethernet0|rx", "up");
+    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("hws1").sessionId, sessionOid);
 }
 
 class VlanFdbRecoveryTest : public SampleBindingTest
