@@ -2108,7 +2108,16 @@ void BufferOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(it->second);
+        task_process_status task_status;
+        try
+        {
+            task_status = (this->*(m_bufferHandlerMap[map_type_name]))(it->second);
+        }
+        catch (const std::logic_error &e)
+        {
+            SWSS_LOG_ERROR("Invalid %s buffer task: %s", map_type_name.c_str(), e.what());
+            task_status = task_process_status::task_invalid_entry;
+        }
         switch(task_status)
         {
             case task_process_status::task_success :

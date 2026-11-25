@@ -630,6 +630,31 @@ namespace qosorch_test
         }
     };
 
+    TEST_F(QosOrchTest, MalformedPfcDoesNotLeavePortQosMapReference)
+    {
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        for (const auto &field : {"pfc_enable", "pfcwd_sw_enable"})
+        {
+            for (const auto &value : {"invalid", "-1", "8", "1x"})
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                entries.push_back({"Ethernet0", "SET",
+                                   {{"dscp_to_tc_map", "AZURE"}, {field, value}}});
+                consumer->addToSync(entries);
+                static_cast<Orch *>(gQosOrch)->doTask();
+
+                ASSERT_TRUE(consumer->m_toSync.empty());
+                CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map",
+                                CFG_DSCP_TO_TC_MAP_TABLE_NAME);
+            }
+        }
+
+        RemoveItem(CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+        auto remove_count = sai_remove_qos_map_count;
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(remove_count + 1, sai_remove_qos_map_count);
+    }
+
     TEST_F(QosOrchTest, QosOrchTestPortQosMapRemoveOneField)
     {
         Table portQosMapTable = Table(m_config_db.get(), CFG_PORT_QOS_MAP_TABLE_NAME);
@@ -1631,5 +1656,18 @@ namespace qosorch_test
         // Drain TUNNEL_DECAP_TABLE table
         static_cast<Orch *>(tunnel_decap_orch)->doTask();
         entries.clear();
+    }
+
+    TEST_F(QosOrchTest, MalformedMapDoesNotBlockNextMap)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"BAD", SET_COMMAND, {{"not-a-number", "1"}}});
+        entries.push_back({"GOOD", SET_COMMAND, {{"0", "1"}}});
+
+        auto *consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->addToSync(entries);
+        EXPECT_NO_THROW(static_cast<Orch *>(gQosOrch)->doTask(*consumer));
+        EXPECT_TRUE(consumer->m_toSync.empty());
     }
 }

@@ -124,6 +124,11 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
     auto op = kfvOp(tuple);
     string storm_key = key;
     auto tokens = tokenize(storm_key, config_db_key_delimiter);
+    if (tokens.size() != 2)
+    {
+        SWSS_LOG_ERROR("Invalid storm-control key");
+        return task_process_status::task_invalid_entry;
+    }
     auto interface_name = tokens[0];
     auto storm_type = tokens[1];
     Port port;
@@ -385,6 +390,8 @@ void PolicerOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         auto tuple = it->second;
+        try
+        {
 
         auto key = kfvKey(tuple);
         auto op = kfvOp(tuple);
@@ -395,7 +402,8 @@ void PolicerOrch::doTask(Consumer &consumer)
         {
             storm_status = handlePortStormControlTable(tuple);
             if ((storm_status == task_process_status::task_success) ||
-                    (storm_status == task_process_status::task_failed))
+                    (storm_status == task_process_status::task_failed) ||
+                    (storm_status == task_process_status::task_invalid_entry))
             {
                 it = consumer.m_toSync.erase(it);
             }
@@ -583,6 +591,12 @@ void PolicerOrch::doTask(Consumer &consumer)
             SWSS_LOG_NOTICE("Removed policer %s", key.c_str());
             m_syncdPolicers.erase(key);
             m_policerRefCounts.erase(key);
+            it = consumer.m_toSync.erase(it);
+        }
+        }
+        catch (const std::logic_error &e)
+        {
+            SWSS_LOG_ERROR("Invalid policer task: %s", e.what());
             it = consumer.m_toSync.erase(it);
         }
     }

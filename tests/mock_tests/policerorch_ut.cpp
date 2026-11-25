@@ -177,4 +177,29 @@ namespace policerorch_test
         doPolicerConfig(policer, DEL_COMMAND, {});
         EXPECT_EQ(m_policerMock->removed_oid, kPolicerOid);
     }
+
+    TEST_F(PolicerOrchTest, RejectMalformedPolicerWithoutStoppingLaterTasks)
+    {
+        EXPECT_CALL(*mock_sai_policer_api, create_policer)
+            .Times(1)
+            .WillOnce(Invoke(m_policerMock.get(), &PolicerSaiMock::handleCreate));
+
+        EXPECT_NO_THROW(doPolicerConfig("BAD_RATE", SET_COMMAND,
+            {{"meter_type", "packets"}, {"mode", "sr_tcm"}, {"cir", "not-a-number"}}));
+        EXPECT_NO_THROW(doPolicerConfig("BAD_MODE", SET_COMMAND,
+            {{"meter_type", "not-a-mode"}, {"mode", "sr_tcm"}}));
+
+        auto *storm = dynamic_cast<Consumer *>(
+            static_cast<Orch *>(gPolicerOrch)->getExecutor(CFG_PORT_STORM_CONTROL_TABLE_NAME));
+        ASSERT_NE(storm, nullptr);
+        deque<KeyOpFieldsValuesTuple> malformed_key;
+        malformed_key.push_back({"Ethernet0", SET_COMMAND, {{"cir", "600"}}});
+        storm->addToSync(malformed_key);
+        EXPECT_NO_THROW(static_cast<Orch *>(gPolicerOrch)->doTask(*storm));
+        EXPECT_TRUE(storm->m_toSync.empty());
+
+        EXPECT_NO_THROW(doPolicerConfig("GOOD", SET_COMMAND,
+            {{"meter_type", "packets"}, {"mode", "sr_tcm"}, {"cir", "600"}}));
+        EXPECT_EQ(m_policerMock->create_attrs.size(), 3U);
+    }
 }
