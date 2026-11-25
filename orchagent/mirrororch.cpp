@@ -248,7 +248,7 @@ bool MirrorOrch::getSessionStatus(const string& name, bool& state)
         return false;
     }
 
-    state = m_syncdMirrors.find(name)->second.status;
+    state = m_syncdMirrors.find(name)->second.status && !isRemovingExport(name);
 
     return true;
 }
@@ -607,6 +607,7 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
 
     removeSessionState(name);
 
+    m_pendingExportDeactivations.erase(name);
     m_syncdMirrors.erase(sessionIter);
 
     SWSS_LOG_NOTICE("Removed mirror session %s", name.c_str());
@@ -756,8 +757,6 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             SWSS_LOG_NOTICE("Get mirror session destination IP neighbor VLAN %d",
                     session.neighborInfo.port.m_vlan_info.vlan_id);
 
-            // The FDB cache can still point to the removed monitor port until
-            // the flush completes. Wait for updateFdb() to set the new port.
             if (session.neighborInfo.port.m_vlan_info.vlan_oid == session.waitingFdbVlan &&
                 session.neighborInfo.mac == session.waitingFdbMac &&
                 session.neighborInfo.portId == SAI_NULL_OBJECT_ID)
@@ -813,8 +812,11 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
+    if (isRemovingExport(name) && !deactivateSession(name, session)) return false;
+
     bool ret = true;
-    MirrorEntry old_session(session);
+    const bool recovering = m_pendingExportDeactivations.count(name) != 0;
+    const auto previous = recovering ? session.programmedDestination : session.resolvedDestination();
 
     // Get neighbor information
     if (getNeighborInfo(name, session))
@@ -822,24 +824,31 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
         // Update corresponding attributes
         if (session.status)
         {
-            if (old_session.neighborInfo.port.m_type !=
-                    session.neighborInfo.port.m_type &&
-                (old_session.neighborInfo.port.m_type == Port::VLAN ||
-                 session.neighborInfo.port.m_type == Port::VLAN))
+            const auto desired = session.resolvedDestination();
+            const bool vlanChanged = recovering ? previous.vlan != desired.vlan :
+                                                  (previous.vlan == 0) != (desired.vlan == 0);
+            if (vlanChanged)
             {
                 ret &= updateSessionType(name, session);
             }
 
-            if (old_session.neighborInfo.mac !=
-                    session.neighborInfo.mac)
+            if (previous.mac != desired.mac)
             {
                 ret &= updateSessionDstMac(name, session);
             }
 
-            if (old_session.neighborInfo.portId !=
-                    session.neighborInfo.portId)
+            if (previous.portId != desired.portId)
             {
                 ret &= updateSessionDstPort(name, session);
+            }
+            if (recovering)
+            {
+                if (ret)
+                    m_pendingExportDeactivations.erase(name);
+                for (auto& item : m_sampleBindings)
+                {
+                    if (item.second.session == name) syncSampleBinding(item.first, item.second);
+                }
             }
         }
         // Activate mirror session
@@ -1142,6 +1151,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         }
     }
 
+    if (session.type == MIRROR_SESSION_ERSPAN) session.programmedDestination = session.resolvedDestination();
     session.waitingFdbVlan = SAI_NULL_OBJECT_ID;
     setSessionState(name, session);
 
@@ -1154,43 +1164,56 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     return true;
 }
 
+bool MirrorOrch::isRemovingExport(const string& name) const
+{
+    const auto pending = m_pendingExportDeactivations.find(name);
+    return pending != m_pendingExportDeactivations.end() && pending->second == ExportDeactivation::REMOVE_SESSION;
+}
+
 bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
-    sai_status_t status;
 
     assert(session.status);
 
-    for (auto& item : m_sampleBindings)
+    auto pending = m_pendingExportDeactivations.find(name);
+    const bool retryingRemoval = pending != m_pendingExportDeactivations.end() &&
+                                 pending->second == ExportDeactivation::REMOVE_SESSION;
+    if (!retryingRemoval)
     {
-        if (item.second.session != name) continue;
-        if (!clearSampleBinding(item.first, item.second))
+        bool bindingsCleared = true;
+        for (auto& item : m_sampleBindings)
         {
-            m_sampleRetries.insert(item.first);
-            return false;
+            if (item.second.session != name) continue;
+            if (pending == m_pendingExportDeactivations.end())
+                pending = m_pendingExportDeactivations.emplace(name, ExportDeactivation::DETACH_BINDINGS).first;
+            bindingsCleared &= clearSampleBinding(item.first, item.second);
+            m_sampleRetries.erase(item.first);
         }
-        m_sampleRetries.erase(item.first);
+        if (!bindingsCleared) return false;
+        if (pending != m_pendingExportDeactivations.end()) pending->second = ExportDeactivation::REMOVE_SESSION;
     }
 
-    MirrorSessionUpdate update = { name, false };
-    notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
-
-    if (!session.src_port.empty() && !session.direction.empty())
+    if (!retryingRemoval || session.refCount != 0)
     {
-        status = configurePortMirrorSession(name, session, false);
-        if (status == false)
-        {
-            SWSS_LOG_ERROR("Failed to deactivate port mirror session %s", name.c_str());
-            return false;
-        }
+        MirrorSessionUpdate update = { name, false };
+        notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
     }
 
-    status = sai_mirror_api->remove_mirror_session(session.sessionId);
+    if (!session.src_port.empty() && !session.direction.empty() && !configurePortMirrorSession(name, session, false))
+    {
+        SWSS_LOG_ERROR("Failed to deactivate port mirror session %s", name.c_str());
+        return false;
+    }
+
+    const auto status = sai_mirror_api->remove_mirror_session(session.sessionId);
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s", name.c_str());
         task_process_status handle_status =  handleSaiRemoveStatus(SAI_API_MIRROR, status);
+        if (pending != m_pendingExportDeactivations.end() && status != SAI_STATUS_ITEM_NOT_FOUND &&
+            status != SAI_STATUS_ADDR_NOT_FOUND) return false;
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1199,6 +1222,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 
     session.status = false;
     session.sessionId = SAI_NULL_OBJECT_ID;
+    m_pendingExportDeactivations.erase(name);
 
     // Store whole state into StateDB, since it is far from that frequent it's durable
     setSessionState(name, session);
@@ -1230,6 +1254,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to update mirror session %s destination MAC to %s, rv:%d",
                 name.c_str(), sai_serialize_mac(attr.value.mac).c_str(), status);
         task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (m_pendingExportDeactivations.count(name)) return false;
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1239,6 +1264,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     SWSS_LOG_NOTICE("Update mirror session %s destination MAC to %s",
             name.c_str(), sai_serialize_mac(attr.value.mac).c_str());
 
+    if (status == SAI_STATUS_SUCCESS) session.programmedDestination.mac = session.neighborInfo.mac;
     setSessionState(name, session, MIRROR_SESSION_DST_MAC_ADDRESS);
 
     return true;
@@ -1249,7 +1275,6 @@ bool MirrorOrch::hasSampleBindingForSession(const string& name)
 {
     for (const auto& binding : m_sampleBindings)
         if (binding.second.session == name) return true;
-    // CONFIG_DB may already contain bindings that this consumer has not processed.
     vector<string> keys;
     m_sampleConfigTable.getKeys(keys);
     string referenced;
@@ -1292,7 +1317,6 @@ bool MirrorOrch::claimSamplingMode(SamplingMode requested)
 {
     if (m_samplingMode == SamplingMode::NONE)
     {
-        // Config may have arrived since startup. Do not let replay order decide a conflict.
         m_samplingMode = configuredSamplingMode();
         if (m_samplingMode == SamplingMode::NONE) m_samplingMode = requested;
     }
@@ -1339,7 +1363,6 @@ task_process_status MirrorOrch::setSampleBinding(const string& key, const vector
     // default the rate to 1 (sample every packet) so a samplepacket object
     // is still created to carry the truncation.
     if (binding.rate == 0 && binding.truncate != 0) binding.rate = 1;
-    // A binding needs an export and at least one of sample_rate or truncate_size.
     if (binding.rate == 0 || binding.session.empty()) return task_invalid_entry;
     if (current)
     {
@@ -1408,7 +1431,7 @@ bool MirrorOrch::createSamplePacket(const string& name, SampleBinding& binding)
         return false;
     }
     binding.samplepacketId = oid;
-    increaseRefCount(binding.session); // The binding holds the export reference for this object's lifetime.
+    increaseRefCount(binding.session);
     return true;
 }
 
@@ -1423,7 +1446,6 @@ bool MirrorOrch::clearSampleAttachment(const string& key, SampleBinding& binding
     }
     auto& attachment = binding.attachments.at(port);
     sai_attribute_t attr{};
-    // Track each successful operation so retries never free a still-attached object.
     if (attachment.mirrorSet)
     {
         attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION :
@@ -1453,13 +1475,14 @@ bool MirrorOrch::clearSampleBinding(const string& key, SampleBinding& binding)
     for (auto it = binding.attachments.begin(); it != binding.attachments.end();)
     {
         const auto oid = (it++)->first;
-        clearSampleAttachment(key, binding, oid); // Failed attachments stay in the map for retry.
+        clearSampleAttachment(key, binding, oid);
     }
     if (!binding.attachments.empty()) return false;
     if (binding.samplepacketId != SAI_NULL_OBJECT_ID)
     {
         auto status = sai_samplepacket_api->remove_samplepacket(binding.samplepacketId);
-        if (status != SAI_STATUS_SUCCESS)
+        if (status != SAI_STATUS_SUCCESS &&
+            status != SAI_STATUS_ITEM_NOT_FOUND && status != SAI_STATUS_ADDR_NOT_FOUND)
         {
             SWSS_LOG_ERROR("Failed to remove SamplePacket for binding %s: %d", key.c_str(), status);
             return false;
@@ -1501,8 +1524,8 @@ bool MirrorOrch::samplePortsAvailable(const string& key, const SampleBinding& bi
 
         sai_attribute_t attr{};
         attr.id = binding.ingress ? SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE : SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE;
-        if (sai_port_api->get_port_attribute(port.first, 1, &attr) != SAI_STATUS_SUCCESS ||
-            attr.value.oid != SAI_NULL_OBJECT_ID) return false;
+        if (sai_port_api->get_port_attribute(port.first, 1, &attr) == SAI_STATUS_SUCCESS &&
+            attr.value.oid != SAI_NULL_OBJECT_ID && attr.value.oid != binding.samplepacketId) return false;
     }
     return true;
 }
@@ -1529,11 +1552,11 @@ bool MirrorOrch::attachSamplePort(const string& key, SampleBinding& binding, sai
     return true;
 }
 
-// A missing export or source is an event dependency, not a reason to retry hardware.
 bool MirrorOrch::reconcileSampleBinding(const string& key, SampleBinding& binding)
 {
     auto session = m_syncdMirrors.find(binding.session);
-    if (!binding.enabled || binding.deleting || session == m_syncdMirrors.end() || !session->second.isActiveSampleExport())
+    if (!binding.enabled || binding.deleting || session == m_syncdMirrors.end() ||
+        !session->second.isActiveSampleExport() || m_pendingExportDeactivations.count(binding.session))
     {
         return clearSampleBinding(key, binding);
     }
@@ -1578,7 +1601,6 @@ bool MirrorOrch::reconcileSampleBinding(const string& key, SampleBinding& bindin
 
 void MirrorOrch::syncSampleBinding(const string& key, SampleBinding& binding)
 {
-    // DEL stays in its consumer until clearSampleBinding succeeds.
     if (!reconcileSampleBinding(key, binding) && !binding.deleting)
         m_sampleRetries.insert(key);
     else
@@ -1587,7 +1609,6 @@ void MirrorOrch::syncSampleBinding(const string& key, SampleBinding& binding)
 
 void MirrorOrch::syncSampleBindings()
 {
-    // Only accepted sampled-mode bindings enter this map; deletion cannot change the mode.
     for (auto it = m_sampleBindings.begin(); it != m_sampleBindings.end();)
     {
         auto& binding = it->second;
@@ -1601,11 +1622,17 @@ void MirrorOrch::syncSampleBindings()
 
 void MirrorOrch::doTask()
 {
-    // Consume configuration (including deletes) before retrying the current desired state.
     Orch::doTask();
-    if (m_sampleRetries.empty() || !m_portsOrch->allPortsReady()) return;
+    if ((m_pendingExportDeactivations.empty() && m_sampleRetries.empty()) || !m_portsOrch->allPortsReady()) return;
 
-    // Each blocked key gets one attempt per normal orchagent retry pass.
+    for (auto it = m_pendingExportDeactivations.begin(); it != m_pendingExportDeactivations.end();)
+    {
+        const auto pending = it++;
+        auto session = m_syncdMirrors.find(pending->first);
+        if (session == m_syncdMirrors.end()) m_pendingExportDeactivations.erase(pending);
+        else updateSession(session->first, session->second);
+    }
+
     for (auto it = m_sampleRetries.begin(); it != m_sampleRetries.end();)
     {
         const auto& key = *it;
@@ -1621,6 +1648,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
+    if (isRemovingExport(name)) return false;
     assert(session.sessionId != SAI_NULL_OBJECT_ID);
 
     Port port;
@@ -1650,6 +1678,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to update mirror session %s monitor port to %s, rv:%d",
                 name.c_str(), port.m_alias.c_str(), status);
         task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (m_pendingExportDeactivations.count(name)) return false;
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1659,6 +1688,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     SWSS_LOG_NOTICE("Update mirror session %s monitor port to %s",
             name.c_str(), port.m_alias.c_str());
 
+    if (status == SAI_STATUS_SUCCESS) session.programmedDestination.portId = session.neighborInfo.portId;
     setSessionState(name, session, MIRROR_SESSION_MONITOR_PORT);
 
     return true;
@@ -1701,6 +1731,7 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
     }
 
     sai_status_t status;
+    bool allApplied = true;
     for (auto attr : attrs)
     {
         status = sai_mirror_api->
@@ -1708,9 +1739,12 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
 
         if (status != SAI_STATUS_SUCCESS)
         {
+            allApplied = false;
+            session.programmedDestination.vlan = -1;
             SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
                     name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
             task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+            if (m_pendingExportDeactivations.count(name)) return false;
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -1721,6 +1755,7 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
     SWSS_LOG_NOTICE("Update mirror session %s VLAN to %s",
             name.c_str(), session.neighborInfo.port.m_alias.c_str());
 
+    if (allApplied) session.programmedDestination.vlan = session.resolvedDestination().vlan;
     setSessionState(name, session, MIRROR_SESSION_VLAN_ID);
 
     return true;
@@ -2034,7 +2069,6 @@ void MirrorOrch::doTask(Consumer& consumer)
             auto result = task_invalid_entry;
             if (op == SET_COMMAND)
             {
-                // Queued SETs merge fields and can retain a field that CONFIG_DB has since removed.
                 vector<FieldValueTuple> row;
                 result = m_sampleConfigTable.get(key, row) ? setSampleBinding(key, row) : task_success;
             }

@@ -13,7 +13,6 @@ namespace mirror_sample_port_wrap_ut
     // paths in mirrororch can be exercised. Reset by install()/uninstall().
     extern bool g_fail_mirror_session_set;
     extern bool g_fail_samplepacket_enable_set;
-    // Fail only EGRESS_SAMPLEPACKET_ENABLE with a retryable status.
     extern bool g_fail_egress_samplepacket_enable_set;
     // Fault injection for the sai_samplepacket_api: fail create/remove so the
     // samplepacket create/remove error paths in mirrororch can be exercised.

@@ -832,12 +832,8 @@ bool SflowOrch::isSamplepacketFreeForSflow(sai_object_id_t port_id, sai_port_att
 
     sai_attribute_t check_attr;
     check_attr.id = attr_id;
-    if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Cannot verify SamplePacket ownership on port 0x%" PRIx64, port_id);
-        return false;
-    }
-    if (check_attr.value.oid != SAI_NULL_OBJECT_ID
+    if (sai_port_api->get_port_attribute(port_id, 1, &check_attr) == SAI_STATUS_SUCCESS
+        && check_attr.value.oid != SAI_NULL_OBJECT_ID
         && check_attr.value.oid != sample_id
         && !isSflowSamplePacket(check_attr.value.oid))
     {

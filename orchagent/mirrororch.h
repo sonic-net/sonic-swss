@@ -56,11 +56,21 @@ struct MirrorEntry
         NeighborEntry neighbor;
         MacAddress mac;
         Port port;
-        sai_object_id_t portId;
+        sai_object_id_t portId = SAI_NULL_OBJECT_ID;
     } neighborInfo;
 
-    // Set when cleanup fails after the VLAN monitor port is removed. The session
-    // waits for an FDB update for this VLAN and MAC until it is activated again.
+    struct Destination
+    {
+        int vlan = 0;
+        MacAddress mac;
+        sai_object_id_t portId = SAI_NULL_OBJECT_ID;
+    } programmedDestination;
+    Destination resolvedDestination() const
+    {
+        return {neighborInfo.port.m_type == Port::VLAN ? neighborInfo.port.m_vlan_info.vlan_id : 0,
+                neighborInfo.mac, neighborInfo.portId};
+    }
+
     sai_object_id_t waitingFdbVlan = SAI_NULL_OBJECT_ID;
     MacAddress waitingFdbMac;
 
@@ -177,7 +187,6 @@ private:
     };
     Table m_sampleConfigTable;
     swss::DBConnector& m_configDb;
-    // Set once per orchagent lifetime, even if the selected feature is later disabled or deleted.
     enum class SamplingMode { NONE, SFLOW, SAMPLED_MIRROR, CONFLICT };
     SamplingMode m_samplingMode = SamplingMode::NONE;
     SamplingMode configuredSamplingMode() const;
@@ -185,6 +194,9 @@ private:
     bool hasSampleBindingForSession(const string& name);
     map<string, SampleBinding> m_sampleBindings;
     std::set<string> m_sampleRetries;
+    enum class ExportDeactivation { DETACH_BINDINGS, REMOVE_SESSION };
+    map<string, ExportDeactivation> m_pendingExportDeactivations;
+    bool isRemovingExport(const string& name) const;
     map<std::pair<sai_object_id_t, bool>, string> m_sampleOwners;
     using SamplePorts = map<sai_object_id_t, string>;
     SamplePorts resolveSamplePorts(const string& alias) const;
