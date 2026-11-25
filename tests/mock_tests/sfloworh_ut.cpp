@@ -1170,6 +1170,76 @@ namespace sflow_test
         EXPECT_NE(info.find(port.m_port_id), info.end());
     }
 
+    /* A malformed sample_rate must be dropped, not thrown out of doTask and left to stall the table. */
+    TEST_F(SflowOrchTest, SflowMalformedRateIsDropped)
+    {
+        MockSflowOrch mock_orch;
+        auto enable = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    "global",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"}
+                    }
+                }
+            });
+        mock_orch.doSflowTableTask(enable);
+        ASSERT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+
+        // Ethernet0 (malformed rate) sorts ahead of the valid Ethernet4; a throw or
+        // stall on the bad rate would also stop the valid session being programmed.
+        auto sessions = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    "Ethernet0",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"},
+                        {"sample_rate", "abc"},
+                        {"sample_direction", "rx"}
+                    }
+                },
+                {
+                    "Ethernet4",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"},
+                        {"sample_rate", "1000"},
+                        {"sample_direction", "rx"}
+                    }
+                }
+            });
+        EXPECT_NO_THROW(mock_orch.doSflowSessionTableTask(sessions));
+
+        Port bad_port, good_port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", bad_port));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", good_port));
+        auto info = Portal::SflowOrchInternal::getSflowPortInfoMap(mock_orch.get());
+        EXPECT_EQ(info.find(bad_port.m_port_id), info.end());
+        EXPECT_NE(info.find(good_port.m_port_id), info.end());
+    }
+
+    /* A malformed sample_rate in the GLOBAL table is tolerated (rate defaults to 0) rather than
+       thrown out of doTask; unlike a per-port session, the global entry is still applied. */
+    TEST_F(SflowOrchTest, SflowGlobalMalformedRateIsHandled)
+    {
+        MockSflowOrch mock_orch;
+        auto global_bad_rate = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    "global",
+                    SET_COMMAND,
+                    {
+                        {"admin_state", "up"},
+                        {"sample_rate", "abc"}
+                    }
+                }
+            });
+        EXPECT_NO_THROW(mock_orch.doSflowTableTask(global_bad_rate));
+        EXPECT_TRUE(Portal::SflowOrchInternal::getSflowStatusEnable(mock_orch.get()));
+    }
+
     TEST_F(SflowOrchTest, SflowAddPortRejectsConflictingEgressBinding)
     {
         MockSflowOrch mock_orch;

@@ -2,6 +2,7 @@
 #include "sfloworch.h"
 #include "tokenize.h"
 #include "warm_restart.h"
+#include "converter.h"
 
 #include <fstream>
 #include "nlohmann/json.hpp"
@@ -1016,7 +1017,7 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
     return true;
 }
 
-void SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir)
+bool SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir)
 {
     for (auto i : fvs)
     {
@@ -1035,7 +1036,15 @@ void SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint
         {
             if (fvValue(i) != "error")
             {
-                rate = (uint32_t)stoul(fvValue(i));
+                try
+                {
+                    rate = to_uint<uint32_t>(fvValue(i));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid sample_rate '%s': %s", fvValue(i).c_str(), e.what());
+                    return false;
+                }
             }
             else
             {
@@ -1050,6 +1059,7 @@ void SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint
             }
         }
     }
+    return true;
 }
 
 void SflowOrch::sflowExtractGlobalInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate, string &dir, int32_t &drop_monitor_limit)
@@ -1071,7 +1081,16 @@ void SflowOrch::sflowExtractGlobalInfo(vector<FieldValueTuple> &fvs, bool &admin
         {
             if (fvValue(i) != "error")
             {
-                rate = (uint32_t)stoul(fvValue(i));
+                try
+                {
+                    rate = to_uint<uint32_t>(fvValue(i));
+                }
+                catch (const std::exception &e)
+                {
+                    SWSS_LOG_ERROR("Invalid sample_rate '%s': %s", fvValue(i).c_str(), e.what());
+                    rate = 0;
+                    continue;
+                }
             }
             else
             {
@@ -1240,7 +1259,12 @@ void SflowOrch::doTask(Consumer &consumer)
                             port.m_port_id, (unsigned int)admin_state, rate, 
                             (sflowInfo != m_sflowPortInfoMap.end()) ? sflowInfo->second.m_sample_dir.c_str() : "n/a");
 
-            sflowExtractInfo(kfvFieldsValues(tuple), admin_state, rate, dir);
+            // Malformed rate: drop the entry (a zero rate below is deferred, not dropped).
+            if (!sflowExtractInfo(kfvFieldsValues(tuple), admin_state, rate, dir))
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             SWSS_LOG_DEBUG("New Cfg  portOid %" PRIx64 " admin %d rate %d dir %s", 
                             port.m_port_id, (unsigned int)admin_state, rate, dir.c_str());
