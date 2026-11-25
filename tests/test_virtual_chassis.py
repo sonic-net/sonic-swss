@@ -1,5 +1,6 @@
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
+from dvslib.dvs_common import PollingConfig, wait_for_result
 import ast
 import time
 import pytest
@@ -796,20 +797,31 @@ class TestVirtualChassis(object):
                     spa_id = lag_entry.get("SAI_LAG_ATTR_SYSTEM_PORT_AGGREGATE_ID")
                     assert spa_id != "", "VOQ System port aggregate id not present for the LAG 2"
 
-                    # Create PortChannel 3. This should not be configured since lag id limit reached
-                    fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
-                    psTbl_lag.set(f"{test_lag3_name}", fvs)
-
-                    # Check syslog for the table full error
-                    marker = "ERR #orchagent"
+                    # Create PortChannel 3. This should not be configured since lag id limit reached.
+                    # orchagent retries addLag and logs the table-full error on every retry, so
+                    # a one-shot grep | wc -l == '1' races. Use the same check as
+                    # test_fabric_switch_id: unique marker + poll until count >= 1.
+                    marker = dvs.add_log_marker()
                     srch_str = f"addLag: Failed to allocate unique LAG id for local lag {test_lag3_name} rv:-1"
-                    _, num =  dvs.runcmd(["sh", "-c", "awk '/%s/,ENDFILE {print;}' /var/log/syslog \
-                                        | grep \"%s\" | wc -l" % (marker, srch_str)])
-                    assert num.strip() == '1', "LAG ID allocator table full error is not returned"
+                    fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
+                    try:
+                        psTbl_lag.set(f"{test_lag3_name}", fvs)
 
-                    # Clean up the app db for the PortChannel creation failure
-                    psTbl_lag.delete(f"{test_lag3_name}")
-                    
+                        def do_check_syslog():
+                            (_, out) = dvs.runcmd(['sh', '-c',
+                                "awk '/%s/,ENDFILE {print;}' /var/log/syslog | grep '%s' | wc -l"
+                                % (marker, srch_str)])
+                            return (int(out.strip()) >= 1, out.strip())
+
+                        wait_for_result(
+                            do_check_syslog,
+                            polling_config=PollingConfig(polling_interval=1, timeout=60, strict=True),
+                            failure_message="LAG ID allocator table full error is not returned")
+                    finally:
+                        # Always drop PC0003 so test_chassis_system_lag_id_allocator_del_id
+                        # is not skipped when the syslog assert fails.
+                        psTbl_lag.delete(f"{test_lag3_name}")
+
                     break
 
     def test_chassis_system_lag_id_allocator_del_id(self, vct):
