@@ -13,6 +13,8 @@ namespace swss {
 /* Port default admin status is down */
 #define DEFAULT_ADMIN_STATUS_STR    "down"
 #define DEFAULT_MTU_STR             "9100"
+#define DEFAULT_DHCP_RATE_LIMIT_STR ""
+#define PACKET_SIZE                 406
 
 class PortMgr : public Orch
 {
@@ -36,7 +38,11 @@ private:
     bool writeConfigToAppDb(const std::string &alias, std::vector<FieldValueTuple> &field_values);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);
+    bool setPortDHCPMitigationRate(const std::string &alias, const std::string &dhcp_rate_limit);
     bool isPortStateOk(const std::string &alias);
 };
+
+
+
 
 }
