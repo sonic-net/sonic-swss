@@ -704,6 +704,11 @@ bool VxlanMgr::doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t)
     std::string key = "Vlan" + vxlan_dev_name.substr(found+1,vxlan_dev_name.length());
     SWSS_LOG_INFO("Delete Tunnel Map for %s -> %s ", key.c_str(), vxlan_dev_name.c_str());
     m_stateNeighSuppressVlanTable.del(key);
+
+    // Cascade cleanup: flush kernel ARP (neigh) entries associated with this
+    // VLAN, since the VNI mapping is gone.
+    flushVxlanArpByVlan(vlan);
+
     return true;
 }
 
@@ -1363,6 +1368,28 @@ void VxlanMgr::endReconcile(bool warm)
     clearAllVxlanDevices();
 
     m_in_reconcile = false;
+}
+
+void VxlanMgr::flushVxlanArpByVlan(const std::string &vlan)
+{
+    SWSS_LOG_ENTER();
+
+    /* Flush kernel ARP entries with NUD_NOARP state on this VLAN interface.
+    EVPN Type 2 routes create NOARP neighbor entries in the kernel via the
+    VXLAN bridge driver, bypassing orchagent's m_syncdNeighbors entirely. */
+    std::string cmd = std::string("/sbin/ip neigh flush dev ") + vlan + " nud noarp";
+    std::string res;
+    int32_t ret = swss::exec(cmd, res);
+    if (ret)
+    {
+        SWSS_LOG_WARN("flushVxlanArpByVlan: ip neigh flush failed for %s, ret=%d, res=%s",
+                      vlan.c_str(), ret, res.c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("flushVxlanArpByVlan: kernel NOARP ARP flushed on %s",
+                        vlan.c_str());
+    }
 }
 
 bool VxlanMgr::isTunnelActive(std::string vxlanTunnelName)

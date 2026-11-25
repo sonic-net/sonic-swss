@@ -91,6 +91,7 @@ private:
 
     void clearAllVxlanDevices();
     void disableLearningForAllVxlanNetdevices();
+    void flushVxlanArpByVlan(const std::string &vlan);
 
     ProducerStateTable m_appVxlanTunnelTableProducer, m_appVxlanTunnelMapTable,m_appEvpnNvoTable;
     Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable, m_appVxlanTunnelTable;
