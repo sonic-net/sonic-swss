@@ -1,0 +1,36 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "SWSS_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "*.cpp",
+    "*.h",
+]))
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
+# Preserve the native local header search order, including repeated roots.
+MCLAGSYNCD_INCLUDE_DIRECTORIES = [
+    "mclagsyncd",
+    ".",
+    ".",
+]
+
+swss_cc_binary(
+    name = "mclagsyncd",
+    srcs = [
+        # do not sort
+        "mclagsyncd.cpp",
+        "mclaglink.cpp",
+    ],
+    local_include_directories = MCLAGSYNCD_INCLUDE_DIRECTORIES,
+    deps = SWSS_DEPS + [
+        ":production_headers",
+        "//lib:production_headers",
+    ],
+)

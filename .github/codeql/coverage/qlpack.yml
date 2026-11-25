@@ -1,0 +1,5 @@
+name: sonic/swss-source-coverage
+version: 0.0.1
+dependencies:
+  # CodeQL 2.27.1, selected by codeql-action v4.38.2.
+  codeql/cpp-all: "12.1.1"

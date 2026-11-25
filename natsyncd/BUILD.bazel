@@ -1,0 +1,39 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "SWSS_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "*.cpp",
+    "*.h",
+]))
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
+# Preserve the native local header search order, including repeated roots.
+NATSYNCD_INCLUDE_DIRECTORIES = [
+    "natsyncd",
+    ".",
+    ".",
+    "warmrestart",
+]
+
+swss_cc_binary(
+    name = "natsyncd",
+    srcs = [
+        # do not sort
+        "natsyncd.cpp",
+        "natsync.cpp",
+        "//warmrestart:warmRestartAssist.cpp",
+    ],
+    local_include_directories = NATSYNCD_INCLUDE_DIRECTORIES,
+    deps = SWSS_DEPS + [
+        ":production_headers",
+        "//lib:production_headers",
+        "//warmrestart:production_headers",
+    ],
+)

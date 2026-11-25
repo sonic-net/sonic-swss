@@ -1,6 +1,4 @@
-# For more infomation, please visit: https://github.com/github/codeql-action
-
-name: "CodeQL"
+name: CodeQL
 
 on:
   push:
@@ -14,146 +12,184 @@ on:
   workflow_dispatch:
 
 jobs:
-  analyze:
-    name: Analyze
+  analyze-python:
+    name: Analyze (python)
     runs-on: ubuntu-22.04
     permissions:
       actions: read
       contents: read
       security-events: write
-
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'cpp','python' ]
-
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    # Initializes the CodeQL tools for scanning.
-    - name: Initialize CodeQL
-      uses: github/codeql-action/init@ec3cf9c605b848da5f1e41e8452719eb1ccfb9a6 # v2.1.29
-      with:
-        config-file: ./.github/codeql/codeql-config.yml
-        languages: ${{ matrix.language }}
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          config-file: ./.github/codeql/codeql-config.yml
+          languages: python
 
-    - if: matrix.language == 'cpp'
-      name: Install prerequisites
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libxml-simple-perl \
-            aspell \
-            aspell-en \
-            libhiredis-dev \
-            libnl-3-dev \
-            libnl-genl-3-dev \
-            libnl-route-3-dev \
-            libnl-nf-3-dev \
-            libzmq3-dev \
-            libzmq5 \
-            swig \
-            libpython3-dev \
-            libgtest-dev \
-            libgmock-dev \
-            libboost-dev \
-            libboost-serialization-dev \
-            dh-exec \
-            doxygen \
-            cdbs \
-            bison \
-            flex \
-            graphviz \
-            autoconf-archive \
-            uuid-dev \
-            libjansson-dev \
-            nlohmann-json3-dev \
-            build-essential \
-            devscripts \
-            stgit
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: "/language:python"
 
-    - if: matrix.language == 'cpp'
-      name: Build sonic-swss-common
-      run: |
-        cd ..
-        git clone https://github.com/sonic-net/sonic-swss-common
-        pushd sonic-swss-common
-        ./autogen.sh
-        dpkg-buildpackage -rfakeroot -us -uc -b -Pnoyangmod,nopython2 -j$(nproc)
-        popd
-        dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-      env:
-        SWSSCOMMON_VER: "1.0.0"
+  analyze-cpp:
+    name: Analyze (cpp)
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie-20260918@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
+      options: --init
+    # Source-built protoc and Protobuf add to the full traced C++ build.
+    timeout-minutes: 120
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    steps:
+      - name: Install host build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils build-essential ca-certificates curl git lua5.4 python3 tar
 
-    - if: matrix.language == 'cpp'
-      name: Build sonic-sairedis
-      run: |
-        cd ..
-        git clone --recursive https://github.com/sonic-net/sonic-sairedis
-        pushd sonic-sairedis
-        ./autogen.sh
-        DEB_BUILD_OPTIONS=nocheck \
-        SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" \
-        SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" \
-        DEB_CFLAGS_SET="-Wno-error" DEB_CXXFLAGS_SET="-Wno-error" \
-        dpkg-buildpackage -rfakeroot -us -uc -b -Psyncd,vs,nopython2 -j$(nproc)
-        popd
-        dpkg-deb -x libsairedis_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsairedis-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaimetadata_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaimetadata-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaivs_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaivs-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-      env:
-        SAIREDIS_VER: "1.0.0"
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-    # Inject libnl deb only after sonic-sairedis compilation is done.
-    - if: matrix.language == 'cpp'
-      name: Build libnl
-      run: |
-        cd ..
-        git clone https://github.com/sonic-net/sonic-buildimage
-        pushd sonic-buildimage/src/libnl3
-        dget -u https://deb.debian.org/debian/pool/main/libn/libnl3/libnl3_${LIBNL3_VER}-${LIBNL3_REV}.dsc
-        pushd libnl3-${LIBNL3_VER}
-        git init
-        git config --local user.name $USER
-        git config --local user.email $USER@microsoft.com
-        git add -f *
-        git commit -qm "initial commit"
-        stg init
-        stg import -s ../patch/series
-        git config --local --unset user.name
-        git config --local --unset user.email
-        ln -s ../debian debian
-        DPKG_GENSYMBOLS_CHECK_LEVEL=0 dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
-        popd
-        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV_SONIC}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        popd
-      env:
-        LIBNL3_VER: "3.7.0"
-        LIBNL3_REV: "0.2"
-        LIBNL3_REV_SONIC: "0.2+b1sonic1"
+      - name: Configure Git for the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-    - if: matrix.language == 'cpp'
-      name: Build repository
-      run: |
-        ./autogen.sh
-        ./configure --prefix=/usr \
-        --with-extra-inc=$(dirname $GITHUB_WORKSPACE)/usr/include \
-        --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu \
-        --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu \
-        --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
+      - name: Check the tool-preparation tracing boundary
+        run: lua5.4 .github/codeql/test-preparation-tracing.lua
 
-    - name: Perform CodeQL analysis
-      uses: github/codeql-action/analyze@ec3cf9c605b848da5f1e41e8452719eb1ccfb9a6 # v2.1.29
-      with:
-        category: "/language:${{matrix.language}}"
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        with:
+          bazelisk-version: 1.29.0
+          bazelisk-cache: true
+          repository-cache: true
+          cache-version: "8.5.1"
+
+      - name: Prepare verified GitHub inputs and public download mirrors
+        run: bash bazel/ci_downloader.sh
+
+      - name: Fetch locked APT tools and patched protobuf sources before tracing
+        shell: bash
+        run: |
+          base="$(mktemp -d "$RUNNER_TEMP/swss-codeql-bazel-XXXXXXXX")"
+          bazel --batch --output_base="$base" fetch \
+            --repo=@@rules_distroless++apt+apt_native_tools \
+            --repo=@@rules_distroless++_repo_rules+distroless_native_tools \
+            --repo=@@protobuf-legacy++_repo_rules2+protobuf_source
+          echo "SWSS_CODEQL_OUTPUT_BASE=$base" >> "$GITHUB_ENV"
+
+      # Trace every Bazel build action, including all production and test compilers.
+      - name: Initialize CodeQL
+        id: init
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        env:
+          CODEQL_ACTION_EXTRA_OPTIONS: >-
+            {"database":{"init":["--extra-tracing-config=.github/codeql/sai-preparation-tracing.lua"]}}
+        with:
+          config-file: ./.github/codeql/codeql-config.yml
+          languages: cpp
+          build-mode: manual
+          trap-caching: false
+          dependency-caching: false
+
+      - name: Record maintained registry inputs
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+          main = "https://raw.githubusercontent.com/sonic-net/sonic-bazel-registry/main"
+          ref = "refs/heads/main"
+          advertised = subprocess.check_output(["git", "ls-remote",
+              "https://github.com/sonic-net/sonic-bazel-registry.git", ref], text=True).split()
+          assert len(advertised) == 2 and advertised[1] == ref
+          maintained_revision = advertised[0]
+          assert re.fullmatch(r"[0-9a-f]{40}", maintained_revision)
+          configuration = Path(".bazelrc").read_text()
+          declared = subprocess.check_output(["git", "show", "HEAD:.bazelrc"], text=True)
+          assert configuration == declared, "unexpected working .bazelrc changes"
+          assert configuration.count(main) == 1
+          artifacts = Path("artifacts/validation").resolve()
+          artifacts.mkdir(parents=True, exist_ok=True)
+          (artifacts / "declared.bazelrc").write_text(configuration)
+          (artifacts / "effective.bazelrc").write_text(configuration)
+          (artifacts / "registry-inputs.json").write_text(json.dumps({
+              "registry": main, "observed_revision": maintained_revision,
+          }, indent=2) + "\n")
+          PYTHON
+
+      - name: Verify Rust source inputs
+        run: |
+          test ! -e Cargo.Bazel.lock
+          git ls-files --error-unmatch Cargo.lock
+
+      - name: Build production programs and selected C++ coverage targets
+        run: >-
+          python3 bazel/ci_production.py build
+          --architecture amd64
+          --artifact-directory artifacts/codeql
+          --mode codeql
+
+      - name: Retain Rust dependency evidence
+        run: |
+          test ! -e Cargo.Bazel.lock
+          git diff --exit-code HEAD -- Cargo.lock
+          mkdir -p artifacts/rust
+          cp Cargo.toml Cargo.lock MODULE.bazel.lock artifacts/rust/
+
+      - name: Upload Rust dependency evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-rust-metadata-codeql
+          path: artifacts/rust/
+          if-no-files-found: error
+
+      - name: Perform CodeQL analysis
+        id: analyze
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: "/language:cpp"
+          upload-database: false
+
+      - name: Verify selected C++ source extraction
+        shell: bash
+        env:
+          CODEQL: ${{ steps.init.outputs.codeql-path }}
+          CODEQL_DATABASES: ${{ steps.analyze.outputs.db-locations }}
+        run: |
+          codeql_database="$(python3 -c 'import json, os; print(json.loads(os.environ["CODEQL_DATABASES"])["cpp"])')"
+          "$CODEQL" pack install .github/codeql/coverage
+          "$CODEQL" query run \
+            --database="$codeql_database" \
+            --output="$RUNNER_TEMP/swss-cpp-files.bqrs" \
+            .github/codeql/coverage/CppSourceFiles.ql
+          "$CODEQL" bqrs decode \
+            --format=csv \
+            --output=artifacts/codeql/cpp-source-files.csv \
+            "$RUNNER_TEMP/swss-cpp-files.bqrs"
+          python3 bazel/ci_production.py check-codeql \
+            --build-receipt artifacts/codeql/manifest.json \
+            --csv artifacts/codeql/cpp-source-files.csv \
+            --output artifacts/codeql/source-coverage.json
+
+      - name: Upload C++ extraction evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-codeql-cpp
+          path: artifacts/codeql/
+          if-no-files-found: error
+
+      - name: Upload registry selection evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-registry-codeql
+          path: artifacts/validation/
+          if-no-files-found: warn

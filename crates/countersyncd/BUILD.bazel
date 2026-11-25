@@ -1,0 +1,148 @@
+load("@rules_rs//rs:rust_binary.bzl", "rust_binary")
+load("@rules_rs//rs:rust_library.bzl", "rust_library")
+load("@rules_rs//rs:rust_test.bzl", "rust_test")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# rules_rs has no cargo_toml_env_vars helper for first-party targets.
+# Keep these values aligned with Cargo.toml so Clap preserves the Cargo-built CLI.
+CARGO_PACKAGE_ENV = {
+    "CARGO_PKG_AUTHORS": "SONiC",
+    "CARGO_PKG_DESCRIPTION": "",
+    "CARGO_PKG_HOMEPAGE": "",
+    "CARGO_PKG_NAME": "countersyncd",
+    "CARGO_PKG_REPOSITORY": "https://github.com/sonic-net/sonic-swss",
+}
+
+# Keep these direct dependencies aligned with countersyncd/Cargo.toml.
+# The shared module resolves their transitive crates, including Serde, once.
+RUST_DEPS = [
+    "@sonic_rust_deps//:ahash",
+    "@sonic_rust_deps//:byteorder",
+    "@sonic_rust_deps//:chrono",
+    "@sonic_rust_deps//:clap",
+    "@sonic_rust_deps//:color-eyre",
+    "@sonic_rust_deps//:env_logger",
+    "@sonic_rust_deps//:genetlink",
+    "@sonic_rust_deps//:libc",
+    "@sonic_rust_deps//:log",
+    "@sonic_rust_deps//:netlink-packet-core",
+    "@sonic_rust_deps//:netlink-packet-generic",
+    "@sonic_rust_deps//:netlink-packet-utils",
+    "@sonic_rust_deps//:netlink-sys",
+    "@sonic_rust_deps//:once_cell",
+    "@sonic_rust_deps//:opentelemetry",
+    "@sonic_rust_deps//:opentelemetry-http",
+    "@sonic_rust_deps//:opentelemetry-otlp",
+    "@sonic_rust_deps//:opentelemetry-proto",
+    "@sonic_rust_deps//:opentelemetry-semantic-conventions",
+    "@sonic_rust_deps//:opentelemetry-stdout",
+    "@sonic_rust_deps//:opentelemetry_sdk",
+    "@sonic_rust_deps//:prost",
+    "@sonic_rust_deps//:prost-types",
+    "@sonic_rust_deps//:reqwest",
+    "@sonic_rust_deps//:reqwest-middleware",
+    "@sonic_rust_deps//:reqwest-tracing",
+    "@sonic_rust_deps//:serde",
+    "@sonic_rust_deps//:serde_yaml",
+    "@sonic_rust_deps//:tokio",
+    "@sonic_rust_deps//:tonic",
+    "@sonic_rust_deps//:tonic-health",
+    "@sonic_rust_deps//:tracing",
+    "@sonic_rust_deps//:tracing-opentelemetry",
+    "@sonic_rust_deps//:tracing-subscriber",
+    "@sonic_swss_common//crates/swss-common:swss_common",
+]
+
+rust_library(
+    name = "countersyncd_lib",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/main.rs"],
+    ),
+    crate_name = "countersyncd",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+    rustc_env = CARGO_PACKAGE_ENV,
+    # Keep source lines in the linked ELF before sonic_deploy_tar splits it.
+    rustc_flags = [
+        "-Dwarnings",
+        "-Cdebuginfo=2",
+    ],
+    version = "0.1.0",
+    deps = RUST_DEPS,
+)
+
+rust_binary(
+    name = "countersyncd",
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["src/lib.rs"],
+    ),
+    crate_name = "countersyncd",
+    crate_root = "src/main.rs",
+    edition = "2021",
+    # Preserve the interface-library paths supplied by rules_distroless.
+    experimental_use_cc_common_link = 1,
+    rustc_env = CARGO_PACKAGE_ENV,
+    # Keep source lines in the linked ELF before sonic_deploy_tar splits it.
+    rustc_flags = [
+        "-Dwarnings",
+        "-Cdebuginfo=2",
+    ],
+    version = "0.1.0",
+    deps = [":countersyncd_lib"] + RUST_DEPS,
+)
+
+# Exercise Common's native string API and its Serde implementations through
+# SWSS's resolved Rust dependencies. No Redis service is needed.
+rust_test(
+    name = "common_rust_test_binary",
+    srcs = ["common_rust_test.rs"],
+    edition = "2021",
+    experimental_use_cc_common_link = 1,
+    # The public wrapper supplies the declared transitive native runtime.
+    # Keep //... from also executing this binary against host libraries.
+    tags = ["manual"],
+    visibility = ["//visibility:private"],
+    deps = [
+        "@sonic_rust_deps//:serde_json",
+        "@sonic_swss_common//crates/swss-common:swss_common",
+    ],
+)
+
+# Common owns the selected ZeroMQ/runtime closure, including libsodium. Use its
+# existing test runtime for execution as well as its C++ inputs for linking.
+COMMON_RUNTIME_ARGS = [
+    "$(location @patchelf//:patchelf)",
+    "$(location @sonic_swss_common//tools/bazel/runtime:test_runtime)",
+    "-",
+] + select({
+    "@sonic_swss_common//tools/bazel:yang_modules_enabled": ["enabled"],
+    "//conditions:default": ["disabled"],
+})
+
+sh_test(
+    name = "common_rust_test",
+    srcs = ["@sonic_swss_common//tools/bazel/runtime:run_with_runtime.py"],
+    args = COMMON_RUNTIME_ARGS + ["$(location :common_rust_test_binary)"],
+    data = [
+        ":common_rust_test_binary",
+        "@patchelf",
+        "@sonic_swss_common//tools/bazel/runtime:test_runtime",
+    ],
+)
+
+sh_binary(
+    name = "countersyncd_with_runtime",
+    testonly = True,
+    srcs = ["@sonic_swss_common//tools/bazel/runtime:run_with_runtime.py"],
+    args = COMMON_RUNTIME_ARGS + ["$(location :countersyncd)"],
+    data = [
+        ":countersyncd",
+        "@patchelf",
+        "@sonic_swss_common//tools/bazel/runtime:test_runtime",
+    ],
+)

@@ -1,0 +1,225 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "CFGMGR_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "*.cpp",
+    "*.h",
+    "*.lua",
+]))
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
+filegroup(
+    name = "lua_files",
+    srcs = [
+        # do not sort
+        "buffer_check_headroom_barefoot.lua",
+        "buffer_check_headroom_mellanox.lua",
+        "buffer_check_headroom_vs.lua",
+        "buffer_headroom_barefoot.lua",
+        "buffer_headroom_mellanox.lua",
+        "buffer_headroom_vs.lua",
+        "buffer_pool_barefoot.lua",
+        "buffer_pool_mellanox.lua",
+        "buffer_pool_vs.lua",
+    ],
+)
+
+CFGMGR_DAEMON_DEPS = CFGMGR_DEPS + [
+    ":production_headers",
+    "//lib:production_headers",
+    "//orchagent:production_headers",
+    "//warmrestart:production_headers",
+]
+
+# Preserve the native local header search order, including repeated roots.
+CFGMGR_INCLUDE_DIRECTORIES = [
+    "cfgmgr",
+    ".",
+    "lib",
+    ".",
+    "orchagent",
+    "warmrestart",
+    "orchagent/flex_counter",
+]
+
+# Compile these shared sources with each daemon's own options.
+CFGMGR_COMMON_SRCS = [
+    "//orchagent:orch.cpp",
+    "//orchagent:request_parser.cpp",
+    "//orchagent:response_publisher.cpp",
+    "//lib:recorder.cpp",
+]
+
+swss_cc_binary(
+    name = "vlanmgrd",
+    srcs = [
+        # do not sort
+        "vlanmgrd.cpp",
+        "vlanmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "teammgrd",
+    srcs = [
+        # do not sort
+        "teammgrd.cpp",
+        "teammgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "portmgrd",
+    srcs = [
+        # do not sort
+        "portmgrd.cpp",
+        "portmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "intfmgrd",
+    srcs = [
+        # do not sort
+        "intfmgrd.cpp",
+        "intfmgr.cpp",
+        "//lib:subintf.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "buffermgrd",
+    srcs = [
+        # do not sort
+        "buffermgrd.cpp",
+        "buffermgr.cpp",
+        "buffermgrdyn.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "vrfmgrd",
+    srcs = [
+        # do not sort
+        "vrfmgrd.cpp",
+        "vrfmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "nbrmgrd",
+    srcs = [
+        # do not sort
+        "nbrmgrd.cpp",
+        "nbrmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "vxlanmgrd",
+    srcs = [
+        # do not sort
+        "vxlanmgrd.cpp",
+        "vxlanmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "sflowmgrd",
+    srcs = [
+        # do not sort
+        "sflowmgrd.cpp",
+        "sflowmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "natmgrd",
+    srcs = [
+        # do not sort
+        "natmgrd.cpp",
+        "natmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "coppmgrd",
+    srcs = [
+        # do not sort
+        "coppmgrd.cpp",
+        "coppmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "tunnelmgrd",
+    srcs = [
+        # do not sort
+        "tunnelmgrd.cpp",
+        "tunnelmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "macsecmgrd",
+    srcs = [
+        # do not sort
+        "macsecmgrd.cpp",
+        "macsecmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS + ["//orchagent:macsecpost.cpp"],
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "fabricmgrd",
+    srcs = [
+        # do not sort
+        "fabricmgrd.cpp",
+        "fabricmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)
+
+swss_cc_binary(
+    name = "stpmgrd",
+    srcs = [
+        # do not sort
+        "stpmgrd.cpp",
+        "stpmgr.cpp",
+    ] + CFGMGR_COMMON_SRCS,
+    local_include_directories = CFGMGR_INCLUDE_DIRECTORIES,
+    deps = CFGMGR_DAEMON_DEPS,
+)

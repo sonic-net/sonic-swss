@@ -21,6 +21,9 @@ The SWitch State Service (SWSS) is a collection of software that provides a data
 
 ## Getting Started
 
+For Bazel build commands and instructions for maintaining component targets,
+see [Building and maintaining SWSS with Bazel](tools/bazel/README.md).
+
 ### Prerequisites
 
 Install the following dependencies:
@@ -156,4 +159,3 @@ For example:
 * Push your changes to your private fork and do "pull-request" to this repository
 * Use a pull request to do code review
 * Use issues to keep track of what is going on
-

@@ -1,0 +1,21 @@
+load("@buildifier_prebuilt//:rules.bzl", "buildifier")
+
+EXCLUDE_PATTERNS = [
+    "./.git/*",
+    "./bazel-*/*",
+    "./target/*",
+]
+
+buildifier(
+    name = "buildifier",
+    exclude_patterns = EXCLUDE_PATTERNS,
+    lint_mode = "fix",
+    mode = "fix",
+)
+
+buildifier(
+    name = "buildifier.check",
+    exclude_patterns = EXCLUDE_PATTERNS,
+    lint_mode = "warn",
+    mode = "check",
+)

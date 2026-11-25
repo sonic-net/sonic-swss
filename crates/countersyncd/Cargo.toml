@@ -69,7 +69,8 @@ reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
 swss-common = { workspace = true }
 
 [dev-dependencies]
-# Test utilities  
+# Test utilities
+serde_json = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
