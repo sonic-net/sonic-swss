@@ -179,6 +179,7 @@ public:
     bool getVlanMember(const string &alias, const Port &vlan, sai_object_id_t &vlan_member_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
+    bool setLagCollectionDistribution(Port& port, bool lag_oper_status);
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
     void updateDbPortFlapCount(Port& port, sai_port_oper_status_t pstatus);
     void updateDbPortOperError(Port& port, PortOperErrorEvent *pevent);
