@@ -64,6 +64,7 @@ public:
 
 private:
     void handleDeviceMetadataTable(Consumer &consumer);
+    void warnPortsNotReady();
     bool m_port_counter_enabled = false;
     bool m_port_phy_attr_enabled = false;
     bool m_port_phy_serdes_attr_enabled = false;
@@ -76,6 +77,7 @@ private:
     bool m_route_flow_counter_enabled = false;
     bool m_copp_stats_counter_enabled = false;
     bool m_delayTimerExpired = false;
+    bool m_portsNotReadyWarned = false;
     bool m_wred_queue_counter_enabled = false;
     bool m_wred_port_counter_enabled = false;
     Table m_bufferQueueConfigTable;
