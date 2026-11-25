@@ -1,0 +1,135 @@
+# Keep bazel_compatibility aligned with sonic-buildimage and sonic-swss-common.
+module(
+    name = "sonic-swss",
+    version = "0.0.3",
+    bazel_compatibility = [
+        ">=8.5.1",
+        "<=8.5.1",
+    ],
+    repo_name = "sonic_swss",
+)
+
+bazel_dep(name = "buildifier_prebuilt", version = "8.5.1.3", dev_dependency = True)
+
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "libnl3", version = "3.7.0.sonic.10")
+bazel_dep(name = "libteam", version = "1.31.0.sonic.2")
+bazel_dep(name = "patchelf", version = "0.18.0.bcr.1")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "protobuf-legacy", version = "3.21.12.sonic.4", repo_name = "protobuf_legacy")
+bazel_dep(name = "rules_cc", version = "0.2.20")
+bazel_dep(name = "rules_distroless", version = "0.9.4.sonic.26")
+bazel_dep(name = "rules_pkg", version = "1.1.0")
+bazel_dep(name = "rules_python", version = "1.9.0.sonic.2")
+bazel_dep(name = "rules_rs", version = "0.1.0")
+bazel_dep(name = "rules_shell", version = "0.6.1")
+bazel_dep(name = "sai", version = "1.18.0.sonic.2")
+bazel_dep(name = "tar.bzl", version = "0.10.5.sonic.2")
+bazel_dep(
+    name = "sonic-build-infra",
+    version = "0.0.45-77ef625a4ddafc8cdc15f3cc6aee31eabac8a5de",
+    repo_name = "sonic_build_infra",
+)
+bazel_dep(
+    name = "sonic-dash-api",
+    version = "0.0.6-55310bf7437d67411418c974587adcdc1b194d6b",
+    repo_name = "sonic_dash_api",
+)
+bazel_dep(
+    name = "sonic-sairedis",
+    version = "0.0.5-6b9b254c0d083f3c75e20c61e88e083a7acf0a67",
+    repo_name = "sonic_sairedis",
+)
+bazel_dep(
+    name = "sonic-rust-deps",
+    version = "0.0.5-4064a814e8530300a7acbad4a9aff0621e2fb98e",
+    repo_name = "sonic_rust_deps",
+)
+bazel_dep(
+    name = "sonic-swss-common",
+    version = "0.0.8-2a4ddd070edb719f2e969a880a5cfff711e64e72",
+    repo_name = "sonic_swss_common",
+)
+
+# Imported module overrides do not propagate to this root. Keep the patched
+# tar implementation required by Common and shared deployment rules.
+single_version_override(
+    module_name = "tar.bzl",
+    version = "0.10.5.sonic.2",
+)
+
+# Keep SWSS and its dependencies on the same published infrastructure release.
+single_version_override(
+    module_name = "sonic-build-infra",
+    version = "0.0.45-77ef625a4ddafc8cdc15f3cc6aee31eabac8a5de",
+)
+
+# Distroless imports rules_cc's private cc_import implementation. Releases
+# 0.2.21 and 0.2.22 require a runtime toolchain type missing from Bazel 8.5.1.
+single_version_override(
+    module_name = "rules_cc",
+    version = "0.2.20",
+)
+
+# Historical dotted versions requested by dependencies sort above this release.
+single_version_override(
+    module_name = "libnl3",
+    version = "3.7.0.sonic.10",
+)
+
+# RE2's BCR metadata repair marks its legacy local C++ extension as development-only.
+single_version_override(
+    module_name = "re2",
+    version = "2024-07-02.bcr.1",
+)
+
+gcc = use_extension("@sonic_build_infra//toolchains/gcc:extensions.bzl", "gcc")
+use_repo(gcc, "gcc_toolchains")
+
+register_toolchains("@gcc_toolchains//:all")
+
+register_toolchains("@sonic_build_infra//tools/gzip:toolchain")
+
+# sonic-build-infra owns the common Debian dependency set.
+apt = use_extension("@rules_distroless//apt:extensions.bzl", "apt")
+apt.install(
+    dependency_set = "swss_debian",
+    packages = [
+        "libjansson-dev",
+        "libjansson4",
+        "libjemalloc-dev",
+        "libjemalloc2",
+        "libyaml-cpp-dev",
+        "libyaml-cpp0.8",
+    ],
+    suites = [
+        "trixie",
+        "trixie-updates",
+        "trixie-security",
+    ],
+)
+use_repo(apt, "swss_debian", "trixie")
+
+rules_rust = use_extension("@rules_rs//rs:rules_rust.bzl", "rules_rust")
+use_repo(rules_rust, "rules_rust")
+
+rust = use_extension("@rules_rs//rs:rules_rust_reexported_extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = [
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    ],
+    versions = ["1.90.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+bindgen = use_extension("@rules_rs//rs:rules_rust_bindgen.bzl", "rules_rust_bindgen")
+use_repo(bindgen, "rules_rust_bindgen")
+
+register_toolchains(
+    "@rules_rust_bindgen//:all",
+    dev_dependency = True,
+)

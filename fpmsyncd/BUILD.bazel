@@ -1,0 +1,46 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "SWSS_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "**/*.cpp",
+    "**/*.h",
+]) + ["bgp_eoiu_marker.py"])
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["**/*.h"]),
+    includes = ["."],
+)
+
+# Preserve the native local header search order, including repeated roots.
+FPMSYNCD_INCLUDE_DIRECTORIES = [
+    "fpmsyncd",
+    ".",
+    ".",
+    "warmrestart",
+    "fpmsyncd",
+    "lib",
+]
+
+swss_cc_binary(
+    name = "fpmsyncd",
+    srcs = [
+        # do not sort
+        "fpmsyncd.cpp",
+        "fpmlink.cpp",
+        "routesync.cpp",
+        "routesendcoalescer.cpp",
+        "macsync.cpp",
+        "//warmrestart:warmRestartHelper.cpp",
+        "//lib:orch_zmq_config.cpp",
+    ],
+    local_include_directories = FPMSYNCD_INCLUDE_DIRECTORIES,
+    deps = SWSS_DEPS + [
+        ":production_headers",
+        "//lib:production_headers",
+        "//warmrestart:production_headers",
+        "@swss_debian//libjemalloc-dev:libjemalloc",
+    ],
+)

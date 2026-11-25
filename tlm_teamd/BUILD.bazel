@@ -1,0 +1,37 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "TLM_TEAM_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "*.cpp",
+    "*.h",
+]))
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
+# Preserve the native local header search order, including repeated roots.
+TLM_TEAMD_INCLUDE_DIRECTORIES = [
+    "tlm_teamd",
+    ".",
+    ".",
+    "lib",
+]
+
+swss_cc_binary(
+    name = "tlm_teamd",
+    srcs = [
+        "main.cpp",
+        "teamdctl_mgr.cpp",
+        "values_store.cpp",
+    ],
+    local_include_directories = TLM_TEAMD_INCLUDE_DIRECTORIES,
+    deps = TLM_TEAM_DEPS + [
+        ":production_headers",
+        "//lib:production_headers",
+    ],
+)

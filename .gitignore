@@ -4,6 +4,7 @@
 *.lo
 *.o
 *.pyc
+MODULE.bazel.lock
 
 # Packaging Files #
 ###################
@@ -107,4 +108,13 @@ orchagent/p4orch/tests/*_tr.xml
 
 build-env/.env
 build-env/custom-setup.sh
+
+# Bazel outputs and local configuration
+/bazel-*
+/.bazelrc.user
+
+# Generated Bazel state and CI artifacts.
+/MODULE.bazel.lock
+/Cargo.Bazel.lock
+/artifacts/
 .azure-pipelines/docker-sonic-vs/debs/

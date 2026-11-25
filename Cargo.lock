@@ -466,6 +466,7 @@ dependencies = [
  "reqwest-middleware 0.3.3",
  "reqwest-tracing",
  "serde",
+ "serde_json",
  "serde_yaml",
  "serial_test",
  "swss-common",

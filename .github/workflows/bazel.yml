@@ -1,0 +1,240 @@
+name: Bazel
+
+on:
+  workflow_dispatch:
+    inputs:
+      clean:
+        description: Rebuild native outputs without action result cache reuse
+        type: boolean
+        default: false
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  production:
+    name: Bazel production (${{ matrix.arch }})
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: AMD64
+            architecture: amd64
+            platform: x86_64_trixie
+            runner: ubuntu-24.04
+          - arch: ARM64
+            architecture: arm64
+            platform: aarch64_trixie
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: debian:trixie-20260918@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
+      options: --init
+      volumes:
+        - /usr/local/lib/android:/runner-unused/android
+        - /usr/share/dotnet:/runner-unused/dotnet
+        - /opt/ghc:/runner-unused/ghc
+    steps:
+      - name: Allocate source-build space on this disposable runner
+        if: matrix.architecture == 'amd64'
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          df -h / "$GITHUB_WORKSPACE"
+          du -sh /runner-unused/android /runner-unused/dotnet /runner-unused/ghc
+          # These host SDKs are not inputs to the pinned Trixie build. Preserve
+          # all Bazel caches, the workspace, retained outputs and execution tools.
+          find /runner-unused/android /runner-unused/dotnet /runner-unused/ghc \
+            -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          df -h / "$GITHUB_WORKSPACE"
+      - name: Install host build tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            autoconf autoconf-archive automake autotools-dev binutils \
+            build-essential ca-certificates curl debhelper gdb git libhiredis-dev \
+            libjansson-dev libnl-3-dev libnl-genl-3-dev libnl-nf-3-dev \
+            libnl-route-3-dev libteam-dev libtool libxml2 pkg-config python3 tar
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Configure Git for the container checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Run build contract unit tests
+        run: python3 -m unittest discover -s bazel/tests -v
+
+      - name: Configure the native production source selection
+        run: |
+          ./autogen.sh
+          debian/rules override_dh_auto_configure
+
+      - name: Record native production sources and build settings
+        run: >-
+          python3 bazel/native_build_contract.py
+          --source "$GITHUB_WORKSPACE"
+          --configured-build "$GITHUB_WORKSPACE"
+          --output-build-contract "$RUNNER_TEMP/native-build-contract.json"
+          --git-revision "$(git rev-parse HEAD)"
+
+      # A Bazel-Clean: true trailer on the PR head commit also selects a clean
+      # build while this workflow is not yet available on the default branch.
+      - name: Select native build cache mode
+        id: build_mode
+        shell: bash
+        env:
+          CLEAN_INPUT: ${{ inputs.clean || false }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          commit_trailers="$(git show -s --format=%B "$CI_HEAD_SHA" | git interpret-trailers --parse)"
+          build_mode=normal
+          if [[ "$CLEAN_INPUT" == "true" ]] || grep -Eq '^Bazel-Clean:[[:space:]]*true[[:space:]]*$' <<< "$commit_trailers"; then
+            build_mode=clean
+          fi
+          printf 'mode=%s\n' "$build_mode" >> "$GITHUB_OUTPUT"
+          printf 'Native build mode: %s (head %s)\n' "$build_mode" "$CI_HEAD_SHA"
+
+      - name: Set up Bazel
+        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        with:
+          bazelisk-version: 1.29.0
+          bazelisk-cache: true
+          repository-cache: true
+          disk-cache: swss-production-${{ matrix.architecture }}
+          cache-version: "8.5.1"
+
+      - name: Prepare verified GitHub inputs and public download mirrors
+        run: bash bazel/ci_downloader.sh
+
+      - name: Record maintained registry inputs
+        run: |
+          python3 - <<'PYTHON'
+          import json
+          from pathlib import Path
+          import re
+          import subprocess
+          main = "https://raw.githubusercontent.com/sonic-net/sonic-bazel-registry/main"
+          ref = "refs/heads/main"
+          advertised = subprocess.check_output(["git", "ls-remote",
+              "https://github.com/sonic-net/sonic-bazel-registry.git", ref], text=True).split()
+          assert len(advertised) == 2 and advertised[1] == ref
+          maintained_revision = advertised[0]
+          assert re.fullmatch(r"[0-9a-f]{40}", maintained_revision)
+          configuration = Path(".bazelrc").read_text()
+          declared = subprocess.check_output(["git", "show", "HEAD:.bazelrc"], text=True)
+          assert configuration == declared, "unexpected working .bazelrc changes"
+          assert configuration.count(main) == 1
+          artifacts = Path("artifacts/validation").resolve()
+          artifacts.mkdir(parents=True, exist_ok=True)
+          (artifacts / "declared.bazelrc").write_text(configuration)
+          (artifacts / "effective.bazelrc").write_text(configuration)
+          (artifacts / "registry-inputs.json").write_text(json.dumps({
+              "registry": main, "observed_revision": maintained_revision,
+          }, indent=2) + "\n")
+          PYTHON
+
+      - name: Verify Rust source inputs
+        run: |
+          test ! -e Cargo.Bazel.lock
+          git ls-files --error-unmatch Cargo.lock
+
+      - name: Check Bazel formatting
+        run: >-
+          bazel run --lockfile_mode=update
+          --platforms=@sonic_build_infra//platforms:${{ matrix.platform }}
+          --host_platform=@sonic_build_infra//platforms:${{ matrix.platform }}
+          //tools/bazel/buildifier:buildifier.check
+
+      - name: Build and inspect production C++ programs
+        run: >-
+          python3 bazel/ci_production.py build
+          --architecture ${{ matrix.architecture }}
+          --native-contract "$RUNNER_TEMP/native-build-contract.json"
+          --artifact-directory artifacts/production
+          --mode ${{ steps.build_mode.outputs.mode }}
+
+      - name: Upload C++ build outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-cpp-${{ matrix.architecture }}
+          path: artifacts/production/
+          if-no-files-found: error
+
+      - name: Build and test the Rust program
+        shell: bash
+        run: |
+          options=(
+            --config=release
+            --lockfile_mode=update
+            --platforms=@sonic_build_infra//platforms:${{ matrix.platform }}
+            --host_platform=@sonic_build_infra//platforms:${{ matrix.platform }}
+            --jobs=4
+          )
+          bazel test "${options[@]}" --test_output=errors \
+            //crates/countersyncd:countersyncd \
+            //crates/countersyncd:common_rust_test
+          binary="$(bazel cquery "${options[@]}" //crates/countersyncd:countersyncd --output=files)"
+          test -x "$binary"
+          # Use Common's declared runtime for ZeroMQ's transitive libraries.
+          runtime_test_tmpdir="$(mktemp -d /tmp/sonic-swss-runtime.XXXXXX)"
+          test "$(bazel run "${options[@]}" --run_under="/usr/bin/env TEST_TMPDIR=$runtime_test_tmpdir" \
+            //crates/countersyncd:countersyncd_with_runtime -- --version)" = "countersyncd 0.1.0"
+          mkdir -p artifacts/rust
+          cp "$binary" artifacts/rust/
+          cp bazel-testlogs/crates/countersyncd/common_rust_test/test.xml \
+            bazel-testlogs/crates/countersyncd/common_rust_test/test.log artifacts/rust/
+          python3 bazel/verify_rust_dependencies.py \
+            --architecture ${{ matrix.architecture }} \
+            --artifact-directory artifacts/rust
+
+      - name: Retain Rust dependency evidence
+        run: |
+          test ! -e Cargo.Bazel.lock
+          git diff --exit-code HEAD -- Cargo.lock
+          cp Cargo.toml Cargo.lock MODULE.bazel.lock artifacts/rust/
+
+      - name: Upload Rust dependency evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-rust-metadata-${{ matrix.architecture }}
+          path: artifacts/rust/
+          if-no-files-found: error
+
+      - name: Build and validate complete runtime and debug packages
+        env:
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: >-
+          python3 bazel/ci_runtime_package.py
+          --architecture ${{ matrix.architecture }}
+          --native-contract "$RUNNER_TEMP/native-build-contract.json"
+          --artifact-directory artifacts/packages
+
+      - name: Build producer package metadata
+        run: |
+          bazel build --config=release --lockfile_mode=update \
+            --platforms=@sonic_build_infra//platforms:${{ matrix.platform }} \
+            --host_platform=@sonic_build_infra//platforms:${{ matrix.platform }} \
+            //dist:runtime_packages.json
+          cp bazel-bin/dist/runtime_packages.json artifacts/packages/runtime_packages.json
+
+      - name: Upload runtime and matching debug packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-packages-${{ matrix.architecture }}
+          path: artifacts/packages/
+          if-no-files-found: error
+
+      - name: Upload registry selection evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sonic-swss-registry-${{ matrix.architecture }}
+          path: artifacts/validation/
+          if-no-files-found: warn

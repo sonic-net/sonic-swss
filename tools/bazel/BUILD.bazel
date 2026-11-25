@@ -1,0 +1,32 @@
+load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+
+package(default_visibility = ["//visibility:public"])
+
+bool_flag(
+    name = "asan",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "asan_enabled",
+    flag_values = {":asan": "True"},
+)
+
+bool_flag(
+    name = "gcov",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "gcov_enabled",
+    flag_values = {":gcov": "True"},
+)
+
+config_setting(
+    name = "release_link",
+    flag_values = {
+        ":asan": "False",
+        ":gcov": "False",
+    },
+    values = {"compilation_mode": "opt"},
+)

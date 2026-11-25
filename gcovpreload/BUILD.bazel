@@ -1,0 +1,39 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_import", "cc_library", "cc_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["gcovpreload.cpp"])
+
+# The native coverage build compiles this shared object without coverage flags.
+cc_binary(
+    name = "libgcovpreload.so",
+    srcs = ["gcovpreload.cpp"],
+    copts = ["-fPIC"],
+    linkopts = ["-Wl,-soname,libgcovpreload.so"],
+    linkshared = True,
+)
+
+cc_import(
+    name = "_gcovpreload_import",
+    shared_library = ":libgcovpreload.so",
+)
+
+# Coverage loads this library for its constructor, with no direct symbol
+# reference. Keep it in DT_NEEDED despite the toolchain's --as-needed default.
+cc_library(
+    name = "gcovpreload_shared",
+    additional_linker_inputs = [":libgcovpreload.so"],
+    linkopts = [
+        "-Wl,--push-state,--no-as-needed",
+        "$(location :libgcovpreload.so)",
+        "-Wl,--pop-state",
+    ],
+    deps = [":_gcovpreload_import"],
+)
+
+cc_test(
+    name = "gcovpreload_test",
+    size = "small",
+    srcs = ["gcovpreload_test.cpp"],
+    deps = [":gcovpreload_shared"],
+)

@@ -1,0 +1,34 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary")
+load("//tools/bazel:deps.bzl", "SWSS_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["sample/netbouncer.json"])
+
+# Preserve the native local header search order, including repeated roots.
+SWSSCONFIG_INCLUDE_DIRECTORIES = [
+    "swssconfig",
+    ".",
+    ".",
+    "lib",
+]
+
+swss_cc_binary(
+    name = "swssconfig",
+    srcs = [
+        "swssconfig.cpp",
+        "//lib:orch_zmq_config.cpp",
+    ],
+    local_include_directories = SWSSCONFIG_INCLUDE_DIRECTORIES,
+    deps = SWSS_DEPS + ["//lib:production_headers"],
+)
+
+swss_cc_binary(
+    name = "swssplayer",
+    srcs = [
+        "swssplayer.cpp",
+        "//lib:orch_zmq_config.cpp",
+    ],
+    local_include_directories = SWSSCONFIG_INCLUDE_DIRECTORIES,
+    deps = SWSS_DEPS + ["//lib:production_headers"],
+)

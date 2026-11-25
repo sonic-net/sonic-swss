@@ -1,0 +1,39 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "SWSS_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "*.cpp",
+    "*.h",
+]) + ["restore_neighbors.py"])
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
+# Preserve the native local header search order, including repeated roots.
+NEIGHSYNCD_INCLUDE_DIRECTORIES = [
+    "neighsyncd",
+    ".",
+    ".",
+    "warmrestart",
+]
+
+swss_cc_binary(
+    name = "neighsyncd",
+    srcs = [
+        # do not sort
+        "neighsyncd.cpp",
+        "neighsync.cpp",
+        "//warmrestart:warmRestartAssist.cpp",
+    ],
+    local_include_directories = NEIGHSYNCD_INCLUDE_DIRECTORIES,
+    deps = SWSS_DEPS + [
+        ":production_headers",
+        "//lib:production_headers",
+        "//warmrestart:production_headers",
+    ],
+)

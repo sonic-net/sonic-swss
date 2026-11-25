@@ -1,0 +1,36 @@
+load("//tools/bazel:cc.bzl", "swss_cc_binary", "swss_headers")
+load("//tools/bazel:deps.bzl", "TEAM_DEPS")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob([
+    "*.cpp",
+    "*.h",
+]))
+
+swss_headers(
+    name = "headers",
+    hdrs = glob(["*.h"]),
+    includes = ["."],
+)
+
+# Preserve the native local header search order, including repeated roots.
+TEAMSYNCD_INCLUDE_DIRECTORIES = [
+    "teamsyncd",
+    ".",
+    ".",
+]
+
+swss_cc_binary(
+    name = "teamsyncd",
+    srcs = [
+        # do not sort
+        "teamsyncd.cpp",
+        "teamsync.cpp",
+    ],
+    local_include_directories = TEAMSYNCD_INCLUDE_DIRECTORIES,
+    deps = TEAM_DEPS + [
+        ":production_headers",
+        "//lib:production_headers",
+    ],
+)

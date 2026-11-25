@@ -1,0 +1,40 @@
+common --check_direct_dependencies=off
+common --noincompatible_disallow_empty_glob
+
+# The maintained registry includes the landed DASH entry.
+# Keep module versions, source checksums and toolchain inputs pinned.
+common --registry=https://raw.githubusercontent.com/sonic-net/sonic-bazel-registry/main
+common --registry=https://bcr.bazel.build/
+
+# Optional public download defaults prepared by bazel/ci_downloader.sh.
+# Keep explicit submodule and user configuration below these defaults.
+try-import %workspace%/artifacts/validation/swss-github-inputs.bazelrc
+
+# sonic-buildimage supplies checkout overrides when this repository is a submodule.
+try-import %workspace%/../../tools/bazel/submodule-config.bazelrc
+
+# These toolchains execute on the same CPU they target.
+common --platforms=@sonic_build_infra//platforms:x86_64_trixie
+common --host_platform=@sonic_build_infra//platforms:x86_64_trixie
+common:aarch64 --platforms=@sonic_build_infra//platforms:aarch64_trixie
+common:aarch64 --host_platform=@sonic_build_infra//platforms:aarch64_trixie
+
+# Build Common's YANG C++ sources and generate its schema from declared inputs.
+common --@sonic_swss_common//tools/bazel:yang_modules=True
+
+# Rust 1.90 mangles allocator symbols. The cc_common linker needs the
+# compiler-generated allocator library supplied by rules_rust.
+build --@rules_rust//rust/settings:experimental_use_allocator_libraries_with_mangled_symbols=True
+
+# The managed GCC toolchain supplies optimization and baseline hardening.
+build:release --compilation_mode=opt
+
+build:asan --//tools/bazel:asan=True
+build:gcov --//tools/bazel:gcov=True
+build:debug --compilation_mode=dbg
+
+# Keep local configuration outside source control.
+try-import %workspace%/.bazelrc.user
+
+# Dependencies do not import their .bazelrc; select cached kernel tools here.
+build --remote_download_regex=(^|.*/)tools/build_tools/kernel_runtime_(amd64|arm64)(/.*)?$

@@ -1,0 +1,27 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//tools/bazel:deps.bzl", "ORCHAGENT_DEPS", "TEAM_DEPS", "TLM_TEAM_DEPS")
+load(":runtime_libraries.bzl", "runtime_libraries")
+
+# Exercise the same shared dependency closure as orchagent without starting its
+# Redis/SAI daemon initialization. Both DASH and SWSS use one Protobuf runtime.
+cc_test(
+    name = "protobuf_runtime_test",
+    srcs = ["protobuf_runtime_test.cpp"],
+    linkopts = [
+        "-Wl,--no-as-needed",
+        "-ldl",
+    ],
+    deps = ORCHAGENT_DEPS,
+)
+
+runtime_libraries(
+    name = "orchagent_runtime_libraries",
+    deps = ORCHAGENT_DEPS,
+)
+
+# The loader check uses these declared dependencies with the owner's installed
+# libteam TARs; no host libteam library may satisfy the check.
+runtime_libraries(
+    name = "libteam_consumer_runtime_libraries",
+    deps = depset(TEAM_DEPS + TLM_TEAM_DEPS).to_list(),
+)
