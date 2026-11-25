@@ -90,6 +90,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 dashmeterorch_ut.cpp \
                 twamporch_ut.cpp \
                 stporch_ut.cpp \
+                natorch_ut.cpp \
                 srv6orch_ut.cpp \
                 flexcounter_ut.cpp \
                 pfcwdhw_counters_ut.cpp \
