@@ -62,7 +62,7 @@ bool NameLabelMapper::getLabel(_In_ sai_object_type_t object_type, _In_ const st
 bool NameLabelMapper::isLabelValid(std::string label) {
     SWSS_LOG_ENTER();
     size_t len = label.length();
-    return len >= 16 && len < 32;
+    return len >= 15 && len < 32;
 }
 
 bool NameLabelMapper::eraseLabel(_In_ sai_object_type_t object_type, _In_ const std::string &key)
@@ -112,7 +112,7 @@ std::string NameLabelMapper::generateUniqueLabel()
     uint64_t msec =
         std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch())
             .count();
-    snprintf(label_buf, UNIQUE_LABEL_SIZE, "%" PRIu64 "", msec);
+    snprintf(label_buf, UNIQUE_LABEL_SIZE, "%015" PRIx64 "", msec);
     return std::string(reinterpret_cast<char const *>(label_buf));
 }
 
