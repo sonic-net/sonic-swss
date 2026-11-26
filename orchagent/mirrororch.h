@@ -90,6 +90,7 @@ struct MirrorSessionUpdate
 {
     string name;
     bool active;
+    bool recoveredInPlace = false;
 };
 
 /* MirrorTable: mirror session name, mirror session data */
@@ -135,7 +136,7 @@ private:
     bool isHwResourcesAvailable();
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
-    task_process_status deleteEntry(const string&);
+    task_process_status deleteEntry(const string&, bool replacingForNewBinding = false);
 
     bool activateSession(const string&, MirrorEntry&);
     bool deactivateSession(const string&, MirrorEntry&);
@@ -179,6 +180,7 @@ private:
         bool enabled = false;
         bool deleting = false;
         bool cleanupPending = false;
+        bool programmingRejected = false;
         bool unsupportedLogged = false;
         uint32_t rate = 0;
         uint32_t truncate = 0;
@@ -191,7 +193,9 @@ private:
     SamplingMode m_samplingMode = SamplingMode::NONE;
     SamplingMode configuredSamplingMode() const;
     bool claimSamplingMode(SamplingMode requested);
-    bool hasSampleBindingForSession(const string& name);
+    bool hasSampleBindingForSession(const string& name, bool includeConfig = true);
+    bool hasConfiguredSampleBinding(const string& name, bool onlyNew = false);
+    bool hasQueuedReplacement(const string& table, const string& key);
     map<string, SampleBinding> m_sampleBindings;
     std::set<string> m_sampleRetries;
     enum class ExportDeactivation { DETACH_BINDINGS, REMOVE_SESSION };
@@ -201,12 +205,12 @@ private:
     using SamplePorts = map<sai_object_id_t, string>;
     SamplePorts resolveSamplePorts(const string& alias) const;
     bool samplePortsAvailable(const string& key, const SampleBinding& binding, const SamplePorts& ports) const;
-    bool attachSamplePort(const string& key, SampleBinding& binding, sai_object_id_t oid, const string& alias,
-                          sai_object_id_t sessionId);
+    sai_status_t attachSamplePort(const string& key, SampleBinding& binding, sai_object_id_t oid, const string& alias,
+                                  sai_object_id_t sessionId);
     bool reconcileSampleBinding(const string& key, SampleBinding& binding);
     void syncSampleBinding(const string& key, SampleBinding& binding);
     task_process_status setSampleBinding(const string&, const vector<FieldValueTuple>&);
-    bool createSamplePacket(const string&, SampleBinding&);
+    sai_status_t createSamplePacket(const string&, SampleBinding&);
     bool clearSampleAttachment(const string&, SampleBinding&, sai_object_id_t);
     bool clearSampleBinding(const string&, SampleBinding&);
     void syncSampleBindings();

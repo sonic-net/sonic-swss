@@ -2727,6 +2727,7 @@ void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
 
     if (update->active)
     {
+        if (update->recoveredInPlace && m_state) return;
         SWSS_LOG_INFO("Activating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
         // During mirror session activation, the newly created counter needs to be registered to the FC.
         if(activate() && hasCounter())

@@ -45,6 +45,7 @@ class SampleBindingTest : public MockOrchTest
 {
 protected:
     std::unique_ptr<PortSampleSaiGuard> guard;
+    Consumer* bindings = nullptr;
     void ApplyInitialConfigs() override
     {
         Table ports(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -58,6 +59,8 @@ protected:
     void PostSetUp() override
     {
         guard.reset(new PortSampleSaiGuard());
+        bindings = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor("PORT_MIRROR_SAMPLE"));
+        ASSERT_NE(bindings, nullptr);
         gSwitchOrch->m_portIngressSampleMirrorSupported = true;
         gSwitchOrch->m_portEgressSampleMirrorSupported = true;
         gSwitchOrch->m_samplepacketTruncationSupported = true;
@@ -116,22 +119,25 @@ protected:
     void remove(const string& key)
     {
         Table(m_config_db.get(), "PORT_MIRROR_SAMPLE").del(key);
-        auto consumer = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor("PORT_MIRROR_SAMPLE"));
-        ASSERT_NE(consumer, nullptr);
-        consumer->m_toSync.emplace(key, KeyOpFieldsValuesTuple(key, DEL_COMMAND, {}));
-        gMirrorOrch->doTask(*consumer);
+        bindings->addToSync(KeyOpFieldsValuesTuple(key, DEL_COMMAND, {}));
+        bindings->drain();
+    }
+    void queueBindingRow(const string& key)
+    {
+        vector<FieldValueTuple> row;
+        ASSERT_TRUE(Table(m_config_db.get(), "PORT_MIRROR_SAMPLE").get(key, row));
+        bindings->addToSync(KeyOpFieldsValuesTuple(key, SET_COMMAND, row));
+    }
+    void writeBinding(const string& key, const vector<FieldValueTuple>& values)
+    {
+        Table(m_config_db.get(), "PORT_MIRROR_SAMPLE").set(key, values);
+        queueBindingRow(key);
+        bindings->drain();
     }
     void setAdmin(const string& key, const string& state)
     {
-        auto consumer = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor("PORT_MIRROR_SAMPLE"));
-        ASSERT_NE(consumer, nullptr);
-        Table cfg(m_config_db.get(), "PORT_MIRROR_SAMPLE");
-        cfg.hset(key, "admin_state", state);
-        vector<FieldValueTuple> row;
-        ASSERT_TRUE(cfg.get(key, row));
-        consumer->addToSync(KeyOpFieldsValuesTuple(key, SET_COMMAND, row));
-        gMirrorOrch->doTask(*consumer);
-        EXPECT_TRUE(consumer->m_toSync.empty());
+        writeBinding(key, {{"admin_state", state}});
+        EXPECT_TRUE(bindings->m_toSync.empty());
     }
     void sflowTask(SflowOrch& sflow, const string& table, const string& key, const string& op,
                    const vector<FieldValueTuple>& values = {})
@@ -144,33 +150,17 @@ protected:
     }
 };
 
-TEST_F(SampleBindingTest, ConsumerCreatesBindingAndDeletionPreservesExport)
-{
-    auto consumer = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor("PORT_MIRROR_SAMPLE"));
-    ASSERT_NE(consumer, nullptr);
-    Table(m_config_db.get(), "PORT_MIRROR_SAMPLE").set("Ethernet0|rx", fields());
-    consumer->m_toSync.emplace("Ethernet0|rx", KeyOpFieldsValuesTuple("Ethernet0|rx", SET_COMMAND, fields()));
-    gMirrorOrch->doTask(*consumer);
-    EXPECT_TRUE(consumer->m_toSync.empty());
-    EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
-    EXPECT_EQ(sampleOn("Ethernet0", false), SAI_NULL_OBJECT_ID);
-    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").refCount, 1);
-    verifyIngressSampleMirror("Ethernet0", gMirrorOrch->m_syncdMirrors.at("export1").sessionId);
-    remove("Ethernet0|rx");
-    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
-    EXPECT_TRUE(gMirrorOrch->m_sampleBindings.empty());
-    EXPECT_TRUE(gMirrorOrch->sessionExists("export1"));
-    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").refCount, 0);
-}
-
 TEST_F(SampleBindingTest, IndependentDirectionsAndPoliciesShareExport)
 {
-    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields("2", "up", "64")), task_success);
-    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|tx", fields("4294967295", "up", "9216")), task_success);
-    auto ingress = sampleOn("Ethernet0");
-    auto egress = sampleOn("Ethernet0", false);
-    EXPECT_NE(ingress, SAI_NULL_OBJECT_ID);
-    EXPECT_NE(egress, SAI_NULL_OBJECT_ID);
+    writeBinding("Ethernet0|rx", fields("2", "up", "64"));
+    ASSERT_TRUE(bindings->m_toSync.empty());
+    const auto ingress = sampleOn("Ethernet0");
+    ASSERT_NE(ingress, SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(sampleOn("Ethernet0", false), SAI_NULL_OBJECT_ID);
+    verifyIngressSampleMirror("Ethernet0", gMirrorOrch->m_syncdMirrors.at("export1").sessionId);
+    writeBinding("Ethernet0|tx", fields("4294967295", "up", "9216"));
+    const auto egress = sampleOn("Ethernet0", false);
+    ASSERT_NE(egress, SAI_NULL_OBJECT_ID);
     EXPECT_NE(ingress, egress);
     sai_attribute_t attr{};
     attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
@@ -179,14 +169,20 @@ TEST_F(SampleBindingTest, IndependentDirectionsAndPoliciesShareExport)
     ASSERT_EQ(sai_samplepacket_api->get_samplepacket_attribute(egress, 1, &attr), SAI_STATUS_SUCCESS);
     EXPECT_EQ(attr.value.u32, 0xffffffffu);
     remove("Ethernet0|rx");
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     EXPECT_EQ(sampleOn("Ethernet0", false), egress);
     EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").refCount, 1);
+    remove("Ethernet0|tx");
+    EXPECT_EQ(sampleOn("Ethernet0", false), SAI_NULL_OBJECT_ID);
+    EXPECT_TRUE(gMirrorOrch->m_sampleBindings.empty());
+    ASSERT_TRUE(gMirrorOrch->sessionExists("export1"));
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").refCount, 0);
 }
 
-TEST_F(SampleBindingTest, DisabledAndDefaultDownAllocateNothing)
+TEST_F(SampleBindingTest, DisabledBindingsAllocateNothingAndKeepMirrorModeAfterDeletion)
 {
-    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields("5000", "down")), task_success);
-    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet4|tx", fields("5000", "")), task_success);
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields("5000", "down")), task_success);
+    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet4|tx", fields("5000", "")), task_success);
     for (const auto& item : gMirrorOrch->m_sampleBindings)
     {
         EXPECT_FALSE(item.second.enabled);
@@ -194,6 +190,13 @@ TEST_F(SampleBindingTest, DisabledAndDefaultDownAllocateNothing)
         EXPECT_TRUE(item.second.attachments.empty());
     }
     EXPECT_EQ(gMirrorOrch->deleteEntry("export1"), task_need_retry);
+    remove("Ethernet0|rx");
+    remove("Ethernet4|tx");
+    ASSERT_TRUE(gMirrorOrch->m_sampleBindings.empty());
+    vector<string> tables{APP_SFLOW_TABLE_NAME};
+    SflowOrch sflow(m_app_db.get(), tables);
+    sflowTask(sflow, APP_SFLOW_TABLE_NAME, "global", SET_COMMAND, {{"admin_state", "up"}});
+    EXPECT_FALSE(sflow.m_sflowStatus);
 }
 
 TEST_F(SampleBindingTest, AdminStateUpdatesPreservePolicyAndSharedExport)
@@ -247,37 +250,30 @@ TEST_F(SampleBindingTest, CoalescedSetsUseCurrentConfigRow)
 {
     const string key = "Ethernet0|rx";
     Table cfg(m_config_db.get(), "PORT_MIRROR_SAMPLE");
-    auto consumer = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor("PORT_MIRROR_SAMPLE"));
-    ASSERT_NE(consumer, nullptr);
-    auto queueSnapshot = [&] {
-        vector<FieldValueTuple> row;
-        ASSERT_TRUE(cfg.get(key, row));
-        consumer->addToSync(KeyOpFieldsValuesTuple(key, SET_COMMAND, row));
-    };
 
     cfg.set(key, fields("5000", "up", "128"));
-    queueSnapshot();
+    queueBindingRow(key);
     cfg.hdel(key, "truncate_size");
-    queueSnapshot();
-    gMirrorOrch->doTask(*consumer);
-    ASSERT_TRUE(consumer->m_toSync.empty());
+    queueBindingRow(key);
+    bindings->drain();
+    ASSERT_TRUE(bindings->m_toSync.empty());
     ASSERT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     EXPECT_EQ(gMirrorOrch->m_sampleBindings.at(key).truncate, 0u);
 
-    queueSnapshot();
+    queueBindingRow(key);
     cfg.hdel(key, "admin_state");
-    queueSnapshot();
-    gMirrorOrch->doTask(*consumer);
-    EXPECT_TRUE(consumer->m_toSync.empty());
+    queueBindingRow(key);
+    bindings->drain();
+    EXPECT_TRUE(bindings->m_toSync.empty());
     EXPECT_FALSE(gMirrorOrch->m_sampleBindings.at(key).enabled);
     EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     remove(key);
 
     cfg.set(key, fields());
-    queueSnapshot();
+    queueBindingRow(key);
     cfg.del(key);
-    gMirrorOrch->doTask(*consumer);
-    EXPECT_TRUE(consumer->m_toSync.empty());
+    bindings->drain();
+    EXPECT_TRUE(bindings->m_toSync.empty());
     EXPECT_FALSE(gMirrorOrch->m_sampleBindings.count(key));
 }
 
@@ -285,10 +281,15 @@ TEST_F(SampleBindingTest, InvalidConfigurationAllocatesNothing)
 {
     for (const auto& key : {"Ethernet0", "Ethernet0|both", "Ethernet0|RX", "|rx", "Ethernet0|rx|extra"})
         EXPECT_EQ(gMirrorOrch->setSampleBinding(key, fields()), task_invalid_entry);
-    for (const auto& rate : {"0", "1", "-1", "4294967296", "bad"})
-        EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields(rate)), task_invalid_entry);
-    for (const auto& truncate : {"-1", "4294967296", "bad"})
-        EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields("5000", "up", truncate)), task_invalid_entry);
+
+    // These negative values can wrap into range on 32-bit or 64-bit platforms.
+    for (const auto& rate : {"0", "1", "-1", " -1", "-18446744073709551614", "4294967296", "bad"})
+        EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields(rate)), task_invalid_entry)
+            << "sample_rate='" << rate << "'";
+    for (const auto& truncate : {"-1", "-4294967232", "-18446744073709551552",
+                                 "0", "63", "9217", "4294967296", "bad"})
+        EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|tx", fields("5000", "up", truncate)), task_invalid_entry)
+            << "truncate_size='" << truncate << "'";
     EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields("5000", "invalid")), task_invalid_entry);
     EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", {{"mirror_session", "export1"}}), task_invalid_entry);
     for (const auto& rate : {"0", "1"})
@@ -362,6 +363,44 @@ TEST_F(SampleBindingTest, WaitsForExportAndDestination)
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     EXPECT_NE(sampleOn("Ethernet4", false), SAI_NULL_OBJECT_ID);
     ASSERT_TRUE(gMirrorOrch->deactivateSession("export1", session));
+}
+
+TEST_F(SampleBindingTest, QueuedExportReplacementDoesNotBindNewSourceToOldSession)
+{
+    const string name = "collector", key = "Ethernet0|rx";
+    auto* exports = dynamic_cast<Consumer*>(gMirrorOrch->getExecutor(CFG_MIRROR_SESSION_TABLE_NAME));
+    ASSERT_NE(exports, nullptr);
+    const NextHopKey nextHop{"10.0.0.1@Ethernet8"};
+    gNeighOrch->m_syncdNeighbors[nextHop].mac = MacAddress("00:11:22:33:44:55");
+    gNeighOrch->m_syncdNextHops[nextHop] = {SAI_NULL_OBJECT_ID, 0, 0};
+    gRouteOrch->m_syncdRoutes[gVirtualRouterId][IpPrefix("10.0.0.0/24")].nhg_key = NextHopGroupKey(nextHop.to_string());
+    const string src = "192.0.2.1", newDst = "10.0.0.3";
+    ASSERT_EQ(gMirrorOrch->createEntry(name, {{"src_ip", src}, {"dst_ip", "10.0.0.2"}}), task_success);
+    const auto oldOid = gMirrorOrch->m_syncdMirrors.at(name).sessionId;
+    ASSERT_NE(oldOid, SAI_NULL_OBJECT_ID);
+    ASSERT_TRUE(gMirrorOrch->increaseRefCount(name));
+
+    const vector<FieldValueTuple> row{{"src_ip", src}, {"dst_ip", newDst}};
+    Table(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME).set(name, row);
+    exports->addToSync(deque<KeyOpFieldsValuesTuple>{{name, DEL_COMMAND, {}}, {name, SET_COMMAND, row}});
+    writeBinding(key, {{"mirror_session", name}, {"sample_rate", "5000"}, {"admin_state", "up"}});
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    exports->drain();
+    EXPECT_EQ(exports->m_toSync.count(name), 2u);
+    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at(name).sessionId, oldOid);
+    ASSERT_TRUE(gMirrorOrch->decreaseRefCount(name));
+
+    gMirrorOrch->doTask();
+    EXPECT_TRUE(exports->m_toSync.empty());
+    EXPECT_TRUE(bindings->m_toSync.empty());
+    const auto& session = gMirrorOrch->m_syncdMirrors.at(name);
+    EXPECT_EQ(session.dstIp.to_string(), newDst);
+    ASSERT_TRUE(session.isActiveSampleExport());
+    EXPECT_NE(session.sessionId, oldOid);
+    ASSERT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    verifyIngressSampleMirror("Ethernet0", session.sessionId);
+    remove(key);
+    EXPECT_EQ(gMirrorOrch->deleteEntry(name), task_success);
 }
 
 TEST_F(SampleBindingTest, UnsupportedCapabilitiesLeaveBindingUnattached)
@@ -449,19 +488,26 @@ TEST_F(SampleBindingTest, PreRebootSamplePacketIsReplacedOnlyDuringWarmRestore)
     EXPECT_EQ(sampleOn("Ethernet4"), 0x9876u);
 }
 
-TEST_F(SampleBindingTest, CreateAndAttachFailuresRetryWithoutLeaking)
+TEST_F(SampleBindingTest, RetriesResourceFailureButNotRejectedAttachment)
 {
+    const string key = "Ethernet0|rx";
     g_fail_samplepacket_create = true;
-    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields()), task_success);
-    EXPECT_EQ(gMirrorOrch->m_sampleBindings.at("Ethernet0|rx").samplepacketId, SAI_NULL_OBJECT_ID);
+    writeBinding(key, fields());
+    EXPECT_EQ(gMirrorOrch->m_sampleBindings.at(key).samplepacketId, SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(gMirrorOrch->m_sampleRetries.count(key), 1u);
     g_fail_samplepacket_create = false;
     g_fail_mirror_session_set = true;
     gMirrorOrch->doTask();
     EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     EXPECT_TRUE(gMirrorOrch->m_sampleOwners.empty());
+    EXPECT_EQ(gMirrorOrch->m_sampleRetries.count(key), 0u);
     g_fail_mirror_session_set = false;
     gMirrorOrch->doTask();
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    setAdmin(key, "down");
+    setAdmin(key, "up");
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+    remove(key);
 }
 
 TEST_F(SampleBindingTest, FailedDetachRetainsOwnershipAndExportReference)
@@ -544,26 +590,30 @@ TEST_F(SampleBindingTest, PortChannelMembershipAndDirectMemberConflict)
     EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
     EXPECT_NE(sampleOn("Ethernet4"), SAI_NULL_OBJECT_ID);
 }
-TEST_F(SampleBindingTest, TruncationOnlyProgramsEveryPacket)
+
+TEST_F(SampleBindingTest, TruncationRequiresExplicitSampleRate)
 {
-    const vector<FieldValueTuple> policy{{"mirror_session", "export1"}, {"truncate_size", "128"}};
-    Table(m_config_db.get(), "PORT_MIRROR_SAMPLE").set("Ethernet0|rx", policy);
-    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", policy), task_success);
-    setAdmin("Ethernet0|rx", "up");
-    auto oid = sampleOn("Ethernet0");
+    const string key = "Ethernet0|rx";
+    writeBinding(key, {{"mirror_session", "export1"}, {"truncate_size", "128"}});
+    EXPECT_FALSE(gMirrorOrch->m_sampleBindings.count(key));
+    setAdmin(key, "up");
+    EXPECT_FALSE(gMirrorOrch->m_sampleBindings.count(key));
+    EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
+
+    writeBinding(key, {{"sample_rate", "2"}});
+    const auto oid = sampleOn("Ethernet0");
     ASSERT_NE(oid, SAI_NULL_OBJECT_ID);
     sai_attribute_t attr{};
     attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
     ASSERT_EQ(sai_samplepacket_api->get_samplepacket_attribute(oid, 1, &attr), SAI_STATUS_SUCCESS);
-    EXPECT_EQ(attr.value.u32, 1u);
+    EXPECT_EQ(attr.value.u32, 2u);
     attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_ENABLE;
     ASSERT_EQ(sai_samplepacket_api->get_samplepacket_attribute(oid, 1, &attr), SAI_STATUS_SUCCESS);
     EXPECT_TRUE(attr.value.booldata);
     attr.id = SAI_SAMPLEPACKET_ATTR_TRUNCATE_SIZE;
     ASSERT_EQ(sai_samplepacket_api->get_samplepacket_attribute(oid, 1, &attr), SAI_STATUS_SUCCESS);
     EXPECT_EQ(attr.value.u32, 128u);
-    EXPECT_EQ(gMirrorOrch->setSampleBinding("Ethernet0|rx", fields("1", "up", "128")), task_invalid_entry);
-    remove("Ethernet0|rx");
+    remove(key);
 }
 
 TEST_F(SampleBindingTest, EmptyLagWaitsThenFollowsMembers)
@@ -630,17 +680,6 @@ TEST_F(SampleBindingTest, PartialLagMemberDetachIsCompletedOnRejoin)
     EXPECT_NE(sampleOn("Ethernet4"), SAI_NULL_OBJECT_ID);
     verifyIngressSampleMirror(member.m_alias, gMirrorOrch->m_syncdMirrors.at("export1").sessionId);
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
-}
-
-TEST_F(SampleBindingTest, RemovingLastDisabledBindingDoesNotReleaseMirrorMode)
-{
-    vector<string> tables{APP_SFLOW_TABLE_NAME};
-    SflowOrch sflow(m_app_db.get(), tables);
-    ASSERT_EQ(gMirrorOrch->setSampleBinding("Ethernet4|rx", fields("5000", "down")), task_success);
-    remove("Ethernet4|rx");
-    ASSERT_TRUE(gMirrorOrch->m_sampleBindings.empty());
-    sflowTask(sflow, APP_SFLOW_TABLE_NAME, "global", SET_COMMAND, {{"admin_state", "up"}});
-    EXPECT_FALSE(sflow.m_sflowStatus);
 }
 
 TEST_F(SampleBindingTest, RemovingSflowGlobalAndRetryingPortCleanupDoesNotReleaseMode)
@@ -865,15 +904,11 @@ TEST_F(VlanFdbRecoveryTest, RetryWaitsForFreshFdbAfterMonitorMemberRemoval)
     EXPECT_FALSE(session.status);
 
     addFreshFdb();
-    EXPECT_TRUE(session.status);
+    ASSERT_TRUE(session.status);
     EXPECT_EQ(session.neighborInfo.portId, newMonitor.m_port_id);
     verifyMonitorPort(newMonitor.m_port_id);
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
-    remove("Ethernet0|rx");
-    if (session.status)
-    {
-        EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
-    }
+    EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
 }
 
 struct MirrorApiOverride
@@ -887,13 +922,14 @@ struct MirrorApiOverride
 TEST_F(VlanFdbRecoveryTest, FreshFdbBeforeCleanupCompletesIsNotLost)
 {
     setUpVlanExport();
-    const auto mirror = gMirrorOrch->m_syncdMirrors.at("export1").sessionId;
+    auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
+    const auto mirror = session.sessionId;
     removeOldMemberWithFailedDetach();
     gMirrorOrch->updateNeighbor({nextHop, fdbEntry.mac, true});
-    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").neighborInfo.portId, SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(session.neighborInfo.portId, SAI_NULL_OBJECT_ID);
     addFreshFdb();
-    EXPECT_TRUE(gMirrorOrch->m_syncdMirrors.at("export1").status);
-    EXPECT_EQ(gMirrorOrch->m_syncdMirrors.at("export1").neighborInfo.portId, newMonitor.m_port_id);
+    EXPECT_TRUE(session.status);
+    EXPECT_EQ(session.neighborInfo.portId, newMonitor.m_port_id);
 
     g_fail_mirror_session_set = false;
     {
@@ -904,17 +940,12 @@ TEST_F(VlanFdbRecoveryTest, FreshFdbBeforeCleanupCompletesIsNotLost)
         };
         gMirrorOrch->doTask();
     }
-    auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
     ASSERT_TRUE(session.status);
     EXPECT_EQ(session.sessionId, mirror);
     EXPECT_EQ(session.neighborInfo.portId, newMonitor.m_port_id);
     verifyMonitorPort(newMonitor.m_port_id);
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
-    remove("Ethernet0|rx");
-    if (session.status)
-    {
-        EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
-    }
+    EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
 }
 
 TEST_F(VlanFdbRecoveryTest, FailedMonitorUpdateCannotResumeSamplingFromCachedPort)
@@ -949,11 +980,14 @@ TEST_F(VlanFdbRecoveryTest, FailedMonitorUpdateCannotResumeSamplingFromCachedPor
     ASSERT_TRUE(gMirrorOrch->deactivateSession("export1", session));
 }
 
-TEST_F(VlanFdbRecoveryTest, DestinationRecoveryDuringRemovalRestoresSharedAclAndBinding)
+class SharedExportRecoveryTest : public VlanFdbRecoveryTest, public ::testing::WithParamInterface<bool> {};
+
+TEST_P(SharedExportRecoveryTest, WithdrawalSuspendsExistingAndNewMirrorRules)
 {
     setUpVlanExport();
     auto& session = gMirrorOrch->m_syncdMirrors.at("export1");
     const auto oldExport = session.sessionId;
+    const bool removalStarted = GetParam();
     const string table = "SHARED_MIRROR";
     auto addAclConfig = [&](const string& name, const string& key, const vector<FieldValueTuple>& values) {
         auto* consumer = dynamic_cast<Consumer*>(gAclOrch->getExecutor(name));
@@ -966,29 +1000,39 @@ TEST_F(VlanFdbRecoveryTest, DestinationRecoveryDuringRemovalRestoresSharedAclAnd
     addAclConfig(CFG_ACL_RULE_TABLE_NAME, table + "|rule", {{"DSCP", "8"}, {"MIRROR_INGRESS_ACTION", "export1"}});
     auto* rule = gAclOrch->getAclRule(table, "rule");
     ASSERT_NE(rule, nullptr);
-    auto verifyAclDestination = [&](sai_object_id_t expected) {
-        ASSERT_NE(rule->getOid(), SAI_NULL_OBJECT_ID);
+    auto verifyAclDestination = [](const AclRule& acl, sai_object_id_t expected) {
+        ASSERT_NE(acl.getOid(), SAI_NULL_OBJECT_ID);
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
         sai_attribute_t attr{};
         attr.id = SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS;
         attr.value.aclaction.parameter.objlist = {1, &oid};
-        ASSERT_EQ(sai_acl_api->get_acl_entry_attribute(rule->getOid(), 1, &attr), SAI_STATUS_SUCCESS);
+        ASSERT_EQ(sai_acl_api->get_acl_entry_attribute(acl.getOid(), 1, &attr), SAI_STATUS_SUCCESS);
         EXPECT_TRUE(attr.value.aclaction.enable);
         EXPECT_EQ(attr.value.aclaction.parameter.objlist.count, 1u);
         EXPECT_EQ(oid, expected);
     };
-    verifyAclDestination(oldExport);
+    verifyAclDestination(*rule, oldExport);
     ASSERT_EQ(session.refCount, 2);
 
     removeOldMemberWithFailedDetach();
-    g_fail_mirror_session_set = false;
+    bool activeForAcl = true;
+    ASSERT_TRUE(gMirrorOrch->getSessionStatus("export1", activeForAcl));
+    EXPECT_FALSE(activeForAcl);
+    EXPECT_EQ(rule->getOid(), SAI_NULL_OBJECT_ID);
+    addAclConfig(CFG_ACL_RULE_TABLE_NAME, table + "|later", {{"DSCP", "9"}, {"MIRROR_INGRESS_ACTION", "export1"}});
+    auto* later = gAclOrch->getAclRule(table, "later");
+    ASSERT_NE(later, nullptr);
+    gMirrorOrch->doTask();
+    EXPECT_EQ(later->getOid(), SAI_NULL_OBJECT_ID);
+    EXPECT_EQ(session.refCount, 1);
+    if (removalStarted)
     {
+        g_fail_mirror_session_set = false;
         MirrorApiOverride blocked;
         blocked.api.remove_mirror_session = [](sai_object_id_t) -> sai_status_t { return SAI_STATUS_OBJECT_IN_USE; };
         gMirrorOrch->doTask();
         ASSERT_EQ(session.sessionId, oldExport);
         ASSERT_TRUE(session.status);
-        bool activeForAcl = true;
         ASSERT_TRUE(gMirrorOrch->getSessionStatus("export1", activeForAcl));
         EXPECT_FALSE(activeForAcl);
         ASSERT_EQ(rule->getOid(), SAI_NULL_OBJECT_ID);
@@ -1000,19 +1044,27 @@ TEST_F(VlanFdbRecoveryTest, DestinationRecoveryDuringRemovalRestoresSharedAclAnd
         EXPECT_EQ(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
         verifyMonitorPort(oldMonitor.m_port_id);
     }
+    else
+    {
+        addFreshFdb();
+        g_fail_mirror_session_set = false;
+    }
 
     gMirrorOrch->doTask();
     ASSERT_TRUE(session.status);
-    ASSERT_NE(session.sessionId, oldExport);
+    EXPECT_EQ(session.sessionId != oldExport, removalStarted);
     verifyMonitorPort(newMonitor.m_port_id);
-    verifyAclDestination(session.sessionId);
+    verifyAclDestination(*rule, session.sessionId);
+    verifyAclDestination(*later, session.sessionId);
     verifyIngressSampleMirror("Ethernet0", session.sessionId);
     EXPECT_NE(sampleOn("Ethernet0"), SAI_NULL_OBJECT_ID);
-    EXPECT_EQ(session.refCount, 2);
-    EXPECT_TRUE(gAclOrch->removeAclRule(table, "rule"));
+    gMirrorOrch->updateNeighbor({nextHop, fdbEntry.mac, true});
+    EXPECT_EQ(session.refCount, 3);
     EXPECT_TRUE(gAclOrch->removeAclTable(table));
     EXPECT_TRUE(gMirrorOrch->deactivateSession("export1", session));
 }
+
+INSTANTIATE_TEST_SUITE_P(WithdrawalPhases, SharedExportRecoveryTest, ::testing::Bool());
 
     class MirrorOrchHwResourcesTest : public MirrorOrchTest
     {
