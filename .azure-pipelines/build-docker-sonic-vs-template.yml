@@ -12,6 +12,13 @@ parameters:
   type: number
   default: 60
 
+- name: pool
+  type: string
+  default: default
+  values:
+  - default
+  - sonic-ubuntu-1c
+
 - name: swss_artifact_name
   type: string
 
@@ -74,7 +81,10 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeout }}
 
   pool:
-    vmImage: 'ubuntu-22.04'
+    ${{ if ne(parameters.pool, 'default') }}:
+      name: ${{ parameters.pool }}
+    ${{ else }}:
+      vmImage: 'ubuntu-22.04'
 
   steps:
   - checkout: ${{ parameters.repo }}
