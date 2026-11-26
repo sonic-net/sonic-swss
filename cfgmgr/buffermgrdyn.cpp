@@ -548,7 +548,13 @@ string BufferMgrDynamic::getMaxSpeedFromList(string speedList)
 
 string BufferMgrDynamic::getPgPoolMode()
 {
-    return m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].mode;
+    // find() avoids inserting an empty pool entry while probing readiness.
+    auto poolRef = m_bufferPoolLookup.find(INGRESS_LOSSLESS_PG_POOL_NAME);
+    if (poolRef == m_bufferPoolLookup.end())
+    {
+        return {};
+    }
+    return poolRef->second.mode;
 }
 
 // Conduct the effective speed and compare the new value against the old one
@@ -974,15 +980,17 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
     auto profileRef = m_bufferProfileLookup.find(profile_name);
     if (profileRef == m_bufferProfileLookup.end())
     {
-        auto &profile = m_bufferProfileLookup[profile_name];
-        SWSS_LOG_NOTICE("Creating new profile '%s'", profile_name.c_str());
-
+        // Gate on pool readiness before operator[], which would otherwise leave a
+        // hollow profile that later retries treat as "already created".
         string mode = getPgPoolMode();
         if (mode.empty())
         {
             SWSS_LOG_INFO("BUFFER_PROFILE %s cannot be created because the buffer pool isn't ready", profile_name.c_str());
             return task_process_status::task_need_retry;
         }
+
+        auto &profile = m_bufferProfileLookup[profile_name];
+        SWSS_LOG_NOTICE("Creating new profile '%s'", profile_name.c_str());
 
         profile.speed = speed;
         profile.cable_length = cable_len;
@@ -1262,13 +1270,18 @@ void BufferMgrDynamic::applyNormalBufferObjectsOnPort(const string &port)
     }
 }
 
-string &BufferMgrDynamic::fetchZeroProfileFromNormalProfile(const string &profile)
+string BufferMgrDynamic::fetchZeroProfileFromNormalProfile(const string &profile, bool *poolConfigured)
 {
-    auto const &profileRef = m_bufferProfileLookup.find(profile);
-    auto const &poolName = (profileRef == m_bufferProfileLookup.end() ? INGRESS_LOSSLESS_PG_POOL_NAME : profileRef->second.pool_name);
-    auto &poolInfo = m_bufferPoolLookup[poolName];
-
-    return poolInfo.zero_profile_name;
+    auto profileRef = m_bufferProfileLookup.find(profile);
+    // Dynamic-threshold templates do not name a pool; their generated profiles use the ingress lossless pool.
+    const auto &poolName = (profileRef == m_bufferProfileLookup.end() || profileRef->second.pool_name.empty()
+                               ? INGRESS_LOSSLESS_PG_POOL_NAME : profileRef->second.pool_name);
+    auto poolRef = m_bufferPoolLookup.find(poolName);
+    if (poolConfigured)
+    {
+        *poolConfigured = poolRef != m_bufferPoolLookup.end();
+    }
+    return poolRef == m_bufferPoolLookup.end() ? string{} : poolRef->second.zero_profile_name;
 }
 
 bool BufferMgrDynamic::isReadyToReclaimBufferOnPort(const string &port)
@@ -1377,8 +1390,16 @@ template<class T> task_process_status BufferMgrDynamic::reclaimReservedBufferFor
 
         if (dir == BUFFER_PG && !runningProfile.empty())
         {
-            m_bufferProfileLookup[runningProfile].port_pgs.erase(key);
-            profilesToBeReleased.insert(runningProfile);
+            // Reclaim releases the running dependency, but the configured PG still owns its profile.
+            if (runningProfile != m_portPgLookup.at(port).at(key).configured_profile_name)
+            {
+                auto profileRef = m_bufferProfileLookup.find(runningProfile);
+                if (profileRef != m_bufferProfileLookup.end())
+                {
+                    profileRef->second.port_pgs.erase(key);
+                    profilesToBeReleased.insert(runningProfile);
+                }
+            }
             portObject.running_profile_name.clear();
         }
     }
@@ -1619,7 +1640,13 @@ task_process_status BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_stat
      *                                     SHP size will be handled here and programmed to APPL_DB during buffer pool table handling
      */
 
-    auto &ingressLosslessPool = m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME];
+    auto poolRef = m_bufferPoolLookup.find(INGRESS_LOSSLESS_PG_POOL_NAME);
+    if (poolRef == m_bufferPoolLookup.end())
+    {
+        SWSS_LOG_INFO("Skipping SHP refresh because ingress_lossless_pool is not configured");
+        return task_process_status::task_success;
+    }
+    auto &ingressLosslessPool = poolRef->second;
     if (enable_state_updated_by_ratio)
     {
         if (shp_enabled_by_size)
@@ -2097,7 +2124,12 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
 {
     string xoff;
     recalculateSharedBufferPool();
-    if (!isNonZero(m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff))
+    auto poolRef = m_bufferPoolLookup.find(INGRESS_LOSSLESS_PG_POOL_NAME);
+    if (poolRef == m_bufferPoolLookup.end())
+    {
+        return false;
+    }
+    if (!isNonZero(poolRef->second.xoff))
     {
         return true;
     }
@@ -2253,12 +2285,14 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
 
             m_cableLengths[port] = cable_length;
 
-            if (portInfo.cable_length == cable_length)
+            // The cached length is the desired value; a previous refresh may still be pending.
+            if (portInfo.cable_length == cable_length && !portInfo.cable_length_refresh_pending)
             {
                 continue;
             }
 
             portInfo.cable_length = cable_length;
+            portInfo.cable_length_refresh_pending = false;
             if (effectiveSpeed.empty())
             {
                 SWSS_LOG_WARN("Speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
@@ -2305,6 +2339,7 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
             switch (task_status)
             {
             case task_process_status::task_need_retry:
+                portInfo.cable_length_refresh_pending = true;
                 return task_status;
             case task_process_status::task_failed:
                 // We shouldn't return directly here. Because doing so will cause the following items lost
@@ -2980,23 +3015,34 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
     return task_process_status::task_success;
 }
 
-void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const string &port, const string &key, const string &profile)
+task_process_status BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const string &port, const string &key, const string &profile)
 {
     auto &idsToZero = m_bufferObjectIdsToZero[direction];
     auto &table = m_applBufferObjectTables[direction];
     auto const &objectName = m_bufferObjectNames[direction];
     auto &portInfo = m_portInfoLookup[port];
 
+    string zeroProfile;
+    if (idsToZero.empty())
+    {
+        if (m_portInitDone && !m_zeroProfilesLoaded)
+        {
+            loadZeroPoolAndProfiles();
+        }
+        bool poolConfigured = false;
+        zeroProfile = fetchZeroProfileFromNormalProfile(profile, &poolConfigured);
+        if (!poolConfigured)
+        {
+            SWSS_LOG_INFO("Buffer pool for profile %s is not configured, defer reclaiming %s %s",
+                          profile.c_str(), objectName.c_str(), key.c_str());
+            return task_process_status::task_need_retry;
+        }
+    }
+
     if (m_portInitDone)
     {
         if (idsToZero.empty())
         {
-            // Happens only after "config qos reload"
-            if (!m_zeroProfilesLoaded)
-            {
-                loadZeroPoolAndProfiles();
-            }
-
             // If initialization finished, no extra handle required.
             // Check whether the key overlaps with supported but not configured map
             auto const &idsToAdd = parseObjectNameFromKey(key, 1);
@@ -3057,7 +3103,6 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
                 SWSS_LOG_INFO("Add %s zero item %s", objectName.c_str(), keyToAdd.c_str());
             }
 
-            auto const &zeroProfile = fetchZeroProfileFromNormalProfile(profile);
             if (!zeroProfile.empty())
             {
                 updateBufferObjectToDb(key, zeroProfile, true, direction);
@@ -3070,7 +3115,7 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
                               profile.c_str(), objectName.c_str(), key.c_str());
             }
         }
-        return;
+        return task_process_status::task_success;
     }
 
     if (!idsToZero.empty())
@@ -3090,7 +3135,6 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
     {
         // Notify APPL_DB to add zero profile to items
         // An side effect is the items will be ready in orchagent (added to m_ready_list)
-        string &zeroProfile = fetchZeroProfileFromNormalProfile(profile);
         if (!zeroProfile.empty())
         {
             SWSS_LOG_INFO("Reclaim reserved buffer for %s %s by applying zero profile %s", objectName.c_str(), key.c_str(), zeroProfile.c_str());
@@ -3102,6 +3146,7 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
             updateBufferObjectToDb(key, zeroProfile, false, direction);
         }
     }
+    return task_process_status::task_success;
 }
 
 void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const string &port, const string &key, port_info_t &portInfo)
@@ -3204,13 +3249,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         // 3. Check whether the profile is ingress or egress
         // 4. Initialize "profile_name" of buffer_pg_t
 
-        bufferPg.dynamic_calculated = true;
-        bufferPg.static_configured = false;
-        if (!bufferPg.configured_profile_name.empty())
-        {
-            m_bufferProfileLookup[bufferPg.configured_profile_name].port_pgs.erase(key);
-            bufferPg.configured_profile_name.clear();
-        }
+        auto configuredPg = bufferPg;
+        configuredPg.dynamic_calculated = true;
+        configuredPg.static_configured = false;
+        configuredPg.configured_profile_name.clear();
 
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
@@ -3257,17 +3299,21 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                         SWSS_LOG_ERROR("Egress buffer profile configured on PG %s", key.c_str());
                         return task_process_status::task_failed;
                     }
-                    bufferPg.dynamic_calculated = profileRef.dynamic_calculated;
-                    bufferPg.configured_profile_name = profileName;
-                    bufferPg.lossless = profileRef.lossless;
+                    configuredPg.dynamic_calculated = profileRef.dynamic_calculated;
+                    configuredPg.configured_profile_name = profileName;
+                    configuredPg.lossless = profileRef.lossless;
                     if (!profileRef.lossless && !isHeadroomResourceValid(port, profileRef, key))
                     {
                         SWSS_LOG_ERROR("Unable to configure lossy PG %s, accumulative headroom size exceeds the limit", key.c_str());
+                        if (needRemoveOnFailure)
+                        {
+                            m_portPgLookup[port].erase(key);
+                        }
                         return task_process_status::task_failed;
                     }
                 }
-                bufferPg.static_configured = true;
-                bufferPg.configured_profile_name = profileName;
+                configuredPg.static_configured = true;
+                configuredPg.configured_profile_name = profileName;
             }
 
             if (field != buffer_profile_field_name)
@@ -3286,19 +3332,23 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         if (pureDynamic)
         {
             // Generic dynamically calculated headroom
-            bufferPg.dynamic_calculated = true;
-            bufferPg.lossless = true;
+            configuredPg.dynamic_calculated = true;
+            configuredPg.lossless = true;
         }
 
+        const set<string> oldProfiles = {bufferPg.configured_profile_name, bufferPg.running_profile_name};
+        bufferPg = std::move(configuredPg);
+
+        auto status = task_process_status::task_success;
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
             // In case the port is admin down during initialization, the PG will be removed from the port,
             // which effectively notifies bufferOrch to add the item to the m_ready_list
-            handleSetSingleBufferObjectOnAdminDownPort(BUFFER_PG, port, key, bufferPg.configured_profile_name);
+            status = handleSetSingleBufferObjectOnAdminDownPort(BUFFER_PG, port, key, bufferPg.configured_profile_name);
         }
         else if (bufferPg.lossless)
         {
-            doUpdatePgTask(key, port);
+            status = doUpdatePgTask(key, port);
         }
         else
         {
@@ -3307,10 +3357,34 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             updateBufferObjectToDb(key, bufferPg.running_profile_name, true);
         }
 
+        // Example: configured/running A/A -> B/A (retry) -> C/C (lossy SET).
+        // At B/A, both profiles must retain this PG to prevent premature deletion.
+        // Once C/C is applied, A and B are no longer dependencies. Forgetting A
+        // because the previous configured profile was B would leave a stale reference,
+        // causing A's DEL to keep retrying and potentially block QoS cleanup.
+        for (const auto &oldProfileName : oldProfiles)
+        {
+            if (oldProfileName.empty() || oldProfileName == bufferPg.configured_profile_name ||
+                oldProfileName == bufferPg.running_profile_name)
+            {
+                continue;
+            }
+            auto oldProfile = m_bufferProfileLookup.find(oldProfileName);
+            if (oldProfile != m_bufferProfileLookup.end())
+            {
+                oldProfile->second.port_pgs.erase(key);
+                if (!oldProfile->second.static_configured)
+                {
+                    releaseProfile(oldProfileName);
+                }
+            }
+        }
         if (!bufferPg.configured_profile_name.empty())
         {
-            m_bufferProfileLookup[bufferPg.configured_profile_name].port_pgs.insert(key);
+            // Retain the configured dependency even when applying the PG needs a retry.
+            m_bufferProfileLookup.at(bufferPg.configured_profile_name).port_pgs.insert(key);
         }
+        return status;
     }
     else if (op == DEL_COMMAND)
     {
@@ -3328,11 +3402,19 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
 
         if (!runningProfileName.empty())
         {
-            m_bufferProfileLookup[runningProfileName].port_pgs.erase(key);
+            auto runningProfile = m_bufferProfileLookup.find(runningProfileName);
+            if (runningProfile != m_bufferProfileLookup.end())
+            {
+                runningProfile->second.port_pgs.erase(key);
+            }
         }
         if (!configProfileName.empty() && configProfileName != runningProfileName)
         {
-            m_bufferProfileLookup[configProfileName].port_pgs.erase(key);
+            auto configuredProfile = m_bufferProfileLookup.find(configProfileName);
+            if (configuredProfile != m_bufferProfileLookup.end())
+            {
+                configuredProfile->second.port_pgs.erase(key);
+            }
         }
 
         if (portInfo.state == PORT_ADMIN_DOWN)
@@ -3438,7 +3520,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
         auto &portQueue = m_portQueueLookup[port][queues];
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
-            handleSetSingleBufferObjectOnAdminDownPort(BUFFER_QUEUE, port, key, portQueue.running_profile_name);
+            return handleSetSingleBufferObjectOnAdminDownPort(BUFFER_QUEUE, port, key, portQueue.running_profile_name);
         }
         else
         {

@@ -4,8 +4,8 @@
 #define protected public
 #include "orch.h"
 #undef protected
-#include "ut_helper.h"
-#include "mock_orchagent_main.h"
+#include "gtest/gtest.h"
+#include "bufferorch.h"
 #include "mock_table.h"
 #include <hiredis/hiredis.h>
 #define private public
@@ -221,6 +221,63 @@ namespace buffermgrdyn_test
 
             m_dynamicBuffer = new BufferMgrDynamic(m_config_db.get(), m_state_db.get(), m_app_db.get(), m_app_state_db.get(), buffer_table_connectors, nullptr, zero_profile);
             m_dynamicBuffer->m_saiSyncPollIntervalSec = 0;
+        }
+
+        void InitPgRetryEnvironment(const vector<string> &ports)
+        {
+            StartBufferManager();
+            KeyOpFieldsValuesTuple ingressPool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+            KeyOpFieldsValuesTuple egressPool = {"egress_lossy_pool", "SET", testBufferPool.at("egress_lossy_pool")};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(ingressPool), task_process_status::task_success);
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(egressPool), task_process_status::task_success);
+            KeyOpFieldsValuesTuple defaults = {"AZURE", "SET", {{"default_dynamic_th", "0"}}};
+            ASSERT_EQ(m_dynamicBuffer->handleDefaultLossLessBufferParam(defaults), task_process_status::task_success);
+            for (const auto &port : ports)
+            {
+                InitPort(port);
+                InitCableLength(port, "5m");
+                ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup.at(port).state, PORT_READY);
+            }
+            m_dynamicBuffer->recalculateSharedBufferPool();
+            ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+            KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+            // Another configured pool keeps global readiness true while allocation must retry.
+            ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+            ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.count("ingress_lossless_pool"), 0u);
+        }
+
+        void InitPgReplacementProfiles(const vector<string> &ports)
+        {
+            InitPgRetryEnvironment(ports);
+            KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+            KeyOpFieldsValuesTuple lossyPool = {"ingress_lossy_pool", "SET", {
+                {"mode", "dynamic"}, {"type", "ingress"}, {"size", "1024000"}}};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(lossyPool), task_process_status::task_success);
+            SetRedisScriptReply({"xon:18432", "xoff:18432", "size:36864", "result:true"});
+            KeyOpFieldsValuesTuple a = {"override_a", "SET", {
+                {"pool", "ingress_lossless_pool"}, {"dynamic_th", "3"},
+                {"xon", "18432"}, {"xoff", "18432"}, {"size", "36864"}}};
+            KeyOpFieldsValuesTuple b = {"template_b", "SET", {{"headroom_type", "dynamic"}, {"dynamic_th", "3"}}};
+            KeyOpFieldsValuesTuple c = {"lossy_c", "SET", {
+                {"pool", "ingress_lossy_pool"}, {"dynamic_th", "0"}, {"size", "256"}}};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(a), task_process_status::task_success);
+            ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(b), task_process_status::task_success);
+            ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(c), task_process_status::task_success);
+        }
+
+        void InitDynamicPgPorts(const vector<string> &ports)
+        {
+            InitPgRetryEnvironment(ports);
+            KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+            SetRedisScriptReply({"xon:18432", "xoff:18432", "size:36864", "result:true"});
+            for (const auto &port : ports)
+            {
+                KeyOpFieldsValuesTuple pg = {port + "|3-4", "SET", {{"profile", "NULL"}}};
+                ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+            }
         }
 
         void ClearMockRedisReply()
@@ -619,6 +676,607 @@ namespace buffermgrdyn_test
      * 4. Buffer tables: BUFFER_POOL/BUFFER_PROFILE/BUFFER_PG
      * 5. Queue and buffer profile lists with/without port created
      */
+    TEST_F(BufferMgrDynTest, RemovingShpDoesNotRecreateDeletedPool)
+    {
+        StartBufferManager();
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        KeyOpFieldsValuesTuple defaults = {"AZURE", "SET", {{"default_dynamic_th", "0"}, {"over_subscribe_ratio", "2"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleDefaultLossLessBufferParam(defaults), task_process_status::task_success);
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.empty());
+        ASSERT_FALSE(m_dynamicBuffer->m_bufferPoolReady);
+
+        KeyOpFieldsValuesTuple entry = {"AZURE", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleDefaultLossLessBufferParam(entry), task_process_status::task_success);
+        EXPECT_TRUE(m_dynamicBuffer->m_overSubscribeRatio.empty());
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.empty());
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        EXPECT_FALSE(m_dynamicBuffer->m_bufferPoolReady);
+    }
+
+    TEST_F(BufferMgrDynTest, ShpReadinessProbeDoesNotCreatePool)
+    {
+        StartBufferManager();
+        EXPECT_FALSE(m_dynamicBuffer->isSharedHeadroomPoolEnabledInSai());
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.empty());
+    }
+
+    TEST_F(BufferMgrDynTest, SharedDynamicProfileRetriesWithoutCachingIncompleteProfile)
+    {
+        InitPgRetryEnvironment({"Ethernet0", "Ethernet4"});
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            for (const string port : {"Ethernet0", "Ethernet4"})
+            {
+                SCOPED_TRACE(port + " attempt " + to_string(attempt));
+                KeyOpFieldsValuesTuple pg = {port + "|3-4", "SET", {{"profile", "NULL"}}};
+                EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_need_retry);
+                EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.empty());
+                EXPECT_TRUE(m_dynamicBuffer->m_portPgLookup.at(port).at(port + ":3-4").running_profile_name.empty());
+                EXPECT_EQ(m_dynamicBuffer->m_bufferPoolLookup.count("ingress_lossless_pool"), 0u);
+            }
+        }
+
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        SetRedisScriptReply({"xon:18432", "xoff:18432", "size:36864", "result:true"});
+        for (const string port : {"Ethernet0", "Ethernet4"})
+        {
+            KeyOpFieldsValuesTuple pg = {port + "|3-4", "SET", {{"profile", "NULL"}}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        }
+        const auto &profileName = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        ASSERT_FALSE(profileName.empty());
+        EXPECT_EQ(m_dynamicBuffer->m_portPgLookup.at("Ethernet4").at("Ethernet4:3-4").running_profile_name, profileName);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+        const auto &profile = m_dynamicBuffer->m_bufferProfileLookup.at(profileName);
+        EXPECT_EQ(profile.name, profileName);
+        EXPECT_TRUE(profile.lossless);
+        EXPECT_FALSE(profile.static_configured);
+        EXPECT_EQ(profile.pool_name, "ingress_lossless_pool");
+        EXPECT_EQ(profile.size, "36864");
+        EXPECT_EQ(profile.port_pgs, (port_pg_set_t{"Ethernet0:3-4", "Ethernet4:3-4"}));
+        m_dynamicBuffer->m_applBufferProfileTable.flush();
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        vector<FieldValueTuple> fields;
+        ASSERT_TRUE(appBufferProfileTable.get(profileName, fields));
+        EXPECT_EQ(getField(fields, "size"), "36864");
+        EXPECT_EQ(getField(fields, "dynamic_th"), "0");
+        CheckPg("Ethernet0", "Ethernet0:3-4", profileName);
+        CheckPg("Ethernet4", "Ethernet4:3-4", profileName);
+    }
+
+    TEST_F(BufferMgrDynTest, PgRetryPreservesConfiguredProfileDependency)
+    {
+        InitPgRetryEnvironment({"Ethernet0"});
+        const string profileName = "configured_dynamic_profile";
+        const string key = "Ethernet0:3-4";
+        KeyOpFieldsValuesTuple profile = {profileName, "SET", {{"headroom_type", "dynamic"}, {"dynamic_th", "3"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(profile), task_process_status::task_success);
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            SCOPED_TRACE(attempt);
+            KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", profileName}}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_need_retry);
+            auto configuredProfile = m_dynamicBuffer->m_bufferProfileLookup.find(profileName);
+            ASSERT_NE(configuredProfile, m_dynamicBuffer->m_bufferProfileLookup.end());
+            EXPECT_EQ(configuredProfile->second.port_pgs.count(key), 1u);
+            KeyOpFieldsValuesTuple removeProfile = {profileName, "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeProfile), task_process_status::task_need_retry);
+            configuredProfile = m_dynamicBuffer->m_bufferProfileLookup.find(profileName);
+            ASSERT_NE(configuredProfile, m_dynamicBuffer->m_bufferProfileLookup.end());
+            EXPECT_TRUE(configuredProfile->second.static_configured);
+            EXPECT_TRUE(configuredProfile->second.dynamic_calculated);
+            EXPECT_TRUE(configuredProfile->second.lossless);
+            EXPECT_EQ(configuredProfile->second.threshold, "3");
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+            EXPECT_EQ(m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key).configured_profile_name, profileName);
+            EXPECT_TRUE(m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key).running_profile_name.empty());
+        }
+
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        SetRedisScriptReply({"xon:18432", "xoff:18432", "size:36864", "result:true"});
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", profileName}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        const auto &runningProfileName = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key).running_profile_name;
+        ASSERT_FALSE(runningProfileName.empty());
+        EXPECT_NE(runningProfileName, profileName);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(runningProfileName).threshold, "3");
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(profileName).port_pgs.count(key), 1u);
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        CheckPg("Ethernet0", key, runningProfileName);
+
+        KeyOpFieldsValuesTuple removePg = {"Ethernet0|3-4", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(removePg), task_process_status::task_success);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at(profileName).port_pgs.empty());
+        KeyOpFieldsValuesTuple removeProfile = {profileName, "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeProfile), task_process_status::task_success);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(profileName), 0u);
+    }
+
+    TEST_F(BufferMgrDynTest, PgRetryDoesNotRecreateMissingConfiguredProfile)
+    {
+        StartBufferManager();
+        const string key = "Ethernet0:3-4";
+        const string profileName = "missing_configured_profile";
+        // Recover from a stale PG reference without synthesizing a lossy profile.
+        m_dynamicBuffer->m_portPgLookup["Ethernet0"][key].configured_profile_name = profileName;
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", profileName}}};
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_need_retry);
+            EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.empty());
+        }
+    }
+
+    TEST_F(BufferMgrDynTest, RemovingPgDoesNotRecreateMissingConfiguredProfile)
+    {
+        StartBufferManager();
+        const string key = "Ethernet0:3-4";
+        // A PG whose update was deferred has no running profile to release.
+        m_dynamicBuffer->m_portPgLookup["Ethernet0"][key].configured_profile_name = "missing_configured_profile";
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.empty());
+        EXPECT_EQ(m_dynamicBuffer->m_portPgLookup.count("Ethernet0"), 0u);
+    }
+
+    TEST_F(BufferMgrDynTest, ZeroProfileLookupDoesNotCreateMissingPool)
+    {
+        StartBufferManager();
+        EXPECT_TRUE(m_dynamicBuffer->fetchZeroProfileFromNormalProfile("").empty());
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.empty());
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        EXPECT_FALSE(m_dynamicBuffer->m_bufferPoolReady);
+    }
+
+    TEST_F(BufferMgrDynTest, AdminDownPgRetriesUntilZeroProfilePoolIsConfigured)
+    {
+        StartBufferManager();
+        InitPort("Ethernet0", "down");
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferObjectIdsToZero[BUFFER_PG].empty());
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "NULL"}}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_need_retry);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.empty());
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        EXPECT_FALSE(m_dynamicBuffer->m_bufferPoolReady);
+
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        // Zero-profile metadata is normally attached when the vendor zero profiles are loaded.
+        m_dynamicBuffer->m_bufferPoolLookup.at("ingress_lossless_pool").zero_profile_name = "ingress_lossless_zero_profile";
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+        EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        vector<FieldValueTuple> fields;
+        ASSERT_TRUE(appBufferPgTable.get("Ethernet0:3-4", fields));
+        EXPECT_EQ(getField(fields, "profile"), "ingress_lossless_zero_profile");
+    }
+
+    TEST_F(BufferMgrDynTest, AdminDownDynamicTemplateUsesIngressZeroProfile)
+    {
+        StartBufferManager();
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        KeyOpFieldsValuesTuple profile = {"dynamic_template", "SET", {
+            {"headroom_type", "dynamic"}, {"dynamic_th", "3"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(profile), task_process_status::task_success);
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at("dynamic_template").pool_name.empty());
+        m_dynamicBuffer->m_bufferPoolLookup.at("ingress_lossless_pool").zero_profile_name = "ingress_lossless_zero_profile";
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+        InitPort("Ethernet0", "down");
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferObjectIdsToZero[BUFFER_PG].empty());
+        for (bool portInitDone : {false, true})
+        {
+            SCOPED_TRACE(portInitDone);
+            if (portInitDone)
+            {
+                SetPortInitDone();
+                m_dynamicBuffer->checkSharedBufferPoolSize(true);
+            }
+            ASSERT_EQ(m_dynamicBuffer->m_portInitDone, portInitDone);
+            KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "dynamic_template"}}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+            m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+            vector<FieldValueTuple> fields;
+            EXPECT_TRUE(appBufferPgTable.get("Ethernet0:3-4", fields));
+            EXPECT_EQ(getField(fields, "profile"), "ingress_lossless_zero_profile");
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("dynamic_template").port_pgs.count("Ethernet0:3-4"), 1u);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferPoolLookup.count(""), 0u);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 1u);
+        }
+    }
+
+    TEST_F(BufferMgrDynTest, AdminDownPgWithoutConfiguredZeroProfileIsRemoved)
+    {
+        StartBufferManager();
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        m_dynamicBuffer->recalculateSharedBufferPool();
+        InitPort("Ethernet0", "down");
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.at("ingress_lossless_pool").zero_profile_name.empty());
+        appBufferPgTable.set("Ethernet0:3-4", {{"profile", "previous_profile"}});
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "NULL"}}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        vector<FieldValueTuple> fields;
+        EXPECT_FALSE(appBufferPgTable.get("Ethernet0:3-4", fields));
+    }
+
+    TEST_F(BufferMgrDynTest, PortShutdownPreservesConfiguredProfileDependencies)
+    {
+        InitPgRetryEnvironment({"Ethernet0"});
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        SetRedisScriptReply({"xon:18432", "xoff:18432", "size:36864", "result:true"});
+        KeyOpFieldsValuesTuple fixedProfile = {"headroom_override", "SET", {
+            {"pool", "ingress_lossless_pool"}, {"dynamic_th", "3"},
+            {"xon", "18432"}, {"xoff", "18432"}, {"size", "36864"}}};
+        KeyOpFieldsValuesTuple dynamicProfile = {"dynamic_template", "SET", {
+            {"headroom_type", "dynamic"}, {"dynamic_th", "3"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(fixedProfile), task_process_status::task_success);
+        ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(dynamicProfile), task_process_status::task_success);
+        KeyOpFieldsValuesTuple fixedPg = {"Ethernet0|0", "SET", {{"profile", "headroom_override"}}};
+        KeyOpFieldsValuesTuple dynamicPg = {"Ethernet0|3-4", "SET", {{"profile", "dynamic_template"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(fixedPg), task_process_status::task_success);
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(dynamicPg), task_process_status::task_success);
+        auto &portPgs = m_dynamicBuffer->m_portPgLookup.at("Ethernet0");
+        ASSERT_EQ(portPgs.at("Ethernet0:0").running_profile_name, "headroom_override");
+        const string generatedProfile = portPgs.at("Ethernet0:3-4").running_profile_name;
+        ASSERT_NE(generatedProfile, "dynamic_template");
+        ASSERT_FALSE(generatedProfile.empty());
+        auto &port = m_dynamicBuffer->m_portInfoLookup.at("Ethernet0");
+        port.maximum_buffer_objects[BUFFER_PG] = 8;
+        port.maximum_buffer_objects[BUFFER_QUEUE] = 16;
+        KeyOpFieldsValuesTuple shutdown = {"Ethernet0", "SET", {{"admin_status", "down"}}};
+        ASSERT_EQ(m_dynamicBuffer->handlePortTable(shutdown), task_process_status::task_success);
+        ASSERT_EQ(port.state, PORT_ADMIN_DOWN);
+        EXPECT_TRUE(portPgs.at("Ethernet0:0").running_profile_name.empty());
+        EXPECT_TRUE(portPgs.at("Ethernet0:3-4").running_profile_name.empty());
+        EXPECT_EQ(portPgs.at("Ethernet0:0").configured_profile_name, "headroom_override");
+        EXPECT_EQ(portPgs.at("Ethernet0:3-4").configured_profile_name, "dynamic_template");
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("headroom_override").port_pgs.count("Ethernet0:0"), 1u);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("dynamic_template").port_pgs.count("Ethernet0:3-4"), 1u);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(generatedProfile), 0u);
+        for (const string name : {"headroom_override", "dynamic_template"})
+        {
+            KeyOpFieldsValuesTuple removeProfile = {name, "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeProfile), task_process_status::task_need_retry);
+        }
+        for (const string ids : {"0", "3-4"})
+        {
+            KeyOpFieldsValuesTuple removePg = {"Ethernet0|" + ids, "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(removePg), task_process_status::task_success);
+        }
+        for (const string name : {"headroom_override", "dynamic_template"})
+        {
+            KeyOpFieldsValuesTuple removeProfile = {name, "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeProfile), task_process_status::task_success);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(name), 0u);
+        }
+    }
+
+    TEST_F(BufferMgrDynTest, RejectedNewLossyPgDoesNotLeaveCachedState)
+    {
+        InitPgRetryEnvironment({"Ethernet0"});
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        KeyOpFieldsValuesTuple profile = {"lossy_profile", "SET", {
+            {"pool", "ingress_lossless_pool"}, {"dynamic_th", "0"}, {"size", "36864"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(profile), task_process_status::task_success);
+        SetRedisScriptReply({"result:false"});
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "lossy_profile"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_failed);
+        auto portPgs = m_dynamicBuffer->m_portPgLookup.find("Ethernet0");
+        EXPECT_TRUE(portPgs == m_dynamicBuffer->m_portPgLookup.end() || portPgs->second.count("Ethernet0:3-4") == 0);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at("lossy_profile").port_pgs.empty());
+        KeyOpFieldsValuesTuple removeProfile = {"lossy_profile", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeProfile), task_process_status::task_success);
+        KeyOpFieldsValuesTuple removePg = {"Ethernet0|3-4", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(removePg), task_process_status::task_success);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.empty());
+    }
+
+    TEST_F(BufferMgrDynTest, RejectedLossyPgUpdatePreservesExistingStateAndDependency)
+    {
+        InitPgRetryEnvironment({"Ethernet0"});
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        for (const string name : {"lossy_profile_a", "lossy_profile_b"})
+        {
+            KeyOpFieldsValuesTuple profile = {name, "SET", {
+                {"pool", "ingress_lossless_pool"}, {"dynamic_th", "0"}, {"size", "36864"}}};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferProfileTable(profile), task_process_status::task_success);
+        }
+        SetRedisScriptReply({"result:true"});
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "lossy_profile_a"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        const auto before = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4");
+        SetRedisScriptReply({"result:false"});
+        for (const string name : {"lossy_profile_b", "lossy_profile_a"})
+        {
+            SCOPED_TRACE(name);
+            KeyOpFieldsValuesTuple rejected = {"Ethernet0|3-4", "SET", {{"profile", name}}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(rejected), task_process_status::task_failed);
+            const auto &after = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4");
+            EXPECT_EQ(after.running_profile_name, before.running_profile_name);
+            EXPECT_EQ(after.configured_profile_name, before.configured_profile_name);
+            EXPECT_EQ(after.lossless, before.lossless);
+            EXPECT_EQ(after.dynamic_calculated, before.dynamic_calculated);
+            EXPECT_EQ(after.static_configured, before.static_configured);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("lossy_profile_a").port_pgs.count("Ethernet0:3-4"), 1u);
+            EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at("lossy_profile_b").port_pgs.empty());
+        }
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        vector<FieldValueTuple> fields;
+        ASSERT_TRUE(appBufferPgTable.get("Ethernet0:3-4", fields));
+        EXPECT_EQ(getField(fields, "profile"), "lossy_profile_a");
+        KeyOpFieldsValuesTuple removeA = {"lossy_profile_a", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeA), task_process_status::task_need_retry);
+        KeyOpFieldsValuesTuple removeB = {"lossy_profile_b", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeB), task_process_status::task_success);
+    }
+
+    TEST_F(BufferMgrDynTest, SuccessfulLossyReplacementReleasesBothPreviousPgOwners)
+    {
+        InitPgReplacementProfiles({"Ethernet0"});
+        const string key = "Ethernet0:3-4";
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "override_a"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            KeyOpFieldsValuesTuple retry = {"Ethernet0|3-4", "SET", {{"profile", "template_b"}}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(retry), task_process_status::task_need_retry);
+            const auto &cachedPg = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key);
+            EXPECT_EQ(cachedPg.configured_profile_name, "template_b");
+            EXPECT_EQ(cachedPg.running_profile_name, "override_a");
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("override_a").port_pgs.count(key), 1u);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("template_b").port_pgs.count(key), 1u);
+        }
+        SetRedisScriptReply({"result:false"});
+        KeyOpFieldsValuesTuple replace = {"Ethernet0|3-4", "SET", {{"profile", "lossy_c"}}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(replace), task_process_status::task_failed);
+        const auto &rejectedPg = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key);
+        EXPECT_EQ(rejectedPg.configured_profile_name, "template_b");
+        EXPECT_EQ(rejectedPg.running_profile_name, "override_a");
+        EXPECT_TRUE(rejectedPg.dynamic_calculated);
+        EXPECT_TRUE(rejectedPg.lossless);
+        EXPECT_TRUE(rejectedPg.static_configured);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at("lossy_c").port_pgs.empty());
+        for (const string name : {"override_a", "template_b"})
+        {
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(name).port_pgs.count(key), 1u);
+            KeyOpFieldsValuesTuple remove = {name, "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(remove), task_process_status::task_need_retry);
+        }
+        SetRedisScriptReply({"result:true"});
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(replace), task_process_status::task_success);
+        const auto &replacedPg = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key);
+        EXPECT_EQ(replacedPg.configured_profile_name, "lossy_c");
+        EXPECT_EQ(replacedPg.running_profile_name, "lossy_c");
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        vector<FieldValueTuple> fields;
+        ASSERT_TRUE(appBufferPgTable.get(key, fields));
+        EXPECT_EQ(getField(fields, "profile"), "lossy_c");
+        for (const string name : {"override_a", "template_b"})
+        {
+            EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at(name).port_pgs.empty());
+            KeyOpFieldsValuesTuple remove = {name, "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(remove), task_process_status::task_success);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(name), 0u);
+        }
+        KeyOpFieldsValuesTuple removePg = {"Ethernet0|3-4", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(removePg), task_process_status::task_success);
+        KeyOpFieldsValuesTuple removeC = {"lossy_c", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeC), task_process_status::task_success);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.empty());
+    }
+
+    TEST_F(BufferMgrDynTest, ReturningToRunningProfileRetainsItsPgOwnership)
+    {
+        InitPgReplacementProfiles({"Ethernet0"});
+        const string key = "Ethernet0:3-4";
+        KeyOpFieldsValuesTuple pg = {"Ethernet0|3-4", "SET", {{"profile", "override_a"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        KeyOpFieldsValuesTuple retry = {"Ethernet0|3-4", "SET", {{"profile", "template_b"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(retry), task_process_status::task_need_retry);
+        // The old running owner becomes the configured owner again; it must not be detached.
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        const auto &cachedPg = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at(key);
+        EXPECT_EQ(cachedPg.running_profile_name, "override_a");
+        EXPECT_EQ(cachedPg.configured_profile_name, "override_a");
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("override_a").port_pgs.count(key), 1u);
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at("template_b").port_pgs.empty());
+        KeyOpFieldsValuesTuple removeB = {"template_b", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeB), task_process_status::task_success);
+        KeyOpFieldsValuesTuple removeA = {"override_a", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeA), task_process_status::task_need_retry);
+        KeyOpFieldsValuesTuple removePg = {"Ethernet0|3-4", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(removePg), task_process_status::task_success);
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeA), task_process_status::task_success);
+    }
+
+    TEST_F(BufferMgrDynTest, SharedGeneratedRunningProfileIsReleasedAfterLastLossyReplacement)
+    {
+        InitPgReplacementProfiles({"Ethernet0", "Ethernet4"});
+        for (const string port : {"Ethernet0", "Ethernet4"})
+        {
+            KeyOpFieldsValuesTuple pg = {port + "|3-4", "SET", {{"profile", "NULL"}}};
+            ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_success);
+        }
+        const string generated = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        ASSERT_FALSE(generated.empty());
+        ASSERT_EQ(m_dynamicBuffer->m_portPgLookup.at("Ethernet4").at("Ethernet4:3-4").running_profile_name, generated);
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        for (const string port : {"Ethernet0", "Ethernet4"})
+        {
+            KeyOpFieldsValuesTuple pg = {port + "|3-4", "SET", {{"profile", "template_b"}}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(pg), task_process_status::task_need_retry);
+        }
+        KeyOpFieldsValuesTuple first = {"Ethernet0|3-4", "SET", {{"profile", "lossy_c"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(first), task_process_status::task_success);
+        auto shared = m_dynamicBuffer->m_bufferProfileLookup.find(generated);
+        ASSERT_NE(shared, m_dynamicBuffer->m_bufferProfileLookup.end());
+        EXPECT_EQ(shared->second.port_pgs, (port_pg_set_t{"Ethernet4:3-4"}));
+        KeyOpFieldsValuesTuple last = {"Ethernet4|3-4", "SET", {{"profile", "lossy_c"}}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPgTable(last), task_process_status::task_success);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(generated), 0u);
+        m_dynamicBuffer->m_applBufferProfileTable.flush();
+        vector<FieldValueTuple> fields;
+        EXPECT_FALSE(appBufferProfileTable.get(generated, fields));
+        EXPECT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.at("template_b").port_pgs.empty());
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at("lossy_c").port_pgs,
+                  (port_pg_set_t{"Ethernet0:3-4", "Ethernet4:3-4"}));
+        for (const string port : {"Ethernet0", "Ethernet4"})
+        {
+            KeyOpFieldsValuesTuple removePg = {port + "|3-4", "DEL", {}};
+            EXPECT_EQ(m_dynamicBuffer->handleBufferPgTable(removePg), task_process_status::task_success);
+        }
+        KeyOpFieldsValuesTuple removeC = {"lossy_c", "DEL", {}};
+        EXPECT_EQ(m_dynamicBuffer->handleBufferProfileTable(removeC), task_process_status::task_success);
+    }
+
+    TEST_F(BufferMgrDynTest, CableLengthRetryRemainsQueuedUntilSharedProfilesConverge)
+    {
+        InitDynamicPgPorts({"Ethernet0", "Ethernet4"});
+        const string oldProfile = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolReady);
+        auto consumer = dynamic_cast<Consumer *>(m_dynamicBuffer->getExecutor(CFG_PORT_CABLE_LEN_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        std::deque<KeyOpFieldsValuesTuple> entries = {{"AZURE", "SET", {{"Ethernet0", "17m"}, {"Ethernet4", "17m"}}}};
+        consumer->addToSync(entries);
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            SCOPED_TRACE(attempt);
+            m_dynamicBuffer->doTask(*consumer);
+            EXPECT_EQ(consumer->m_toSync.size(), 1u);
+            ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+            const auto &old = m_dynamicBuffer->m_bufferProfileLookup.at(oldProfile);
+            EXPECT_EQ(old.cable_length, "5m");
+            EXPECT_EQ(old.size, "36864");
+            EXPECT_EQ(old.port_pgs, (port_pg_set_t{"Ethernet0:3-4", "Ethernet4:3-4"}));
+            for (const string port : {"Ethernet0", "Ethernet4"})
+            {
+                EXPECT_EQ(m_dynamicBuffer->m_portPgLookup.at(port).at(port + ":3-4").running_profile_name, oldProfile);
+            }
+        }
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        m_dynamicBuffer->doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        const string newProfile = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        EXPECT_NE(newProfile, oldProfile);
+        const auto &profile = m_dynamicBuffer->m_bufferProfileLookup.at(newProfile);
+        EXPECT_EQ(profile.cable_length, "17m");
+        EXPECT_EQ(profile.size, "36864");
+        EXPECT_EQ(profile.xon, "18432");
+        EXPECT_EQ(profile.xoff, "18432");
+        EXPECT_EQ(profile.port_pgs, (port_pg_set_t{"Ethernet0:3-4", "Ethernet4:3-4"}));
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(oldProfile), 0u);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+        m_dynamicBuffer->m_applBufferProfileTable.flush();
+        m_dynamicBuffer->m_applBufferObjectTables[BUFFER_PG].flush();
+        CheckPg("Ethernet0", "Ethernet0:3-4", newProfile);
+        CheckPg("Ethernet4", "Ethernet4:3-4", newProfile);
+        vector<FieldValueTuple> fields;
+        EXPECT_FALSE(appBufferProfileTable.get(oldProfile, fields));
+        ASSERT_TRUE(appBufferProfileTable.get(newProfile, fields));
+        EXPECT_EQ(getField(fields, "size"), "36864");
+
+        // Replaying a fully applied configuration must not revalidate or rewrite its PGs.
+        testing_db::resetOperationCounters();
+        SetRedisScriptReply({"result:false"});
+        auto unchanged = entries.front();
+        EXPECT_EQ(m_dynamicBuffer->handleCableLenTable(unchanged), task_process_status::task_success);
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_BUFFER_PG_TABLE_NAME), 0u);
+        EXPECT_EQ(testing_db::getProducerSetCount(APP_BUFFER_PROFILE_TABLE_NAME), 0u);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(newProfile).port_pgs.size(), 2u);
+    }
+
+    TEST_F(BufferMgrDynTest, PendingCableLengthIsSupersededByLatestDesiredValue)
+    {
+        InitDynamicPgPorts({"Ethernet0", "Ethernet4"});
+        const string oldProfile = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        auto consumer = dynamic_cast<Consumer *>(m_dynamicBuffer->getExecutor(CFG_PORT_CABLE_LEN_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        std::deque<KeyOpFieldsValuesTuple> first = {{"AZURE", "SET", {{"Ethernet0", "17m"}, {"Ethernet4", "17m"}}}};
+        consumer->addToSync(first);
+        m_dynamicBuffer->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        std::deque<KeyOpFieldsValuesTuple> latest = {{"AZURE", "SET", {{"Ethernet0", "24m"}, {"Ethernet4", "24m"}}}};
+        consumer->addToSync(latest);
+        for (int attempt = 0; attempt < 4; ++attempt)
+        {
+            m_dynamicBuffer->doTask(*consumer);
+            EXPECT_EQ(consumer->m_toSync.size(), 1u);
+            EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+        }
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        m_dynamicBuffer->doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        const string newProfile = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        EXPECT_NE(newProfile, oldProfile);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(newProfile).cable_length, "24m");
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(newProfile).port_pgs,
+                  (port_pg_set_t{"Ethernet0:3-4", "Ethernet4:3-4"}));
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.count(oldProfile), 0u);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+        for (const string port : {"Ethernet0", "Ethernet4"})
+        {
+            EXPECT_EQ(m_dynamicBuffer->m_portInfoLookup.at(port).cable_length, "24m");
+            EXPECT_EQ(m_dynamicBuffer->m_portPgLookup.at(port).at(port + ":3-4").running_profile_name, newProfile);
+        }
+    }
+
+    TEST_F(BufferMgrDynTest, PendingCableLengthCanReturnToAlreadyRunningValue)
+    {
+        InitDynamicPgPorts({"Ethernet0", "Ethernet4"});
+        const string oldProfile = m_dynamicBuffer->m_portPgLookup.at("Ethernet0").at("Ethernet0:3-4").running_profile_name;
+        KeyOpFieldsValuesTuple removePool = {"ingress_lossless_pool", "DEL", {}};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(removePool), task_process_status::task_success);
+        auto consumer = dynamic_cast<Consumer *>(m_dynamicBuffer->getExecutor(CFG_PORT_CABLE_LEN_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        std::deque<KeyOpFieldsValuesTuple> first = {{"AZURE", "SET", {{"Ethernet0", "17m"}, {"Ethernet4", "17m"}}}};
+        consumer->addToSync(first);
+        m_dynamicBuffer->doTask(*consumer);
+        EXPECT_EQ(consumer->m_toSync.size(), 1u);
+        std::deque<KeyOpFieldsValuesTuple> revert = {{"AZURE", "SET", {{"Ethernet0", "5m"}, {"Ethernet4", "5m"}}}};
+        consumer->addToSync(revert);
+        m_dynamicBuffer->doTask(*consumer);
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        EXPECT_EQ(m_dynamicBuffer->m_bufferPoolLookup.count("ingress_lossless_pool"), 0u);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.at(oldProfile).port_pgs,
+                  (port_pg_set_t{"Ethernet0:3-4", "Ethernet4:3-4"}));
+        KeyOpFieldsValuesTuple pool = {"ingress_lossless_pool", "SET", testBufferPool.at("ingress_lossless_pool")};
+        ASSERT_EQ(m_dynamicBuffer->handleBufferPoolTable(pool), task_process_status::task_success);
+        m_dynamicBuffer->doTask(*consumer);
+        for (const string port : {"Ethernet0", "Ethernet4"})
+        {
+            EXPECT_EQ(m_dynamicBuffer->m_portInfoLookup.at(port).cable_length, "5m");
+            EXPECT_EQ(m_dynamicBuffer->m_portPgLookup.at(port).at(port + ":3-4").running_profile_name, oldProfile);
+        }
+        EXPECT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 1u);
+    }
+
     TEST_F(BufferMgrDynTest, BufferMgrTestNormalFlows)
     {
         vector<FieldValueTuple> fieldValues;

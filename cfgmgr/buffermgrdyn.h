@@ -108,6 +108,7 @@ typedef struct {
     port_state_t state;
     std::string speed;
     std::string cable_length;
+    bool cable_length_refresh_pending = false;
     std::string mtu;
     std::string gearbox_model;
 
@@ -293,7 +294,7 @@ private:
         return !value.empty() && value != "0";
     }
     std::string getMaxSpeedFromList(std::string speedList);
-    std::string &fetchZeroProfileFromNormalProfile(const std::string &profile);
+    std::string fetchZeroProfileFromNormalProfile(const std::string &profile, bool *poolConfigured = nullptr);
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
@@ -321,7 +322,7 @@ private:
     void removeSupportedButNotConfiguredItemsOnPort(port_info_t &portInfo, const std::string &port);
     void applyNormalBufferObjectsOnPort(const std::string &port);
     void handlePendingBufferObjects();
-    void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
+    task_process_status handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
     void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
     bool isReadyToReclaimBufferOnPort(const std::string &port);
     void cleanUpItemsForReclaimingBuffer(const std::string &port);
