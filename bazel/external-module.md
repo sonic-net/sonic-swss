@@ -18,7 +18,7 @@ bazel_dep(name = "rules_distroless", version = "0.9.4.sonic.26")
 bazel_dep(name = "sonic-swss", version = "0.0.4", repo_name = "sonic_swss")
 bazel_dep(
     name = "sonic-swss-common",
-    version = "0.0.9-e06d5157d0a6a7228c8ba7357bdfd5e03623e586",
+    version = "0.0.8-2a4ddd070edb719f2e969a880a5cfff711e64e72",
     repo_name = "sonic_swss_common",
 )
 bazel_dep(
@@ -187,8 +187,7 @@ The C++ module uses these public interfaces for programs and tests:
 | sairedis shared library | `@sonic_sairedis//lib:sairedis_shared` |
 | DASH generated headers and shared library | `@sonic_dash_api//:dashapi` |
 
-Common is fetched from
-[securely1g/sonic-swss-common](https://github.com/securely1g/sonic-swss-common).
+The [SWSS Common registry entry](https://github.com/sonic-net/sonic-bazel-registry/blob/main/modules/sonic-swss-common/0.0.8-2a4ddd070edb719f2e969a880a5cfff711e64e72/source.json) records the source archive and checksum.
 SAI and sairedis provide their headers and libraries through their own module
 targets. DASH generates its headers and builds `libdashapi.so` with the
 source-built Protobuf 3.21.12 compiler. SWSS and DASH both use
