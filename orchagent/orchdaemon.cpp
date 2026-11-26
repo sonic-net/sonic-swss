@@ -383,6 +383,17 @@ bool OrchDaemon::init()
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
+    /*
+     * Force the protection-NHG capability probe during init. The accessors
+     * self-probe on first call and the probe publishes the NHG_PROTECTION_*
+     * fields to STATE_DB|SWITCH_CAPABILITY; without this they would not appear
+     * until the first protected route arrived. There is no global enable -- the
+     * real gate is the per-call-site isProtectionSupported() check.
+     */
+    SWSS_LOG_NOTICE("Protection NHG capability: protection=%d, hw_switchover=%d",
+                    gNhgOrch->isProtectionSupported() ? 1 : 0,
+                    gNhgOrch->isHwSwitchoverSupported() ? 1 : 0);
+
     gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
 
     vector<string> tunnel_tables = {
@@ -849,12 +860,12 @@ bool OrchDaemon::init()
         if (pfcWdMode == PfcWdRecoveryMode::Hardware)
         {
             SWSS_LOG_NOTICE("Starting hardware-based pfc watchdog");
+            // The hardware watchdog reads a queue from SAI while that queue is
+            // in storm, so it registers no counters for polling.
             m_orchList.push_back(new PfcWdHwOrch(
                         m_configDb,
                         pfc_wd_tables,
-                        portStatIds,
-                        queueStatIds,
-                        queueAttrIds));
+                        portStatIds));
         }
         else if (pfcWdMode == PfcWdRecoveryMode::HybridDlr)
         {

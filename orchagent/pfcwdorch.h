@@ -4,6 +4,7 @@
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
+#include "pfcwdcounters.h"
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
@@ -102,6 +103,37 @@ public:
     PfcWdAction getPfcDlrPacketAction() { return m_pfcDlrPacketAction; }
     void setPfcDlrPacketAction(PfcWdAction action) { m_pfcDlrPacketAction = action; }
 
+    // Read this queue's watchdog counters from COUNTERS_DB. A missing field or
+    // entry reads as zero and operational.
+    static PfcWdQueueStats getQueueStats(const shared_ptr<Table>& countersTable,
+                                         const string& queueIdStr);
+
+    // Persist this queue's watchdog counters to COUNTERS_DB.
+    static void updateQueueStats(const shared_ptr<Table>& countersTable,
+                                 const string& queueIdStr,
+                                 const PfcWdQueueStats& stats);
+
+    // Read a queue's TX counters from SAI; RX is left at 0, the ingress side
+    // being the caller's to fill. False when the read fails, in which case the
+    // sample cannot be used.
+    static bool readQueueSaiStats(sai_object_id_t queueId, PfcWdHwStats& counters);
+
+    // Record the start of a storm. A storm already in progress
+    // (detectCount > restoreCount) is treated as the same storm.
+    static void beginStormCounters(const shared_ptr<Table>& countersTable,
+                                   const string& queueIdStr,
+                                   PfcWdHwStats hwStats,
+                                   PfcWdHwStats& baseline);
+
+    // Fold the traffic seen since `baseline` into this queue's counters.
+    // periodic=false ends the storm; baselineValid=false skips the deltas.
+    static void accumulateStormCounters(const shared_ptr<Table>& countersTable,
+                                        const string& queueIdStr,
+                                        PfcWdHwStats hwStats,
+                                        PfcWdHwStats& baseline,
+                                        bool periodic,
+                                        bool baselineValid = true);
+
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") = 0;
 
@@ -120,6 +152,9 @@ protected:
     // Ports the watchdog is currently running on, maintained by both the
     // software and hardware implementations.
     std::set<std::string> m_pfcwd_ports;
+
+    // True while doTask is processing a batch that still holds a DEL for this key
+    bool isDeletePending(const string& key) const { return m_pendingDeletes.count(key) != 0; }
 
     void updateStateTable(const string &field, const string &value)
     {
@@ -177,6 +212,7 @@ private:
     shared_ptr<DBConnector> m_stateDb = nullptr;
     shared_ptr<Table> m_stateTable = nullptr;
     PfcWdAction m_pfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
+    std::set<std::string> m_pendingDeletes;
 };
 
 #endif
