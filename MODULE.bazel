@@ -1,7 +1,7 @@
 # Keep bazel_compatibility aligned with sonic-buildimage and sonic-swss-common.
 module(
     name = "sonic-swss",
-    version = "0.0.3",
+    version = "0.0.4",
     bazel_compatibility = [
         ">=8.5.1",
         "<=8.5.1",
@@ -23,7 +23,7 @@ bazel_dep(name = "rules_pkg", version = "1.1.0")
 bazel_dep(name = "rules_python", version = "1.9.0.sonic.2")
 bazel_dep(name = "rules_rs", version = "0.1.0")
 bazel_dep(name = "rules_shell", version = "0.6.1")
-bazel_dep(name = "sai", version = "1.18.0.sonic.2")
+bazel_dep(name = "sai", version = "1.19.2.sonic.1")
 bazel_dep(name = "tar.bzl", version = "0.10.5.sonic.2")
 bazel_dep(
     name = "sonic-build-infra",
@@ -37,7 +37,7 @@ bazel_dep(
 )
 bazel_dep(
     name = "sonic-sairedis",
-    version = "0.0.5-6b9b254c0d083f3c75e20c61e88e083a7acf0a67",
+    version = "0.0.6-c41b95c073a9deed76eae780c2cb8d25e11cb893",
     repo_name = "sonic_sairedis",
 )
 bazel_dep(
@@ -47,7 +47,7 @@ bazel_dep(
 )
 bazel_dep(
     name = "sonic-swss-common",
-    version = "0.0.8-2a4ddd070edb719f2e969a880a5cfff711e64e72",
+    version = "0.0.9-e06d5157d0a6a7228c8ba7357bdfd5e03623e586",
     repo_name = "sonic_swss_common",
 )
 
