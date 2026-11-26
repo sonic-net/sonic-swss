@@ -2889,6 +2889,43 @@ namespace vxlanorch_test
             EXPECT_TRUE(m_VxlanTunnelOrch->m_heldDeletes.empty());
         }
 
+        // A VLAN DEL held for its map is retried on every pass but logged once, and logged again for a new hold
+        // after the held DEL was dropped as stale.
+        void vlanDelWaitLoggedOnce()
+        {
+            const string waitLog = "VLAN-VNI mapping not yet removed. VLAN Vlan100 VNI 1000";
+            auto countWaitLogs = [&waitLog](const function<void()> &fn) {
+                swss::Logger::swssOutputNotify("orchagent", "STDERR");
+                testing::internal::CaptureStderr();
+                fn();
+                string out = testing::internal::GetCapturedStderr();
+                const char *syslogStdout = std::getenv("SWSS_SYSLOG_STDOUT");
+                swss::Logger::swssOutputNotify("orchagent",
+                    (syslogStdout != nullptr && string(syslogStdout) == "1") ? "STDOUT" : "SYSLOG");
+                size_t count = 0;
+                for (size_t pos = out.find(waitLog); pos != string::npos; pos = out.find(waitLog, pos + 1))
+                {
+                    count++;
+                }
+                return count;
+            };
+            auto retryVlan = [] { static_cast<Orch *>(gPortsOrch)->doTask(); };
+
+            EXPECT_EQ(countWaitLogs([&] { vlanDel(); retryVlan(); retryVlan(); }), 1U);
+            EXPECT_TRUE(vlanHeld());
+
+            vlanSet();
+            EXPECT_FALSE(vlanHeld());
+            EXPECT_EQ(countWaitLogs([&] { vlanDel(); retryVlan(); }), 1U);
+            EXPECT_TRUE(vlanHeld());
+
+            mapDel();
+            retryVlan();
+            EXPECT_FALSE(vlanHeld());
+            Port vlanPort;
+            EXPECT_FALSE(gPortsOrch->getVlanByVlanId(100, vlanPort));
+        }
+
         // The VLAN DEL can also come before the map DEL: the map DEL still removes the tunnel hw, so the held
         // tunnel DEL then goes.
         void vlanGoneBeforeMapDel()
@@ -3136,6 +3173,8 @@ namespace vxlanorch_test
     TEST_F(EvpnNvoDelP2mpTest, VlanDelWaitsForItsMap) { vlanDelWaitsForMap(); }
     TEST_F(EvpnNvoDelTest, HeldVlanDelDroppedOnRecreate) { heldVlanDelDroppedOnRecreate(); }
     TEST_F(EvpnNvoDelP2mpTest, HeldVlanDelDroppedOnRecreate) { heldVlanDelDroppedOnRecreate(); }
+    TEST_F(EvpnNvoDelTest, HeldVlanDelLoggedOnce) { vlanDelWaitLoggedOnce(); }
+    TEST_F(EvpnNvoDelP2mpTest, HeldVlanDelLoggedOnce) { vlanDelWaitLoggedOnce(); }
     TEST_F(EvpnNvoDelTest, ParentFirstDeleteMergedWithRecreate) { parentFirstDeleteMergedWithRecreate(); }
     TEST_F(EvpnNvoDelP2mpTest, ParentFirstDeleteMergedWithRecreate) { parentFirstDeleteMergedWithRecreate(); }
     TEST_F(EvpnNvoDelTest, VniChangeKeepsTheNewVni) { vniChangeKeepsTheNewVni(); }

@@ -406,6 +406,8 @@ private:
     map<string, uint32_t> m_port_ref_count;
     // VLANs whose DEL removed their STP membership but not the SAI VLAN.
     set<string> m_partlyRemovedVlans;
+    // VLANs whose DEL waits for their VLAN-VNI map; each wait is logged once.
+    set<string> m_vniHeldVlans;
     unordered_set<string> m_pendingPortSet;
     const uint32_t max_flood_control_types = 4;
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;

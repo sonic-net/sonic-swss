@@ -6002,6 +6002,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             if (m_appVlanTable->get(key, row))
             {
                 SWSS_LOG_NOTICE("VLAN %s was re-created, stale delete dropped", vlan_alias.c_str());
+                m_vniHeldVlans.erase(vlan_alias);
                 if (m_partlyRemovedVlans.erase(vlan_alias) && gStpOrch)
                 {
                     gStpOrch->restoreVlan(vlan_alias);
@@ -7708,10 +7709,15 @@ bool PortsOrch::removeVlan(Port vlan)
     // Fail VLAN removal if there is a vnid associated
     if (vlan.m_vnid != VNID_NONE)
     {
-       SWSS_LOG_WARN("VLAN-VNI mapping not yet removed. VLAN %s VNI %d",
-                     vlan.m_alias.c_str(), vlan.m_vnid);
+       // Retried on every pass until the map DEL comes: log once.
+       if (m_vniHeldVlans.insert(vlan.m_alias).second)
+       {
+           SWSS_LOG_WARN("VLAN-VNI mapping not yet removed. VLAN %s VNI %d",
+                         vlan.m_alias.c_str(), vlan.m_vnid);
+       }
        return false;
     }
+    m_vniHeldVlans.erase(vlan.m_alias);
 
 
     if (vlan.m_vlan_info.host_intf_id)
