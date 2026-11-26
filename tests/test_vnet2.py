@@ -718,6 +718,61 @@ class TestVnet2Orch(object):
             delete_vxlan_tunnel(dvs, tunnel_name)
 
 
+    def test_vnet_orch_37(self, dvs, testlog):
+        """Defer VNET deletion until its tunnel routes have been removed."""
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_37'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.30')
+        create_vnet_entry(dvs, 'Vnet_5037', tunnel_name, '5037', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet_5037')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5037', '5037')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.30')
+
+        wait_for_vnet_obj_in_state_db(dvs, 'Vnet_5037')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.200.1.1/32", 'Vnet_5037', '10.10.10.51')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet_5037', '10.10.10.51', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet_5037', "100.200.1.1/32", ['10.10.10.51'])
+
+        create_vnet_routes(dvs, "100.200.2.1/32", 'Vnet_5037', '10.10.10.52')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet_5037', '10.10.10.52', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet_5037', "100.200.2.1/32", ['10.10.10.52'])
+
+        delete_vnet_entry(dvs, 'Vnet_5037')
+
+        # Wait until vrfmgrd has processed the VNET delete far enough that
+        # STATE_VRF_TABLE is cleared (phase 1 done, phase 2 defer started).
+        # A fixed sleep can pass before vrfmgrd runs, so route deletes would
+        # complete cleanup without exercising the deferred-delete path.
+        wait_for_vnet_delete_in_progress(dvs, 'Vnet_5037')
+        check_vnet_obj_in_state_db(dvs, 'Vnet_5037')
+
+        delete_vnet_routes(dvs, "100.200.1.1/32", 'Vnet_5037')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_5037', ["100.200.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet_5037', "100.200.1.1/32")
+
+        delete_vnet_routes(dvs, "100.200.2.1/32", 'Vnet_5037')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_5037', ["100.200.2.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet_5037', "100.200.2.1/32")
+
+        wait_for_vnet_obj_removed_from_state_db(dvs, 'Vnet_5037')
+
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        route_tbl = swsscommon.Table(app_db, "VNET_ROUTE_TUNNEL_TABLE")
+        keys = route_tbl.getKeys()
+        stale_routes = [k for k in keys if k.startswith('Vnet_5037:')]
+        assert len(stale_routes) == 0, "Stale VNET routes in APP_DB: %s" % stale_routes
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
+
 def syslog_match_count(dvs, marker, pattern):
     """Number of lines matching pattern in the syslog written since marker."""
     (_, out) = dvs.runcmd(
