@@ -7,6 +7,7 @@
 #include <net/if.h>
 #include <netlink/addr.h>
 #include <netlink/msg.h>
+#include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
 #include <string>
 #include <vector>
@@ -165,6 +166,34 @@ class NeighSyncTest : public ::testing::Test
         }
 
         return false;
+    }
+
+    // the neighbor's interface (lo, see createNeighbor) becomes a VLAN bound to the given VRF
+    void bindNeighborInterfaceToVrf(const std::string& vrf)
+    {
+        const int vrfIndex = 4242;
+        struct nl_cache *cache = nullptr;
+        ASSERT_EQ(nl_cache_alloc_name("route/link", &cache), 0);
+
+        struct rtnl_link *vlan = rtnl_link_alloc();
+        rtnl_link_set_ifindex(vlan, static_cast<int>(if_nametoindex("lo")));
+        rtnl_link_set_name(vlan, mockInterfaceName.c_str());
+        rtnl_link_set_master(vlan, vrfIndex);
+        ASSERT_EQ(nl_cache_add(cache, OBJ_CAST(vlan)), 0);
+        rtnl_link_put(vlan);
+
+        struct rtnl_link *master = rtnl_link_alloc();
+        rtnl_link_set_ifindex(master, vrfIndex);
+        rtnl_link_set_name(master, vrf.c_str());
+        ASSERT_EQ(nl_cache_add(cache, OBJ_CAST(master)), 0);
+        rtnl_link_put(master);
+
+        if (m_sync->m_link_cache)
+        {
+            nl_cache_free(m_sync->m_link_cache);
+        }
+        m_sync->m_link_cache = cache;
+        m_sync->m_isEvpnNvoExist = true;
     }
 
     std::shared_ptr<DBConnector> m_appDb;
@@ -342,3 +371,46 @@ TEST_F(NeighSyncTest, RemovesStaleFailedNeighborOnNonVlanInterface)
 }
 
 } // namespace
+
+TEST_F(NeighSyncTest, KeepsEvpnRemoteHostRouteForRemoteNeighbor)
+{
+    ASSERT_NO_FATAL_FAILURE(bindNeighborInterfaceToVrf("Vrf1"));
+
+    ProducerStateTable routeTable(m_pipeline.get(), APP_ROUTE_TABLE_NAME);
+    routeTable.set("Vrf1:10.1.0.5", {{"nexthop", "2.2.2.2"}, {"vni_label", "1000"}});
+
+    // zebra installs a remote host's neighbor as NOARP and externally learned
+    auto neigh = createNeighbor(AF_INET, "10.1.0.5", NUD_NOARP);
+    ASSERT_TRUE(neigh.get() != nullptr);
+    rtnl_neigh_set_flags(neigh.get(), NTF_EXT_LEARNED);
+
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(neigh.get()));
+
+    std::vector<FieldValueTuple> values;
+    Table appRouteTable(m_appDb.get(), APP_ROUTE_TABLE_NAME);
+    EXPECT_TRUE(appRouteTable.get("Vrf1:10.1.0.5", values));
+
+    Table appNeighTable(m_appDb.get(), APP_NEIGH_TABLE_NAME);
+    EXPECT_TRUE(appNeighTable.get("Vlan1000:10.1.0.5", values));
+}
+
+TEST_F(NeighSyncTest, DeletesEvpnHostRouteForLocalNeighbor)
+{
+    ASSERT_NO_FATAL_FAILURE(bindNeighborInterfaceToVrf("Vrf1"));
+
+    ProducerStateTable routeTable(m_pipeline.get(), APP_ROUTE_TABLE_NAME);
+    routeTable.set("Vrf1:10.1.0.6", {{"nexthop", "2.2.2.2"}, {"vni_label", "1000"}});
+
+    // a host that turned local
+    auto local = createNeighbor(AF_INET, "10.1.0.6", NUD_REACHABLE);
+    ASSERT_TRUE(local.get() != nullptr);
+    rtnl_neigh_set_flags(local.get(), NTF_EXT_LEARNED);
+    m_sync->onMsg(RTM_NEWNEIGH, reinterpret_cast<struct nl_object *>(local.get()));
+
+    std::vector<FieldValueTuple> values;
+    Table appRouteTable(m_appDb.get(), APP_ROUTE_TABLE_NAME);
+    EXPECT_FALSE(appRouteTable.get("Vrf1:10.1.0.6", values));
+
+    Table appNeighTable(m_appDb.get(), APP_NEIGH_TABLE_NAME);
+    EXPECT_TRUE(appNeighTable.get("Vlan1000:10.1.0.6", values));
+}
