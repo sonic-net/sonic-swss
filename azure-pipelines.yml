@@ -129,7 +129,6 @@ stages:
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
-      pool: sonic-ubuntu-1c
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       swss_artifact_name: sonic-swss-${{ parameters.debian_version }}
@@ -145,7 +144,6 @@ stages:
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
-      pool: sonic-ubuntu-1c
       swss_common_artifact_name: sonic-swss-common-${{ parameters.debian_version }}
       sairedis_artifact_name: sonic-sairedis-${{ parameters.debian_version }}
       swss_artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
