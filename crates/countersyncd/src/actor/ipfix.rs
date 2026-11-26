@@ -99,7 +99,10 @@ enum ObservationTime {
     },
     Split {
         seconds_offset: usize,
+        seconds_len: u8,
         nanos_offset: usize,
+        nanos_len: u8,
+        nanos_is_standalone: bool,
     },
     Missing,
 }
@@ -112,16 +115,27 @@ impl ObservationTime {
             )),
             Self::Split {
                 seconds_offset,
+                seconds_len,
                 nanos_offset,
+                nanos_len,
+                nanos_is_standalone,
             } => {
-                let seconds = NetworkEndian::read_u32(
-                    &record
-                        [seconds_offset..seconds_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
-                );
-                let nanos = NetworkEndian::read_u32(
-                    &record[nanos_offset..nanos_offset + usize::from(SPLIT_OBSERVATION_TIME_LEN)],
-                );
-                Some(u64::from(seconds) * NANOS_PER_SECOND + u64::from(nanos))
+                let seconds =
+                    read_be_u64(&record[seconds_offset..seconds_offset + usize::from(seconds_len)]);
+                let nanos =
+                    read_be_u64(&record[nanos_offset..nanos_offset + usize::from(nanos_len)]);
+                if nanos_len == u8::try_from(SPLIT_OBSERVATION_TIME_LEN).expect("constant fits")
+                    || nanos < NANOS_PER_SECOND
+                {
+                    seconds
+                        .checked_mul(NANOS_PER_SECOND)
+                        .and_then(|value| value.checked_add(nanos))
+                } else if nanos_is_standalone {
+                    // A standalone 8-byte IE 325 is also a complete timestamp.
+                    Some(nanos)
+                } else {
+                    None
+                }
             }
             Self::Missing => None,
         }
@@ -1182,8 +1196,8 @@ fn compile_template_set(
         }
         let mut counters = Vec::with_capacity(field_count);
         let mut raw_nanos_offset = None;
-        let mut seconds_offset = None;
-        let mut nanos_offset = None;
+        let mut seconds_component = None;
+        let mut nanos_component = None;
         let mut field_keys = HashSet::with_capacity(field_count);
         let mut record_len = 0usize;
         for _ in 0..field_count {
@@ -1243,11 +1257,22 @@ fn compile_template_set(
             ) {
                 let time_offset = match (field_id, field_len) {
                     (OBSERVATION_TIME_NANOSECONDS, OBSERVATION_TIME_LEN) => &mut raw_nanos_offset,
-                    (OBSERVATION_TIME_SECONDS, SPLIT_OBSERVATION_TIME_LEN) => &mut seconds_offset,
-                    (OBSERVATION_TIME_NANOSECONDS, SPLIT_OBSERVATION_TIME_LEN) => &mut nanos_offset,
+                    (
+                        OBSERVATION_TIME_SECONDS,
+                        SPLIT_OBSERVATION_TIME_LEN | OBSERVATION_TIME_LEN,
+                    ) => &mut seconds_component,
+                    (OBSERVATION_TIME_NANOSECONDS, SPLIT_OBSERVATION_TIME_LEN) => {
+                        &mut nanos_component
+                    }
                     _ => return Err(format!("template {template_id} observation time IE {field_id} has unsupported length {field_len}").into()),
                 };
-                if time_offset.replace(field_offset).is_some() {
+                if time_offset
+                    .replace((
+                        field_offset,
+                        u8::try_from(field_len).expect("time field is 4 or 8"),
+                    ))
+                    .is_some()
+                {
                     return Err(format!(
                         "template {template_id} contains duplicate observation time fields"
                     )
@@ -1263,13 +1288,42 @@ fn compile_template_set(
         if counters.is_empty() {
             return Err(format!("template {template_id} requires at least one counter").into());
         }
-        let observation_time = if let Some(offset) = raw_nanos_offset {
-            ObservationTime::RawNanoseconds { offset }
-        } else if let (Some(seconds_offset), Some(nanos_offset)) = (seconds_offset, nanos_offset) {
+        let observation_time = if nanos_component.is_some() && raw_nanos_offset.is_some() {
+            // Preserve the existing preference for an explicit standalone
+            // 8-byte IE 325 when both 4-byte and 8-byte IE 325 are present.
+            ObservationTime::RawNanoseconds {
+                offset: raw_nanos_offset.expect("checked above").0,
+            }
+        } else if let (Some((seconds_offset, seconds_len)), Some((nanos_offset, nanos_len))) =
+            (seconds_component, nanos_component)
+        {
             ObservationTime::Split {
                 seconds_offset,
+                seconds_len,
                 nanos_offset,
+                nanos_len,
+                nanos_is_standalone: false,
             }
+        } else if let (Some((seconds_offset, seconds_len)), Some((nanos_offset, nanos_len))) =
+            (seconds_component, raw_nanos_offset)
+        {
+            if u16::from(seconds_len) == OBSERVATION_TIME_LEN {
+                ObservationTime::Split {
+                    seconds_offset,
+                    seconds_len,
+                    nanos_offset,
+                    nanos_len,
+                    nanos_is_standalone: true,
+                }
+            } else {
+                // Keep the standalone timestamp for the existing 4-byte
+                // seconds plus 8-byte nanoseconds layout.
+                ObservationTime::RawNanoseconds {
+                    offset: nanos_offset,
+                }
+            }
+        } else if let Some((offset, _)) = raw_nanos_offset {
+            ObservationTime::RawNanoseconds { offset }
         } else {
             ObservationTime::Missing
         };
@@ -2405,7 +2459,10 @@ mod tests {
             one.observation_time,
             ObservationTime::Split {
                 seconds_offset: 0,
-                nanos_offset: 4
+                seconds_len: 4,
+                nanos_offset: 4,
+                nanos_len: 4,
+                nanos_is_standalone: false,
             }
         );
         let two = &actor.installed[&TemplateKey {
@@ -2440,6 +2497,112 @@ mod tests {
         );
         assert_eq!(records[0].stats.get(1).unwrap().counter, 0xf123_4567);
         assert_eq!(records[2].stats.get(0).unwrap().counter, 0x8765_4321);
+    }
+
+    #[test]
+    fn sft_eight_byte_seconds_and_nanoseconds_are_combined() {
+        let mut actor = actor();
+        actor
+            .handle_template(hardware_template(
+                300,
+                &[(322, 8, None), (325, 8, None), (1, 8, Some(0x0001_0001))],
+            ))
+            .unwrap();
+        let mut record = Vec::new();
+        record.extend_from_slice(&7_699u64.to_be_bytes());
+        record.extend_from_slice(&638_434_000u64.to_be_bytes());
+        record.extend_from_slice(&10u64.to_be_bytes());
+        let output = actor
+            .handle_record(&hardware_data(300, &[&record]))
+            .unwrap();
+        let decoded = output.iter().next().unwrap();
+        assert_eq!(decoded.observation_time, 7_699_638_434_000);
+        assert_eq!(decoded.stats.get(0).unwrap().counter, 10);
+    }
+
+    #[test]
+    fn eight_byte_seconds_and_four_byte_nanoseconds_are_combined() {
+        let mut actor = actor();
+        actor
+            .handle_template(hardware_template(
+                300,
+                &[(322, 8, None), (325, 4, None), (1, 8, Some(0x0001_0001))],
+            ))
+            .unwrap();
+        let mut record = Vec::new();
+        record.extend_from_slice(&4_294_967_297u64.to_be_bytes());
+        record.extend_from_slice(&123_456_789u32.to_be_bytes());
+        record.extend_from_slice(&10u64.to_be_bytes());
+        let output = actor
+            .handle_record(&hardware_data(300, &[&record]))
+            .unwrap();
+        let decoded = output.iter().next().unwrap();
+        assert_eq!(decoded.observation_time, 4_294_967_297_123_456_789);
+        assert_eq!(decoded.stats.get(0).unwrap().counter, 10);
+    }
+
+    #[test]
+    fn eight_byte_seconds_preserve_standalone_eight_byte_nanoseconds() {
+        let mut actor = actor();
+        actor
+            .handle_template(hardware_template(
+                300,
+                &[(322, 8, None), (325, 8, None), (1, 8, Some(0x0001_0001))],
+            ))
+            .unwrap();
+        for nanos in [1_000_000_000u64, 1_788_655_919_123_456_789] {
+            let mut record = Vec::new();
+            record.extend_from_slice(&7_699u64.to_be_bytes());
+            record.extend_from_slice(&nanos.to_be_bytes());
+            record.extend_from_slice(&10u64.to_be_bytes());
+            let output = actor
+                .handle_record(&hardware_data(300, &[&record]))
+                .unwrap();
+            let decoded = output.iter().next().unwrap();
+            assert_eq!(decoded.observation_time, nanos);
+            assert_eq!(decoded.stats.get(0).unwrap().counter, 10);
+        }
+    }
+
+    #[test]
+    fn split_timestamp_seconds_overflow_returns_none() {
+        let mut actor = actor();
+        actor
+            .handle_template(hardware_template(
+                300,
+                &[(322, 8, None), (325, 8, None), (1, 8, Some(0x0001_0001))],
+            ))
+            .unwrap();
+        let mut record = Vec::new();
+        record.extend_from_slice(&(u64::MAX / NANOS_PER_SECOND + 1).to_be_bytes());
+        record.extend_from_slice(&123u64.to_be_bytes());
+        record.extend_from_slice(&10u64.to_be_bytes());
+        let template = &actor.installed[&TemplateKey {
+            observation_domain_id: 0,
+            template_id: 300,
+        }];
+        assert_eq!(template.observation_time.extract(&record), None);
+    }
+
+    #[test]
+    fn four_byte_seconds_preserve_standalone_eight_byte_nanoseconds() {
+        let mut actor = actor();
+        actor
+            .handle_template(hardware_template(
+                300,
+                &[(322, 4, None), (325, 8, None), (1, 8, Some(0x0001_0001))],
+            ))
+            .unwrap();
+        let mut record = Vec::new();
+        record.extend_from_slice(&100u32.to_be_bytes());
+        record.extend_from_slice(&42u64.to_be_bytes());
+        record.extend_from_slice(&10u64.to_be_bytes());
+        let output = actor
+            .handle_record(&hardware_data(300, &[&record]))
+            .unwrap();
+        let decoded = output.iter().next().unwrap();
+        assert_eq!(decoded.observation_time, 42);
+        assert_eq!(decoded.stats.get(0).unwrap().counter, 10);
     }
 
     #[test]
@@ -2579,7 +2742,10 @@ mod tests {
                 template.observation_time,
                 ObservationTime::Split {
                     seconds_offset: 0,
+                    seconds_len: 4,
                     nanos_offset: 4,
+                    nanos_len: 4,
+                    nanos_is_standalone: false,
                 }
             );
             for counter_index in [0, COUNTERS_PER_TEMPLATE - 1] {
@@ -2841,7 +3007,7 @@ mod tests {
     fn hardware_layout_keeps_strict_malformed_field_validation() {
         let counter = (1, 8, Some(0x0001_0001));
         for fields in [
-            vec![(322, 8, None), counter],
+            vec![(322, 3, None), counter],
             vec![(325, 3, None), counter],
             vec![(322, 4, None), (322, 4, None), counter],
             vec![(325, 4, None), (325, 4, None), counter],

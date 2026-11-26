@@ -2,6 +2,8 @@
 #define __WARM_RESTART_ASSIST__
 
 #include <unordered_map>
+#include <unordered_set>
+#include <functional>
 #include <string>
 #include "dbconnector.h"
 #include "table.h"
@@ -84,11 +86,21 @@ public:
     void warmStartDisabled(void);
     void insertToMap(std::string tableName, std::string key, std::vector<FieldValueTuple> fvVector, bool delete_key);
     void reconcile(void);
+    // Called with each entry keepStaleEntries() keeps: table name, key and its restored fields.
+    typedef std::function<void(const std::string &, const std::string &,
+                               const std::vector<FieldValueTuple> &)> KeptEntryHandler;
+    // Marks every STALE cache entry SAME so the reconcile keeps it; for a replay known to be incomplete.
+    void keepStaleEntries(const KeptEntryHandler &onKept = nullptr);
     bool isWarmStartInProgress(void)
     {
         return m_warmStartInProgress;
     }
-    void registerAppTable(const std::string &tableName, ProducerStateTable *psTable);
+    /*
+     * replaceFields: the application deletes an entry before it sets one with other fields,
+     * so the reconcile deletes a NEW entry before setting it when APPL_DB holds a field
+     * the new value lacks. A set alone merges into the restored hash.
+     */
+    void registerAppTable(const std::string &tableName, ProducerStateTable *psTable, bool replaceFields = false);
 
 private:
     typedef std::map<cache_state_t, std::string> cache_state_map;
@@ -112,6 +124,7 @@ private:
     std::string         m_dockerName; // docker name of the application
     std::string         m_appName;    // application name
     ProducerStateTables m_psTables;   // producer state tables
+    std::unordered_set<std::string> m_replaceFieldsTables;  // tables registered with replaceFields
 
     bool m_warmStartInProgress;       // indicate if warm start is in progress
     time_t m_reconcileTimer;          // reconcile timer value
@@ -123,6 +136,8 @@ private:
     cache_state_t getCacheEntryState(const std::vector<FieldValueTuple> &fvVector);
     bool contains(const std::vector<FieldValueTuple>& left,
                   const std::vector<FieldValueTuple>& right);
+    bool dropsAppDbField(const std::string &tableName, const std::string &key,
+                         const std::vector<FieldValueTuple> &fvVector);
 };
 
 }
