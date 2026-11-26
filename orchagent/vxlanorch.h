@@ -196,6 +196,11 @@ public:
         return src_ip_;
     }
 
+    const IpAddress getDstIP() const
+    {
+        return dst_ip_;
+    }
+
     bool hasConfig(const IpAddress& src_ip, const IpAddress& dst_ip, VxlanTunnelTTLMode ttl_mode) const
     {
         return src_ip_ == src_ip && dst_ip_ == dst_ip && decap_ttl_mode_ == ttl_mode;
@@ -456,6 +461,9 @@ public:
     }
 
     bool isVniVlanMapExists(uint32_t vni_id, std::string& vniVlanMapName, sai_object_id_t *tnl_map_entry_id, uint32_t *vlan_id);
+
+    // True when the VLAN is mapped on a tunnel with a dst_ip, i.e. a static VXLAN tunnel, not an EVPN VTEP.
+    bool isVlanMappedOnStaticTunnel(sai_vlan_id_t vlan_id) const;
 
     void updateTnlMapId(std::string vniVlanMapName, sai_object_id_t tunnel_map_id);
 private:

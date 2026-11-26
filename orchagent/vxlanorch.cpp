@@ -2963,6 +2963,15 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
     {
+        // A static tunnel's netdev has a default FDB entry to its dst_ip, which fdbsyncd sends as a remote VNI.
+        // No NVO is coming for it, so waiting would keep it queued and block a warm restart.
+        if (gDirectory.get<VxlanTunnelMapOrch*>()->isVlanMappedOnStaticTunnel(vlan_id))
+        {
+            SWSS_LOG_NOTICE("Remote VNI add ignored: vid %d is mapped on a static VXLAN tunnel. remote=%s",
+                            vlan_id, remote_vtep.c_str());
+            m_noSourceVtepLogged.erase(make_pair(vlan_id, remote_vtep));
+            return true;
+        }
         if (evpn_orch->isBindPending())
         {
             SWSS_LOG_INFO("Remote VNI add waits for the source VTEP. remote=%s vid=%d",
@@ -3192,6 +3201,14 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
     {
+        // A static tunnel's default FDB entry to its dst_ip: no NVO is coming for it.
+        if (vxlan_tun_map_orch->isVlanMappedOnStaticTunnel(vlan_id))
+        {
+            SWSS_LOG_NOTICE("Remote VNI add ignored: vid %d is mapped on a static VXLAN tunnel. remote=%s",
+                            vlan_id, end_point_ip.c_str());
+            m_noSourceVtepLogged.erase(make_pair(vlan_id, end_point_ip));
+            return true;
+        }
         if (evpn_orch->isBindPending())
         {
             SWSS_LOG_INFO("Remote VNI add waits for the source VTEP. remote=%s vid=%d",
@@ -3522,6 +3539,25 @@ bool VxlanTunnelMapOrch::isVniVlanMapExists(uint32_t vni_id, std::string& vniVla
     }
 
     return map_entry_exists;
+}
+
+bool VxlanTunnelMapOrch::isVlanMappedOnStaticTunnel(sai_vlan_id_t vlan_id) const
+{
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    for (const auto &map : vxlan_tunnel_map_table_)
+    {
+        if (map.second.vlan_id != vlan_id)
+        {
+            continue;
+        }
+        const auto tunnel_name = map.first.substr(0, map.first.find(':'));
+        if (tunnel_orch->isTunnelExists(tunnel_name) &&
+            !tunnel_orch->getVxlanTunnel(tunnel_name)->getDstIP().isZero())
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 void VxlanTunnelMapOrch::updateTnlMapId(std::string vniVlanMapName, sai_object_id_t tunnel_map_id)

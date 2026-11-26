@@ -1794,6 +1794,53 @@ namespace vxlanorch_test
             EXPECT_TRUE(floodMember());
             delRemoteVni();
         }
+
+        // A static VXLAN tunnel (one with a dst_ip) has no EVPN NVO. The remote VNI fdbsyncd sends for its netdev's
+        // default FDB entry is dropped once its VLAN map is known, not kept queued, which would block a warm restart.
+        // An EVPN remote VNI still waits for the NVO.
+        void staticTunnelRemoteVniDropped()
+        {
+            const string staticKey = "tunnelVxlan:map_2000_Vlan200";
+            nvoDel();
+
+            Table vlan(m_app_db.get(), APP_VLAN_TABLE_NAME);
+            vlan.set("Vlan200", {{"admin_status", "up"}, {"mtu", "9100"}});
+            gPortsOrch->addExistingData(&vlan);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+
+            // Before the static tunnel's map is known, the entry cannot be told apart from EVPN's: it waits.
+            remoteVniConsumer()->addToSync({{"Vlan200:10.2.2.2", SET_COMMAND, {{"vni", "2000"}}}});
+            retryRemoteVni();
+            EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+
+            Table tunnel(m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            tunnel.set("tunnelVxlan", {{"src_ip", "10.1.1.10"}, {"dst_ip", "10.2.2.2"}});
+            m_VxlanTunnelOrch->addExistingData(&tunnel);
+            static_cast<Orch *>(m_VxlanTunnelOrch)->doTask();
+            Table tunnelMap(m_app_db.get(), APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
+            tunnelMap.set(staticKey, {{"vni", "2000"}, {"vlan", "Vlan200"}});
+            m_tunnelMapOrch->addExistingData(&tunnelMap);
+            static_cast<Orch *>(m_tunnelMapOrch)->doTask();
+            ASSERT_TRUE(m_tunnelMapOrch->isTunnelMapExists(staticKey));
+
+            retryRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            remoteVniConsumer()->addToSync({{"Vlan200:10.2.2.2", SET_COMMAND, {{"vni", "2000"}}}});
+            retryRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+
+            EXPECT_EQ(waitLogs([this] { setRemoteVni(); retryRemoteVni(); }), 1U);
+            EXPECT_EQ(remoteVniConsumer()->m_toSync.size(), 1U);
+            nvoSet();
+            retryRemoteVni();
+            EXPECT_TRUE(remoteVniConsumer()->m_toSync.empty());
+            EXPECT_TRUE(floodMember());
+            delRemoteVni();
+
+            tunnelMap.del(staticKey);
+            tunnel.del("tunnelVxlan");
+            vlan.del("Vlan200");
+        }
     };
 
     class EvpnRemoteVniBeforeNvoP2mpTest : public EvpnRemoteVniBeforeNvoTest
@@ -1809,6 +1856,8 @@ namespace vxlanorch_test
     TEST_F(EvpnRemoteVniBeforeNvoP2mpTest, RemoteVniWaitsForNvo) { waitsForNvo(); }
     TEST_F(EvpnRemoteVniBeforeNvoTest, DelWhileWaitingForNvo) { delWhileWaitingForNvo(); }
     TEST_F(EvpnRemoteVniBeforeNvoP2mpTest, DelWhileWaitingForNvo) { delWhileWaitingForNvo(); }
+    TEST_F(EvpnRemoteVniBeforeNvoTest, StaticTunnelRemoteVniDropped) { staticTunnelRemoteVniDropped(); }
+    TEST_F(EvpnRemoteVniBeforeNvoP2mpTest, StaticTunnelRemoteVniDropped) { staticTunnelRemoteVniDropped(); }
 
     // Without DIP tunnels a remote MAC points at the NVO's source VTEP tunnel port, so a remote
     // MAC that comes before the NVO waits for it too.
