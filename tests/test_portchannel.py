@@ -114,6 +114,27 @@ class TestPortchannel(object):
         self.dvs_lag.remove_port_channel(po_id)
         self.dvs_lag.get_and_verify_port_channel(0)
 
+    @pytest.mark.parametrize("active", [None, False, True])
+    def test_Portchannel_lacp_mode(self, dvs, testlog, active):
+        po_id = "0003"
+        po_member = "Ethernet16"
+
+        # Create PortChannel; no "active" field means LACP active mode
+        self.dvs_lag.create_port_channel(po_id, active=active)
+        self.dvs_lag.get_and_verify_port_channel(1)
+
+        # Add member to PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
+
+        # test LACP activity mode (active/passive) configuration
+        self.dvs_lag.get_and_verify_port_channel_active(po_id, active is not False)
+
+        # remove PortChannel
+        self.dvs_lag.remove_port_channel_member(po_id, po_member)
+        self.dvs_lag.remove_port_channel(po_id)
+        self.dvs_lag.get_and_verify_port_channel(0)
+
 
     def test_Portchannel_lacpkey(self, dvs, testlog):
         portchannelNamesAuto = [("PortChannel001", "Ethernet0", 1001),
