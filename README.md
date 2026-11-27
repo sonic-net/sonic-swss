@@ -81,6 +81,47 @@ You can also build a debian package using:
 ./autogen.sh
 fakeroot debian/rules binary
 ```
+## Direct ACL DSCP rewrite
+
+Custom ACL table types can include `DSCP_ACTION` in their `actions` list.
+Rules in those tables accept `DSCP_ACTION` values from `0` to `63`, independently
+of `PACKET_ACTION`. The action rewrites the DSCP field directly at the table's
+ingress or egress stage; it does not allocate metadata or create an additional
+egress table. The ASIC/SAI must support `SET_DSCP` at the selected stage.
+
+For example, the following CONFIG_DB entries classify IPv4 packets by destination
+and rewrite their DSCP to 46 at ingress:
+
+```json
+{
+    "ACL_TABLE_TYPE": {
+        "DSCP_REWRITE": {
+            "matches": ["DST_IP"],
+            "bind_points": ["PORT"],
+            "actions": ["DSCP_ACTION"]
+        }
+    },
+    "ACL_TABLE": {
+        "DSCP_REWRITE": {
+            "type": "DSCP_REWRITE",
+            "stage": "ingress",
+            "ports": ["Ethernet0"]
+        }
+    },
+    "ACL_RULE": {
+        "DSCP_REWRITE|RULE1": {
+            "PRIORITY": "1000",
+            "DST_IP": "192.0.2.0/24",
+            "DSCP_ACTION": "46"
+        }
+    }
+}
+```
+
+Use IPv6 match fields such as `DST_IPV6` in the custom table type and rule for
+IPv6 traffic. Existing `UNDERLAY_SET_DSCP` and `UNDERLAY_SET_DSCPV6` tables retain
+their metadata-based ingress-to-egress behavior.
+
 ## Common issues
 
 #### Cannot find `libboost-serialization1.74.0`

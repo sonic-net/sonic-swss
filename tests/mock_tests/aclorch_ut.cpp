@@ -1500,6 +1500,239 @@ namespace aclorch_test
         }
     }
 
+    struct AclDscpActionTest : public AclOrchTest
+    {
+        string originalPlatform;
+        bool hadPlatform;
+        const string tableType = "TEST_DSCP_TYPE";
+        const string tableName = "TEST_DSCP_TABLE";
+        const string ruleName = "TEST_DSCP_RULE";
+
+        void SetUp() override
+        {
+            const auto platform = getenv("platform");
+            hadPlatform = platform != nullptr;
+            originalPlatform = platform ? platform : "";
+            setenv("platform", VS_PLATFORM_SUBSTRING, 1);
+            AclOrchTest::SetUp();
+        }
+
+        void TearDown() override
+        {
+            AclOrchTest::TearDown();
+            if (hadPlatform)
+            {
+                setenv("platform", originalPlatform.c_str(), 1);
+            }
+            else
+            {
+                unsetenv("platform");
+            }
+        }
+
+        void createTable(MockAclOrch &orch, const string &match = MATCH_SRC_IP,
+                         const string &actions = ACTION_DSCP, const string &stage = STAGE_INGRESS)
+        {
+            orch.doAclTableTypeTask({
+                { tableType, SET_COMMAND,
+                  { { ACL_TABLE_TYPE_MATCHES, match },
+                    { ACL_TABLE_TYPE_ACTIONS, actions },
+                    { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT } } }
+            });
+            orch.doAclTableTask({
+                { tableName, SET_COMMAND,
+                  { { ACL_TABLE_TYPE, tableType },
+                    { ACL_TABLE_STAGE, stage },
+                    { ACL_TABLE_PORTS, "1,2" } } }
+            });
+            ASSERT_TRUE(orch.getAclTable(tableName));
+        }
+    };
+
+    TEST_F(AclDscpActionTest, Rewrite)
+    {
+        auto orch = createAclOrch();
+        for (const auto &stage : { STAGE_INGRESS, STAGE_EGRESS })
+        {
+            for (const auto ipv6 : { false, true })
+            {
+                SCOPED_TRACE(string(stage) + (ipv6 ? " IPv6" : " IPv4"));
+                const string match = ipv6 ? MATCH_SRC_IPV6 : MATCH_SRC_IP;
+                const string address = ipv6 ? "2001:db8::1/128" : "192.0.2.1/32";
+                ASSERT_NO_FATAL_FAILURE(createTable(*orch, match,
+                    string(ACTION_DSCP) + "," + ACTION_PACKET_ACTION, stage));
+                ASSERT_EQ(orch->getAclTables().size(), 1U);
+
+                int32_t actionList[3];
+                sai_attribute_t attr = {};
+                attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
+                attr.value.s32list = { 3, actionList };
+                ASSERT_EQ(sai_acl_api->get_acl_table_attribute(
+                    orch->getTableById(tableName), 1, &attr), SAI_STATUS_SUCCESS);
+                EXPECT_NE(find(actionList, actionList + attr.value.s32list.count,
+                    SAI_ACL_ACTION_TYPE_SET_DSCP), actionList + attr.value.s32list.count);
+
+                for (const auto forward : { false, true })
+                {
+                    for (const auto &dscp : { "0", "46", "63" })
+                    {
+                        vector<FieldValueTuple> fields = { { match, address } };
+                        if (forward)
+                        {
+                            fields.emplace_back(ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD);
+                        }
+                        fields.emplace_back(ACTION_DSCP, dscp);
+                        orch->doAclRuleTask({
+                            { tableName + "|" + ruleName, SET_COMMAND, fields }
+                        });
+                        const auto rule = orch->getAclRule(tableName, ruleName);
+                        ASSERT_TRUE(rule);
+                        EXPECT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP), dscp);
+                        const auto &actions = Portal::AclRuleInternal::getActions(rule);
+                        EXPECT_EQ(actions.count(SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA), 0U);
+                        if (forward)
+                        {
+                            EXPECT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION),
+                                "SAI_PACKET_ACTION_FORWARD");
+                        }
+                    }
+                    orch->doAclRuleTask({
+                        { tableName + "|" + ruleName, DEL_COMMAND, {} }
+                    });
+                    EXPECT_FALSE(orch->getAclRule(tableName, ruleName));
+                }
+                orch->doAclTableTask({ { tableName, DEL_COMMAND, {} } });
+                EXPECT_TRUE(orch->getAclTables().empty());
+                orch->doAclTableTypeTask({ { tableType, DEL_COMMAND, {} } });
+            }
+        }
+    }
+
+    TEST_F(AclDscpActionTest, InvalidValue)
+    {
+        auto orch = createAclOrch();
+        ASSERT_NO_FATAL_FAILURE(createTable(*orch));
+        for (const auto &dscp : { "64", "255", "256", "-1", "invalid", "1.5", "", "4294967296" })
+        {
+            SCOPED_TRACE(dscp);
+            orch->doAclRuleTask({
+                { tableName + "|" + ruleName, SET_COMMAND,
+                  { { MATCH_SRC_IP, "192.0.2.1/32" }, { ACTION_DSCP, dscp } } }
+            });
+            EXPECT_FALSE(orch->getAclRule(tableName, ruleName));
+        }
+    }
+
+    TEST_F(AclDscpActionTest, TableTypeWithoutDscp)
+    {
+        auto orch = createAclOrch();
+        ASSERT_NO_FATAL_FAILURE(createTable(*orch, MATCH_SRC_IP, ACTION_PACKET_ACTION));
+        orch->doAclRuleTask({
+            { tableName + "|" + ruleName, SET_COMMAND,
+              { { MATCH_SRC_IP, "192.0.2.1/32" }, { ACTION_DSCP, "46" } } }
+        });
+        EXPECT_FALSE(orch->getAclRule(tableName, ruleName));
+    }
+
+    TEST_F(AclDscpActionTest, UnsupportedStage)
+    {
+        const auto originalGet = sai_switch_api->get_switch_attribute;
+        auto spy = SpyOn<SAI_API_SWITCH, SAI_OBJECT_TYPE_SWITCH>(&sai_switch_api->get_switch_attribute);
+        spy->callFake([&](sai_object_id_t oid, uint32_t count, sai_attribute_t *attrs) -> sai_status_t {
+            const auto status = originalGet(oid, count, attrs);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                for (uint32_t i = 0; i < count; ++i)
+                {
+                    if (attrs[i].id == SAI_SWITCH_ATTR_ACL_STAGE_EGRESS)
+                    {
+                        auto &actions = attrs[i].value.aclcapability.action_list;
+                        const auto end = remove(actions.list, actions.list + actions.count,
+                            SAI_ACL_ACTION_TYPE_SET_DSCP);
+                        actions.count = static_cast<uint32_t>(end - actions.list);
+                    }
+                }
+            }
+            return status;
+        });
+        auto orch = createAclOrch();
+        ASSERT_FALSE(orch->m_aclOrch->isAclActionSupported(ACL_STAGE_EGRESS, SAI_ACL_ACTION_TYPE_SET_DSCP));
+        orch->doAclTableTypeTask({
+            { tableType, SET_COMMAND,
+              { { ACL_TABLE_TYPE_MATCHES, MATCH_SRC_IP },
+                { ACL_TABLE_TYPE_ACTIONS, ACTION_DSCP },
+                { ACL_TABLE_TYPE_BPOINT_TYPES, BIND_POINT_TYPE_PORT } } }
+        });
+        ASSERT_TRUE(orch->getAclTableType(tableType));
+        orch->doAclTableTask({
+            { tableName, SET_COMMAND,
+              { { ACL_TABLE_TYPE, tableType },
+                { ACL_TABLE_STAGE, STAGE_EGRESS },
+                { ACL_TABLE_PORTS, "1,2" } } }
+        });
+        EXPECT_FALSE(orch->getAclTable(tableName));
+    }
+
+    TEST_F(AclDscpActionTest, WithoutMetadataSupport)
+    {
+        setenv("platform", BRCM_PLATFORM_SUBSTRING, 1);
+        sai_cap_ut::AttrCapabilityOverrideGuard guard(
+            [](sai_object_type_t objectType, sai_attr_id_t attrId,
+               sai_attr_capability_t *cap, sai_status_t *status) -> bool {
+                if (objectType != SAI_OBJECT_TYPE_SWITCH || attrId != SAI_SWITCH_ATTR_ACL_USER_META_DATA_RANGE)
+                {
+                    return false;
+                }
+                *cap = {};
+                *status = SAI_STATUS_SUCCESS;
+                return true;
+            });
+        auto orch = createAclOrch();
+        ASSERT_FALSE(orch->m_aclOrch->isAclMetaDataSupported());
+        swss::Table capabilities(m_state_db.get(), STATE_ACL_STAGE_CAPABILITY_TABLE_NAME);
+        string actions;
+        ASSERT_TRUE(capabilities.hget(STAGE_INGRESS, "action_list", actions));
+        EXPECT_NE(actions.find(ACTION_DSCP), string::npos);
+        EXPECT_EQ(actions.find(ACTION_META_DATA), string::npos);
+        ASSERT_NO_FATAL_FAILURE(createTable(*orch));
+        orch->doAclRuleTask({
+            { tableName + "|" + ruleName, SET_COMMAND,
+              { { MATCH_SRC_IP, "192.0.2.1/32" }, { ACTION_DSCP, "46" } } }
+        });
+        const auto rule = orch->getAclRule(tableName, ruleName);
+        ASSERT_TRUE(rule);
+        EXPECT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP), "46");
+    }
+
+    TEST_F(AclDscpActionTest, UnderlayStillUsesMetadata)
+    {
+        auto orch = createAclOrch();
+        orch->doAclTableTask({
+            { tableName, SET_COMMAND,
+              { { ACL_TABLE_TYPE, TABLE_TYPE_UNDERLAY_SET_DSCP },
+                { ACL_TABLE_STAGE, STAGE_INGRESS },
+                { ACL_TABLE_PORTS, "1,2" } } }
+        });
+        ASSERT_TRUE(orch->getAclTable(tableName));
+        orch->doAclRuleTask({
+            { tableName + "|" + ruleName, SET_COMMAND,
+              { { MATCH_SRC_IP, "192.0.2.1/32" }, { ACTION_DSCP, "46" } } }
+        });
+        const auto rule = orch->getAclRule(tableName, ruleName);
+        ASSERT_TRUE(rule);
+        EXPECT_NE(dynamic_cast<const AclRuleUnderlaySetDscp *>(rule), nullptr);
+        const auto &actions = Portal::AclRuleInternal::getActions(rule);
+        EXPECT_EQ(actions.count(SAI_ACL_ENTRY_ATTR_ACTION_SET_ACL_META_DATA), 1U);
+        EXPECT_EQ(actions.count(SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP), 0U);
+        const auto egressTable = orch->getAclTable("EgressSetDSCP");
+        ASSERT_TRUE(egressTable);
+        ASSERT_EQ(egressTable->rules.size(), 1U);
+        EXPECT_EQ(getAclRuleSaiAttribute(*egressTable->rules.begin()->second,
+            SAI_ACL_ENTRY_ATTR_ACTION_SET_DSCP), "46");
+        orch->doAclRuleTask({ { tableName + "|" + ruleName, DEL_COMMAND, {} } });
+        EXPECT_TRUE(egressTable->rules.empty());
+    }
+
     // An ACL rule with POLICER_ACTION referencing a POLICER entry is realized as
     // SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER. A rule referencing a policer that
     // does not exist yet is deferred (relies on the m_toSync retry) and not created.
