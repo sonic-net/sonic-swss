@@ -9,6 +9,9 @@
 #include <fstream>
 #include <iostream>
 #include "warm_restart.h"
+#include "netdispatcher.h"
+#include "netlink.h"
+#include "intfmgr_netlink.h"
 
 using namespace std;
 using namespace swss;
@@ -46,13 +49,23 @@ int main(int argc, char **argv)
         WarmStart::checkWarmStart("intfmgrd", "swss");
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
+        IntfAddrNetlink intfAddrNetlink(&intfmgr);
         std::vector<Orch *> cfgOrchList = {&intfmgr};
+
+        NetDispatcher::getInstance().registerMessageHandler(RTM_NEWADDR, &intfAddrNetlink);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_DELADDR, &intfAddrNetlink);
+
+        NetLink netlink;
+        netlink.registerGroup(RTNLGRP_IPV4_IFADDR);
+        netlink.registerGroup(RTNLGRP_IPV6_IFADDR);
+        netlink.dumpRequest(RTM_GETADDR);
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
+        s.addSelectable(&netlink);
 
         Table table(&cfgDb, "DEVICE_METADATA");
         string mac = "";
@@ -79,6 +92,11 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 intfmgr.doTask();
+                continue;
+            }
+
+            if (sel == static_cast<Selectable *>(&netlink))
+            {
                 continue;
             }
 

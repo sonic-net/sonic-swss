@@ -12,6 +12,11 @@
 #include "subscriberstatetable.h"
 #include <swss/redisutility.h>
 #include "subintf.h"
+#include <linux/rtnetlink.h>
+#include <netlink/route/addr.h>
+#include <linux/if_addr.h>
+#include <net/if.h>
+#include <arpa/inet.h>
 
 using namespace std;
 using namespace swss;
@@ -1264,7 +1269,6 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
             fvVector.push_back(s);
             fvVector.push_back(f);
             m_appIntfTableProducer.set(appKey, fvVector);
-            m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
         }
     }
     else if (op == DEL_COMMAND)
@@ -1288,7 +1292,6 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
         {
             m_appIntfTableProducer.del(appKey);
-            m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
         }
     }
     else
@@ -1297,6 +1300,83 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
 
     return true;
+}
+
+string IntfMgr::intfAddrScopeStr(const IpPrefix &ipPrefix)
+{
+    if (ipPrefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+    {
+        return "link-local";
+    }
+    return "global";
+}
+
+void IntfMgr::setIntfAddrStateDb(const string &alias, const IpPrefix &ipPrefix)
+{
+    const string stateKey = alias + state_db_key_delimiter + ipPrefix.to_string();
+    vector<FieldValueTuple> fvs;
+    fvs.emplace_back("state", "ok");
+    fvs.emplace_back("family", ipPrefix.isV4() ? IPV4_NAME : IPV6_NAME);
+    if (!ipPrefix.isV4())
+    {
+        fvs.emplace_back("scope", intfAddrScopeStr(ipPrefix));
+    }
+    m_stateIntfTable.set(stateKey, fvs);
+}
+
+void IntfMgr::delIntfAddrStateDb(const string &alias, const IpPrefix &ipPrefix)
+{
+    const string stateKey = alias + state_db_key_delimiter + ipPrefix.to_string();
+    m_stateIntfTable.del(stateKey);
+}
+
+void IntfMgr::handleNetlinkAddr(int nlmsg_type, struct nl_object *obj)
+{
+    SWSS_LOG_ENTER();
+
+    auto *addr = reinterpret_cast<struct rtnl_addr *>(obj);
+    const int family = rtnl_addr_get_family(addr);
+    if (family != AF_INET && family != AF_INET6)
+    {
+        return;
+    }
+
+    if (nlmsg_type == RTM_NEWADDR)
+    {
+        const unsigned int flags = rtnl_addr_get_flags(addr);
+        if (flags & IFA_F_TENTATIVE)
+        {
+            return;
+        }
+    }
+
+    const int ifindex = rtnl_addr_get_ifindex(addr);
+    char ifname[IF_NAMESIZE] = {0};
+    if (if_indextoname(ifindex, ifname) == nullptr)
+    {
+        SWSS_LOG_WARN("handleNetlinkAddr: unknown ifindex %d", ifindex);
+        return;
+    }
+
+    struct nl_addr *local = rtnl_addr_get_local(addr);
+    if (local == nullptr)
+    {
+        return;
+    }
+
+    char addrBuf[INET6_ADDRSTRLEN + 1] = {0};
+    nl_addr2str(local, addrBuf, sizeof(addrBuf));
+
+    const int prefixLen = rtnl_addr_get_prefixlen(addr);
+    IpPrefix ipPrefix(string(addrBuf) + "/" + to_string(prefixLen));
+
+    if (nlmsg_type == RTM_DELADDR)
+    {
+        delIntfAddrStateDb(ifname, ipPrefix);
+        return;
+    }
+
+    setIntfAddrStateDb(ifname, ipPrefix);
 }
 
 void IntfMgr::doSagTask(const vector<string>& keys,
