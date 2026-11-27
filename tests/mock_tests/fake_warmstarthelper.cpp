@@ -154,3 +154,9 @@ size_t getMockWarmStartHelperRefreshMapSize(const std::string &tableName)
     auto table = g_mockRefreshMaps.find(tableName);
     return table == g_mockRefreshMaps.end() ? 0 : table->second.size();
 }
+
+// Before any insertRefreshMap() on it, true only if a helper registered the table
+bool hasMockWarmStartHelperTable(const std::string &tableName)
+{
+    return g_mockRefreshMaps.find(tableName) != g_mockRefreshMaps.end();
+}
