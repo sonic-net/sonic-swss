@@ -25,6 +25,8 @@ namespace
     // Per-port emulated value of SAI_PORT_ATTR_{INGRESS,EGRESS}_SAMPLEPACKET_ENABLE.
     std::map<sai_object_id_t, sai_object_id_t> g_ingress_samplepacket;
     std::map<sai_object_id_t, sai_object_id_t> g_egress_samplepacket;
+    std::map<sai_object_id_t, sai_object_id_t> g_ingress_mirror;
+    std::map<sai_object_id_t, sai_object_id_t> g_egress_mirror;
 
     bool isIntercepted(sai_attr_id_t id)
     {
@@ -50,6 +52,11 @@ namespace
             {
                 return SAI_STATUS_FAILURE;
             }
+            if (attr->id == SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE
+                && mirror_sample_port_wrap_ut::g_fail_egress_samplepacket_enable_set)
+            {
+                return SAI_STATUS_INSUFFICIENT_RESOURCES;
+            }
             auto &store = (attr->id == SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE)
                 ? g_ingress_samplepacket : g_egress_samplepacket;
             if (attr->value.oid == SAI_NULL_OBJECT_ID)
@@ -73,14 +80,18 @@ namespace
             // Validate the call framing the production code uses (bind: a
             // single non-null session; unbind: an empty list) so a malformed
             // attribute is still caught, without depending on libsaivs.
+            auto &store = attr->id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION ?
+                g_ingress_mirror : g_egress_mirror;
             if (attr->value.objlist.count == 0)
             {
+                store.erase(port_id);
                 return SAI_STATUS_SUCCESS;
             }
             if (attr->value.objlist.count == 1
                 && attr->value.objlist.list != nullptr
                 && attr->value.objlist.list[0] != SAI_NULL_OBJECT_ID)
             {
+                store[port_id] = attr->value.objlist.list[0];
                 return SAI_STATUS_SUCCESS;
             }
             return SAI_STATUS_INVALID_PARAMETER;
@@ -108,8 +119,21 @@ namespace
                 return SAI_STATUS_SUCCESS;
             }
 
-            // {INGRESS,EGRESS}_SAMPLE_MIRROR_SESSION: report unbound.
-            attr_list[0].value.objlist.count = 0;
+            auto &store = attr_list[0].id == SAI_PORT_ATTR_INGRESS_SAMPLE_MIRROR_SESSION ?
+                g_ingress_mirror : g_egress_mirror;
+            auto it = store.find(port_id);
+            if (it == store.end())
+            {
+                attr_list[0].value.objlist.count = 0;
+                return SAI_STATUS_SUCCESS;
+            }
+            if (attr_list[0].value.objlist.count < 1 || !attr_list[0].value.objlist.list)
+            {
+                attr_list[0].value.objlist.count = 1;
+                return SAI_STATUS_BUFFER_OVERFLOW;
+            }
+            attr_list[0].value.objlist.count = 1;
+            attr_list[0].value.objlist.list[0] = it->second;
             return SAI_STATUS_SUCCESS;
         }
 
@@ -148,6 +172,7 @@ namespace mirror_sample_port_wrap_ut
 {
     bool g_fail_mirror_session_set = false;
     bool g_fail_samplepacket_enable_set = false;
+    bool g_fail_egress_samplepacket_enable_set = false;
     bool g_fail_samplepacket_create = false;
     bool g_fail_samplepacket_remove = false;
 
@@ -155,6 +180,7 @@ namespace mirror_sample_port_wrap_ut
     {
         g_fail_mirror_session_set = false;
         g_fail_samplepacket_enable_set = false;
+        g_fail_egress_samplepacket_enable_set = false;
         g_fail_samplepacket_create = false;
         g_fail_samplepacket_remove = false;
 
@@ -178,6 +204,8 @@ namespace mirror_sample_port_wrap_ut
 
         g_ingress_samplepacket.clear();
         g_egress_samplepacket.clear();
+        g_ingress_mirror.clear();
+        g_egress_mirror.clear();
         sai_port_api = &g_wrap_port_api;
         sai_samplepacket_api = &g_wrap_samplepacket_api;
     }
@@ -186,6 +214,7 @@ namespace mirror_sample_port_wrap_ut
     {
         g_fail_mirror_session_set = false;
         g_fail_samplepacket_enable_set = false;
+        g_fail_egress_samplepacket_enable_set = false;
         g_fail_samplepacket_create = false;
         g_fail_samplepacket_remove = false;
 
@@ -199,5 +228,7 @@ namespace mirror_sample_port_wrap_ut
         }
         g_ingress_samplepacket.clear();
         g_egress_samplepacket.clear();
+        g_ingress_mirror.clear();
+        g_egress_mirror.clear();
     }
 }

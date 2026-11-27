@@ -1,5 +1,8 @@
 #include "sai.h"
 #include "sfloworch.h"
+#include "mirrororch.h"
+#include "directory.h"
+
 #include "tokenize.h"
 #include "warm_restart.h"
 
@@ -17,6 +20,7 @@ extern sai_tam_api_t*          sai_tam_api;
 extern sai_port_api_t*         sai_port_api;
 extern sai_object_id_t         gSwitchId;
 extern PortsOrch*              gPortsOrch;
+extern Directory<Orch*> gDirectory;
 
 // Default CPU queue for sFlow drop monitor.
 // Can be overridden by /usr/share/sonic/templates/sflow_mod.json
@@ -1120,6 +1124,13 @@ void SflowOrch::sflowStatusSet(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            auto mirrorOrch = gDirectory.get<MirrorOrch*>();
+            if (mirrorOrch && !mirrorOrch->claimSflowMode())
+            {
+                SWSS_LOG_ERROR("Cannot configure sFlow in the current sampling mode; remove the conflicting configuration and restart orchagent");
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             sflowExtractGlobalInfo(kfvFieldsValues(tuple), sflow_status, rate, dir, sflow_drop_monitor_limit);
         }
         else if (op == DEL_COMMAND)
