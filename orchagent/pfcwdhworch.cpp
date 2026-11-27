@@ -6,6 +6,7 @@
 #include "portsorch.h"
 #include "sai_serialize.h"
 #include "converter.h"
+#include "redisapi.h"
 
 #include <algorithm>
 #include <set>
@@ -20,14 +21,19 @@ extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
-                         const vector<sai_port_stat_t> &portStatIds):
+                         const vector<sai_port_stat_t> &portStatIds,
+                         const vector<sai_queue_stat_t> &queueStatIds,
+                         const vector<sai_queue_attr_t> &queueAttrIds):
     PfcWdBaseOrch(db, tableNames),
     c_portStatIds(portStatIds),
+    c_queueStatIds(queueStatIds),
+    c_queueAttrIds(queueAttrIds),
     m_detectionTimeMin(0),
     m_detectionTimeMax(0),
     m_restorationTimeMin(0),
     m_restorationTimeMax(0),
-    m_pfcWdHwStateTable(make_shared<Table>(getStateDb().get(), STATE_PFC_WD_HW_STATE_TABLE_NAME))
+    m_pfcWdHwStateTable(make_shared<Table>(getStateDb().get(), STATE_PFC_WD_HW_STATE_TABLE_NAME)),
+    m_statHistoryTable(make_shared<Table>(getCountersDb().get(), PFC_WD_STAT_HISTORY_TABLE))
 {
     SWSS_LOG_ENTER();
 
@@ -46,6 +52,11 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     {
         m_pfcWdHwStateTable->del(portAlias);
     }
+
+    // COUNTERS_DB survives a warm restart, and a port whose watchdog config went
+    // away meanwhile is never stopped; configured ports are listed again as
+    // their watchdog starts.
+    m_statHistoryTable->del(PFC_WD_STAT_HISTORY_PORTS);
 
     initializeTimerRanges();
     registerCallbacks();
@@ -123,6 +134,26 @@ void PfcWdHwOrch::initializeTimerRanges()
 void PfcWdHwOrch::registerCallbacks()
 {
     SWSS_LOG_ENTER();
+
+    // The hardware detects storms, so the PFC_WD group's only plugin is the PFC
+    // stat history. Nothing is registered in the group until stat history is
+    // enabled on a port.
+    string historySha;
+    try
+    {
+        string historyLuaScript = swss::loadLuaScript(PFC_STAT_HISTORY_PLUGIN);
+        historySha = swss::loadRedisScript(getCountersDb().get(), historyLuaScript);
+    }
+    catch (...)
+    {
+        SWSS_LOG_WARN("Failed to load %s, PFC stat history will not be recorded",
+                      PFC_STAT_HISTORY_PLUGIN);
+    }
+    m_statHistoryPluginLoaded = !historySha.empty();
+
+    m_pfcwdFlexCounterManager = make_shared<FlexCounterTaggedCachedManager<sai_object_type_t>>(
+        PFC_WD_FLEX_COUNTER_GROUP, StatsMode::READ, PFC_WD_POLL_MSECS, true,
+        historySha.empty() ? make_pair(string(), string()) : make_pair(string(QUEUE_PLUGIN_FIELD), historySha));
 
     bool supported = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QUEUE_PFC_DEADLOCK_NOTIFY);
     if (supported)
@@ -431,15 +462,6 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         SWSS_LOG_ERROR("%s is invalid value for %s", pfcStatHistory.c_str(), PFC_STAT_HISTORY);
         return task_process_status::task_invalid_entry;
     }
-    if (pfcStatHistory == "enable")
-    {
-        // The field is only consumed by the software detection plugin, which reads it from
-        // the queue's COUNTERS_DB entry. Hardware mode detects in the ASIC and runs no such
-        // plugin, so there is nothing to honour the request. Accept the key so an existing
-        // configuration that sets it stays valid, but say plainly that it does nothing here.
-        SWSS_LOG_WARN("%s is not supported in hardware PFC watchdog mode and is ignored on %s",
-                      PFC_STAT_HISTORY, key.c_str());
-    }
 
     // All ports must use the same switch-level PFC DLR packet action.
     // Action can only change when no ports are configured, or when
@@ -579,11 +601,114 @@ bool PfcWdHwOrch::startWdOnPort(const Port& port,
 {
     SWSS_LOG_ENTER();
 
-    // For hardware-based watchdog, all hardware programming and flex counter
-    // registration are handled in configureHwWatchdog().
-    // Any existing configuration is cleaned up via stopWdOnPort() before this
-    // function is invoked from createEntry().
-    return configureHwWatchdog(port, detectionTime, restorationTime, action);
+    // For hardware-based watchdog, all hardware programming is handled in
+    // configureHwWatchdog(). Any existing configuration is cleaned up via
+    // stopWdOnPort() before this function is invoked from createEntry().
+    if (!configureHwWatchdog(port, detectionTime, restorationTime, action))
+    {
+        return false;
+    }
+
+    if (pfcStatHistory == "enable")
+    {
+        enableStatHistory(port);
+    }
+
+    return true;
+}
+
+void PfcWdHwOrch::enableStatHistory(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    // Without the plugin nothing would record the history, so nothing is polled
+    if (!m_statHistoryPluginLoaded)
+    {
+        SWSS_LOG_WARN("PFC stat history plugin not loaded, history not recorded on port %s",
+                      port.m_alias.c_str());
+        return;
+    }
+
+    set<uint8_t> losslessTc;
+    if (!getLosslessTcsForPort(port, losslessTc))
+    {
+        return;
+    }
+
+    // The plugin reads PFC RX every poll; ON2OFF is the CLI's transition count,
+    // which no other group polls.
+    if (!c_portStatIds.empty())
+    {
+        auto portStatIdSet = filterPfcCounters(
+            counterIdsToStr(c_portStatIds, &sai_serialize_port_stat), losslessTc);
+        m_pfcwdFlexCounterManager->setCounterIdList(port.m_port_id, CounterType::PORT,
+                                                    portStatIdSet, SAI_OBJECT_TYPE_PORT);
+    }
+
+    for (auto tc : losslessTc)
+    {
+        if (tc >= port.m_queue_ids.size())
+        {
+            continue;
+        }
+
+        // The plugin reads the queue's pause status each poll, and nothing else
+        // in hardware mode polls it. syncd runs a queue plugin over the queues
+        // polled for stats, not for attributes, so the queue stats are polled
+        // too. Both lists are written straight to syncd, not cached: a clear
+        // that finds the queue still cached drops it from the cache only, which
+        // would leave the attribute list polled.
+        sai_object_id_t queueId = port.m_queue_ids[tc];
+        auto *fcMgr = static_cast<FlexCounterManager*>(m_pfcwdFlexCounterManager.get());
+        if (!c_queueStatIds.empty())
+        {
+            fcMgr->setCounterIdList(queueId, CounterType::QUEUE,
+                                    counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat));
+        }
+
+        if (!c_queueAttrIds.empty())
+        {
+            fcMgr->setCounterIdList(queueId, CounterType::QUEUE_ATTR,
+                                    counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr));
+        }
+
+        // A warm restart starts the watchdog without stopping it first, so the
+        // previous run's samples may still be here; the first poll must only
+        // record a baseline, as the software watchdog's registration does.
+        clearStatHistorySamples(port.m_port_id, queueId, tc);
+        getCountersTable()->hset(sai_serialize_object_id(queueId), "PFC_STAT_HISTORY", "enable");
+    }
+
+    m_statHistoryTable->hset(PFC_WD_STAT_HISTORY_PORTS, sai_serialize_object_id(port.m_port_id), port.m_alias);
+
+    SWSS_LOG_NOTICE("Enabled PFC stat history on port %s", port.m_alias.c_str());
+}
+
+void PfcWdHwOrch::clearStatHistoryState(sai_object_id_t portId, sai_object_id_t queueId, uint8_t tc)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_pfcwdFlexCounterManager)
+    {
+        m_pfcwdFlexCounterManager->clearCounterIdList(queueId, SAI_OBJECT_TYPE_QUEUE);
+    }
+
+    // The history itself (EST_* fields) is kept; only the enable flag and the
+    // previous poll's samples go, so a new registration starts from a baseline.
+    getCountersTable()->hdel(sai_serialize_object_id(queueId), "PFC_STAT_HISTORY");
+    clearStatHistorySamples(portId, queueId, tc);
+}
+
+void PfcWdHwOrch::clearStatHistorySamples(sai_object_id_t portId, sai_object_id_t queueId, uint8_t tc)
+{
+    SWSS_LOG_ENTER();
+
+    // The plugin's poll timestamp is global and survives a stop, so it is these
+    // deletions that keep a period the queue was not watched from being charged
+    // on the next poll.
+    getCountersTable()->hdel(sai_serialize_object_id(queueId), "SAI_QUEUE_ATTR_PAUSE_STATUS_last");
+    getCountersTable()->hdel(sai_serialize_object_id(portId),
+                             SAI_PORT_STAT_PFC_PREFIX + to_string(tc) + "_RX_PKTS_last");
 }
 
 bool PfcWdHwOrch::stopWdOnPort(const Port& port)
@@ -982,6 +1107,9 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
 
         sai_object_id_t queueId = port.m_queue_ids[tc];
 
+        // Stat history ends with the stop, even for a queue whose DLDR is still on
+        clearStatHistoryState(port.m_port_id, queueId, tc);
+
         // Tracking is kept for a queue that could not be disabled, so the
         // caller can retry instead of orphaning an armed queue.
         if (!disableQueueDldr(port, tc, queueId))
@@ -1001,6 +1129,8 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
     {
         if (it->second.port_alias == port.m_alias)
         {
+            clearStatHistoryState(it->second.port_id, it->first, it->second.queue_index);
+
             if (!disableQueueDldr(port, it->second.queue_index, it->first))
             {
                 cleanupOk = false;
@@ -1017,6 +1147,13 @@ bool PfcWdHwOrch::disableHwWatchdog(const Port& port, bool bestEffort)
             ++it;
         }
     }
+
+    // PFC port counters are registered only while stat history is enabled
+    if (m_pfcwdFlexCounterManager)
+    {
+        m_pfcwdFlexCounterManager->clearCounterIdList(port.m_port_id, SAI_OBJECT_TYPE_PORT);
+    }
+    m_statHistoryTable->hdel(PFC_WD_STAT_HISTORY_PORTS, sai_serialize_object_id(port.m_port_id));
 
     // A queue that could not be disabled is still armed, so the port keeps its
     // intervals, its tracking and its STATE_DB entry, and the caller retries.

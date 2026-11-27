@@ -117,6 +117,33 @@ bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& lossle
     return true;
 }
 
+unordered_set<string> PfcWdBaseOrch::filterPfcCounters(const unordered_set<string> &counters, const set<uint8_t>& losslessTc)
+{
+    SWSS_LOG_ENTER();
+
+    unordered_set<string> filterCounters;
+
+    for (auto &counter : counters)
+    {
+        size_t index = 0;
+        index = counter.find(SAI_PORT_STAT_PFC_PREFIX);
+        if (index != 0)
+        {
+            filterCounters.emplace(counter);
+        }
+        else
+        {
+            uint8_t tc = (uint8_t)atoi(counter.substr(index + sizeof(SAI_PORT_STAT_PFC_PREFIX) - 1, 1).c_str());
+            if (losslessTc.count(tc))
+            {
+                filterCounters.emplace(counter);
+            }
+        }
+    }
+
+    return filterCounters;
+}
+
 void PfcWdBaseOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
