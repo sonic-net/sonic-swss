@@ -155,6 +155,7 @@ private:
     Table m_stateFdbSyncTableRead;
     Table m_cfgFdbSyncTableRead;
     Table m_stateVlanMemberTable;
+    Table m_cfgVlanMemberTable;
 
     struct m_local_fdb_info
     {
@@ -177,6 +178,8 @@ private:
 
     void updateLocalMac(struct m_fdb_info *info);
     bool flushLeftVlanMacs(const std::string &port_name, const std::string &vlan, short fdb_type);
+    bool isKernelVlanMember(const std::string &port_name, const std::string &vlan);
+    bool isLeftVlan(const std::string &port_name, const std::string &vlan_name);
 
     void updateAllLocalMac();
 

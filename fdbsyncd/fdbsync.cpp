@@ -2,6 +2,7 @@
 #include "neighbour.h"
 
 #include <string>
+#include <sstream>
 #include <algorithm>
 #include <cstdlib>
 #include <memory>
@@ -115,7 +116,8 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_stateFdbSyncTable(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_stateFdbSyncTableRead(stateDb, STATE_FDB_SYNC_TABLE_NAME),
     m_cfgFdbSyncTableRead(config_db, CFG_FDB_SYNC_TABLE_NAME),
-    m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME)
+    m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
+    m_cfgVlanMemberTable(config_db, CFG_VLAN_MEMBER_TABLE_NAME)
 {
     string subtype;
     Table deviceMetadata(config_db, CFG_DEVICE_METADATA_TABLE_NAME);
@@ -866,6 +868,51 @@ bool FdbSync::flushLeftVlanMacs(const std::string &port_name, const std::string 
     return true;
 }
 
+/* Whether the kernel bridge has the VLAN on the port; true when it cannot tell */
+bool FdbSync::isKernelVlanMember(const std::string &port_name, const std::string &vlan)
+{
+    std::string res;
+    if (swss::exec("bridge vlan show dev " + port_name + " vid " + vlan, res) != 0)
+    {
+        return true;
+    }
+
+    /* The port's name heads its line only when the VLAN passes the filter */
+    std::istringstream lines(res);
+    std::string line;
+    while (std::getline(lines, line))
+    {
+        std::istringstream words(line);
+        std::string first;
+        if ((words >> first) && first == port_name)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/*
+ * Whether the port has left the VLAN (vlan_name: Vlan<id>): no STATE_DB member row, or the member
+ * delete is under way. vlanmgrd removes the kernel member before the STATE_DB row, and the CONFIG_DB
+ * row is gone by then. The kernel's VLAN list alone does not tell: spanning tree removes the VLAN
+ * from a member port that is not forwarding.
+ */
+bool FdbSync::isLeftVlan(const std::string &port_name, const std::string &vlan_name)
+{
+    const std::string key = vlan_name + "|" + port_name;
+    std::vector<FieldValueTuple> member;
+    if (!m_stateVlanMemberTable.get(key, member))
+    {
+        return true;
+    }
+    if (m_cfgVlanMemberTable.get(key, member))
+    {
+        return false;
+    }
+    return !isKernelVlanMember(port_name, vlan_name.substr(4));
+}
+
 void FdbSync::updateLocalMac (struct m_fdb_info *info)
 {
     char *op;
@@ -940,6 +987,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
     std::string res;
     // stderr too, in the C locale: it tells an entry that is already gone apart from a real failure
     int ret = swss::exec("LC_ALL=C" + cmds + " 2>&1", res);
+    bool leftVlan = false;
     if (ret == 0)
     {
         SWSS_LOG_INFO("Success cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
@@ -950,12 +998,27 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
         // an FDB flush can remove the kernel entry first where the kernel bridge is the data plane (virtual switch)
         SWSS_LOG_INFO("Already removed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
+    else if (info->op_type == FDB_OPER_ADD &&
+             (res.find("RTNETLINK answers: Operation not supported") != std::string::npos ||
+              res.find("RTNETLINK answers: Invalid argument") != std::string::npos) &&
+             isLeftVlan(port_name, info->vid))
+    {
+        /*
+         * vlanmgrd takes the port out of the kernel VLAN before orchagent removes the ASIC member,
+         * and the ASIC can learn on the port in between. The kernel refuses the entry: EOPNOTSUPP
+         * once the port has left the bridge, EINVAL while it is a bridge port without the VLAN.
+         */
+        leftVlan = true;
+        SWSS_LOG_INFO("%s has left %s, not installed cmd:%s, res=%s, ret=%d", port_name.c_str(),
+                      info->vid.c_str(), cmds.c_str(), res.c_str(), ret);
+    }
     else if ((info->op_type != FDB_OPER_DEL) || !flushLeftVlanMacs(port_name, info->vid.substr(4), fdb_type))
     {
         SWSS_LOG_ERROR("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
 
-    if (info->op_type == FDB_OPER_ADD)
+    /* A learn on a port that has left the VLAN does not replace the MAC's VXLAN entry */
+    if (info->op_type == FDB_OPER_ADD && !leftVlan)
     {
         /* Check if this vlan+key is also learned by vxlan neighbor then delete the dest entry */
         if (m_mac.find(key) != m_mac.end())
