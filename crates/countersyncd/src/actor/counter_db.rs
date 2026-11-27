@@ -12,12 +12,6 @@ use crate::sai::{
 };
 use crate::utilities::{record_comm_stats, ChannelLabel};
 
-/// Unix socket path for Redis connection
-#[allow(dead_code)] // Used in new() method but Rust may not detect it in all build configurations
-const SOCK_PATH: &str = "/var/run/redis/redis.sock";
-/// Counter database ID in Redis  
-#[allow(dead_code)] // Used in new() method but Rust may not detect it in all build configurations
-const COUNTERS_DB_ID: i32 = 2;
 
 /// Unique key for identifying a counter in our local cache
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -146,7 +140,7 @@ impl CounterDBActor {
         config: CounterDBConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Connect to CounterDB
-        let counters_db = DbConnector::new_unix(COUNTERS_DB_ID, SOCK_PATH, 0)
+        let counters_db = DbConnector::new_with_auth(swss_common::DbConnectionInfo::Named { db_name: "COUNTERS_DB".into(), is_tcp_conn: false }, 0, true)
             .map_err(|e| format!("Failed to connect to CounterDB: {}", e))?;
 
         info!(
