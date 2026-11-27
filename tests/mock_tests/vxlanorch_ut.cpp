@@ -1239,6 +1239,144 @@ namespace vxlanorch_test
         EXPECT_EQ(imrRefCount(), -1);
     }
 
+    // Remote MACs keep a remote VTEP's tunnel port alive after its IMET is
+    // withdrawn; the tunnel must go once the last MAC leaves that VTEP.
+    class EvpnRemoteMacTunnelTest : public EvpnRemoteVniTest
+    {
+    protected:
+        const string m_vtepB = "10.1.1.3";
+        const string m_mac = "00:11:22:33:44:55";
+
+        void setRemoteVniOf(const string &vtep)
+        {
+            remoteVniConsumer()->addToSync({{"Vlan100:" + vtep, SET_COMMAND, {{"vni", "1000"}}}});
+            static_cast<Orch *>(m_remoteVniOrch)->doTask();
+        }
+
+        void fdbOp(const string &table, const string &op, const vector<FieldValueTuple> &fvs)
+        {
+            auto consumer = dynamic_cast<Consumer *>(gFdbOrch->getExecutor(table));
+            consumer->addToSync({{"Vlan100:" + m_mac, op, fvs}});
+            static_cast<Orch *>(gFdbOrch)->doTask();
+        }
+
+        void setRemoteMac(const string &vtep)
+        {
+            fdbOp(APP_VXLAN_FDB_TABLE_NAME, SET_COMMAND,
+                  {{"remote_vtep", vtep}, {"type", "dynamic"}, {"vni", "1000"}});
+        }
+
+        void setLocalStaticMac(const string &port)
+        {
+            fdbOp(APP_FDB_TABLE_NAME, SET_COMMAND, {{"port", port}, {"type", "static"}});
+        }
+
+        void addLocalVlanMember(const string &alias)
+        {
+            Table vlanMember(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+            vlanMember.set("Vlan100:" + alias, {{"tagging_mode", "untagged"}});
+            gPortsOrch->addExistingData(&vlanMember);
+            static_cast<Orch *>(gPortsOrch)->doTask();
+            Port port;
+            ASSERT_TRUE(gPortsOrch->getPort(alias, port));
+            ASSERT_NE(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        }
+
+        bool tunnelPortOf(const string &vtep, Port &port)
+        {
+            return m_VxlanTunnelOrch->getTunnelPort(vtep, port);
+        }
+
+        bool dipTunnelOf(const string &vtep)
+        {
+            string name;
+            m_VxlanTunnelOrch->getTunnelNameFromDIP(vtep, name);
+            return m_VxlanTunnelOrch->isTunnelExists(name);
+        }
+
+        // MAC on VTEP A, then A's IMET withdrawn: the MAC holds A's tunnel.
+        void macHoldsTunnelAfterImetWithdraw()
+        {
+            setRemoteVni();
+            setRemoteMac(m_remoteVtep);
+            Port port;
+            ASSERT_TRUE(tunnelPortOf(m_remoteVtep, port));
+            ASSERT_EQ(port.m_fdb_count, 1);
+
+            delRemoteVni();
+            ASSERT_TRUE(tunnelPortOf(m_remoteVtep, port));
+            ASSERT_EQ(port.m_fdb_count, 1);
+            ASSERT_TRUE(dipTunnelOf(m_remoteVtep));
+        }
+
+        void expectTunnelOfAGone()
+        {
+            Port portA;
+            EXPECT_FALSE(tunnelPortOf(m_remoteVtep, portA))
+                << "tunnel port left with FDB count " << portA.m_fdb_count;
+            EXPECT_FALSE(dipTunnelOf(m_remoteVtep));
+        }
+    };
+
+    // Control: withdrawing the last MAC removes the tunnel.
+    TEST_F(EvpnRemoteMacTunnelTest, LastMacWithdrawnRemovesTunnel)
+    {
+        ASSERT_NO_FATAL_FAILURE(macHoldsTunnelAfterImetWithdraw());
+
+        fdbOp(APP_VXLAN_FDB_TABLE_NAME, DEL_COMMAND, {});
+
+        expectTunnelOfAGone();
+    }
+
+    // The last MAC is re-advertised through another VTEP.
+    TEST_F(EvpnRemoteMacTunnelTest, LastMacMovedToAnotherVtepRemovesTunnel)
+    {
+        setRemoteVniOf(m_vtepB);
+        ASSERT_NO_FATAL_FAILURE(macHoldsTunnelAfterImetWithdraw());
+
+        setRemoteMac(m_vtepB);
+
+        Port portB;
+        ASSERT_TRUE(tunnelPortOf(m_vtepB, portB));
+        EXPECT_EQ(portB.m_fdb_count, 1);
+        expectTunnelOfAGone();
+    }
+
+    // The last MAC is replaced by a locally provisioned static MAC.
+    TEST_F(EvpnRemoteMacTunnelTest, LastMacReplacedByLocalStaticRemovesTunnel)
+    {
+        ASSERT_NO_FATAL_FAILURE(addLocalVlanMember("Ethernet0"));
+        ASSERT_NO_FATAL_FAILURE(macHoldsTunnelAfterImetWithdraw());
+
+        setLocalStaticMac("Ethernet0");
+
+        Port eth0;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", eth0));
+        EXPECT_EQ(eth0.m_fdb_count, 1);
+        expectTunnelOfAGone();
+    }
+
+    // While its IMET is there, a VTEP keeps its tunnel when its last MAC goes
+    // local; withdrawing that IMET then releases it.
+    TEST_F(EvpnRemoteMacTunnelTest, LastMacReplacedByLocalStaticKeepsTunnelWithImet)
+    {
+        ASSERT_NO_FATAL_FAILURE(addLocalVlanMember("Ethernet0"));
+        setRemoteVni();
+        setRemoteMac(m_remoteVtep);
+
+        setLocalStaticMac("Ethernet0");
+
+        Port portA;
+        ASSERT_TRUE(tunnelPortOf(m_remoteVtep, portA));
+        EXPECT_EQ(portA.m_fdb_count, 0);
+        EXPECT_TRUE(dipTunnelOf(m_remoteVtep));
+        EXPECT_TRUE(isFloodMember());
+
+        delRemoteVni();
+
+        expectTunnelOfAGone();
+    }
+
     // A refused VLAN member keeps the request queued for retry. The retry adds
     // only the VLAN member: it neither takes another tunnel reference nor
     // rebuilds the tunnel. Once the SAI accepts the member the entry completes,
