@@ -1,6 +1,9 @@
 #include "gtest/gtest.h"
 #include "sairedis.h"
 #include "notifications.h"
+#include "table.h"
+
+#include <deque>
 
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
 
@@ -148,6 +151,16 @@ namespace notifications_zmq_test
         ASSERT_NO_THROW(on_tam_tel_type_config_change(tam_tel_id));
     }
 
+    TEST_F(NotificationsZmqForwardingTest, QueuePfcDeadlockForwarding)
+    {
+        sai_queue_deadlock_notification_data_t data;
+        memset(&data, 0, sizeof(data));
+        data.queue_id = 0x600;
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+
+        ASSERT_NO_THROW(on_queue_pfc_deadlock(1, &data));
+    }
+
     // Verify callbacks are no-ops in non-ZMQ mode (no forwarding)
     TEST(NotificationsNonZmqTest, FdbEventNoForwardingInRedisMode)
     {
@@ -197,6 +210,21 @@ namespace notifications_zmq_test
         gRedisCommunicationMode = oldMode;
     }
 
+    TEST(NotificationsNonZmqTest, QueuePfcDeadlockNoForwardingInRedisMode)
+    {
+        sai_redis_communication_mode_t oldMode = gRedisCommunicationMode;
+        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+
+        sai_queue_deadlock_notification_data_t data;
+        memset(&data, 0, sizeof(data));
+        data.queue_id = 0x600;
+        data.event = SAI_QUEUE_PFC_DEADLOCK_EVENT_TYPE_DETECTED;
+
+        ASSERT_NO_THROW(on_queue_pfc_deadlock(1, &data));
+
+        gRedisCommunicationMode = oldMode;
+    }
+
     // Repeated calls to verify static thread_local connections stay stable
     TEST_F(NotificationsZmqForwardingTest, RepeatedFdbEventsStable)
     {
@@ -227,5 +255,101 @@ namespace notifications_zmq_test
 
             ASSERT_NO_THROW(on_bfd_session_state_change(1, &data));
         }
+    }
+
+    /*
+     * Registry tests.  There is no unregister API and the registry is process
+     * wide, so these tests use ops no real orch registers and intentionally
+     * leak their consumers: a freed consumer left in the registry would be a
+     * dangling pointer for later callbacks.
+     */
+    TEST_F(NotificationsZmqForwardingTest, CreateConsumerIsInProcessInZmqMode)
+    {
+        auto *consumer = createSaiNotificationConsumer(nullptr);
+        ASSERT_NE(consumer, nullptr);
+        EXPECT_TRUE(consumer->isInProcessDelivery());
+        delete consumer;
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, ForwardReachesRegisteredConsumer)
+    {
+        auto *consumer = createSaiNotificationConsumer(nullptr);
+        consumer->setOpAllowList({"ut_registry_op"});
+        registerSaiNotificationConsumer("ut_registry_op", consumer);
+
+        dispatchSaiNotification("ut_registry_op", "payload-1");
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        consumer->pops(entries);
+        ASSERT_EQ(entries.size(), 1u);
+        EXPECT_EQ(kfvOp(entries.front()), "ut_registry_op");
+        EXPECT_EQ(kfvKey(entries.front()), "payload-1");
+        // consumer intentionally not deleted, see comment above
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, ForwardKeepsOrderForFifoConsumer)
+    {
+        auto *consumer = createSaiNotificationConsumer(nullptr, swss::NotificationQueuePolicy::Fifo);
+        registerSaiNotificationConsumer("ut_registry_fifo_op", consumer);
+
+        dispatchSaiNotification("ut_registry_fifo_op", "a");
+        dispatchSaiNotification("ut_registry_fifo_op", "b");
+        dispatchSaiNotification("ut_registry_fifo_op", "a");
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        consumer->pops(entries);
+        ASSERT_EQ(entries.size(), 3u);
+        EXPECT_EQ(kfvKey(entries[0]), "a");
+        EXPECT_EQ(kfvKey(entries[1]), "b");
+        EXPECT_EQ(kfvKey(entries[2]), "a");
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, ForwardCollapsesDuplicatesForLruDedupConsumer)
+    {
+        auto *consumer = createSaiNotificationConsumer(nullptr, swss::NotificationQueuePolicy::LruDedup);
+        registerSaiNotificationConsumer("ut_registry_lru_op", consumer);
+
+        dispatchSaiNotification("ut_registry_lru_op", "same");
+        dispatchSaiNotification("ut_registry_lru_op", "same");
+        dispatchSaiNotification("ut_registry_lru_op", "other");
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        consumer->pops(entries);
+        EXPECT_EQ(entries.size(), 2u);
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, ReregisteringOpReplacesConsumer)
+    {
+        auto *first = createSaiNotificationConsumer(nullptr);
+        auto *second = createSaiNotificationConsumer(nullptr);
+        registerSaiNotificationConsumer("ut_registry_replace_op", first);
+        registerSaiNotificationConsumer("ut_registry_replace_op", second);
+
+        dispatchSaiNotification("ut_registry_replace_op", "x");
+
+        std::deque<swss::KeyOpFieldsValuesTuple> entries;
+        first->pops(entries);
+        EXPECT_EQ(entries.size(), 0u);
+        second->pops(entries);
+        EXPECT_EQ(entries.size(), 1u);
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, UnregisteredOpFallsBackToRedis)
+    {
+        // No consumer registered: published on the Redis channel (mock hiredis).
+        ASSERT_NO_THROW(dispatchSaiNotification("ut_registry_unregistered_op", "x"));
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, RegisterIgnoresNullConsumer)
+    {
+        ASSERT_NO_THROW(registerSaiNotificationConsumer("ut_registry_null_op", nullptr));
+        ASSERT_NO_THROW(dispatchSaiNotification("ut_registry_null_op", "x"));
+    }
+
+    TEST_F(NotificationsZmqForwardingTest, WakeConsumersWithEmptyQueuesIsSafe)
+    {
+        auto *consumer = createSaiNotificationConsumer(nullptr);
+        registerSaiNotificationConsumer("ut_registry_wake_op", consumer);
+        ASSERT_NO_THROW(wakeSaiNotificationConsumers());
     }
 }

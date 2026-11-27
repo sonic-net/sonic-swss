@@ -7,6 +7,7 @@
 #include "table.h"
 #include "taskworker.h"
 #include "converter.h"
+#include "notifications.h"
 #include "ipaddress.h"
 #include "macaddress.h"
 #include "swssnet.h"
@@ -780,7 +781,8 @@ DashHaFlowOrch::DashHaFlowOrch(DBConnector *db, const vector<string> &tableNames
     m_handlers[SESSION_TYPE_FLOW_DUMP] = make_shared<FlowDumpHandler>(m_dpuStateDb.get(), m_dump_timer, m_filter_manager);
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_flowBulkGetSessionNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_flowBulkGetSessionNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
+    registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT, m_flowBulkGetSessionNotificationConsumer);
     auto flowBulkGetSessionNotifier = new Notifier(m_flowBulkGetSessionNotificationConsumer, this, SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT);
 
     Orch::addExecutor(flowBulkGetSessionNotifier);

@@ -1116,13 +1116,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
      * Also install an op-allowlist so cross-fanout messages on the
      * shared "NOTIFICATIONS" channel are dropped at admission. */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(
-        m_notificationsDb.get(), "NOTIFICATIONS",
-        100,                                       // pri -- match swss-common default
-        swss::DEFAULT_NC_POP_BATCH_SIZE,
-        swss::NotificationQueuePolicy::LruDedup);
+    m_portStatusNotificationConsumer = createSaiNotificationConsumer(
+        m_notificationsDb.get(), swss::NotificationQueuePolicy::LruDedup);
     m_portStatusNotificationConsumer->setOpAllowList({"port_state_change"});
     m_portStatusNotificationConsumer->setStatsLabel("PortsOrch:port_state_change");
+    registerSaiNotificationConsumer("port_state_change", m_portStatusNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("PortsOrch:port_state_change", m_portStatusNotificationConsumer);
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
@@ -1130,13 +1128,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     if (m_cmisModuleAsicSyncSupported)
     {
-        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(
-            m_notificationsDb.get(), "NOTIFICATIONS",
-            100,                                       // pri -- match swss-common default
-            swss::DEFAULT_NC_POP_BATCH_SIZE,
-            swss::NotificationQueuePolicy::LruDedup);
+        m_portHostTxReadyNotificationConsumer = createSaiNotificationConsumer(
+            m_notificationsDb.get(), swss::NotificationQueuePolicy::LruDedup);
         m_portHostTxReadyNotificationConsumer->setOpAllowList({"port_host_tx_ready"});
         m_portHostTxReadyNotificationConsumer->setStatsLabel("PortsOrch:port_host_tx_ready");
+        registerSaiNotificationConsumer("port_host_tx_ready", m_portHostTxReadyNotificationConsumer);
         if (gNotifConsumerStatsOrch)
             gNotifConsumerStatsOrch->registerConsumer("PortsOrch:port_host_tx_ready", m_portHostTxReadyNotificationConsumer);
         auto portHostTxReadyNotificatier = new Notifier(m_portHostTxReadyNotificationConsumer, this, "PORT_HOST_TX_NOTIFICATIONS");
@@ -1750,6 +1746,19 @@ void PortsOrch::removeDefaultBridgePorts()
 bool PortsOrch::allPortsReady()
 {
     return m_initDone && m_pendingPortSet.empty();
+}
+
+/*
+ * Notification doTask()s return early until allPortsReady(), leaving entries
+ * queued.  An in-process consumer is only re-selected on a new enqueue(), so
+ * re-arm the registered consumers when readiness may have just been reached.
+ */
+void PortsOrch::maybeWakeSaiNotificationConsumers()
+{
+    if (allPortsReady())
+    {
+        wakeSaiNotificationConsumers();
+    }
 }
 
 /* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
@@ -4761,6 +4770,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 addSystemPorts();
                 m_initDone = true;
                 SWSS_LOG_INFO("Got PortInitDone notification from portsyncd");
+                maybeWakeSaiNotificationConsumers();
             }
 
             it = taskMap.erase(it);
@@ -4806,6 +4816,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     // allPortsReady() false and block every other port.
                     SWSS_LOG_ERROR("Failed to parse configuration for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
+                    maybeWakeSaiNotificationConsumers();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4814,6 +4825,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Invalid configuration for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
+                    maybeWakeSaiNotificationConsumers();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4830,6 +4842,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to parse configuration update for port %s, skipping it", key.c_str());
                     m_pendingPortSet.erase(key);
+                    maybeWakeSaiNotificationConsumers();
                     it = taskMap.erase(it);
                     continue;
                 }
@@ -4936,6 +4949,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             else
             {
                 m_pendingPortSet.erase(pCfg.key);
+                maybeWakeSaiNotificationConsumers();
             }
 
             Port p;

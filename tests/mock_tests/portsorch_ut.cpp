@@ -7069,10 +7069,10 @@ TEST_F(PfcWdHwOrchTest, DldrLifecycle)
 }
 
 /*
- * The deadlock notification reaches the orch through the ASIC_DB
- * NOTIFICATIONS channel rather than the SAI callback thread, so drive it the
- * way it actually arrives: serialize, publish, and let doTask() consume it.
- * Calling onQueuePfcDeadlock() directly would not exercise the unpacking.
+ * Non-ZMQ mode subscribes to ASIC_DB NOTIFICATIONS. This fixture runs in
+ * that mode, so drive the consumer the way that path fills its queue:
+ * serialize, frame the message, and let doTask() consume it. Calling
+ * onQueuePfcDeadlock() directly would not exercise the unpacking.
  */
 TEST_F(PfcWdHwOrchTest, DeadlockNotificationThroughConsumer)
 {

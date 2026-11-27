@@ -1,6 +1,7 @@
 #include "macsecorch.h"
 #include "macsecpost.h"
 #include "notifier.h"
+#include "notifications.h"
 
 #include <macaddress.h>
 #include <sai_serialize.h>
@@ -689,7 +690,9 @@ MACsecOrch::MACsecOrch(
         post_state == "macsec-level-post-in-progress" )
     {
         m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-        m_postCompletionNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
+        m_postCompletionNotificationConsumer = createSaiNotificationConsumer(m_notificationsDb.get());
+        registerSaiNotificationConsumer("switch_macsec_post_status", m_postCompletionNotificationConsumer);
+        registerSaiNotificationConsumer("macsec_post_status", m_postCompletionNotificationConsumer);
         auto postCompletionNotificatier = new Notifier(m_postCompletionNotificationConsumer, this, "POST_COMPLETION__NOTIFICATIONS");
         Orch::addExecutor(postCompletionNotificatier);
     }

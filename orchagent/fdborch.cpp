@@ -8,6 +8,7 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "notificationconsumerstatsorch.h"
+#include "notifications.h"
 #include "fdborch.h"
 #include "macmoveguard.h"
 #include "crmorch.h"
@@ -97,19 +98,17 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
      * preserves the final FDB_TABLE state while bounding queue depth
      * to count(distinct in-flight payloads) instead of event rate.
      *
-     * pri=100 / popBatchSize match swss-common's 4-arg ctor defaults;
-     * the 5-arg ctor has no defaults so they must be passed
-     * explicitly.  No change in Select-loop priority vs. the prior
-     * 2-arg call.
+     * In ZMQ mode createSaiNotificationConsumer() returns an in-process
+     * consumer fed from the SAI callback via NotificationConsumer::enqueue();
+     * otherwise it is the usual Redis-subscribed consumer.  The Notifier
+     * and doTask() below are the same either way.
      */
     m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
-    m_fdbNotificationConsumer = new swss::NotificationConsumer(
-        m_notificationsDb.get(), "NOTIFICATIONS",
-        100,                                       // pri -- match swss-common default
-        swss::DEFAULT_NC_POP_BATCH_SIZE,
-        swss::NotificationQueuePolicy::LruDedup);
+    m_fdbNotificationConsumer = createSaiNotificationConsumer(
+        m_notificationsDb.get(), swss::NotificationQueuePolicy::LruDedup);
     m_fdbNotificationConsumer->setOpAllowList({"fdb_event"});
     m_fdbNotificationConsumer->setStatsLabel("FdbOrch:fdb_event");
+    registerSaiNotificationConsumer("fdb_event", m_fdbNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("FdbOrch:fdb_event", m_fdbNotificationConsumer);
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");

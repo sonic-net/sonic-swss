@@ -6,22 +6,133 @@ extern "C" {
 #include "notifications.h"
 #include "switchorch.h"
 
+#include <csignal>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
+
+#include "notificationproducer.h"
+
 extern SwitchOrch *gSwitchOrch;
 extern sai_redis_communication_mode_t gRedisCommunicationMode;
+
+/*
+ * Set by the orchagent signal handler.  Once it is set,
+ * dispatchSaiNotification() returns without forwarding.  Graceful shutdown
+ * exits without running destructors, so this stops new work that the main
+ * loop will no longer drain.
+ */
+volatile sig_atomic_t gOrchShutdownRequested = 0;
 
 #ifdef ASAN_ENABLED
 #include <sanitizer/lsan_interface.h>
 #endif
 
+namespace
+{
+
+/*
+ * op -> in-process NotificationConsumer.  Written from orch constructors on
+ * the orchagent main thread and read from the libsairedis callback thread, so
+ * every access takes gConsumerRegistryMutex.
+ */
+std::mutex gConsumerRegistryMutex;
+std::unordered_map<std::string, swss::NotificationConsumer *> gConsumerRegistry;
+
+} // namespace
+
+/*
+ * Hand a SAI notification to the orch that owns it.
+ *
+ * ZMQ mode: the owning orch registered an in-process NotificationConsumer for
+ * this op, so push straight into it; its executor runs the usual
+ * doTask(NotificationConsumer&) on the orchagent main thread.
+ *
+ * No in-process consumer registered for the op (or its orch does not exist):
+ * publish on the Redis NOTIFICATIONS channel.  In ZMQ mode the owning orch's
+ * consumer is in-process, so this fallback does not deliver the notification
+ * to an orch.  It covers an op that arrives before that orch has registered.
+ */
+void dispatchSaiNotification(const std::string &op, const std::string &sdata)
+{
+    if (gOrchShutdownRequested != 0)
+    {
+        return;
+    }
+
+    std::vector<swss::FieldValueTuple> values;
+
+    {
+        std::lock_guard<std::mutex> lock(gConsumerRegistryMutex);
+        auto it = gConsumerRegistry.find(op);
+        if (it != gConsumerRegistry.end())
+        {
+            it->second->enqueue(op, sdata, values);
+            return;
+        }
+    }
+
+    static thread_local swss::DBConnector db("ASIC_DB", 0);
+    static thread_local swss::NotificationProducer notifier(&db, "NOTIFICATIONS");
+    notifier.send(op, sdata, values);
+}
+
+/*
+ * Create the NotificationConsumer an orch uses to receive SAI switch
+ * notifications on the "NOTIFICATIONS" channel.  The kind of consumer depends
+ * on the SAI redis communication mode:
+ *
+ *   - ZMQ mode: an in-process consumer.  Notifications are pushed into it with
+ *     NotificationConsumer::enqueue() from the SAI callbacks.  db is not used.
+ *   - Any other mode: a consumer subscribed to the channel through db.
+ *
+ * policy selects the queue policy (Fifo or LruDedup).
+ */
+swss::NotificationConsumer *createSaiNotificationConsumer(swss::DBConnector *db,
+                                                          swss::NotificationQueuePolicy policy)
+{
+    if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
+    {
+        return new swss::NotificationConsumer("NOTIFICATIONS", policy);
+    }
+
+    if (policy == swss::NotificationQueuePolicy::Fifo)
+    {
+        return new swss::NotificationConsumer(db, "NOTIFICATIONS");
+    }
+
+    return new swss::NotificationConsumer(db, "NOTIFICATIONS",
+                                          100,    // pri, same as the 2-arg ctor default
+                                          swss::DEFAULT_NC_POP_BATCH_SIZE,
+                                          policy);
+}
+
+void registerSaiNotificationConsumer(const std::string &op, swss::NotificationConsumer *consumer)
+{
+    if (consumer == nullptr || !consumer->isInProcessDelivery())
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(gConsumerRegistryMutex);
+    gConsumerRegistry[op] = consumer;
+    SWSS_LOG_NOTICE("Registered in-process SAI notification consumer for op %s", op.c_str());
+}
+
+void wakeSaiNotificationConsumers()
+{
+    std::lock_guard<std::mutex> lock(gConsumerRegistryMutex);
+    for (auto &entry : gConsumerRegistry)
+    {
+        entry.second->notifyPending();
+    }
+}
+
 void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer fdbNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_fdb_event_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        fdbNotifier.send("fdb_event", sdata, values);
+        dispatchSaiNotification("fdb_event", sai_serialize_fdb_event_ntf(count, data));
     }
 }
 
@@ -30,17 +141,14 @@ void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
  * libsairedis in a separate thread which causes concurrency issues.
  * For platforms which use zmq between orchagent and syncd, it is an acceptable
  * workaround to forward the notifications from the callback handler to the
- * redis notifications channel processed by portsorch.
+ * owning orch's in-process NotificationConsumer, which is drained by the
+ * orchagent main loop.
  */
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer portStateNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        portStateNotifier.send("port_state_change", sdata, values);
+        dispatchSaiNotification("port_state_change", sai_serialize_port_oper_status_ntf(count, data));
     }
 }
 
@@ -48,11 +156,8 @@ void on_queue_pfc_deadlock(uint32_t count, sai_queue_deadlock_notification_data_
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer pfcDeadlockNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_queue_deadlock_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        pfcDeadlockNotifier.send(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK, sdata, values);
+        dispatchSaiNotification(SAI_SWITCH_NOTIFICATION_NAME_QUEUE_PFC_DEADLOCK,
+                                sai_serialize_queue_deadlock_ntf(count, data));
     }
 }
 
@@ -60,11 +165,7 @@ void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notificat
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer bfdNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_bfd_session_state_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        bfdNotifier.send("bfd_session_state_change", sdata, values);
+        dispatchSaiNotification("bfd_session_state_change", sai_serialize_bfd_session_state_ntf(count, data));
     }
 }
 
@@ -72,11 +173,7 @@ void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer twampNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_twamp_session_event_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        twampNotifier.send("twamp_session_event", sdata, values);
+        dispatchSaiNotification("twamp_session_event", sai_serialize_twamp_session_event_ntf(count, data));
     }
 }
 
@@ -84,13 +181,9 @@ void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
-        swss::NotificationProducer ha_set_event(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_ha_set_event_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-
         // Forward ha_set_event notification to be handled in dashhaorch doTask()
-        ha_set_event.send(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT, sdata, values);
+        dispatchSaiNotification(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT,
+                                sai_serialize_ha_set_event_ntf(count, data));
     }
 }
 
@@ -98,13 +191,9 @@ void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
-        swss::NotificationProducer ha_scope_event(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_ha_scope_event_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-
         // Forward ha_scope_event notification to be handled in dashhaorch doTask()
-        ha_scope_event.send(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT, sdata, values);
+        dispatchSaiNotification(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT,
+                                sai_serialize_ha_scope_event_ntf(count, data));
     }
 }
 
@@ -112,13 +201,9 @@ void on_flow_bulk_get_session_event(sai_object_id_t flow_bulk_session_id, uint32
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
-        swss::NotificationProducer flow_bulk_get_session_event(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_flow_bulk_get_session_event_ntf(flow_bulk_session_id, count, data);
-        std::vector<swss::FieldValueTuple> values;
-
         // Forward flow_bulk_get_session_event notification to be handled in orchagent doTask()
-        flow_bulk_get_session_event.send(SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT, sdata, values);
+        dispatchSaiNotification(SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT,
+                                sai_serialize_flow_bulk_get_session_event_ntf(flow_bulk_session_id, count, data));
     }
 }
 
@@ -153,11 +238,8 @@ void on_port_host_tx_ready(sai_object_id_t switch_id, sai_object_id_t port_id, s
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer portHostTxReadyNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_port_host_tx_ready_ntf(switch_id, port_id, m_portHostTxReadyStatus);
-        std::vector<swss::FieldValueTuple> values;
-        portHostTxReadyNotifier.send("port_host_tx_ready", sdata, values);
+        dispatchSaiNotification("port_host_tx_ready",
+                                sai_serialize_port_host_tx_ready_ntf(switch_id, port_id, m_portHostTxReadyStatus));
     }
 }
 
@@ -180,11 +262,8 @@ void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer tamNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_object_id(tam_tel_id);
-        std::vector<swss::FieldValueTuple> values;
-        tamNotifier.send(SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE, sdata, values);
+        dispatchSaiNotification(SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE,
+                                sai_serialize_object_id(tam_tel_id));
     }
 }
 
@@ -193,13 +272,9 @@ void on_switch_macsec_post_status_notify(sai_object_id_t switch_id,
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
-        swss::NotificationProducer macsec_post_status_notify(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_switch_macsec_post_status_ntf(switch_id, switch_macsec_post_status);
-        std::vector<swss::FieldValueTuple> values;
-
         // Forward switch_macsec_post_status notification to be handled in macsecorch doTask()
-        macsec_post_status_notify.send("switch_macsec_post_status", sdata, values);
+        dispatchSaiNotification("switch_macsec_post_status",
+                                sai_serialize_switch_macsec_post_status_ntf(switch_id, switch_macsec_post_status));
     }
 }
 
@@ -208,12 +283,8 @@ void on_macsec_post_status_notify(sai_object_id_t macsec_id,
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
-        swss::NotificationProducer macsec_post_status_notify(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_macsec_post_status_ntf(macsec_id, macsec_post_status);
-        std::vector<swss::FieldValueTuple> values;
-
         // Forward macsec_post_status notification to be handled in macsecorch doTask()
-        macsec_post_status_notify.send("macsec_post_status", sdata, values);
+        dispatchSaiNotification("macsec_post_status",
+                                sai_serialize_macsec_post_status_ntf(macsec_id, macsec_post_status));
     }
 }

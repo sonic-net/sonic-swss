@@ -53,9 +53,10 @@ IcmpOrch::IcmpOrch(DBConnector *db, string tableName, TableConnector stateDbIcmp
     }
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_icmpStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_icmpStateNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
     m_icmpStateNotificationConsumer->setOpAllowList({"icmp_echo_session_state_change"});
     m_icmpStateNotificationConsumer->setStatsLabel("IcmpOrch:icmp_echo_session_state_change");
+    registerSaiNotificationConsumer("icmp_echo_session_state_change", m_icmpStateNotificationConsumer);
     if (gNotifConsumerStatsOrch)
         gNotifConsumerStatsOrch->registerConsumer("IcmpOrch:icmp_echo_session_state_change", m_icmpStateNotificationConsumer);
 
@@ -737,11 +738,8 @@ void IcmpSaiSessionHandler::on_state_change(uint32_t count, sai_icmp_echo_sessio
     extern sai_redis_communication_mode_t gRedisCommunicationMode;
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
-        static thread_local swss::NotificationProducer icmpNotifier(&db, "NOTIFICATIONS");
-        std::string sdata = sai_serialize_icmp_echo_session_state_ntf(count, data);
-        std::vector<swss::FieldValueTuple> values;
-        icmpNotifier.send("icmp_echo_session_state_change", sdata, values);
+        dispatchSaiNotification("icmp_echo_session_state_change",
+                                sai_serialize_icmp_echo_session_state_ntf(count, data));
     }
 }
 

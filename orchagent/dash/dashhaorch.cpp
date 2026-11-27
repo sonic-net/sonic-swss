@@ -12,6 +12,7 @@
 #include "taskworker.h"
 #include "pbutils.h"
 #include "converter.h"
+#include "notifications.h"
 
 #include <google/protobuf/util/message_differencer.h>
 
@@ -82,10 +83,12 @@ DashHaOrch::DashHaOrch(DBConnector *db, const vector<string> &tables, DashOrch *
     m_dpuStateDbHaScopeTable = make_unique<Table>(m_dpuStateDbConnector.get(), STATE_DASH_HA_SCOPE_STATE_TABLE_NAME);
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_haSetNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_haSetNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
+    registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_HA_SET_EVENT, m_haSetNotificationConsumer);
     auto haSetNotificatier = new Notifier(m_haSetNotificationConsumer, this, "HA_SET_NOTIFICATIONS");
 
-    m_haScopeNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_haScopeNotificationConsumer = createSaiNotificationConsumer(notificationsDb);
+    registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_HA_SCOPE_EVENT, m_haScopeNotificationConsumer);
     auto haScopeNotificatier = new Notifier(m_haScopeNotificationConsumer, this, "HA_SCOPE_NOTIFICATIONS");
 
     Orch::addExecutor(haSetNotificatier);

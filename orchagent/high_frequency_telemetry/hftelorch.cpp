@@ -101,7 +101,8 @@ HFTelOrch::HFTelOrch(
     createNetlinkChannel("sonic_stel", "ipfix");
     createTAM();
 
-    m_asic_notification_consumer = new NotificationConsumer(&m_asic_db, "NOTIFICATIONS");
+    m_asic_notification_consumer = createSaiNotificationConsumer(&m_asic_db);
+    registerSaiNotificationConsumer(SAI_SWITCH_NOTIFICATION_NAME_TAM_TEL_TYPE_CONFIG_CHANGE, m_asic_notification_consumer);
     auto notifier = new Notifier(m_asic_notification_consumer, this, "TAM_TEL_TYPE_STATE");
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_TAM_TEL_TYPE_CONFIG_CHANGE_NOTIFY;
