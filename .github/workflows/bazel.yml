@@ -102,7 +102,7 @@ jobs:
           printf 'Native build mode: %s (head %s)\n' "$build_mode" "$CI_HEAD_SHA"
 
       - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
         with:
           bazelisk-version: 1.29.0
           bazelisk-cache: true
@@ -161,7 +161,7 @@ jobs:
           --mode ${{ steps.build_mode.outputs.mode }}
 
       - name: Upload C++ build outputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-cpp-${{ matrix.architecture }}
           path: artifacts/production/
@@ -201,7 +201,7 @@ jobs:
           cp Cargo.toml Cargo.lock MODULE.bazel.lock artifacts/rust/
 
       - name: Upload Rust dependency evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-rust-metadata-${{ matrix.architecture }}
           path: artifacts/rust/
@@ -225,7 +225,7 @@ jobs:
           cp bazel-bin/dist/runtime_packages.json artifacts/packages/runtime_packages.json
 
       - name: Upload runtime and matching debug packages
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-packages-${{ matrix.architecture }}
           path: artifacts/packages/
@@ -233,7 +233,7 @@ jobs:
 
       - name: Upload registry selection evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-registry-${{ matrix.architecture }}
           path: artifacts/validation/

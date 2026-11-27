@@ -24,13 +24,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           config-file: ./.github/codeql/codeql-config.yml
           languages: python
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: "/language:python"
 
@@ -63,7 +63,7 @@ jobs:
         run: lua5.4 .github/codeql/test-preparation-tracing.lua
 
       - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@c5acdfb288317d0b5c0bbd7a396a3dc868bb0f86 # 0.19.0
+        uses: bazel-contrib/setup-bazel@f34d6a05eae3c24acab7fa54587492daeaeffdab # 0.19.2
         with:
           bazelisk-version: 1.29.0
           bazelisk-cache: true
@@ -86,7 +86,7 @@ jobs:
       # Trace every Bazel build action, including all production and test compilers.
       - name: Initialize CodeQL
         id: init
-        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         env:
           CODEQL_ACTION_EXTRA_OPTIONS: >-
             {"database":{"init":["--extra-tracing-config=.github/codeql/sai-preparation-tracing.lua"]}}
@@ -144,7 +144,7 @@ jobs:
           cp Cargo.toml Cargo.lock MODULE.bazel.lock artifacts/rust/
 
       - name: Upload Rust dependency evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-rust-metadata-codeql
           path: artifacts/rust/
@@ -152,7 +152,7 @@ jobs:
 
       - name: Perform CodeQL analysis
         id: analyze
-        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
         with:
           category: "/language:cpp"
           upload-database: false
@@ -180,7 +180,7 @@ jobs:
 
       - name: Upload C++ extraction evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-codeql-cpp
           path: artifacts/codeql/
@@ -188,7 +188,7 @@ jobs:
 
       - name: Upload registry selection evidence
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sonic-swss-registry-codeql
           path: artifacts/validation/
