@@ -10,6 +10,7 @@
 #define private public
 #include "portsorch.h"
 #include "fdborch.h"
+#include "macmoveguard.h"
 #include "warm_restart.h"
 #undef private
 
@@ -26,6 +27,7 @@ extern FdbOrch   *gFdbOrch;
 extern redisReply *mockReply;
 
 #define ETH0 "Ethernet0"
+#define ETH1 "Ethernet1"
 #define VLAN40 "Vlan40"
 #define VXLAN_REMOTE "Port_EVPN_1.1.1.1"
 #define NHG_REMOTE "Port_Nexthop_Group_536870913"
@@ -382,6 +384,24 @@ namespace fdborch_vxlan_ut
         m_portsOrch->m_portList[VLAN40].m_members.insert(ETH0);
     }
 
+    void setUpSecondPort(PortsOrch* m_portsOrch){
+        std::string alias = ETH1;
+        sai_object_id_t oid = 0x10000000004a7;
+
+        Port port(alias, Port::PHY);
+        port.m_index = 2;
+        port.m_port_id = oid;
+        port.m_hif_id = 0xd00000000056f;
+
+        m_portsOrch->m_portList[alias] = port;
+        m_portsOrch->saiOidToAlias[oid] = alias;
+
+        sai_object_id_t bridge_port_id = 0x3a000000002c36;
+        m_portsOrch->m_portList[alias].m_bridge_port_id = bridge_port_id;
+        m_portsOrch->saiOidToAlias[bridge_port_id] = alias;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(alias);
+    }
+
     void setUpVxlanPort(PortsOrch* m_portsOrch){
         /* Updates portsOrch internal cache for VXLAN */
         std::string alias = VXLAN_REMOTE;
@@ -432,6 +452,14 @@ namespace fdborch_vxlan_ut
         neigh_table.del(key);
     }
 
+    void setUpPortNhgTopology(PortsOrch *portsOrch)
+    {
+        setUpVlan(portsOrch);
+        setUpPort(portsOrch);
+        setUpVlanMember(portsOrch);
+        setUpNhgPort(portsOrch);
+        setUpNhg(portsOrch);
+    }
 
     void triggerUpdate(FdbOrch* m_fdborch,
                        sai_fdb_event_t type,
@@ -455,6 +483,7 @@ ACTION_P(SaveSAIAttrs, sai_attr_dest)
 namespace fdborch_vxlan_ut
 {
     using ::testing::Eq;
+    using ::testing::InSequence;
     using ::testing::SaveArg;
     using ::testing::SaveArgPointee;
 
@@ -5395,6 +5424,475 @@ namespace fdborch_vxlan_ut
         EXPECT_TRUE(gFdbOrch->saved_fdb_entries[eth8].empty());
         ASSERT_EQ(gFdbOrch->m_entries.count(cd_key), 1);
         EXPECT_EQ(gFdbOrch->m_entries[cd_key].type, "dynamic_control_learn");
+    }
+
+    sai_status_t expectDynamicFdbCreate(const sai_fdb_entry_t *, uint32_t count,
+                                        const sai_attribute_t *attributes)
+    {
+        const vector<sai_attribute_t> attrs(attributes, attributes + count);
+        const auto *type = findFdbAttr(attrs, SAI_FDB_ENTRY_ATTR_TYPE);
+        EXPECT_NE(type, nullptr);
+        if (type != nullptr)
+        {
+            EXPECT_EQ(type->value.s32, SAI_FDB_ENTRY_TYPE_DYNAMIC);
+        }
+        EXPECT_EQ(findFdbAttr(attrs, SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE), nullptr);
+        EXPECT_EQ(findFdbAttr(attrs, SAI_FDB_ENTRY_ATTR_ENDPOINT_IP), nullptr);
+        return SAI_STATUS_SUCCESS;
+    }
+
+    TEST_F(VxlanFdbOrchTest, NhgToProvisionedDynamicCreateOmitsStaticOnlyAttributes)
+    {
+        setUpPortNhgTopology(m_portsOrch.get());
+        InSequence sai_order;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Invoke(expectDynamicFdbCreate));
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _)).Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:b2");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        FdbData remote;
+        remote.type = "dynamic";
+        remote.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        remote.dest_type = FdbDest::NEXTHOPGROUP;
+        remote.dest_value = "536870913";
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, remote));
+
+        FdbData local;
+        local.type = "dynamic";
+        local.origin = FDB_ORIGIN_PROVISIONED;
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, ETH0, local));
+        EXPECT_EQ(gFdbOrch->m_entries.at(entry).sai_fdb_type, SAI_FDB_ENTRY_TYPE_DYNAMIC);
+        EXPECT_EQ(gFdbOrch->m_entries.at(entry).origin, FDB_ORIGIN_PROVISIONED);
+    }
+
+    TEST_F(VxlanFdbOrchTest, PortNhgMovesUseRemoveAndCreate)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpPortNhgTopology(m_portsOrch.get());
+
+        InSequence sai_order;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _))
+            .Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:99");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData portFdbData;
+        portFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        portFdbData.type = "dynamic";
+        portFdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        portFdbData.dest_type = FdbDest::IFNAME;
+        portFdbData.dest_value = ETH0;
+        portFdbData.vni = 40;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, ETH0, portFdbData));
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+
+
+        FdbData nhgFdbData = portFdbData;
+        nhgFdbData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgFdbData.dest_value = "536870913";
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, nhgFdbData));
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::NEXTHOPGROUP);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 0);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, ETH0, portFdbData));
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::IFNAME);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[ETH0].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 0);
+    }
+
+    TEST_F(VxlanFdbOrchTest, PortNhgLocalToNhgRemoveFailurePreservesNeighborState)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpPortNhgTopology(m_portsOrch.get());
+
+        InSequence sai_order;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .Times(0);
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _))
+            .Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:a1");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData portFdbData;
+        portFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        portFdbData.type = "dynamic";
+        portFdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        portFdbData.dest_type = FdbDest::IFNAME;
+        portFdbData.dest_value = ETH0;
+        portFdbData.vni = 40;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, ETH0, portFdbData));
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+
+        NeighborEntry neighborEntry(IpAddress("10.0.0.6"), string(VLAN40));
+        gNeighOrch->m_syncdNeighbors[neighborEntry] = { entry.mac, true };
+
+        FdbData nhgFdbData = portFdbData;
+        nhgFdbData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgFdbData.dest_value = "536870913";
+
+        ASSERT_FALSE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, nhgFdbData));
+
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::IFNAME);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, FDB_ORIGIN_VXLAN_ADVERTIZED);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[ETH0].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 0);
+        ASSERT_TRUE(gNeighOrch->m_syncdNeighbors.at(neighborEntry).hw_configured);
+    }
+
+    TEST_F(VxlanFdbOrchTest, ProvisionedOverwritesNhgUsesRemoveAndCreate)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpPortNhgTopology(m_portsOrch.get());
+
+        InSequence sai_order;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+
+        bool sawEndpointIpAttr = false;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::DoAll(
+                testing::Invoke([&sawEndpointIpAttr](const sai_fdb_entry_t *,
+                                                      uint32_t attr_count,
+                                                      const sai_attribute_t *attr_list)
+                {
+                    for (uint32_t i = 0; i < attr_count; i++)
+                    {
+                        if (attr_list[i].id == SAI_FDB_ENTRY_ATTR_ENDPOINT_IP)
+                        {
+                            sawEndpointIpAttr = true;
+                        }
+                    }
+                }),
+                testing::Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _))
+            .Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:9a");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData nhgFdbData;
+        nhgFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        nhgFdbData.type = "static";
+        nhgFdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        nhgFdbData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgFdbData.dest_value = "536870913";
+        nhgFdbData.vni = 40;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, nhgFdbData));
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        FdbData provisionedFdbData;
+        provisionedFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        provisionedFdbData.type = "static";
+        provisionedFdbData.origin = FDB_ORIGIN_PROVISIONED;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, ETH0, provisionedFdbData));
+        ASSERT_FALSE(sawEndpointIpAttr);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::UNKNOWN);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[ETH0].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 0);
+    }
+
+    TEST_F(VxlanFdbOrchTest, ProvisionedOverwritesNhgRemoveAlreadyExistsStatusLeavesStateUnchanged)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpPortNhgTopology(m_portsOrch.get());
+
+        InSequence sai_order;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .Times(0);
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _))
+            .Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:97");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData nhgFdbData;
+        nhgFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        nhgFdbData.type = "static";
+        nhgFdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        nhgFdbData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgFdbData.dest_value = "536870913";
+        nhgFdbData.vni = 40;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, nhgFdbData));
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        FdbData provisionedFdbData;
+        provisionedFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        provisionedFdbData.type = "static";
+        provisionedFdbData.origin = FDB_ORIGIN_PROVISIONED;
+
+        ASSERT_FALSE(gFdbOrch->addFdbEntry(entry, ETH0, provisionedFdbData));
+
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::NEXTHOPGROUP);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, FDB_ORIGIN_VXLAN_ADVERTIZED);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 0);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+    }
+
+    void verifyPortNhgAlreadyExistsRetries(PortsOrch *portsOrch, bool moveToNhg)
+    {
+        setUpPortNhgTopology(portsOrch);
+        portsOrch->m_portList[NHG_REMOTE].m_type = Port::NEXTHOP_GROUP;
+        const string oldPort = moveToNhg ? ETH0 : NHG_REMOTE;
+        const string newPort = moveToNhg ? NHG_REMOTE : ETH0;
+        const auto crmUsed = []() {
+            return gCrmOrch->m_resourcesMap.at(CrmResourceType::CRM_FDB_ENTRY)
+                .countersMap["STATS"].usedCounter;
+        };
+        const auto initialCrmUsed = crmUsed();
+
+        InSequence sai_order;
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        for (int attempt = 0; attempt < 3; ++attempt)
+        {
+            EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+                .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+            EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+                .WillOnce(testing::Return(attempt < 2 ?
+                    SAI_STATUS_ITEM_ALREADY_EXISTS : SAI_STATUS_SUCCESS));
+        }
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _)).Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:b1");
+        entry.bv_id = portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData localData;
+        localData.type = moveToNhg ? "dynamic" : "static";
+        localData.origin = FDB_ORIGIN_PROVISIONED;
+
+        FdbData nhgData;
+        nhgData.type = "dynamic";
+        nhgData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        nhgData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgData.dest_value = "536870913";
+        nhgData.vni = 40;
+
+        const FdbData oldData = moveToNhg ? localData : nhgData;
+        const FdbData targetData = moveToNhg ? nhgData : localData;
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, oldPort, oldData));
+        ASSERT_EQ(crmUsed(), initialCrmUsed + 1);
+
+        const string key = "Vlan40:" + entry.mac.to_string();
+        string statePort;
+        ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget(key, "port", statePort), moveToNhg);
+
+        // Hardware can relearn the MAC between remove and create. Each collision
+        // must leave the SET pending and the previous bookkeeping intact.
+        for (int attempt = 0; attempt < 2; ++attempt)
+        {
+            ASSERT_FALSE(gFdbOrch->addFdbEntry(entry, newPort, targetData));
+            ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, oldData.dest_type);
+            ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, oldData.origin);
+            ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                      portsOrch->m_portList[oldPort].m_bridge_port_id);
+            ASSERT_EQ(portsOrch->m_portList[oldPort].m_fdb_count, 1);
+            ASSERT_EQ(portsOrch->m_portList[newPort].m_fdb_count, 0);
+            ASSERT_EQ(portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+            ASSERT_EQ(crmUsed(), initialCrmUsed + 1);
+            ASSERT_EQ(gFdbOrch->m_entries_by_port[oldPort].size(), 1);
+            ASSERT_TRUE(gFdbOrch->m_entries_by_port[newPort].empty());
+            ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget(key, "port", statePort), moveToNhg);
+            if (moveToNhg)
+            {
+                ASSERT_EQ(statePort, ETH0);
+            }
+        }
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, newPort, targetData));
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, targetData.dest_type);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, targetData.origin);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  portsOrch->m_portList[newPort].m_bridge_port_id);
+        ASSERT_EQ(portsOrch->m_portList[oldPort].m_fdb_count, 0);
+        ASSERT_EQ(portsOrch->m_portList[newPort].m_fdb_count, 1);
+        ASSERT_EQ(portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(crmUsed(), initialCrmUsed + 1);
+        ASSERT_TRUE(gFdbOrch->m_entries_by_port[oldPort].empty());
+        ASSERT_EQ(gFdbOrch->m_entries_by_port[newPort].size(), 1);
+        ASSERT_EQ(gFdbOrch->m_fdbStateTable.hget(key, "port", statePort), !moveToNhg);
+        if (!moveToNhg)
+        {
+            ASSERT_EQ(statePort, ETH0);
+        }
+    }
+
+    TEST_F(VxlanFdbOrchTest, PortNhgLocalToNhgCreateAlreadyExistsRetries)
+    {
+        verifyPortNhgAlreadyExistsRetries(m_portsOrch.get(), true);
+    }
+
+    TEST_F(VxlanFdbOrchTest, PortNhgToProvisionedCreateAlreadyExistsRetries)
+    {
+        verifyPortNhgAlreadyExistsRetries(m_portsOrch.get(), false);
+    }
+
+    TEST_F(VxlanFdbOrchTest, NhgRemoteLearnedLocallyUsesRemoveAndCreate)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpPortNhgTopology(m_portsOrch.get());
+
+        InSequence sai_order;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Invoke(expectDynamicFdbCreate));
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _))
+            .Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:9b");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData nhgFdbData;
+        nhgFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        nhgFdbData.type = "dynamic";
+        nhgFdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        nhgFdbData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgFdbData.dest_value = "536870913";
+        nhgFdbData.vni = 40;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, nhgFdbData));
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        auto &guard = *gFdbOrch->m_macMoveGuard;
+        const MacKey key{entry.mac, entry.bv_id};
+        guard.m_enabled = true;
+        guard.m_learntMac[key] = {ETH1, std::chrono::steady_clock::now()};
+
+        sai_fdb_entry_t sai_entry;
+        memcpy(sai_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
+        sai_entry.bv_id = entry.bv_id;
+        gFdbOrch->update(SAI_FDB_EVENT_LEARNED, &sai_entry,
+                          m_portsOrch->m_portList[ETH0].m_bridge_port_id,
+                          SAI_FDB_ENTRY_TYPE_DYNAMIC);
+        guard.m_enabled = false;
+
+        ASSERT_EQ(guard.m_learntMac.at(key).port, ETH0);
+        ASSERT_EQ(guard.m_macTrackingState.count(key), 1);
+        EXPECT_EQ(guard.m_macTrackingState.at(key).move_count, 1);
+
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::IFNAME);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, FDB_ORIGIN_LEARN);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[ETH0].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 0);
+    }
+
+    TEST_F(VxlanFdbOrchTest, NhgRemoteLearnedLocallyRemoveAlreadyExistsStatusLeavesStateUnchanged)
+    {
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpPortNhgTopology(m_portsOrch.get());
+
+        InSequence sai_order;
+
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .WillOnce(testing::Return(SAI_STATUS_SUCCESS));
+        EXPECT_CALL(*mock_sai_fdb_api, remove_fdb_entry(_))
+            .WillOnce(testing::Return(SAI_STATUS_ITEM_ALREADY_EXISTS));
+        EXPECT_CALL(*mock_sai_fdb_api, create_fdb_entry(_, _, _))
+            .Times(0);
+        EXPECT_CALL(*mock_sai_fdb_api, set_fdb_entry_attribute(_, _))
+            .Times(0);
+
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:98");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+
+        FdbData nhgFdbData;
+        nhgFdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        nhgFdbData.type = "dynamic";
+        nhgFdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        nhgFdbData.dest_type = FdbDest::NEXTHOPGROUP;
+        nhgFdbData.dest_value = "536870913";
+        nhgFdbData.vni = 40;
+
+        ASSERT_TRUE(gFdbOrch->addFdbEntry(entry, NHG_REMOTE, nhgFdbData));
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
+
+        sai_fdb_entry_t sai_entry;
+        memcpy(sai_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
+        sai_entry.bv_id = entry.bv_id;
+        gFdbOrch->update(SAI_FDB_EVENT_LEARNED, &sai_entry,
+                          m_portsOrch->m_portList[ETH0].m_bridge_port_id,
+                          SAI_FDB_ENTRY_TYPE_DYNAMIC);
+
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).dest_type, FdbDest::NEXTHOPGROUP);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).origin, FDB_ORIGIN_VXLAN_ADVERTIZED);
+        ASSERT_EQ(gFdbOrch->m_entries.at(entry).bridge_port_id,
+                  m_portsOrch->m_portList[NHG_REMOTE].m_bridge_port_id);
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[ETH0].m_fdb_count, 0);
+        ASSERT_EQ(m_portsOrch->m_portList[NHG_REMOTE].m_fdb_count, 1);
     }
 
 }
