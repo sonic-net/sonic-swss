@@ -184,10 +184,12 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
 };
 
-class QosOrch : public Orch
+class QosOrch : public Orch, public Observer
 {
 public:
     QosOrch(DBConnector *db, vector<string> &tableNames);
+
+    void update(SubjectType type, void *cntx) override;
 
     static type_map& getTypeMap();
     static type_map m_qos_maps;
@@ -238,6 +240,9 @@ private:
     };
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
+
+    // WRED profile last bound to each queue, keyed by queue OID
+    std::unordered_map<sai_object_id_t, sai_object_id_t> m_queue_wred_profile;
 
     friend QosMapHandler;
     friend DscpToTcMapHandler;

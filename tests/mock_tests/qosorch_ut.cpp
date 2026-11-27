@@ -38,6 +38,9 @@ namespace qosorch_test
     sai_set_switch_attribute_fn old_set_switch_attribute_fn;
     sai_switch_api_t ut_sai_switch_api, *pold_sai_switch_api;
     sai_tunnel_api_t ut_sai_tunnel_api, *pold_sai_tunnel_api;
+    sai_queue_api_t ut_sai_queue_api, *pold_sai_queue_api;
+
+    vector<sai_object_id_t> queue_wred_profile_sets;
 
     typedef struct
     {
@@ -52,6 +55,15 @@ namespace qosorch_test
         if (rc == SAI_STATUS_SUCCESS && attr->id == SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP)
             switch_dscp_to_tc_map_id = attr->value.oid;
         return rc;
+    }
+
+    sai_status_t _ut_stub_sai_set_queue_attribute(sai_object_id_t queue_id, const sai_attribute_t *attr)
+    {
+        if (attr->id == SAI_QUEUE_ATTR_WRED_PROFILE_ID)
+        {
+            queue_wred_profile_sets.push_back(attr->value.oid);
+        }
+        return pold_sai_queue_api->set_queue_attribute(queue_id, attr);
     }
 
     sai_status_t _ut_stub_sai_remove_qos_map(sai_object_id_t qos_map_id)
@@ -327,6 +339,13 @@ namespace qosorch_test
             old_set_switch_attribute_fn = pold_sai_switch_api->set_switch_attribute;
             sai_switch_api = &ut_sai_switch_api;
             ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+
+            // Mock queue API
+            pold_sai_queue_api = sai_queue_api;
+            ut_sai_queue_api = *pold_sai_queue_api;
+            sai_queue_api = &ut_sai_queue_api;
+            ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+            queue_wred_profile_sets.clear();
 
             // Mock tunnel API
             pold_sai_tunnel_api = sai_tunnel_api;
@@ -625,6 +644,7 @@ namespace qosorch_test
             sai_scheduler_api = pold_sai_scheduler_api;
             sai_wred_api = pold_sai_wred_api;
             sai_switch_api = pold_sai_switch_api;
+            sai_queue_api = pold_sai_queue_api;
             sai_tunnel_api = pold_sai_tunnel_api;
             ut_helper::uninitSaiApi();
         }
@@ -887,6 +907,74 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         ASSERT_EQ(++current_sai_remove_wred_profile_count, sai_remove_wred_profile_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME]).count("AZURE_LOSSLESS_1"), 0);
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestQueueSchedulerChangeKeepsWredBinding)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        auto queueConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
+        auto wredProfileConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        auto &wredProfiles = *QosOrch::getTypeMap()[CFG_WRED_PROFILE_TABLE_NAME];
+
+        entries.push_back({"AZURE_LOSSLESS_1", "SET",
+                           {
+                               {"ecn", "ecn_all"},
+                               {"green_drop_probability", "5"},
+                               {"green_max_threshold", "2097152"},
+                               {"green_min_threshold", "1048576"},
+                               {"wred_green_enable", "true"},
+                               {"yellow_drop_probability", "5"},
+                               {"yellow_max_threshold", "2097152"},
+                               {"yellow_min_threshold", "1048576"},
+                               {"wred_yellow_enable", "true"},
+                               {"red_drop_probability", "5"},
+                               {"red_max_threshold", "2097152"},
+                               {"red_min_threshold", "1048576"},
+                               {"wred_red_enable", "true"}
+                           }});
+        wredProfileConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        auto lossless = wredProfiles["AZURE_LOSSLESS"].m_saiObjectId;
+        auto lossless1 = wredProfiles["AZURE_LOSSLESS_1"].m_saiObjectId;
+        ASSERT_NE(lossless, SAI_NULL_OBJECT_ID);
+        ASSERT_NE(lossless1, SAI_NULL_OBJECT_ID);
+
+        auto setQueue = [&](vector<FieldValueTuple> fields)
+        {
+            entries.push_back({"Ethernet0|3", "SET", fields});
+            queueConsumer->addToSync(entries);
+            entries.clear();
+            static_cast<Orch *>(gQosOrch)->doTask();
+        };
+
+        setQueue({{"scheduler", "scheduler.1"}, {"wred_profile", "AZURE_LOSSLESS"}});
+        ASSERT_EQ(queue_wred_profile_sets, vector<sai_object_id_t>({lossless}));
+
+        // Scheduler-only change: the WRED profile must not be bound again
+        setQueue({{"scheduler", "scheduler.0"}, {"wred_profile", "AZURE_LOSSLESS"}});
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+        ASSERT_EQ(queue_wred_profile_sets, vector<sai_object_id_t>({lossless}));
+
+        setQueue({{"scheduler", "scheduler.0"}, {"wred_profile", "AZURE_LOSSLESS_1"}});
+        ASSERT_EQ(queue_wred_profile_sets, vector<sai_object_id_t>({lossless, lossless1}));
+
+        setQueue({{"scheduler", "scheduler.0"}});
+        ASSERT_EQ(queue_wred_profile_sets, vector<sai_object_id_t>({lossless, lossless1, SAI_NULL_OBJECT_ID}));
+
+        setQueue({{"scheduler", "scheduler.0"}, {"wred_profile", "AZURE_LOSSLESS_1"}});
+        ASSERT_EQ(queue_wred_profile_sets, vector<sai_object_id_t>({lossless, lossless1, SAI_NULL_OBJECT_ID, lossless1}));
+
+        // Removing the port forgets its queues' bindings. The port stays in this test,
+        // so binding the same profile again reaches the SAI
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        PortUpdate removal = {port, false};
+        gQosOrch->update(SUBJECT_TYPE_PORT_CHANGE, &removal);
+        setQueue({{"scheduler", "scheduler.0"}, {"wred_profile", "AZURE_LOSSLESS_1"}});
+        ASSERT_EQ(queue_wred_profile_sets,
+                  vector<sai_object_id_t>({lossless, lossless1, SAI_NULL_OBJECT_ID, lossless1, lossless1}));
     }
 
     TEST_F(QosOrchTest, QosOrchTestPortQosMapReplaceOneFieldAndRemoveObject)
