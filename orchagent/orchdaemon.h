@@ -448,6 +448,7 @@ protected:
 
     void initTaskStatsChannel();
     void handleTaskStatsQuery();
+    void drainNotifications();
 
     void flush();
 
