@@ -1202,4 +1202,180 @@ namespace pfcwdhworch_test
         }), task_process_status::task_success);
         EXPECT_FALSE(dlr_written);
     }
+
+    // Timers outside the hardware range, with CONFIG_DB holding the same row or a newer one
+    class PfcWdHwTimerRangeTest : public PfcWdHwRestorationTest
+    {
+    protected:
+        void SetUp() override
+        {
+            PfcWdHwRestorationTest::SetUp();
+
+            m_pfcwd_hw_orch->m_timerRangesValid = true;
+            m_pfcwd_hw_orch->m_detectionTimeMin = 100;
+            m_pfcwd_hw_orch->m_detectionTimeMax = 1500;
+            m_pfcwd_hw_orch->m_restorationTimeMin = 100;
+            m_pfcwd_hw_orch->m_restorationTimeMax = 1000;
+
+            // both tables are shared across the whole binary
+            swss::Table(m_config_db.get(), CFG_PFC_WD_TABLE_NAME).del("Ethernet0");
+            swss::Table(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME).del("Ethernet0");
+        }
+
+        void TearDown() override
+        {
+            swss::Table(m_config_db.get(), CFG_PFC_WD_TABLE_NAME).del("Ethernet0");
+            PfcWdHwRestorationTest::TearDown();
+        }
+
+        void configure(const vector<swss::FieldValueTuple> &fvs)
+        {
+            swss::Table(m_config_db.get(), CFG_PFC_WD_TABLE_NAME).set("Ethernet0", fvs);
+        }
+
+        task_process_status apply(const string &detection, const string &restoration)
+        {
+            return m_pfcwd_hw_orch->createEntry("Ethernet0", {
+                { PFC_WD_ACTION, "drop" },
+                { PFC_WD_DETECTION_TIME, detection },
+                { PFC_WD_RESTORATION_TIME, restoration },
+            });
+        }
+
+        void expectRefused(task_process_status status)
+        {
+            EXPECT_EQ(status, task_process_status::task_invalid_entry);
+            EXPECT_FALSE(dlr_written);
+        }
+
+        void expectDropped(task_process_status status)
+        {
+            EXPECT_EQ(status, task_process_status::task_ignore);
+            string value;
+            EXPECT_FALSE(hwState("status", &value));
+            EXPECT_FALSE(dlr_written);
+        }
+    };
+
+    TEST_F(PfcWdHwTimerRangeTest, RefusesTimerStillConfigured)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "1600" },
+                    { PFC_WD_RESTORATION_TIME, "400" } });
+
+        expectRefused(apply("1600", "400"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, RefusesRestorationTimeStillConfigured)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "400" },
+                    { PFC_WD_RESTORATION_TIME, "1600" } });
+
+        expectRefused(apply("400", "1600"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, DropsDetectionTimeReplacedInConfig)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "1500" },
+                    { PFC_WD_RESTORATION_TIME, "1000" } });
+
+        expectDropped(apply("1600", "1600"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, DropsRestorationTimeReplacedInConfig)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "400" },
+                    { PFC_WD_RESTORATION_TIME, "1000" } });
+
+        expectDropped(apply("400", "1600"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, DropsDetectionTimeBelowRangeReplacedInConfig)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "100" },
+                    { PFC_WD_RESTORATION_TIME, "400" } });
+
+        expectDropped(apply("50", "400"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, DropsRestorationTimeBelowRangeReplacedInConfig)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "400" },
+                    { PFC_WD_RESTORATION_TIME, "100" } });
+
+        expectDropped(apply("400", "50"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, RefusesTimerOfEntryNotInConfig)
+    {
+        expectRefused(apply("1600", "400"));
+    }
+
+    // No change to the row is on its way for a field that is only gone
+    TEST_F(PfcWdHwTimerRangeTest, RefusesRestorationTimeRemovedFromConfig)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "400" } });
+
+        expectRefused(apply("400", "1600"));
+    }
+
+    TEST_F(PfcWdHwTimerRangeTest, AppliesTheReplacementAfterTheDrop)
+    {
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "1500" },
+                    { PFC_WD_RESTORATION_TIME, "1000" } });
+
+        expectDropped(apply("1600", "1600"));
+        ASSERT_EQ(apply("1500", "1000"), task_process_status::task_success);
+
+        string value;
+        ASSERT_TRUE(hwState("status", &value));
+        EXPECT_EQ(value, "configured");
+        ASSERT_TRUE(hwState("configured_restoration_time", &value));
+        EXPECT_EQ(value, "1000");
+    }
+
+    // The drop comes before the stop: a running watchdog keeps its timers and its state
+    TEST_F(PfcWdHwTimerRangeTest, DropLeavesRunningWatchdogUntouched)
+    {
+        ASSERT_EQ(apply("400", "400"), task_process_status::task_success);
+        ASSERT_TRUE(dlr_written);
+        dlr_written = false;
+
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "1500" },
+                    { PFC_WD_RESTORATION_TIME, "1000" } });
+
+        EXPECT_EQ(apply("1600", "1600"), task_process_status::task_ignore);
+        EXPECT_FALSE(dlr_written);
+        EXPECT_EQ(programmed_dlr_ms, 400u);
+
+        string value;
+        ASSERT_TRUE(hwState("status", &value));
+        EXPECT_EQ(value, "configured");
+        ASSERT_TRUE(hwState("configured_restoration_time", &value));
+        EXPECT_EQ(value, "400");
+        ASSERT_TRUE(hwState("hw_restoration_time", &value));
+        EXPECT_EQ(value, "400");
+    }
+
+    // The task loop ends a dropped entry without retrying it or reporting it as invalid
+    TEST_F(PfcWdHwTimerRangeTest, TaskLoopErasesDroppedEntry)
+    {
+        auto consumer = dynamic_cast<Consumer *>(m_pfcwd_hw_orch->getExecutor(CFG_PFC_WD_TABLE_NAME));
+        ASSERT_NE(consumer, nullptr);
+        consumer->m_toSync.clear();
+
+        configure({ { PFC_WD_ACTION, "drop" }, { PFC_WD_DETECTION_TIME, "1500" },
+                    { PFC_WD_RESTORATION_TIME, "1000" } });
+
+        consumer->addToSync(deque<KeyOpFieldsValuesTuple>{ { "Ethernet0", SET_COMMAND, {
+            { PFC_WD_ACTION, "drop" },
+            { PFC_WD_DETECTION_TIME, "1600" },
+            { PFC_WD_RESTORATION_TIME, "1600" },
+        } } });
+        static_cast<PfcWdBaseOrch *>(m_pfcwd_hw_orch)->doTask(*consumer);
+
+        EXPECT_TRUE(consumer->m_toSync.empty());
+        string value;
+        EXPECT_FALSE(hwState("status", &value));
+        EXPECT_FALSE(dlr_written);
+    }
 }

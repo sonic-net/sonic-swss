@@ -27,7 +27,8 @@ PfcWdHwOrch::PfcWdHwOrch(DBConnector *db, vector<string> &tableNames,
     m_detectionTimeMax(0),
     m_restorationTimeMin(0),
     m_restorationTimeMax(0),
-    m_pfcWdHwStateTable(make_shared<Table>(getStateDb().get(), STATE_PFC_WD_HW_STATE_TABLE_NAME))
+    m_pfcWdHwStateTable(make_shared<Table>(getStateDb().get(), STATE_PFC_WD_HW_STATE_TABLE_NAME)),
+    m_cfgPfcWdTable(make_shared<Table>(db, CFG_PFC_WD_TABLE_NAME))
 {
     SWSS_LOG_ENTER();
 
@@ -319,6 +320,9 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
 
     uint32_t detectionTime = 0;
     uint32_t restorationTime = 0;
+    // The timers as configured, to compare with what CONFIG_DB holds now
+    string detectionTimeValue;
+    string restorationTimeValue;
     // Default action is drop
     PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP;
     string pfcStatHistory = "disable";
@@ -347,10 +351,12 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
             if (field == PFC_WD_DETECTION_TIME)
             {
                 detectionTime = to_uint<uint32_t>(value);
+                detectionTimeValue = value;
             }
             else if (field == PFC_WD_RESTORATION_TIME)
             {
                 restorationTime = to_uint<uint32_t>(value);
+                restorationTimeValue = value;
             }
             else if (field == PFC_WD_ACTION)
             {
@@ -413,6 +419,11 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
     {
         if (detectionTime < m_detectionTimeMin || detectionTime > m_detectionTimeMax)
         {
+            if (timerSuperseded(key, PFC_WD_DETECTION_TIME, detectionTimeValue))
+            {
+                return task_process_status::task_ignore;
+            }
+
             SWSS_LOG_ERROR("Detection time %u ms is outside the supported range [%u-%u] ms on port %s",
                            detectionTime, m_detectionTimeMin, m_detectionTimeMax, key.c_str());
             return task_process_status::task_invalid_entry;
@@ -421,6 +432,11 @@ task_process_status PfcWdHwOrch::createEntry(const string& key, const vector<Fie
         if (restorationTime != 0 &&
             (restorationTime < m_restorationTimeMin || restorationTime > m_restorationTimeMax))
         {
+            if (timerSuperseded(key, PFC_WD_RESTORATION_TIME, restorationTimeValue))
+            {
+                return task_process_status::task_ignore;
+            }
+
             SWSS_LOG_ERROR("Restoration time %u ms is outside the supported range [%u-%u] ms on port %s",
                            restorationTime, m_restorationTimeMin, m_restorationTimeMax, key.c_str());
             return task_process_status::task_invalid_entry;
@@ -1178,6 +1194,33 @@ void PfcWdHwOrch::doTask(SelectableTimer &timer)
     {
         updateQueueCounters(sai_serialize_object_id(queueId), queueId, true);
     }
+}
+
+// A timer outside the hardware range can be a value CONFIG_DB has stopped holding:
+// tasks loaded at startup wait for the ports, and are processed before a change
+// written meanwhile is read. The change is applied when it is read, so the old
+// value is not an error. Only a different value for the same timer counts: that
+// is certain to arrive as a later task, while a timer CONFIG_DB lacks may be a
+// field merged in from an older task, with no change behind it.
+// The caller ends the task with task_ignore: the entry was neither applied nor
+// refused.
+bool PfcWdHwOrch::timerSuperseded(const string& key, const string& field, const string& value)
+{
+    vector<FieldValueTuple> current;
+    m_cfgPfcWdTable->get(key, current);
+
+    for (const auto& fv : current)
+    {
+        if (fvField(fv) == field && fvValue(fv) != value)
+        {
+            SWSS_LOG_NOTICE("PFC watchdog %s %s ms on port %s not applied: outside the hardware "
+                            "range, and CONFIG_DB now holds %s ms",
+                            field.c_str(), value.c_str(), key.c_str(), fvValue(fv).c_str());
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void PfcWdHwOrch::writeFailureStatus(const Port& port)
