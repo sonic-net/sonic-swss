@@ -60,6 +60,8 @@ using namespace std::rel_ops;
 
 MirrorEntry::MirrorEntry(const string& platform) :
         status(false),
+    srcIp(),
+    dstIp(),
         dscp(8),
         ttl(255),
         queue(0),
@@ -869,6 +871,11 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
+    if (session.type == MIRROR_SESSION_SPAN)
+    {
+        return true;
+    }
+
     bool ret = true;
     MirrorEntry old_session(session);
 
@@ -1650,6 +1657,10 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
     {
         const auto& name = it->first;
         auto& session = it->second;
+        if (session.type == MIRROR_SESSION_SPAN)
+        {
+            continue;
+        }
 
         // Check if mirror session's destination IP is the update's destination IP
         if (session.dstIp != update.destination)
@@ -1733,6 +1744,10 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
     {
         const auto& name = it->first;
         auto& session = it->second;
+        if (session.type == MIRROR_SESSION_SPAN)
+        {
+            continue;
+        }
 
         // Check if the session's destination IP matches the neighbor's update IP
         // or if the session's next hop IP matches the neighbor's update IP
