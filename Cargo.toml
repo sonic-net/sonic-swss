@@ -68,7 +68,7 @@ uuid = { version = "1.15", features = ["v4"] }
 tracing-opentelemetry = "0.25"
 
 opentelemetry = { version = "0.25", features = ["trace", "metrics"] }
-opentelemetry_sdk = { version = "0.25", features = ["rt-tokio"]}
+opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"]}
 opentelemetry-stdout = "0.25"
 opentelemetry-semantic-conventions = "0.25"
 opentelemetry-http = "0.25"
