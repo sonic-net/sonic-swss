@@ -580,7 +580,7 @@ namespace pfcactionhandler_test
             PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>::PfcWdQueueEntry(
                 PfcWdAction::PFC_WD_ACTION_DROP, port.m_port_id, 3, port.m_alias));
 
-        Table stateTable(m_state_db.get(), "PFC_WD_SW_STATE_TABLE");
+        Table stateTable(m_state_db.get(), PFC_WD_SW_STATE_TABLE);
         string status;
 
         {
@@ -620,5 +620,38 @@ namespace pfcactionhandler_test
 
         // An unknown event is rejected without throwing.
         EXPECT_FALSE(orch->startWdActionOnQueue("bogus_event", queueOid));
+    }
+
+    // Watchdog STATE_DB rows outlive orchagent. A new software orch, as the
+    // software and hybrid watchdogs build, removes every row a previous run
+    // left: its own, for a port whose watchdog was removed meanwhile (a config
+    // reload), and the hardware watchdog's, from a run that used the other one.
+    TEST_F(PfcActionHandlerTest, PfcWdSwOrchClearsPreviousRunsState)
+    {
+        Table stateTable(m_state_db.get(), PFC_WD_SW_STATE_TABLE);
+        stateTable.set("Ethernet0:3", { { "status", "configured" } });
+        stateTable.set("Ethernet8:4", { { "status", "failed" } });
+        Table hwStateTable(m_state_db.get(), STATE_PFC_WD_HW_STATE_TABLE_NAME);
+        hwStateTable.set("Ethernet4", { { "status", "configured" } });
+
+        vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
+        static const vector<sai_port_stat_t> portStatIds = {
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+        };
+        static const vector<sai_queue_stat_t> queueStatIds = {
+            SAI_QUEUE_STAT_PACKETS,
+        };
+        static const vector<sai_queue_attr_t> queueAttrIds = {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        auto orch = make_unique<PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>>(
+            m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
+
+        vector<string> keys;
+        stateTable.getKeys(keys);
+        EXPECT_TRUE(keys.empty()) << "software watchdog rows left from the previous run: " << keys.size();
+        hwStateTable.getKeys(keys);
+        EXPECT_TRUE(keys.empty()) << "hardware watchdog rows left from the previous run: " << keys.size();
     }
 }

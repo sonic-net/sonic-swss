@@ -85,7 +85,6 @@ private:
     shared_ptr<DBConnector> m_applDb = nullptr;
     // Track queues in storm
     shared_ptr<Table> m_applTable = nullptr;
-    shared_ptr<DBConnector> m_stateDb = nullptr;
     shared_ptr<Table> m_pfcWdSwStateTable = nullptr;
 };
 

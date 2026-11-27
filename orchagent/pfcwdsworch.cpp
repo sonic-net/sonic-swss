@@ -14,7 +14,6 @@
 
 #define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
 #define PFC_WD_IN_STORM                 "storm"
-#define PFC_WD_SW_STATE_TABLE           "PFC_WD_SW_STATE_TABLE"
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
@@ -420,8 +419,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     m_pollInterval(pollInterval),
     m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
     m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
-    m_stateDb(make_shared<DBConnector>("STATE_DB", 0)),
-    m_pfcWdSwStateTable(make_shared<Table>(m_stateDb.get(), PFC_WD_SW_STATE_TABLE))
+    m_pfcWdSwStateTable(make_shared<Table>(getStateDb().get(), PFC_WD_SW_STATE_TABLE))
 {
     SWSS_LOG_ENTER();
 
@@ -472,6 +470,9 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
             m_applDb.get(), APP_PFC_WD_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto ssConsumer = new Consumer(ssTable, this, APP_PFC_WD_TABLE_NAME);
     Orch::addExecutor(ssConsumer);
+
+    // Mark software watchdog recovery in STATE_DB
+    this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_SOFTWARE);
 }
 
 template <typename DropHandler, typename ForwardHandler>

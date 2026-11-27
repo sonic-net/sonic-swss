@@ -28,6 +28,27 @@ static const map<string, sai_packet_action_t> packet_action_map = {
     {"alert", SAI_PACKET_ACTION_FORWARD}
 };
 
+void PfcWdBaseOrch::clearPreviousRunState()
+{
+    SWSS_LOG_ENTER();
+
+    // Every row in these tables describes a previous run's watchdog: nothing is
+    // watched yet. A row this run never rewrites, for a port whose watchdog went
+    // away meanwhile (a config reload) or that the other watchdog watched, would
+    // go on reporting a watchdog that no longer exists. Each watchdog writes the
+    // rows of the ports it watches again as it starts on them.
+    for (const char *tableName : { PFC_WD_SW_STATE_TABLE, STATE_PFC_WD_HW_STATE_TABLE_NAME })
+    {
+        Table table(m_stateDb.get(), tableName);
+        vector<string> keys;
+        table.getKeys(keys);
+        for (const auto &key : keys)
+        {
+            table.del(key);
+        }
+    }
+}
+
 PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
@@ -37,6 +58,14 @@ PfcWdBaseOrch::PfcWdBaseOrch(DBConnector *db, vector<string> &tableNames):
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
+
+    // STATE_DB outlives orchagent, so the entry may still hold what the
+    // previous run wrote, such as HARDWARE after a restart into software mode.
+    // The derived constructor writes this run's recovery mechanism.
+    m_stateTable->del(PFC_WD_STATE_KEY);
+
+    clearPreviousRunState();
+
     if (m_platform == "")
     {
         SWSS_LOG_ERROR("Platform environment variable is not defined");
