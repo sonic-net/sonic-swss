@@ -583,6 +583,14 @@ namespace neighorch_test
         EXPECT_EQ(gNeighOrch->removeIpinipTunnelNextHop(nh), TunnelNhOpStatus::REMOVED);
     }
 
+    TEST_F(NeighOrchTest, SkipHostInterfaceBmc0)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        LearnNeighbor("bmc0", TEST_IP, MAC1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(TEST_IP, std::string("bmc0"))), 0);
+    }
+
     TEST_F(NeighOrchTest, ProcessFDBAdd_EnableNeighbor)
     {
         // Setup: Learn a neighbor first
