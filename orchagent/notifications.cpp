@@ -17,7 +17,7 @@ void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer fdbNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_fdb_event_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -36,7 +36,7 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer portStateNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_port_oper_status_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -48,7 +48,7 @@ void on_queue_pfc_deadlock(uint32_t count, sai_queue_deadlock_notification_data_
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer pfcDeadlockNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_queue_deadlock_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -60,7 +60,7 @@ void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notificat
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer bfdNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_bfd_session_state_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -72,7 +72,7 @@ void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer twampNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_twamp_session_event_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -84,7 +84,7 @@ void on_ha_set_event(uint32_t count, sai_ha_set_event_data_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
+        swss::DBConnector db("ASIC_DB", 0, false, "", true);
         swss::NotificationProducer ha_set_event(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_ha_set_event_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -98,7 +98,7 @@ void on_ha_scope_event(uint32_t count, sai_ha_scope_event_data_t *data)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
+        swss::DBConnector db("ASIC_DB", 0, false, "", true);
         swss::NotificationProducer ha_scope_event(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_ha_scope_event_ntf(count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -112,7 +112,7 @@ void on_flow_bulk_get_session_event(sai_object_id_t flow_bulk_session_id, uint32
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
+        swss::DBConnector db("ASIC_DB", 0, false, "", true);
         swss::NotificationProducer flow_bulk_get_session_event(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_flow_bulk_get_session_event_ntf(flow_bulk_session_id, count, data);
         std::vector<swss::FieldValueTuple> values;
@@ -153,7 +153,7 @@ void on_port_host_tx_ready(sai_object_id_t switch_id, sai_object_id_t port_id, s
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer portHostTxReadyNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_port_host_tx_ready_ntf(switch_id, port_id, m_portHostTxReadyStatus);
         std::vector<swss::FieldValueTuple> values;
@@ -180,7 +180,7 @@ void on_tam_tel_type_config_change(sai_object_id_t tam_tel_id)
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        static thread_local swss::DBConnector db("ASIC_DB", 0);
+        static thread_local swss::DBConnector db("ASIC_DB", 0, false, "", true);
         static thread_local swss::NotificationProducer tamNotifier(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_object_id(tam_tel_id);
         std::vector<swss::FieldValueTuple> values;
@@ -193,7 +193,7 @@ void on_switch_macsec_post_status_notify(sai_object_id_t switch_id,
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
+        swss::DBConnector db("ASIC_DB", 0, false, "", true);
         swss::NotificationProducer macsec_post_status_notify(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_switch_macsec_post_status_ntf(switch_id, switch_macsec_post_status);
         std::vector<swss::FieldValueTuple> values;
@@ -208,7 +208,7 @@ void on_macsec_post_status_notify(sai_object_id_t macsec_id,
 {
     if (gRedisCommunicationMode == SAI_REDIS_COMMUNICATION_MODE_ZMQ_SYNC)
     {
-        swss::DBConnector db("ASIC_DB", 0);
+        swss::DBConnector db("ASIC_DB", 0, false, "", true);
         swss::NotificationProducer macsec_post_status_notify(&db, "NOTIFICATIONS");
         std::string sdata = sai_serialize_macsec_post_status_ntf(macsec_id, macsec_post_status);
         std::vector<swss::FieldValueTuple> values;

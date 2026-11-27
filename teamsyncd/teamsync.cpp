@@ -29,7 +29,7 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
     m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
-    WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
+    WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd", 0, false, true);
     WarmStart::checkWarmStart(TEAMSYNCD_APP_NAME, "teamd");
     m_warmstart = WarmStart::isWarmStart();
 

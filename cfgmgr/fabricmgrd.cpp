@@ -17,7 +17,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("fabricmgrd");
+    Logger::linkToDbNative("fabricmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting fabricmgrd ---");
@@ -30,7 +30,7 @@ int main(int argc, char **argv)
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
 
         FabricMgr fabricmgr(&cfgDb, &appDb, cfg_fabric_tables);
 

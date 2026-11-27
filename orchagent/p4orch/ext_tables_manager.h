@@ -44,7 +44,7 @@ class ExtTablesManager : public ObjectManagerInterface
 {
   public:
     ExtTablesManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, ResponsePublisherInterface *publisher)
-        : m_vrfOrch(vrfOrch), m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0)),
+        : m_vrfOrch(vrfOrch), m_countersDb(std::make_unique<swss::DBConnector>("COUNTERS_DB", 0, false, "", true)),
           m_countersTable(std::make_unique<swss::Table>(
               m_countersDb.get(), std::string(COUNTERS_TABLE) + DEFAULT_KEY_SEPARATOR + APP_P4RT_TABLE_NAME))
     {

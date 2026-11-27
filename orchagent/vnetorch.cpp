@@ -836,8 +836,8 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 
     config_db_ = shared_ptr<DBConnector>(new DBConnector("CONFIG_DB", 0));
-    state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
-    app_db_ = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
+    state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0, false, "", true));
+    app_db_ = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0, false, "", true));
 
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
     state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));

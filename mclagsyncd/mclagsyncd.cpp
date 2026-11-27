@@ -32,9 +32,9 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative("mclagsyncd");
+    swss::Logger::linkToDbNative("mclagsyncd", "NOTICE", true);
 
-    DBConnector appl_db("APPL_DB", 0);
+    DBConnector appl_db("APPL_DB", 0, false, "", true);
     RedisPipeline pipeline(&appl_db);
 
     DBConnector config_db("CONFIG_DB", 0);

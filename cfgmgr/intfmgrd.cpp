@@ -21,7 +21,7 @@ MacAddress gSagMacAddress;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("intfmgrd");
+    Logger::linkToDbNative("intfmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting intfmgrd ---");
@@ -39,10 +39,10 @@ int main(int argc, char **argv)
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
+        DBConnector stateDb("STATE_DB", 0, false, "", true);
 
-        WarmStart::initialize("intfmgrd", "swss");
+        WarmStart::initialize("intfmgrd", "swss", 0, false, true);
         WarmStart::checkWarmStart("intfmgrd", "swss");
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);

@@ -29,7 +29,7 @@ void sig_handler(int signo)
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("teammgrd");
+    Logger::linkToDbNative("teammgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting teammrgd ---");
@@ -46,10 +46,10 @@ int main(int argc, char **argv)
     try
     {
         DBConnector conf_db("CONFIG_DB", 0);
-        DBConnector app_db("APPL_DB", 0);
-        DBConnector state_db("STATE_DB", 0);
+        DBConnector app_db("APPL_DB", 0, false, "", true);
+        DBConnector state_db("STATE_DB", 0, false, "", true);
 
-        WarmStart::initialize("teammgrd", "teamd");
+        WarmStart::initialize("teammgrd", "teamd", 0, false, true);
         WarmStart::checkWarmStart("teammgrd", "teamd");
 
         TableConnector conf_lag_table(&conf_db, CFG_LAG_TABLE_NAME);

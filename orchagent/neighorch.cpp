@@ -61,7 +61,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
 
         //STATE DB connection for setting state of the remote neighbor SAI programming
         unique_ptr<DBConnector> stateDb;
-        stateDb = make_unique<DBConnector>("STATE_DB", 0);
+        stateDb = make_unique<DBConnector>("STATE_DB", 0, false, "", true);
         m_stateSystemNeighTable = unique_ptr<Table>(new Table(stateDb.get(), STATE_SYSTEM_NEIGH_TABLE_NAME));
     }
 }

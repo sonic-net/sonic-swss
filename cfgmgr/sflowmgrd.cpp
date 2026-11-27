@@ -17,7 +17,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("sflowmgrd");
+    Logger::linkToDbNative("sflowmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting sflowmgrd ---");
@@ -25,8 +25,8 @@ int main(int argc, char **argv)
     try
     {
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
+        DBConnector stateDb("STATE_DB", 0, false, "", true);
 
         TableConnector conf_port_table(&cfgDb, CFG_PORT_TABLE_NAME);
         TableConnector state_port_table(&stateDb, STATE_PORT_TABLE_NAME);

@@ -15,11 +15,11 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("fdbsyncd");
+    Logger::linkToDbNative("fdbsyncd", "NOTICE", true);
 
-    DBConnector appDb("APPL_DB", 0);
+    DBConnector appDb("APPL_DB", 0, false, "", true);
     RedisPipeline pipelineAppDB(&appDb);
-    DBConnector stateDb("STATE_DB", 0);
+    DBConnector stateDb("STATE_DB", 0, false, "", true);
     DBConnector config_db("CONFIG_DB", 0);
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);

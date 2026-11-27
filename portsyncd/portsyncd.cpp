@@ -49,7 +49,7 @@ int main(int argc, char **argv)
 {
     try
     {
-        Logger::linkToDbNative("portsyncd");
+        Logger::linkToDbNative("portsyncd", "NOTICE", true);
         int opt;
 
         while ((opt = getopt(argc, argv, "v:h")) != -1 )
@@ -66,8 +66,8 @@ int main(int argc, char **argv)
         }
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appl_db("APPL_DB", 0);
-        DBConnector state_db("STATE_DB", 0);
+        DBConnector appl_db("APPL_DB", 0, false, "", true);
+        DBConnector state_db("STATE_DB", 0, false, "", true);
         ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
 
         Table cfgDeviceMetaDataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
@@ -77,7 +77,7 @@ int main(int argc, char **argv)
             g_switchType = "switch";
         }
 
-        WarmStart::initialize("portsyncd", "swss");
+        WarmStart::initialize("portsyncd", "swss", 0, false, true);
         WarmStart::checkWarmStart("portsyncd", "swss");
         const bool warm = WarmStart::isWarmStart();
 

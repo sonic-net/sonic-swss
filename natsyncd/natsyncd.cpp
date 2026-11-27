@@ -13,10 +13,10 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("natsyncd");
+    Logger::linkToDbNative("natsyncd", "NOTICE", true);
 
-    DBConnector     appDb("APPL_DB", 0);
-    DBConnector     stateDb("STATE_DB", 0);
+    DBConnector     appDb("APPL_DB", 0, false, "", true);
+    DBConnector     stateDb("STATE_DB", 0, false, "", true);
     RedisPipeline   pipelineAppDB(&appDb);
     NfNetlink       nfnl;
 

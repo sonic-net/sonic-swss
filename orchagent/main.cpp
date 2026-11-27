@@ -426,11 +426,11 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative("orchagent");
+    swss::Logger::linkToDbNative("orchagent", "NOTICE", true);
 
     SWSS_LOG_ENTER();
 
-    WarmStart::initialize("orchagent", "swss");
+    WarmStart::initialize("orchagent", "swss", 0, false, true);
     WarmStart::checkWarmStart("orchagent", "swss");
 
     /*
@@ -647,9 +647,9 @@ int main(int argc, char **argv)
     Recorder::Instance().retry.startRec(true);
 
     // Instantiate database connectors
-    DBConnector appl_db("APPL_DB", 0);
+    DBConnector appl_db("APPL_DB", 0, false, "", true);
     DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
+    DBConnector state_db("STATE_DB", 0, false, "", true);
 
     // Get switch_type
     getCfgSwitchType(&config_db, gMySwitchType, gMySwitchSubType);

@@ -103,11 +103,11 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
 
     SWSS_LOG_NOTICE( "FabricPortsOrch constructor" );
 
-    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0, false, "", true));
     m_stateTable = unique_ptr<Table>(new Table(m_state_db.get(), APP_FABRIC_PORT_TABLE_NAME));
     m_fabricCapacityTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_FABRIC_CAPACITY_TABLE_NAME));
 
-    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0, false, "", true));
     m_portNameQueueCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_QUEUE_NAME_MAP));
     m_portNamePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_FABRIC_PORT_NAME_MAP));
     m_fabricCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TABLE));
@@ -121,7 +121,7 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
         m_counterNameToSwitchStatMap =  unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP));
     }
 
-    m_appl_db = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
+    m_appl_db = shared_ptr<DBConnector>(new DBConnector("APPL_DB", 0, false, "", true));
     m_applTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_PORT_TABLE_NAME));
     m_applMonitorConstTable = unique_ptr<Table>(new Table(m_appl_db.get(), APP_FABRIC_MONITOR_DATA_TABLE_NAME));
 

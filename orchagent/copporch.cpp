@@ -207,9 +207,9 @@ static const std::vector<std::pair<sai_policer_stat_t, const char*>> policer_sta
 
 CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     Orch(db, tableName),
-    m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
+    m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0, false, "", true))),
     m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
-    m_state_db(std::shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0))),
+    m_state_db(std::shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0, false, "", true))),
     m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TRAP_NAME_MAP))),
     m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
     m_trap_counter_manager(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS, false),

@@ -22,7 +22,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("nbrmgrd");
+    Logger::linkToDbNative("nbrmgrd", "NOTICE", true);
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting nbrmgrd ---");
@@ -34,12 +34,12 @@ int main(int argc, char **argv)
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
+        DBConnector appDb("APPL_DB", 0, false, "", true);
+        DBConnector stateDb("STATE_DB", 0, false, "", true);
 
         NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, cfg_nbr_tables);
 
-        WarmStart::initialize("nbrmgrd", "swss");
+        WarmStart::initialize("nbrmgrd", "swss", 0, false, true);
         WarmStart::checkWarmStart("nbrmgrd", "swss");
 
         if (WarmStart::isWarmStart())

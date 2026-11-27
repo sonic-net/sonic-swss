@@ -725,7 +725,7 @@ void SwitchTrimmingCapabilities::writeCapabilitiesToDb()
 {
     SWSS_LOG_ENTER();
 
-    DBConnector stateDb(SWITCH_STATE_DB_NAME, SWITCH_STATE_DB_TIMEOUT);
+    DBConnector stateDb(SWITCH_STATE_DB_NAME, SWITCH_STATE_DB_TIMEOUT, false, "", true);
     Table capTable(&stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
 
     std::vector<FieldValueTuple> fvList = {

@@ -86,7 +86,7 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
 ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered,
                                      bool db_write_thread,
                                      swss::ZmqServer* zmqServer)
-    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)),
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0, false, "", true)),
       m_ntf_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
       m_db_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
       m_buffered(buffered),
