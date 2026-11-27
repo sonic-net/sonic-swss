@@ -208,6 +208,147 @@ namespace bulker_test
         ASSERT_TRUE(gNeighBulker.bulk_entry_pending_removal(neighbor_entry_remove));
     }
 
+    TEST_F(BulkerTest, ObjectCreateStatusesFollowDistinctFailedObjectIds)
+    {
+        ObjectBulker<sai_next_hop_api_t> bulker(sai_next_hop_api, 0x0, 1000);
+        sai_attribute_t attr = {};
+        attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+        attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+        sai_object_id_t object_ids[2];
+        sai_status_t object_statuses[2];
+        std::vector<sai_object_id_t> returned_ids = {0x101, 0x102};
+        std::vector<sai_status_t> returned_statuses = {SAI_STATUS_TABLE_FULL, SAI_STATUS_FAILURE};
+
+        bulker.create_entry(&object_ids[0], 1, &attr, &object_statuses[0]);
+        bulker.create_entry(&object_ids[1], 1, &attr, &object_statuses[1]);
+
+        EXPECT_EQ(object_statuses[0], SAI_STATUS_NOT_EXECUTED);
+        EXPECT_EQ(object_statuses[1], SAI_STATUS_NOT_EXECUTED);
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                SetArrayArgument<6>(returned_statuses.begin(), returned_statuses.end()),
+                Return(SAI_STATUS_FAILURE)));
+
+        bulker.flush();
+
+        EXPECT_EQ(object_ids[0], SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(object_ids[1], SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(object_statuses[0], SAI_STATUS_TABLE_FULL);
+        EXPECT_EQ(object_statuses[1], SAI_STATUS_FAILURE);
+    }
+
+    TEST_F(BulkerTest, ObjectCreateStatusesFollowRequestsAcrossChunks)
+    {
+        ObjectBulker<sai_next_hop_api_t> bulker(sai_next_hop_api, 0x0, 2);
+        sai_attribute_t attr = {};
+        attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+        attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+        sai_object_id_t object_ids[3];
+        sai_status_t object_statuses[3];
+        std::vector<sai_object_id_t> first_ids = {0x101, 0x102};
+        std::vector<sai_status_t> first_statuses = {SAI_STATUS_SUCCESS, SAI_STATUS_TABLE_FULL};
+        std::vector<sai_object_id_t> second_ids = {0x103};
+        std::vector<sai_status_t> second_statuses = {SAI_STATUS_NOT_EXECUTED};
+
+        for (size_t i = 0; i < 3; ++i)
+        {
+            bulker.create_entry(&object_ids[i], 1, &attr, &object_statuses[i]);
+        }
+
+        ::testing::InSequence sequence;
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(first_ids.begin(), first_ids.end()),
+                SetArrayArgument<6>(first_statuses.begin(), first_statuses.end()),
+                Return(SAI_STATUS_FAILURE)));
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(second_ids.begin(), second_ids.end()),
+                SetArrayArgument<6>(second_statuses.begin(), second_statuses.end()),
+                Return(SAI_STATUS_FAILURE)));
+
+        bulker.flush();
+
+        EXPECT_EQ(object_ids[0], 0x101);
+        EXPECT_EQ(object_ids[1], SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(object_ids[2], SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(object_statuses[0], SAI_STATUS_SUCCESS);
+        EXPECT_EQ(object_statuses[1], SAI_STATUS_TABLE_FULL);
+        EXPECT_EQ(object_statuses[2], SAI_STATUS_NOT_EXECUTED);
+    }
+
+    TEST_F(BulkerTest, ObjectCreateStatusesFollowRequestsWithZeroObjectIds)
+    {
+        ObjectBulker<sai_next_hop_api_t> bulker(sai_next_hop_api, 0x0, 1000);
+        sai_attribute_t attr = {};
+        attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+        attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+        sai_object_id_t object_ids[2];
+        sai_status_t object_statuses[2];
+        std::vector<sai_object_id_t> returned_ids = {SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID};
+        std::vector<sai_status_t> returned_statuses = {SAI_STATUS_ITEM_ALREADY_EXISTS, SAI_STATUS_TABLE_FULL};
+
+        bulker.create_entry(&object_ids[0], 1, &attr, &object_statuses[0]);
+        bulker.create_entry(&object_ids[1], 1, &attr, &object_statuses[1]);
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                SetArrayArgument<6>(returned_statuses.begin(), returned_statuses.end()),
+                Return(SAI_STATUS_FAILURE)));
+
+        bulker.flush();
+
+        EXPECT_EQ(object_statuses[0], SAI_STATUS_ITEM_ALREADY_EXISTS);
+        EXPECT_EQ(object_statuses[1], SAI_STATUS_TABLE_FULL);
+    }
+
+    TEST_F(BulkerTest, ObjectCreateReturnsSuccessfulObjectAndStatus)
+    {
+        ObjectBulker<sai_next_hop_api_t> bulker(sai_next_hop_api, 0x0, 1000);
+        sai_attribute_t attr = {};
+        attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+        attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+        sai_object_id_t object_id;
+        sai_status_t object_status;
+        std::vector<sai_object_id_t> returned_ids = {0x101};
+        std::vector<sai_status_t> returned_statuses = {SAI_STATUS_SUCCESS};
+
+        bulker.create_entry(&object_id, 1, &attr, &object_status);
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(DoAll(
+                SetArrayArgument<5>(returned_ids.begin(), returned_ids.end()),
+                SetArrayArgument<6>(returned_statuses.begin(), returned_statuses.end()),
+                Return(SAI_STATUS_SUCCESS)));
+
+        bulker.flush();
+
+        EXPECT_EQ(object_id, 0x101);
+        EXPECT_EQ(object_status, SAI_STATUS_SUCCESS);
+    }
+
+    TEST_F(BulkerTest, ObjectCreateStatusStaysNotExecutedWhenSaiDoesNotWriteIt)
+    {
+        ObjectBulker<sai_next_hop_api_t> bulker(sai_next_hop_api, 0x0, 1000);
+        sai_attribute_t attr = {};
+        attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+        attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+        sai_object_id_t object_id;
+        sai_status_t object_status;
+
+        bulker.create_entry(&object_id, 1, &attr, &object_status);
+
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hops)
+            .WillOnce(Return(SAI_STATUS_FAILURE));
+
+        bulker.flush();
+
+        EXPECT_EQ(object_id, SAI_NULL_OBJECT_ID);
+        EXPECT_EQ(object_status, SAI_STATUS_NOT_EXECUTED);
+    }
+
     TEST_F(BulkerTest, ObjectBulkSet)
     {
         // Create bulker
