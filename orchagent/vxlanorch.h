@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <map>
 #include <unordered_map>
 #include <set>
@@ -195,6 +196,16 @@ public:
         return src_ip_;
     }
 
+    const IpAddress getDstIP() const
+    {
+        return dst_ip_;
+    }
+
+    bool hasConfig(const IpAddress& src_ip, const IpAddress& dst_ip, VxlanTunnelTTLMode ttl_mode) const
+    {
+        return src_ip_ == src_ip && dst_ip_ == dst_ip && decap_ttl_mode_ == ttl_mode;
+    }
+
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
     bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
     sai_object_id_t getNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const;
@@ -207,6 +218,12 @@ public:
     bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=DEFAULT_TUNNEL_ENCAP_TTL);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
+    // Finishes a held SIP tunnel hw delete once nothing references the tunnel; false while the
+    // P2MP source tunnel port's bridge port cannot be removed.
+    bool finishPendingSIPDelete();
+    // finishPendingSIPDelete() for a held DEL retried on every pass: after a refused bridge port it tries again
+    // only once the retry interval has passed, and returns false meanwhile. True means not refused, not done.
+    bool retryPendingSIPDelete();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
     void updateRemoteEndPointRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
@@ -244,6 +261,8 @@ private:
     VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)
     uint8_t encap_dedicated_mappers_ = 0;
     uint8_t decap_dedicated_mappers_ = 0;
+    // The earliest retry of a refused bridge port removal: each attempt flushes its FDB and logs the failure.
+    std::chrono::steady_clock::time_point bridge_port_retry_at_;
 };
 
 const request_description_t vxlan_tunnel_request_description = {
@@ -372,6 +391,14 @@ public:
     void generateTunnelCounterMap();
     void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
     void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
+    // True while a VXLAN_TUNNEL DEL of this tunnel is held back (see delOperation)
+    bool isDeleteHeld(const std::string& tunnelName) const
+    {
+        return m_heldDeletes.count(tunnelName) != 0;
+    }
+    // True when APPL_DB holds this tunnel again with other attributes than it was created with.
+    bool isTunnelRowReplaced(const std::string& tunnel_name);
+
     bool isDipTunnelsSupported(void)
     {
         return is_dip_tunnel_supported;
@@ -382,12 +409,15 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
     void doTask(swss::SelectableTimer&);
+    // True when APPL_DB holds this tunnel again with the attributes it was created with.
+    bool isTunnelRowBack(const std::string& tunnel_name, const VxlanTunnel& tunnel);
 
     VxlanTunnelTable vxlan_tunnel_table_;
     VxlanTunnelRequest request_;
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
+    Table m_appTunnelTable;
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
     FlexCounterManager vxlan_tunnel_stat_manager;
     bool m_isTunnelCounterMapGenerated = false;
@@ -399,6 +429,8 @@ private:
     shared_ptr<DBConnector> m_asic_db;
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
     bool is_dip_tunnel_supported;
+    // Held tunnel DELs and the reason last logged, so each retry logs only a new reason.
+    std::map<std::string, std::string> m_heldDeletes;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {
@@ -430,10 +462,15 @@ public:
 
     bool isVniVlanMapExists(uint32_t vni_id, std::string& vniVlanMapName, sai_object_id_t *tnl_map_entry_id, uint32_t *vlan_id);
 
+    // True when the VLAN is mapped on a tunnel with a dst_ip, i.e. a static VXLAN tunnel, not an EVPN VTEP.
+    bool isVlanMappedOnStaticTunnel(sai_vlan_id_t vlan_id) const;
+
     void updateTnlMapId(std::string vniVlanMapName, sai_object_id_t tunnel_map_id);
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+    bool removeMap(const std::string& tunnel_name, const std::string& tunnel_map_entry_name,
+                   const std::string& full_tunnel_map_entry_name);
 
     VxlanTunnelMapTable vxlan_tunnel_map_table_;
     VxlanTunnelMapRequest request_;
@@ -521,6 +558,8 @@ private:
     std::set<std::pair<sai_vlan_id_t, std::string>> m_pendingVlanMembers;
     // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
     std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
+    // (vid, remote VTEP) entries waiting for the EVPN NVO whose wait has been logged.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_noSourceVtepLogged;
 };
 
 class EvpnRemoteVnip2mpOrch : public Orch2
@@ -537,6 +576,8 @@ private:
 
     // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
     std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
+    // (vid, remote VTEP) entries waiting for the EVPN NVO whose wait has been logged.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_noSourceVtepLogged;
 };
 
 //------------- EVPN_NVO Table -------------------------
@@ -558,17 +599,39 @@ public:
 class EvpnNvoOrch : public Orch2
 {
 public:
-    EvpnNvoOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
+    EvpnNvoOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_), m_nvoTable(db, tableName) { }
 
     VxlanTunnel* getEVPNVtep() 
     { 
         return source_vtep_ptr;
     }
 
+    // True while the NVO waits to bind its source VTEP: its users retry their adds instead of dropping them.
+    bool isBindPending() const
+    {
+        return !source_vtep_ptr && !m_pendingVtep.empty();
+    }
+
+    // Called by a VXLAN_TUNNEL DEL of the source VTEP: lets go of the tunnel once nothing uses it, with any
+    // pending hw delete finished, and waits for the tunnel configured next under that name. False while the
+    // tunnel must stay.
+    bool releaseForTunnelDelete();
+    // Called once a tunnel is created: binds it if the NVO waits for it.
+    void bindCreatedTunnel(const std::string& tunnel_name);
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
+    bool holdDelete(const std::string& nvo_name, const std::string& reason);
+    std::string finishPendingHwDelete();
+    void unbind();
+
     EvpnNvoRequest request_;
+    Table m_nvoTable;
     VxlanTunnel* source_vtep_ptr=NULL;
+    // The source VTEP the NVO waits to bind; each wait is logged once.
+    std::string m_pendingVtep;
+    // Held DELs and the reason last logged, so each retry logs only a new reason.
+    std::map<std::string, std::string> m_heldDeletes;
 };

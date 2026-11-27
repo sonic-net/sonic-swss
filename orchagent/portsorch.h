@@ -309,6 +309,7 @@ private:
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portSerdesIdToPortIdTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_appVlanTable;
     unique_ptr<Table> m_sendToIngressPortTable;
     unique_ptr<Table> m_systemPortTable;
     unique_ptr<Table> m_gearboxTable;
@@ -403,6 +404,10 @@ private:
     unordered_map<sai_object_id_t, string> saiOidToAlias;
     unordered_map<sai_object_id_t, uint16_t> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
+    // VLANs whose DEL removed their STP membership but not the SAI VLAN.
+    set<string> m_partlyRemovedVlans;
+    // VLANs whose DEL waits for their VLAN-VNI map; each wait is logged once.
+    set<string> m_vniHeldVlans;
     unordered_set<string> m_pendingPortSet;
     const uint32_t max_flood_control_types = 4;
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;

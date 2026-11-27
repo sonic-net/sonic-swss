@@ -6002,6 +6002,8 @@ namespace portsorch_test
 
         // Deferred SET is replaced by DEL via consumer coalescing; after Vlan51 is
         // removed, doVlanMemberTask must erase the DEL (member never existed in vlan).
+        // The consumer's pop of the DEL removes the APPL_DB row.
+        vlanTable.del("Vlan51");
         std::deque<KeyOpFieldsValuesTuple> vlanDelEntries;
         vlanDelEntries.push_back({"Vlan51", DEL_COMMAND, {}});
         auto vlanConsumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_VLAN_TABLE_NAME));
