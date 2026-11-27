@@ -2,6 +2,7 @@
 #include <net/if.h>
 #include <netlink/route/link.h>
 #include "mock_table.h"
+#include "warm_restart.h"
 #define private public 
 #include "linksync.h"
 #undef private
@@ -67,14 +68,22 @@ namespace portsyncd_ut
         virtual void SetUp() override
         {   
             testing_db::reset();
+            g_portSet.clear();
+            g_switchType = "switch";
+            mockCallArgs.clear();
             m_config_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
             m_state_db = std::make_shared<swss::DBConnector>("STATE_DB", 0);
             m_portCfgTable = std::make_shared<swss::Table>(m_config_db.get(), CFG_PORT_TABLE_NAME);
             m_portAppTable = std::make_shared<swss::Table>(m_app_db.get(), APP_PORT_TABLE_NAME);
+            swss::WarmStart::initialize("portsyncd", "swss");
+            swss::WarmStart::checkWarmStart("portsyncd", "swss");
         }
 
         virtual void TearDown() override {
+            swss::Table enable_table(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+            enable_table.hset("swss", "enable", "false");
+            swss::WarmStart::checkWarmStart("portsyncd", "swss");
             if (if_ni_mock != NULL) free(if_ni_mock);
             if_ni_mock = NULL;
         }
@@ -187,6 +196,100 @@ namespace portsyncd_ut
 
 namespace portsyncd_ut
 {
+    TEST_F(PortSyncdTest, test_warmStartPreservesInterfacesAndPortSet)
+    {
+        swss::Table enable_table(m_state_db.get(), "WARM_RESTART_ENABLE_TABLE");
+        enable_table.hset("swss", "enable", "true");
+        swss::Table restart_table(m_state_db.get(), STATE_WARM_RESTART_TABLE_NAME);
+        restart_table.hset("portsyncd", "restore_count", "0");
+        swss::WarmStart::checkWarmStart("portsyncd", "swss");
+        ASSERT_TRUE(swss::WarmStart::isWarmStart());
+
+        if_ni_mock = populateNetDevAdvanced();
+        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
+        populateCfgDb(m_portCfgTable.get());
+        swss::ProducerStateTable p(m_app_db.get(), APP_PORT_TABLE_NAME);
+        writeToApplDB(p, *m_config_db);
+        sync.updatePortSet();
+
+        EXPECT_TRUE(sync.m_ifindexOldNameMap.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+        EXPECT_EQ(g_portSet.size(), 2u);
+    }
+
+    TEST_F(PortSyncdTest, test_updatePortSetAfterConfig)
+    {
+        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
+        populateCfgDb(m_portCfgTable.get());
+        m_portCfgTable->set("Ethernet8", {{"lanes", "8,9,10,11"}});
+        swss::ProducerStateTable p(m_app_db.get(), APP_PORT_TABLE_NAME);
+        writeToApplDB(p, *m_config_db);
+
+        ASSERT_EQ(g_portSet.size(), 3u);
+        sync.updatePortSet();
+        EXPECT_EQ(g_portSet, std::set<std::string>({"Ethernet8"}));
+    }
+
+    TEST_F(PortSyncdTest, test_newInterfaceDuringConfigPublication)
+    {
+        if_ni_mock = populateNetDev();
+        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
+
+        populateCfgDb(m_portCfgTable.get());
+        swss::ProducerStateTable p(m_app_db.get(), APP_PORT_TABLE_NAME);
+        writeToApplDB(p, *m_config_db);
+        free(if_ni_mock);
+        if_ni_mock = populateNetDevAdvanced();
+        sync.updatePortSet();
+
+        EXPECT_TRUE(sync.m_ifindexOldNameMap.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+        auto msg = draft_nlmsg("Ethernet0", {IFF_UP, IFF_RUNNING},
+                              "tun", "1c:34:da:1c:9f:00", 142, 9100);
+        sync.onMsg(RTM_NEWLINK, msg);
+        free_nlobj(msg);
+
+        std::string state;
+        ASSERT_TRUE(sync.m_statePortTable.hget("Ethernet0", "state", state));
+        EXPECT_EQ(state, "ok");
+    }
+
+    TEST_F(PortSyncdTest, test_recreatedInterfaceUsesNewIndex)
+    {
+        if_ni_mock = populateNetDevAdvanced();
+        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
+        populateCfgDb(m_portCfgTable.get());
+        swss::ProducerStateTable p(m_app_db.get(), APP_PORT_TABLE_NAME);
+        writeToApplDB(p, *m_config_db);
+        sync.updatePortSet();
+
+        auto msg = draft_nlmsg("Ethernet0", {IFF_UP, IFF_RUNNING},
+                              "tun", "1c:34:da:1c:9f:00", 143, 9100);
+        sync.onMsg(RTM_NEWLINK, msg);
+        free_nlobj(msg);
+
+        std::string state;
+        ASSERT_TRUE(sync.m_statePortTable.hget("Ethernet0", "state", state));
+        EXPECT_EQ(state, "ok");
+        EXPECT_EQ(sync.m_ifindexOldNameMap.at(142), "Ethernet0");
+        EXPECT_EQ(sync.m_ifindexNameMap.at(143), "Ethernet0");
+    }
+
+    TEST_F(PortSyncdTest, test_dpuInterfacesAreNotOld)
+    {
+        g_switchType = "dpu";
+        if_ni_mock = populateNetDevAdvanced();
+        swss::LinkSync sync(m_app_db.get(), m_state_db.get());
+        populateCfgDb(m_portCfgTable.get());
+        swss::ProducerStateTable p(m_app_db.get(), APP_PORT_TABLE_NAME);
+        writeToApplDB(p, *m_config_db);
+        sync.updatePortSet();
+
+        EXPECT_TRUE(sync.m_ifindexOldNameMap.empty());
+        EXPECT_TRUE(mockCallArgs.empty());
+        EXPECT_TRUE(g_portSet.empty());
+    }
+
     TEST_F(PortSyncdTest, test_cacheOldIfaces)
     {  
         if_ni_mock = populateNetDevAdvanced();
