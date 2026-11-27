@@ -222,6 +222,7 @@ public:
     bool isTunnelReferenced(void);
     void updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc);
     void eraseRemoteEndPoint(const std::string remote_vtep);
+    void syncRemoteVtepNeighbor(const std::string& remote_vtep);
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 
@@ -239,6 +240,8 @@ private:
     IpAddress dst_ip_ = 0x0;
 
     TunnelUsers tnl_users_;
+    // Remote VTEPs this VTEP counts as one neighbor tracking user in VxlanTunnelOrch
+    std::set<std::string> neigh_tracked_;
     VxlanTunnel* vtep_ptr=NULL;
     tunnel_creation_src_t src_creation_;
     VxlanTunnelTTLMode decap_ttl_mode_; // Decap TTL mode: NOT_SET, PIPE, or UNIFORM (default is NOT_SET)
@@ -267,7 +270,7 @@ typedef std::map<std::string, VxlanTunnel_T> VxlanTunnelTable;
 typedef std::map<uint32_t, uint16_t> VxlanVniVlanMapTable;
 typedef std::map<IpAddress, VxlanTunnel*> VTEPTable;
 
-class VxlanTunnelOrch : public Orch2
+class VxlanTunnelOrch : public Orch2, public Observer
 {
 public:
     VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName);
@@ -377,6 +380,12 @@ public:
         return is_dip_tunnel_supported;
     }
 
+    /* Neighbor resolution for remote VTEPs whose best underlay route is a connected subnet */
+    void addRemoteVtepNeighbor(const std::string& vtep);
+    void removeRemoteVtepNeighbor(const std::string& vtep);
+    void updateRemoteVtepSubnet(const IpPrefix& subnet);
+    void update(SubjectType type, void *cntx) override;
+
 
 private:
     virtual bool addOperation(const Request& request);
@@ -399,6 +408,19 @@ private:
     shared_ptr<DBConnector> m_asic_db;
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
     bool is_dip_tunnel_supported;
+
+    struct RemoteVtepNeighbor
+    {
+        unsigned users = 0;             // the VTEP's tunnel users (one) and its P2MP flood memberships
+        bool route_observed = false;    // attached to RouteOrch for the VTEP address
+        std::string connected_alias;    // RIF of the best route when that is a connected subnet
+        std::string requested_alias;    // RIF of our outstanding NeighOrch resolve request
+    };
+    std::map<IpAddress, RemoteVtepNeighbor> m_remoteVtepNeighbors;
+    bool m_neighObserverAttached = false;
+
+    void observeRemoteVtepRoute(const IpAddress& vtep, RemoteVtepNeighbor& state);
+    void evaluateRemoteVtepNeighbor(const IpAddress& vtep, RemoteVtepNeighbor& state, bool neighbor_present);
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {
@@ -537,6 +559,10 @@ private:
 
     // (vid, remote VTEP) entries whose VLAN member add failure has been logged at ERROR.
     std::set<std::pair<sai_vlan_id_t, std::string>> m_vlanMemberFailureLogged;
+    // (vid, remote VTEP) flood members counted as a user of the remote VTEP's neighbor tracking.
+    std::set<std::pair<sai_vlan_id_t, std::string>> m_neighTrackedMembers;
+
+    void releaseNeighTrackedMember(sai_vlan_id_t vlan_id, const std::string& end_point_ip);
 };
 
 //------------- EVPN_NVO Table -------------------------

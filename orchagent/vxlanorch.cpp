@@ -21,6 +21,9 @@ extern "C" {
 #include "flex_counter_manager.h"
 #include "converter.h"
 #include "saihelper.h"
+#include "intfsorch.h"
+#include "neighorch.h"
+#include "routeorch.h"
 
 /* Global variables */
 extern sai_object_id_t gSwitchId;
@@ -29,6 +32,9 @@ extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
+extern IntfsOrch*       gIntfsOrch;
+extern NeighOrch*       gNeighOrch;
+extern RouteOrch*       gRouteOrch;
 extern sai_object_id_t  gUnderlayIfId;
 extern FlexManagerDirectory g_FlexManagerDirectory;
 extern bool gTraditionalFlexCounter;
@@ -582,6 +588,10 @@ VxlanTunnel::VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp, tunnel_c
 VxlanTunnel::~VxlanTunnel()
 {
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    for (const auto &remote_vtep : neigh_tracked_)
+    {
+        tunnel_orch->removeRemoteVtepNeighbor(remote_vtep);
+    }
     tunnel_orch->addRemoveStateTableEntry(tunnel_name_,src_ip_, dst_ip_,
                                           src_creation_, false);
 }
@@ -1202,6 +1212,7 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
         {
             it->second.ip_refcnt++;
         }
+        syncRemoteVtepNeighbor(remote_vtep);
         SWSS_LOG_DEBUG("Incrementing remote end point %s reference to %d", remote_vtep.c_str(),
                        tnl_users_[remote_vtep].ip_refcnt);
     }
@@ -1212,7 +1223,13 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
             SWSS_LOG_ERROR("Cannot decrement ref. End point not referenced %s", remote_vtep.c_str());
             return;
         }
+        if (it->second.ip_refcnt == 0)
+        {
+            SWSS_LOG_ERROR("Cannot decrement ref. End point %s has no IP reference", remote_vtep.c_str());
+            return;
+        }
         it->second.ip_refcnt--;
+        syncRemoteVtepNeighbor(remote_vtep);
 
         SWSS_LOG_DEBUG("Decrementing remote end point %s reference to %d", remote_vtep.c_str(),
                        it->second.ip_refcnt);
@@ -1228,6 +1245,49 @@ void VxlanTunnel::eraseRemoteEndPoint(const std::string remote_vtep)
     {
         tnl_users_.erase(it);
         SWSS_LOG_INFO("Erased remote endpoint %s from tnl_users_", remote_vtep.c_str());
+    }
+    syncRemoteVtepNeighbor(remote_vtep);
+}
+
+/*
+ * A remote VTEP is one neighbor tracking user while its IMR, MAC and IP counts add up to more than zero, or while its
+ * P2P tunnel exists. The IP count moves through updateRemoteEndPointIpRef() and through the DIP tunnel create and
+ * delete, so every count change re-evaluates the whole entry instead of hooking one counter's transitions.
+ */
+void VxlanTunnel::syncRemoteVtepNeighbor(const std::string& remote_vtep)
+{
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    if (!tunnel_orch)
+    {
+        return;
+    }
+
+    bool used = false;
+    auto it = tnl_users_.find(remote_vtep);
+    if (it != tnl_users_.end())
+    {
+        used = it->second.imr_refcnt + it->second.mac_refcnt + it->second.ip_refcnt != 0;
+    }
+    if (!used && tunnel_orch->isDipTunnelsSupported())
+    {
+        std::string dip_tunnel_name;
+        tunnel_orch->getTunnelNameFromDIP(remote_vtep, dip_tunnel_name);
+        used = tunnel_orch->isTunnelExists(dip_tunnel_name);
+    }
+
+    if (used == (neigh_tracked_.count(remote_vtep) != 0))
+    {
+        return;
+    }
+    if (used)
+    {
+        neigh_tracked_.insert(remote_vtep);
+        tunnel_orch->addRemoteVtepNeighbor(remote_vtep);
+    }
+    else
+    {
+        neigh_tracked_.erase(remote_vtep);
+        tunnel_orch->removeRemoteVtepNeighbor(remote_vtep);
     }
 }
 
@@ -1267,6 +1327,7 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
         updateRemoteEndPointRefCnt(true,tnl_refcnts,usr);
         tnl_users_[dip] = tnl_refcnts;
     }
+    syncRemoteVtepNeighbor(dip);
 
     return true;
 }
@@ -1290,6 +1351,7 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
         {
             updateRemoteEndPointRefCnt(false,tnl_refcnts,usr);
             tnl_users_[dip] = tnl_refcnts;
+            syncRemoteVtepNeighbor(dip);
         }
  
         SWSS_LOG_INFO("diprefcnt = %d",
@@ -1322,6 +1384,7 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
         tnl_users_.erase(dip);
  
         tunnel_orch->delTunnel(tunnel_name);
+        syncRemoteVtepNeighbor(dip);
         SWSS_LOG_NOTICE("P2P Tunnel deleted : %s", tunnel_name.c_str());
     }
     else 
@@ -1423,6 +1486,18 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
 
 VxlanTunnelOrch::~VxlanTunnelOrch()
 {
+    for (const auto &it : m_remoteVtepNeighbors)
+    {
+        if (it.second.route_observed && gRouteOrch)
+        {
+            gRouteOrch->detach(this, it.first);
+        }
+    }
+    m_remoteVtepNeighbors.clear();
+    if (m_neighObserverAttached && gNeighOrch)
+    {
+        gNeighOrch->detach(this);
+    }
     vxlan_tunnel_table_.clear();
     vtep_table_.clear();
 }
@@ -2174,6 +2249,202 @@ void VxlanTunnelOrch::addRemoveStateTableEntry(string tunnel_name,
     else
     {
         m_stateVxlanTable.del(tunnel_name);
+    }
+}
+
+static bool isInConnectedSubnet(const IpAddress& vtep, const IpPrefix& prefix)
+{
+    const uint8_t host_len = vtep.isV4() ? 32 : 128;
+    return prefix.getMaskLength() < host_len && prefix.getIp() != vtep && prefix.isAddressInSubnet(vtep);
+}
+
+/*
+ * Nothing else resolves the neighbor of a remote VTEP on a connected subnet unless the VTEP sends the switch other IP
+ * traffic. While its best route is that subnet and it has no neighbor, ask NeighOrch to resolve it, as RouteOrch does
+ * for a next hop. Only VTEPs inside a default VRF subnet observe RouteOrch, so loopback VTEPs cost nothing.
+ */
+void VxlanTunnelOrch::addRemoteVtepNeighbor(const std::string& vtep_str)
+{
+    SWSS_LOG_ENTER();
+
+    IpAddress vtep;
+    try
+    {
+        vtep = IpAddress(vtep_str);
+    }
+    catch (const std::invalid_argument &e)
+    {
+        SWSS_LOG_WARN("Remote VTEP %s is not an IP address: %s", vtep_str.c_str(), e.what());
+        return;
+    }
+
+    auto &state = m_remoteVtepNeighbors[vtep];
+    if (++state.users > 1 || !gIntfsOrch)
+    {
+        return;
+    }
+    for (const auto &intf : gIntfsOrch->getSyncdIntfses())
+    {
+        if (intf.second.vrf_id != gVirtualRouterId)
+        {
+            continue;
+        }
+        for (const auto &prefix : intf.second.ip_addresses)
+        {
+            if (isInConnectedSubnet(vtep, prefix))
+            {
+                observeRemoteVtepRoute(vtep, state);
+                return;
+            }
+        }
+    }
+}
+
+void VxlanTunnelOrch::removeRemoteVtepNeighbor(const std::string& vtep_str)
+{
+    SWSS_LOG_ENTER();
+
+    IpAddress vtep;
+    try
+    {
+        vtep = IpAddress(vtep_str);
+    }
+    catch (const std::invalid_argument &)
+    {
+        return;
+    }
+
+    auto it = m_remoteVtepNeighbors.find(vtep);
+    if (it == m_remoteVtepNeighbors.end() || --it->second.users > 0)
+    {
+        return;
+    }
+
+    if (!it->second.requested_alias.empty() && gNeighOrch)
+    {
+        gNeighOrch->cancelResolveNeighbor(NeighborEntry(vtep, it->second.requested_alias));
+    }
+    if (it->second.route_observed && gRouteOrch)
+    {
+        gRouteOrch->detach(this, vtep);
+    }
+    m_remoteVtepNeighbors.erase(it);
+}
+
+/* A default VRF router interface got an address: VTEPs inside it start observing their route. */
+void VxlanTunnelOrch::updateRemoteVtepSubnet(const IpPrefix& subnet)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it : m_remoteVtepNeighbors)
+    {
+        if (!it.second.route_observed && isInConnectedSubnet(it.first, subnet))
+        {
+            observeRemoteVtepRoute(it.first, it.second);
+        }
+    }
+}
+
+void VxlanTunnelOrch::observeRemoteVtepRoute(const IpAddress& vtep, RemoteVtepNeighbor& state)
+{
+    if (state.route_observed || !gRouteOrch || !gNeighOrch)
+    {
+        return;
+    }
+
+    if (!m_neighObserverAttached)
+    {
+        gNeighOrch->attach(this);
+        m_neighObserverAttached = true;
+    }
+
+    SWSS_LOG_INFO("Remote VTEP %s is inside a connected subnet, tracking its route", vtep.to_string().c_str());
+    state.route_observed = true;
+    // attach() calls update() with the current best route before it returns, then on each change.
+    gRouteOrch->attach(this, vtep);
+}
+
+void VxlanTunnelOrch::evaluateRemoteVtepNeighbor(const IpAddress& vtep, RemoteVtepNeighbor& state,
+                                                 bool neighbor_present)
+{
+    const std::string want = neighbor_present ? std::string() : state.connected_alias;
+    if (state.requested_alias == want || !gNeighOrch)
+    {
+        return;
+    }
+
+    if (!state.requested_alias.empty())
+    {
+        gNeighOrch->cancelResolveNeighbor(NeighborEntry(vtep, state.requested_alias));
+        state.requested_alias.clear();
+    }
+
+    if (!want.empty())
+    {
+        SWSS_LOG_NOTICE("Resolving neighbor of remote VTEP %s on %s", vtep.to_string().c_str(), want.c_str());
+        gNeighOrch->resolveNeighbor(NeighborEntry(vtep, want), true);
+        state.requested_alias = want;
+    }
+}
+
+void VxlanTunnelOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    switch (type)
+    {
+        case SUBJECT_TYPE_NEXTHOP_CHANGE:
+        {
+            const auto *update = static_cast<NextHopUpdate *>(cntx);
+            auto it = m_remoteVtepNeighbors.find(update->destination);
+            if (update->vrf_id != gVirtualRouterId || it == m_remoteVtepNeighbors.end() ||
+                !it->second.route_observed)
+            {
+                return;
+            }
+
+            // A connected subnet route has one next hop: the router interface, with no IP.
+            std::string alias;
+            if (update->nexthopGroup.getSize() == 1)
+            {
+                const NextHopKey &nh = *update->nexthopGroup.getNextHops().begin();
+                if (nh.isIntfNextHop() && !nh.alias.empty())
+                {
+                    alias = nh.alias;
+                }
+            }
+            it->second.connected_alias = alias;
+            evaluateRemoteVtepNeighbor(it->first, it->second,
+                                       !alias.empty() && gNeighOrch && gNeighOrch->hasNextHop(NextHopKey(it->first, alias)));
+            break;
+        }
+        case SUBJECT_TYPE_NEIGH_CHANGE:
+        {
+            const auto *update = static_cast<NeighborUpdate *>(cntx);
+            auto it = m_remoteVtepNeighbors.find(update->entry.ip_address);
+            if (it == m_remoteVtepNeighbors.end())
+            {
+                return;
+            }
+
+            if (update->add)
+            {
+                // Adding the next hop ends NeighOrch's request; forget ours so it is never cancelled.
+                if (it->second.requested_alias == update->entry.alias && gNeighOrch &&
+                    gNeighOrch->hasNextHop(NextHopKey(it->first, update->entry.alias)))
+                {
+                    it->second.requested_alias.clear();
+                }
+            }
+            else if (it->second.connected_alias == update->entry.alias)
+            {
+                // Notified before the neighbor goes, so it is still present now.
+                evaluateRemoteVtepNeighbor(it->first, it->second, false);
+            }
+            break;
+        }
+        default:
+            break;
     }
 }
 
@@ -3027,11 +3298,24 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
         return false;
     }
     m_vlanMemberFailureLogged.erase(entry_key);
+    if (m_neighTrackedMembers.insert(entry_key).second)
+    {
+        tunnel_orch->addRemoteVtepNeighbor(end_point_ip);
+    }
 
     SWSS_LOG_INFO("end_point_ip=%s vni=%d vlanid=%d ",
                    end_point_ip.c_str(), vni_id, vlan_id);
 
     return true;
+}
+
+/* Every consumed DEL ends the flood member, also when its VTEP, VLAN or tunnel port is already gone. */
+void EvpnRemoteVnip2mpOrch::releaseNeighTrackedMember(sai_vlan_id_t vlan_id, const std::string& end_point_ip)
+{
+    if (m_neighTrackedMembers.erase(make_pair(vlan_id, end_point_ip)))
+    {
+        gDirectory.get<VxlanTunnelOrch*>()->removeRemoteVtepNeighbor(end_point_ip);
+    }
 }
 
 bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
@@ -3059,12 +3343,14 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     {
         SWSS_LOG_WARN("Remote VNI add: VTEP not found. remote=%s vid=%d",
                       end_point_ip.c_str(), vlan_id);
+        releaseNeighTrackedMember(vlan_id, end_point_ip);
         return true;
     }
 
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
     {
         SWSS_LOG_WARN("Vxlan tunnel map vlan id doesn't exist: %d", vlan_id);
+        releaseNeighTrackedMember(vlan_id, end_point_ip);
         return true;
     }
 
@@ -3072,6 +3358,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     if (!tunnel_orch->getTunnelPort(src_vtep,tunnelPort,true))
     {
         SWSS_LOG_WARN("RemoteVniDel getTunnelPort Fails: %s", src_vtep.c_str());
+        releaseNeighTrackedMember(vlan_id, end_point_ip);
         return true;
     }
 
@@ -3081,6 +3368,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
         SWSS_LOG_WARN("marking it as spurious tunnelPort %s not a member of vid %d",
                        end_point_ip.c_str(), vlan_id);
         vtep_ptr->increment_spurious_imr_del(end_point_ip);
+        releaseNeighTrackedMember(vlan_id, end_point_ip);
         return true;
     }
 
@@ -3090,6 +3378,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
                       vlan_id, end_point_ip.c_str());
         return false;
     }
+    releaseNeighTrackedMember(vlan_id, end_point_ip);
 
     if (vtep_ptr->del_tnl_hw_pending &&
         !vtep_ptr->isTunnelReferenced())
