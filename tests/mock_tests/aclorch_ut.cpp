@@ -2490,6 +2490,54 @@ namespace aclorch_test
         ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
     }
 
+    TEST_F(AclOrchTest, AclRule_InvalidEcnActionRejected)
+    {
+        const string aclTableName = "TEST_ECN_TABLE";
+        const string aclRuleName = "TEST_ECN_RULE";
+
+        auto orch = createAclOrch();
+
+        orch->doAclTableTask({{aclTableName, SET_COMMAND,
+            {{ACL_TABLE_TYPE, TABLE_TYPE_L3}, {ACL_TABLE_STAGE, STAGE_INGRESS},
+             {ACL_TABLE_PORTS, "1,2"}}}});
+        const auto table = orch->getAclTable(aclTableName);
+        ASSERT_TRUE(table);
+
+        const vector<string> invalidValues = { "", "-1", "4", "03", "x", " 3" };
+        auto kvfAclRule = deque<KeyOpFieldsValuesTuple>(
+            { { aclTableName + "|" + aclRuleName,
+                SET_COMMAND,
+                { { RULE_PRIORITY, "999" },
+                  { MATCH_IP_PROTOCOL, "17" },
+                  { MATCH_L4_SRC_PORT, "1234" },
+                  { ACTION_ECN, "" } } } });
+
+        for (const auto &invalidValue : invalidValues)
+        {
+            fvValue(kfvFieldsValues(kvfAclRule.front()).back()) = invalidValue;
+            orch->doAclRuleTask(kvfAclRule);
+
+            ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+        }
+    }
+
+    TEST_F(AclOrchTest, AclRule_EcnValidAction)
+    {
+        auto orch = createAclOrch();
+
+        orch->doAclTableTask({{"TEST_ECN_TABLE", SET_COMMAND,
+            {{ACL_TABLE_TYPE, TABLE_TYPE_L3}, {ACL_TABLE_STAGE, STAGE_INGRESS},
+             {ACL_TABLE_PORTS, "1,2"}}}});
+        orch->doAclRuleTask({{"TEST_ECN_TABLE|TEST_ECN_RULE", SET_COMMAND,
+            {{RULE_PRIORITY, "999"}, {MATCH_IP_PROTOCOL, "17"},
+             {MATCH_L4_SRC_PORT, "1234"}, {ACTION_ECN, "2"}}}});
+
+        const auto rule = orch->getAclRule("TEST_ECN_TABLE", "TEST_ECN_RULE");
+        ASSERT_TRUE(rule);
+        ASSERT_EQ(getAclRuleSaiAttribute(
+            *rule, SAI_ACL_ENTRY_ATTR_ACTION_SET_ECN), "2");
+    }
+
     TEST_F(AclOrchTest, AclRuleUpdate)
     {
         string acl_table_id = "acl_table_1";
