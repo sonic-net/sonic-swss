@@ -13,6 +13,8 @@ extern string gMySwitchType;
 
 extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
+extern bool gOrchUnhealthyCached;
+
 namespace bufferorch_test
 {
     using namespace std;
@@ -69,10 +71,21 @@ namespace bufferorch_test
     sai_uint64_t _ut_stub_buffer_profile_xon;
     sai_uint64_t _ut_stub_buffer_profile_xoff;
     bool _ut_stub_buffer_profile_sanity_check = false;
+    sai_attr_id_t _ut_stub_buffer_profile_not_implemented_attr = SAI_BUFFER_PROFILE_ATTR_END;
+    sai_attr_id_t _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_END;
+    sai_status_t _ut_stub_buffer_profile_failing_status = SAI_STATUS_FAILURE;
     sai_status_t _ut_stub_sai_set_buffer_profile_attribute(
         _In_ sai_object_id_t buffer_profile_id,
         _In_ const sai_attribute_t *attr)
     {
+        if (attr[0].id == _ut_stub_buffer_profile_not_implemented_attr)
+        {
+            return SAI_STATUS_ATTR_NOT_IMPLEMENTED_0;
+        }
+        if (attr[0].id == _ut_stub_buffer_profile_failing_attr)
+        {
+            return _ut_stub_buffer_profile_failing_status;
+        }
         if (_ut_stub_buffer_profile_sanity_check)
         {
             if (SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE == attr[0].id)
@@ -426,6 +439,9 @@ namespace bufferorch_test
 
         void TearDown() override
         {
+            _ut_stub_buffer_profile_not_implemented_attr = SAI_BUFFER_PROFILE_ATTR_END;
+            _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_END;
+            _ut_stub_buffer_profile_failing_status = SAI_STATUS_FAILURE;
             auto buffer_maps = BufferOrch::m_buffer_type_maps;
             for (auto &i : buffer_maps)
             {
@@ -471,6 +487,32 @@ namespace bufferorch_test
             ut_helper::uninitSaiApi();
         }
     };
+
+    // Runs doTask with the swss logger redirected to stderr so that the emitted log can be asserted
+    // on, and restores syslog output afterwards.
+    static std::string drainBufferOrchCapturingLog()
+    {
+        swss::Logger::swssOutputNotify("", "STDERR");
+        testing::internal::CaptureStderr();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        std::string logs = testing::internal::GetCapturedStderr();
+        swss::Logger::swssOutputNotify("", "SYSLOG");
+        return logs;
+    }
+
+    static sai_object_id_t profileOid(const string &name)
+    {
+        auto &profiles = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+        auto it = profiles.find(name);
+        return (it == profiles.end()) ? SAI_NULL_OBJECT_ID : it->second.m_saiObjectId;
+    }
+
+    // Queues only the given entry: the mock DB keeps the rows of earlier tests
+    static void addToOrch(Orch *orch, const string &table, const string &key, const vector<FieldValueTuple> &fvs)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries = {{key, "SET", fvs}};
+        dynamic_cast<Consumer *>(orch->getExecutor(table))->addToSync(entries);
+    }
 
     TEST_F(BufferOrchTest, BufferOrchTestSharedHeadroomPool)
     {
@@ -643,11 +685,11 @@ namespace bufferorch_test
         CheckDependency(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, "Ethernet0", "profile_list",
                         APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile,ingress_lossless_profile");
 
-        // Remove and recreate the referenced profile
+        // Remove and recreate the referenced profile on another pool, which needs a real recreate
         entries.push_back({"ingress_lossy_profile", "DEL", {}});
         entries.push_back({"ingress_lossy_profile", "SET",
                            {
-                               {"pool", "ingress_lossy_pool"},
+                               {"pool", "ingress_lossless_pool"},
                                {"size", "0"},
                                {"dynamic_th", "0"}
                            }});
@@ -663,7 +705,7 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_EQ(ts.size(), 2);
         ASSERT_EQ(ts[0], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|DEL");
-        ASSERT_EQ(ts[1], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossy_pool|size:0|dynamic_th:0");
+        ASSERT_EQ(ts[1], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossless_pool|size:0|dynamic_th:0");
         ts.clear();
 
         // Remove and recreate the referenced pool
@@ -688,7 +730,7 @@ namespace bufferorch_test
         ASSERT_EQ(ts[0], "BUFFER_POOL_TABLE:ingress_lossy_pool|DEL");
         ASSERT_EQ(ts[1], "BUFFER_POOL_TABLE:ingress_lossy_pool|SET|type:ingress|size:1024000|mode:dynamic");
         ASSERT_EQ(ts[2], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|DEL");
-        ASSERT_EQ(ts[3], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossy_pool|size:0|dynamic_th:0");
+        ASSERT_EQ(ts[3], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossless_pool|size:0|dynamic_th:0");
         ts.clear();
 
         // Remove ingress port profile list
@@ -744,6 +786,467 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_EQ(ts[0], "BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE:Ethernet0|SET|profile_list:ingress_no_exist_profile");
         ts.clear();
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestReferencedProfileRemoveThenAddSamePool)
+    {
+        _hook_sai_apis();
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferPgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        bufferPgTable.set("Ethernet0:0", {{"profile", "ingress_lossy_profile"}});
+        gBufferOrch->addExistingData(&bufferPgTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        CheckDependency(APP_BUFFER_PG_TABLE_NAME, "Ethernet0:0", "profile", APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile");
+
+        auto &profiles = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+        auto profile_oid = profiles["ingress_lossy_profile"].m_saiObjectId;
+        auto sai_profile_attr = [&](sai_attr_id_t id) {
+            sai_attribute_t attr;
+            attr.id = id;
+            EXPECT_EQ(SAI_STATUS_SUCCESS, sai_buffer_api->get_buffer_profile_attribute(profiles["ingress_lossy_profile"].m_saiObjectId, 1, &attr));
+            return attr.value;
+        };
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+
+        // Same pool and fields while the PG still uses the profile: the DEL is dropped and the SET applies in place
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "1024"},
+                               {"dynamic_th", "0"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_FALSE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(1024, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        CheckDependency(APP_BUFFER_PG_TABLE_NAME, "Ethernet0:0", "profile", APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile");
+
+        // A later change to the profile applies
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "2048"},
+                               {"dynamic_th", "0"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(2048, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        // The same when the SET arrives after the DEL has already been retried
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 1);
+        ASSERT_EQ(ts[0], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|DEL");
+        ASSERT_TRUE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ts.clear();
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "4096"},
+                               {"dynamic_th", "0"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_FALSE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(4096, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        // An in-place update the SAI refuses part way keeps the DEL and SET queued, and is not retried in place
+        _ut_stub_buffer_profile_not_implemented_attr = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "8192"},
+                               {"dynamic_th", "1"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ASSERT_EQ(ts[0], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|DEL");
+        ASSERT_EQ(ts[1], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossy_pool|size:8192|dynamic_th:1");
+        ts.clear();
+        ASSERT_TRUE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(8192, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        ASSERT_EQ(0, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH).s8);
+        _ut_stub_buffer_profile_not_implemented_attr = SAI_BUFFER_PROFILE_ATTR_END;
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ts.clear();
+        ASSERT_EQ(0, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH).s8);
+
+        entries.push_back({"Ethernet0:0", "DEL", {}});
+        auto pg_consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
+        pg_consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_NE(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(8192, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        ASSERT_EQ(1, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH).s8);
+        profile_oid = profiles["ingress_lossy_profile"].m_saiObjectId;
+
+        // The recreated profile is updated in place again, even with the SET that was refused before the recreate
+        bufferPgTable.set("Ethernet0:0", {{"profile", "ingress_lossy_profile"}});
+        gBufferOrch->addExistingData(&bufferPgTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        CheckDependency(APP_BUFFER_PG_TABLE_NAME, "Ethernet0:0", "profile", APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile");
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "8192"},
+                               {"dynamic_th", "1"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+
+        // Other fields (here a threshold mode change) need a recreate, so the DEL waits for the PG to move
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "0"},
+                               {"static_th", "4096"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ASSERT_EQ(ts[0], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|DEL");
+        ASSERT_EQ(ts[1], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossy_pool|size:0|static_th:4096");
+        ts.clear();
+
+        entries.push_back({"Ethernet0:0", "DEL", {}});
+        pg_consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_NE(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC, sai_profile_attr(SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE).s32);
+
+        _unhook_sai_apis();
+    }
+
+    // Reads one attribute of a buffer profile back from the SAI
+    static sai_attribute_value_t saiProfileAttr(const string &name, sai_attr_id_t id)
+    {
+        sai_attribute_t attr;
+        attr.id = id;
+        auto oid = (*BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME])[name].m_saiObjectId;
+        EXPECT_EQ(SAI_STATUS_SUCCESS, sai_buffer_api->get_buffer_profile_attribute(oid, 1, &attr));
+        return attr.value;
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestReferencedProfileInPlaceSetFails)
+    {
+        _hook_sai_apis();
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        // Queued directly rather than from the DB, which keeps the rows of earlier tests
+        entries.push_back({"Ethernet0:0", "SET", {{"profile", "ingress_lossy_profile"}}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME))->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        auto &profiles = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+        auto profile_oid = profiles["ingress_lossy_profile"].m_saiObjectId;
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+
+        // A set that needs a retry: the attributes after the failed one are applied, and the DEL and SET stay queued
+        _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
+        _ut_stub_buffer_profile_failing_status = SAI_STATUS_INSUFFICIENT_RESOURCES;
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "1024"},
+                               {"dynamic_th", "1"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ASSERT_EQ(ts[0], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|DEL");
+        ASSERT_EQ(ts[1], "BUFFER_PROFILE_TABLE:ingress_lossy_profile|SET|pool:ingress_lossy_pool|size:1024|dynamic_th:1");
+        ts.clear();
+        ASSERT_TRUE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(0, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        ASSERT_EQ(1, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH).s8);
+
+        // Once the SAI accepts it, the next pass applies the same SET in place
+        _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_END;
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_FALSE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(1024, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        // A set that fails outright: the same, and the same SET is not tried in place again once the SAI accepts it.
+        // The refusal falls back to the delete and recreate, so it is not reported as a SAI failure.
+        gOrchUnhealthyCached = false;
+        _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
+        _ut_stub_buffer_profile_failing_status = SAI_STATUS_FAILURE;
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "2048"},
+                               {"dynamic_th", "0"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ts.clear();
+        ASSERT_FALSE(gOrchUnhealthyCached);
+        ASSERT_TRUE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(1024, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        ASSERT_EQ(0, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH).s8);
+        _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_END;
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ts.clear();
+        ASSERT_EQ(1024, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        // A different SET is tried in place
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "2048"},
+                               {"dynamic_th", "1"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_FALSE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(2048, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        ASSERT_EQ(1, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH).s8);
+
+        // After a failed set, the profile is recreated once the PG moves off
+        _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "4096"},
+                               {"dynamic_th", "0"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ts.clear();
+
+        _ut_stub_buffer_profile_failing_attr = SAI_BUFFER_PROFILE_ATTR_END;
+        entries.push_back({"Ethernet0:0", "DEL", {}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME))->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_NE(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(4096, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        _unhook_sai_apis();
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestProfileListReferencedProfileRemoveThenAdd)
+    {
+        _hook_sai_apis();
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET", {{"profile_list", "ingress_lossy_profile,ingress_lossless_profile"}}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME))->addToSync(entries);
+        entries.clear();
+        _ut_stub_expected_profile_count = 2;
+        _ut_stub_expected_profile_list_type = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        CheckDependency(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, "Ethernet0", "profile_list",
+                        APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile,ingress_lossless_profile");
+        auto &profiles = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+        auto &pools = *BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
+        auto profile_oid = profiles["ingress_lossy_profile"].m_saiObjectId;
+        auto pool_oid = pools["ingress_lossy_pool"].m_saiObjectId;
+        auto profile_consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+        auto pool_consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
+
+        // A profile in a port's profile list is updated in place, and the port's list is not set again
+        auto list_set_count = _ut_stub_port_profile_list_add_count;
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "1024"},
+                               {"dynamic_th", "0"}
+                           }});
+        profile_consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(1024, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+        ASSERT_EQ(list_set_count, _ut_stub_port_profile_list_add_count);
+        CheckDependency(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, "Ethernet0", "profile_list",
+                        APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile,ingress_lossless_profile");
+
+        // While the profile's pool is pending remove, a DEL and SET of the profile are not applied in place,
+        // and the pool is not resolved for the check
+        entries.push_back({"ingress_lossy_pool", "DEL", {}});
+        entries.push_back({"ingress_lossy_pool", "SET", {{"type", "ingress"}, {"size", "1024000"}, {"mode", "dynamic"}}});
+        pool_consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_TRUE(pools["ingress_lossy_pool"].m_pendingRemove);
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "2048"},
+                               {"dynamic_th", "0"}
+                           }});
+        profile_consumer->addToSync(entries);
+        entries.clear();
+        auto logs = drainBufferOrchCapturingLog();
+        EXPECT_NE(logs.find("Can't remove object ingress_lossy_profile"), std::string::npos);
+        EXPECT_EQ(logs.find("contains a pending removed object ingress_lossy_pool"), std::string::npos);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 4);
+        ts.clear();
+        ASSERT_TRUE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        ASSERT_EQ(1024, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        // Once the port's list is removed, the profile and the pool are deleted and recreated
+        entries.push_back({"Ethernet0", "DEL", {}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME))->addToSync(entries);
+        entries.clear();
+        _ut_stub_expected_profile_count = 0;
+        for (int i = 0; i < 4; i++)
+        {
+            static_cast<Orch *>(gBufferOrch)->doTask();
+        }
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_NE(pool_oid, pools["ingress_lossy_pool"].m_saiObjectId);
+        ASSERT_NE(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_EQ(2048, saiProfileAttr("ingress_lossy_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        _unhook_sai_apis();
+    }
+
+    // Behaviour change: once a profile has been updated in place, its DEL is gone, so a later DEL and SET of its
+    // pool waits until the profile itself is deleted, as for a profile that was never deleted
+    TEST_F(BufferOrchTest, BufferOrchTestPoolRemoveThenAddAfterProfileUpdatedInPlace)
+    {
+        _hook_sai_apis();
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        // Queued directly rather than from the DB, which keeps the rows of earlier tests
+        entries.push_back({"Ethernet0:0", "SET", {{"profile", "ingress_lossy_profile"}}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME))->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        auto &profiles = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+        auto &pools = *BufferOrch::m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
+        auto profile_oid = profiles["ingress_lossy_profile"].m_saiObjectId;
+        auto pool_oid = pools["ingress_lossy_pool"].m_saiObjectId;
+        auto profile_consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "1024"},
+                               {"dynamic_th", "0"}
+                           }});
+        profile_consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        // The pool's DEL and SET arrive in a later batch, then the PG moves off
+        entries.push_back({"ingress_lossy_pool", "DEL", {}});
+        entries.push_back({"ingress_lossy_pool", "SET", {{"type", "ingress"}, {"size", "1024000"}, {"mode", "dynamic"}}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME))->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        entries.push_back({"Ethernet0:0", "DEL", {}});
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME))->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        // The profile stays and keeps the pool referenced, so the pool's DEL and SET stay queued
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ASSERT_EQ(ts[0], "BUFFER_POOL_TABLE:ingress_lossy_pool|DEL");
+        ASSERT_EQ(ts[1], "BUFFER_POOL_TABLE:ingress_lossy_pool|SET|type:ingress|size:1024000|mode:dynamic");
+        ts.clear();
+        ASSERT_TRUE(pools["ingress_lossy_pool"].m_pendingRemove);
+        ASSERT_EQ(pool_oid, pools["ingress_lossy_pool"].m_saiObjectId);
+        ASSERT_EQ(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_FALSE(profiles["ingress_lossy_profile"].m_pendingRemove);
+        CheckDependency(APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile", "pool",
+                        APP_BUFFER_POOL_TABLE_NAME, "ingress_lossy_pool");
+
+        // Deleting the profile lets the pool be recreated, and the profile is then created on it
+        entries.push_back({"ingress_lossy_profile", "DEL", {}});
+        entries.push_back({"ingress_lossy_profile", "SET",
+                           {
+                               {"pool", "ingress_lossy_pool"},
+                               {"size", "1024"},
+                               {"dynamic_th", "0"}
+                           }});
+        profile_consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_NE(pool_oid, pools["ingress_lossy_pool"].m_saiObjectId);
+        ASSERT_NE(profile_oid, profiles["ingress_lossy_profile"].m_saiObjectId);
+        ASSERT_FALSE(pools["ingress_lossy_pool"].m_pendingRemove);
 
         _unhook_sai_apis();
     }
@@ -1024,5 +1527,146 @@ namespace bufferorch_test
             ASSERT_TRUE(found);
             ASSERT_FALSE(value.empty());
         }
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestLosslessProfileUpdatedInPlacePublish)
+    {
+        _hook_sai_apis();
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+        std::vector<FieldValueTuple> fvs = {
+            {"pool", "ingress_lossless_pool"},
+            {"dynamic_th", "0"},
+            {"size", "39936"},
+            {"xon", "19456"},
+            {"xoff", "20480"}
+        };
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_BUFFER_PROFILE_TABLE_NAME, "test_lossless_profile", fvs,
+                                                     ReturnCode(SAI_STATUS_SUCCESS), true)).Times(1);
+        addToOrch(gBufferOrch, APP_BUFFER_PROFILE_TABLE_NAME, "test_lossless_profile", fvs);
+        addToOrch(gBufferOrch, APP_BUFFER_PG_TABLE_NAME, "Ethernet0:3", {{"profile", "test_lossless_profile"}});
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        auto profile_oid = profileOid("test_lossless_profile");
+        testing::Mock::VerifyAndClearExpectations(gMockResponsePublisher.get());
+
+        // The in-place update publishes the SET's fields, and no removal is published
+        std::vector<FieldValueTuple> new_fvs = {
+            {"pool", "ingress_lossless_pool"},
+            {"dynamic_th", "0"},
+            {"size", "49152"},
+            {"xon", "19456"},
+            {"xoff", "29696"}
+        };
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_BUFFER_PROFILE_TABLE_NAME, "test_lossless_profile", new_fvs,
+                                                     ReturnCode(SAI_STATUS_SUCCESS), true)).Times(1);
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_BUFFER_PROFILE_TABLE_NAME, "test_lossless_profile",
+                                                     std::vector<FieldValueTuple>{},
+                                                     ReturnCode(SAI_STATUS_SUCCESS), true)).Times(0);
+        std::deque<KeyOpFieldsValuesTuple> entries = {
+            {"test_lossless_profile", "DEL", {}},
+            {"test_lossless_profile", "SET", new_fvs}};
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME))->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        vector<string> ts;
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ASSERT_EQ(profile_oid, profileOid("test_lossless_profile"));
+        ASSERT_EQ(49152, saiProfileAttr("test_lossless_profile", SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE).u64);
+
+        gMockResponsePublisher.reset();
+        _unhook_sai_apis();
+    }
+
+    // The shape APPL_DB delivers: the profile DEL is popped and retried while the PG still uses the profile,
+    // then the SET of the same profile and the coalesced PG SET (same profile) arrive in a later pop.
+    // On master all three stay queued; with the change they clear and the profile keeps its OID.
+    TEST_F(BufferOrchTest, BufferOrchTestReferencedProfileRemoveThenAddAcrossPops)
+    {
+        _hook_sai_apis();
+        std::vector<FieldValueTuple> fvs = {
+            {"pool", "ingress_lossless_pool"}, {"dynamic_th", "0"}, {"size", "39936"}, {"xon", "19456"}, {"xoff", "20480"}};
+        addToOrch(gBufferOrch, APP_BUFFER_PROFILE_TABLE_NAME, "pops_lossless_profile", fvs);
+        addToOrch(gBufferOrch, APP_BUFFER_PG_TABLE_NAME, "Ethernet0:3", {{"profile", "pops_lossless_profile"}});
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        auto oid = profileOid("pops_lossless_profile");
+        ASSERT_NE(oid, SAI_NULL_OBJECT_ID);
+        std::deque<KeyOpFieldsValuesTuple> del = {{"pops_lossless_profile", "DEL", {}}};
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME))->addToSync(del);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        addToOrch(gBufferOrch, APP_BUFFER_PROFILE_TABLE_NAME, "pops_lossless_profile", fvs);
+        addToOrch(gBufferOrch, APP_BUFFER_PG_TABLE_NAME, "Ethernet0:3", {{"profile", "pops_lossless_profile"}});
+        for (int i = 0; i < 3; i++)
+        {
+            static_cast<Orch *>(gBufferOrch)->doTask();
+        }
+        vector<string> ts;
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        EXPECT_TRUE(ts.empty());
+        EXPECT_EQ(oid, profileOid("pops_lossless_profile"));
+        _unhook_sai_apis();
+    }
+
+    // A value that does not parse makes the in-place SET throw; the profile stays as the queued DEL
+    // expects, and the in-place state that keeps a refusal from being reported as a SAI failure is reset
+    TEST_F(BufferOrchTest, BufferOrchTestReferencedProfileInPlaceSetThrows)
+    {
+        _hook_sai_apis();
+        std::vector<FieldValueTuple> fvs = {
+            {"pool", "ingress_lossless_pool"}, {"dynamic_th", "0"}, {"size", "39936"}, {"xon", "19456"}, {"xoff", "20480"}};
+        addToOrch(gBufferOrch, APP_BUFFER_PROFILE_TABLE_NAME, "throw_lossless_profile", fvs);
+        addToOrch(gBufferOrch, APP_BUFFER_PG_TABLE_NAME, "Ethernet0:3", {{"profile", "throw_lossless_profile"}});
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_NE(profileOid("throw_lossless_profile"), SAI_NULL_OBJECT_ID);
+
+        std::vector<FieldValueTuple> bad = fvs;
+        for (auto &fv : bad)
+        {
+            if (fvField(fv) == "size")
+            {
+                fvValue(fv) = "abc";
+            }
+        }
+        std::deque<KeyOpFieldsValuesTuple> entries = {{"throw_lossless_profile", "DEL", {}},
+                                                      {"throw_lossless_profile", "SET", bad}};
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME))->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        auto &profiles = *BufferOrch::m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME];
+        EXPECT_TRUE(profiles["throw_lossless_profile"].m_pendingRemove);
+        EXPECT_FALSE(gBufferOrch->m_profileSetInPlace);
+        _unhook_sai_apis();
+    }
+
+    // After the in-place SET throws once, the profile keys queued after it must still be processed:
+    // the failed SET is not tried in place again, so the next pass does not throw.
+    TEST_F(BufferOrchTest, BufferOrchTestInPlaceSetThrowDoesNotBlockLaterProfiles)
+    {
+        _hook_sai_apis();
+        std::vector<FieldValueTuple> fvs = {
+            {"pool", "ingress_lossless_pool"}, {"dynamic_th", "0"}, {"size", "39936"}, {"xon", "19456"}, {"xoff", "20480"}};
+        addToOrch(gBufferOrch, APP_BUFFER_PROFILE_TABLE_NAME, "aa_lossless_profile", fvs);
+        addToOrch(gBufferOrch, APP_BUFFER_PG_TABLE_NAME, "Ethernet0:3", {{"profile", "aa_lossless_profile"}});
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        std::vector<FieldValueTuple> bad = fvs;
+        for (auto &fv : bad)
+        {
+            if (fvField(fv) == "size")
+            {
+                fvValue(fv) = "abc";
+            }
+        }
+        std::deque<KeyOpFieldsValuesTuple> entries = {{"aa_lossless_profile", "DEL", {}},
+                                                      {"aa_lossless_profile", "SET", bad}};
+        dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME))->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        // Sorts after the throwing key in m_toSync
+        addToOrch(gBufferOrch, APP_BUFFER_PROFILE_TABLE_NAME, "zz_profile",
+                  {{"pool", "ingress_lossy_pool"}, {"size", "0"}, {"dynamic_th", "0"}});
+        for (int i = 0; i < 3; i++)
+        {
+            static_cast<Orch *>(gBufferOrch)->doTask();
+        }
+        EXPECT_NE(profileOid("zz_profile"), SAI_NULL_OBJECT_ID);
+        _unhook_sai_apis();
     }
 }
