@@ -21,12 +21,67 @@ def check_syslog(dvs, marker, err_log, expected_cnt):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
     assert num.strip() >= str(expected_cnt)
 
+def get_syslog_count(dvs, marker, log):
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, log)])
+    return int(num.strip())
+
 def crm_update(dvs, field, value):
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     tbl = swsscommon.Table(cfg_db, "CRM")
     fvs = swsscommon.FieldValuePairs([(field, value)])
     tbl.set("Config", fvs)
     time.sleep(1)
+
+def crm_update_fields(dvs, fields):
+    """Write several CRM config fields in one update, so no poll sees them half applied"""
+    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(cfg_db, "CRM")
+    tbl.set("Config", swsscommon.FieldValuePairs(fields))
+    time.sleep(1)
+
+def check_free_threshold(dvs, res):
+    """
+    A free threshold on res stays quiet while the available count is above low, raises
+    THRESHOLD_EXCEEDED once it is at or below low, and THRESHOLD_CLEAR once it is back at or
+    above high. The available count should stay put while this runs; the thresholds are set a
+    margin away from it in case it moves before the next poll.
+    """
+    name = res.upper()
+    avail = getCrmCounterValue(dvs, 'STATS', 'crm_stats_%s_available' % res)
+    assert avail > 0
+
+    # keep the thresholds clear of the counter in case it moves before the next poll
+    above = max(5, avail // 10)
+    below = min(above, avail - 1)
+
+    crm_update(dvs, "polling_interval", "1")
+
+    # available above low: no alarm
+    marker = dvs.add_log_marker()
+    crm_update(dvs, "%s_high_threshold" % res, str(avail - below))
+    crm_update(dvs, "%s_low_threshold" % res, str(avail - below - 1))
+    crm_update(dvs, "%s_threshold_type" % res, "free")
+    time.sleep(2)
+    assert get_syslog_count(dvs, marker, "%s THRESHOLD_EXCEEDED for TH_FREE" % name) == 0
+
+    # available at or below low: exceeded
+    marker = dvs.add_log_marker()
+    crm_update(dvs, "%s_high_threshold" % res, str(avail + above + 1))
+    crm_update(dvs, "%s_low_threshold" % res, str(avail + above))
+    time.sleep(2)
+    assert get_syslog_count(dvs, marker, "%s THRESHOLD_EXCEEDED for TH_FREE" % name) >= 1
+    assert get_syslog_count(dvs, marker, "%s THRESHOLD_CLEAR for TH_FREE" % name) == 0
+
+    # available at or above high again: cleared, once
+    marker = dvs.add_log_marker()
+    crm_update(dvs, "%s_low_threshold" % res, str(avail - below - 1))
+    crm_update(dvs, "%s_high_threshold" % res, str(avail - below))
+    time.sleep(2)
+    assert get_syslog_count(dvs, marker, "%s THRESHOLD_CLEAR for TH_FREE" % name) == 1
+
+    crm_update(dvs, "%s_threshold_type" % res, "percentage")
+    crm_update(dvs, "%s_low_threshold" % res, "70")
+    crm_update(dvs, "%s_high_threshold" % res, "85")
 
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
@@ -85,12 +140,7 @@ class TestCrm(object):
 
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "fdb_entry_high_threshold", "90")
-        crm_update(dvs, "fdb_entry_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "FDB_ENTRY THRESHOLD_EXCEEDED for TH_FREE", 1)
+        check_free_threshold(dvs, "fdb_entry")
 
         # enable ipv6 on server 2
         dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=0")
@@ -148,12 +198,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "ipv4_route_high_threshold", "90")
-        crm_update(dvs, "ipv4_route_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "ipv4_route")
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
         time.sleep(2)
@@ -218,12 +263,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "ipv6_route_high_threshold", "90")
-        crm_update(dvs, "ipv6_route_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "IPV6_ROUTE THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "ipv6_route")
 
         intf_tbl._del("Ethernet0|fc00::1/126")
         time.sleep(2)
@@ -272,12 +312,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "ipv4_nexthop_high_threshold", "90")
-        crm_update(dvs, "ipv4_nexthop_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "IPV4_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "ipv4_nexthop")
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
         time.sleep(2)
@@ -331,12 +366,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "ipv6_nexthop_high_threshold", "90")
-        crm_update(dvs, "ipv6_nexthop_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "IPV6_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "ipv6_nexthop")
 
         intf_tbl._del("Ethernet0|fc00::1/126")
         time.sleep(2)
@@ -386,12 +416,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "ipv4_neighbor_high_threshold", "90")
-        crm_update(dvs, "ipv4_neighbor_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "IPV4_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "ipv4_neighbor")
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
         time.sleep(2)
@@ -445,12 +470,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "ipv6_neighbor_high_threshold", "90")
-        crm_update(dvs, "ipv6_neighbor_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "IPV6_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "ipv6_neighbor")
 
         intf_tbl._del("Ethernet0|fc00::1/126")
         time.sleep(2)
@@ -513,12 +533,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "nexthop_group_high_threshold", "90")
-        crm_update(dvs, "nexthop_group_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "NEXTHOP_GROUP THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "nexthop_group")
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
         intf_tbl._del("Ethernet4|10.0.0.2/31")
@@ -588,12 +603,7 @@ class TestCrm(object):
         assert new_used_counter == used_counter
         assert new_avail_counter == avail_counter
 
-        marker = dvs.add_log_marker()
-        crm_update(dvs, "polling_interval", "2")
-        crm_update(dvs, "nexthop_group_member_high_threshold", "90")
-        crm_update(dvs, "nexthop_group_member_threshold_type", "free")
-        time.sleep(2)
-        check_syslog(dvs, marker, "NEXTHOP_GROUP_MEMBER THRESHOLD_EXCEEDED for TH_FREE",1)
+        check_free_threshold(dvs, "nexthop_group_member")
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
         intf_tbl._del("Ethernet4|10.0.0.2/31")
@@ -730,6 +740,49 @@ class TestCrm(object):
         assert used_counter == 0
         assert avail_counter != 0
 
+    def test_CrmFreeThresholdNothingUsed(self, dvs, testlog):
+        """
+        A free threshold alarms when the available count falls to low and
+        clears when it rises to high, also for a resource with nothing used,
+        where percentage and used thresholds can never fire
+        """
+        crm_update(dvs, "polling_interval", "1")
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+        time.sleep(2)
+
+        assert getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used') == 0
+        assert getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available') == 1000
+
+        # plenty free: no alarm
+        marker = dvs.add_log_marker()
+        crm_update(dvs, "dnat_entry_high_threshold", "64")
+        crm_update(dvs, "dnat_entry_low_threshold", "32")
+        crm_update(dvs, "dnat_entry_threshold_type", "free")
+        time.sleep(2)
+        assert get_syslog_count(dvs, marker, "DNAT_ENTRY THRESHOLD_EXCEEDED for TH_FREE") == 0
+
+        # down to low: exceeded
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '32')
+        time.sleep(2)
+        assert get_syslog_count(dvs, marker, "DNAT_ENTRY THRESHOLD_EXCEEDED for TH_FREE") >= 1
+        assert get_syslog_count(dvs, marker, "DNAT_ENTRY THRESHOLD_CLEAR for TH_FREE") == 0
+
+        # between low and high: still exceeded, not cleared
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '48')
+        time.sleep(2)
+        assert get_syslog_count(dvs, marker, "DNAT_ENTRY THRESHOLD_CLEAR for TH_FREE") == 0
+
+        # back up to high: cleared
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '64')
+        time.sleep(2)
+        assert get_syslog_count(dvs, marker, "DNAT_ENTRY THRESHOLD_CLEAR for TH_FREE") == 1
+
+        # restore
+        crm_update(dvs, "dnat_entry_threshold_type", "percentage")
+        crm_update(dvs, "dnat_entry_low_threshold", "70")
+        crm_update(dvs, "dnat_entry_high_threshold", "85")
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+
     def test_CrmResetThresholdExceedCount(self, dvs, testlog):
 
         config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -763,19 +816,25 @@ class TestCrm(object):
         # for changing to free type will rest crm threshold exceed count, previous type can not be same free type
         crm_update(dvs, "ipv4_route_threshold_type", "percentage")
 
-        # trigger exceed high threshold of free type
+        # trigger exceed low threshold of free type
         marker = dvs.add_log_marker()
-        crm_update(dvs, "ipv4_route_high_threshold", str(avail_counter))
+        crm_update(dvs, "ipv4_route_high_threshold", str(avail_counter + 1))
+        crm_update(dvs, "ipv4_route_low_threshold", str(avail_counter))
         crm_update(dvs, "ipv4_route_threshold_type", "free")
         time.sleep(20)
         check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE", 1)
 
-        # crm threshold exceed count will be reset when threshold type changed
+        # crm threshold exceed count will be reset when threshold type changed. The exceed count
+        # is at its maximum here, and with low 0 a used threshold cannot clear, so only the reset
+        # lets TH_USED be logged. One update: no poll may see the new high with type still free,
+        # which would clear the free alarm and reset the count on its own
         marker = dvs.add_log_marker()
-        crm_update(dvs, "ipv4_route_high_threshold", str(used_counter))
-        crm_update(dvs, "ipv4_route_threshold_type", "used")
+        crm_update_fields(dvs, [("ipv4_route_low_threshold", "0"),
+                                ("ipv4_route_high_threshold", str(used_counter)),
+                                ("ipv4_route_threshold_type", "used")])
         time.sleep(2)
         check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_USED", 1)
+        assert get_syslog_count(dvs, marker, "IPV4_ROUTE THRESHOLD_CLEAR for TH_FREE") == 0
 
         # remove route
         ps._del("2.2.2.0/24")
