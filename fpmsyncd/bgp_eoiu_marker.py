@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """"
 Description: bgp_eoiu_marker.py -- populating bgp eoiu marker flags in stateDB during warm reboot.
@@ -20,7 +20,7 @@ import sys
 import time
 import syslog
 import traceback
-import commands
+import subprocess
 import json
 from swsscommon import swsscommon
 import errno
@@ -48,13 +48,13 @@ class BgpStateCheck():
         while self.get_peers_wt >= 0:
             try:
                 cmd = "vtysh -c 'show bgp summary json'"
-                output = commands.getoutput(cmd)
+                output = subprocess.getoutput(cmd)
                 peer_info = json.loads(output)
                 if "ipv4Unicast" in peer_info and "peers" in peer_info["ipv4Unicast"]:
-                    self.ipv4_neighbors = peer_info["ipv4Unicast"]["peers"].keys()
+                    self.ipv4_neighbors = list(peer_info["ipv4Unicast"]["peers"].keys())
 
                 if "ipv6Unicast" in peer_info and "peers" in peer_info["ipv6Unicast"]:
-                    self.ipv6_neighbors = peer_info["ipv6Unicast"]["peers"].keys()
+                    self.ipv6_neighbors = list(peer_info["ipv6Unicast"]["peers"].keys())
 
                 syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv4_neighbors))
                 syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv6_neighbors))
@@ -102,7 +102,7 @@ class BgpStateCheck():
             neighstr = "%s" % neigh
             eor_received = False
             cmd = "vtysh -c 'show bgp neighbors %s json'" % neighstr
-            output = commands.getoutput(cmd)
+            output = subprocess.getoutput(cmd)
             neig_status = json.loads(output)
             if neighstr in neig_status:
                 if "gracefulRestartInfo" in neig_status[neighstr]:
@@ -176,11 +176,11 @@ class BgpStateCheck():
 
 def main():
 
-    print "bgp_eoiu_marker service is started"
+    print("bgp_eoiu_marker service is started")
 
     try:
         bgp_state_check = BgpStateCheck()
-    except Exception, e:
+    except Exception as e:
         syslog.syslog(syslog.LOG_ERR, "{}: error exit 1, reason {}".format(THIS_MODULE, str(e)))
         exit(1)
 
@@ -194,7 +194,7 @@ def main():
 
     # if bgp or system warm reboot not enabled, don't run
     if not warmstart.isWarmStart():
-        print "bgp_eoiu_marker service is skipped as warm restart not enabled"
+        print("bgp_eoiu_marker service is skipped as warm restart not enabled")
         return
 
     bgp_state_check.set_bgp_eoiu_marker("IPv4", "unknown")
@@ -213,7 +213,7 @@ def main():
     if bgp_state_check.bgp_ipv6_eoiu:
         bgp_state_check.set_bgp_eoiu_marker("IPv6", "reached")
 
-    print "bgp_eoiu_marker service is done"
+    print("bgp_eoiu_marker service is done")
     return
 
 if __name__ == '__main__':
