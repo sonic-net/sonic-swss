@@ -472,6 +472,9 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
             m_applDb.get(), APP_PFC_WD_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
     auto ssConsumer = new Consumer(ssTable, this, APP_PFC_WD_TABLE_NAME);
     Orch::addExecutor(ssConsumer);
+
+    // Mark software watchdog recovery in STATE_DB
+    this->updateStateTable(PFC_WD_RECOVERY_MECHANISM, PFC_WD_RECOVERY_SOFTWARE);
 }
 
 template <typename DropHandler, typename ForwardHandler>

@@ -6943,6 +6943,72 @@ TEST_F(PfcWdHwOrchTest, StateDbGlobalRecoveryMechanism)
     ASSERT_EQ(fields[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
 }
 
+// Builds a software watchdog orch with its own queue lists, so a test that
+// switches modes depends only on PfcWdSwOrch's constructor.
+static unique_ptr<PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>> makePfcWdSwOrch(
+    DBConnector *configDb, const vector<sai_port_stat_t> &portStatIds)
+{
+    static const vector<sai_queue_stat_t> queueStatIds = {
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+    };
+    static const vector<sai_queue_attr_t> queueAttrIds = {
+        SAI_QUEUE_ATTR_PAUSE_STATUS,
+    };
+    vector<string> pfc_wd_tables = { CFG_PFC_WD_TABLE_NAME };
+    return make_unique<PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>>(
+        configDb, pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
+}
+
+// STATE_DB outlives orchagent, so each run must replace what the previous run
+// published: here hardware mode, then a restart into software mode (as when
+// PFC_DLR_INIT_ENABLE=0 is set).
+TEST_F(PfcWdHwOrchTest, StateDbRecoveryMechanismFollowsRestartIntoSoftware)
+{
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->getStateTable()->get(PFC_WD_STATE_KEY, fvs));
+    map<string, string> hwState(fvs.begin(), fvs.end());
+    ASSERT_EQ(hwState[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
+    ASSERT_EQ(hwState.count(PFC_WD_HW_DETECTION_TIME_MIN), 1u);
+    ASSERT_EQ(hwState.count(PFC_WD_DLR_PACKET_ACTION), 1u);
+
+    delete gPfcWdHwOrch;
+    gPfcWdHwOrch = nullptr;
+    auto swOrch = makePfcWdSwOrch(m_config_db.get(), s_portStatIds);
+
+    fvs.clear();
+    ASSERT_TRUE(swOrch->getStateTable()->get(PFC_WD_STATE_KEY, fvs));
+    map<string, string> swState(fvs.begin(), fvs.end());
+    ASSERT_EQ(swState[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_SOFTWARE);
+    // The hardware-only fields from the previous run are gone too.
+    ASSERT_EQ(swState.size(), 1u);
+}
+
+// The restart back: a software-mode run has published its state before the
+// fixture builds the hardware orch.
+struct PfcWdHwOrchAfterSoftwareRunTest : public PfcWdHwOrchTest
+{
+    void beforeOrchCreated() override
+    {
+        makePfcWdSwOrch(m_config_db.get(), s_portStatIds);
+
+        // The software run's state outlives it, as it outlives orchagent.
+        Table stateTable(m_state_db.get(), PFC_WD_STATE_TABLE);
+        string mechanism;
+        ASSERT_TRUE(stateTable.hget(PFC_WD_STATE_KEY, PFC_WD_RECOVERY_MECHANISM, mechanism));
+        ASSERT_EQ(mechanism, PFC_WD_RECOVERY_SOFTWARE);
+    }
+};
+
+TEST_F(PfcWdHwOrchAfterSoftwareRunTest, StateDbRecoveryMechanismFollowsRestartIntoHardware)
+{
+    vector<FieldValueTuple> fvs;
+    ASSERT_TRUE(gPfcWdHwOrch->getStateTable()->get(PFC_WD_STATE_KEY, fvs));
+    map<string, string> hwState(fvs.begin(), fvs.end());
+    ASSERT_EQ(hwState[PFC_WD_RECOVERY_MECHANISM], PFC_WD_RECOVERY_HARDWARE);
+    ASSERT_EQ(hwState.count(PFC_WD_HW_DETECTION_TIME_MIN), 1u);
+}
+
 TEST_F(PfcWdHwOrchTest, WarmRebootRecovery)
 {
     bringUpPorts();
