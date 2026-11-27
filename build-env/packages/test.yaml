@@ -15,7 +15,8 @@ packages:
     requires: [libyang3, python3-cffi, python3-dev, wheel]
 
   # Common VS/DVS and KVM host packages (union of the three existing templates).
-  - python3-pip
+  - python3-setuptools
+  - build-essential
   - libvirt-clients
   - qemu
   - openvswitch-switch
