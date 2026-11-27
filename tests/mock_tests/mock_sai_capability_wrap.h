@@ -25,13 +25,13 @@ extern "C"
  *   sai_query_stats_st_capability               (hftelorch.cpp)
  *   sai_query_attribute_capability              (hftelorch.cpp, and icmporch.cpp
  *                                                via the shared SaiOffloadSession
- *                                                selective-counter capability check)
+ *                                                selective-counter capability check,
+ *                                                and mirror/mirror_capabilities.cpp)
  *   sai_object_type_get_availability            (mirrororch.cpp)
  *
- * sai_query_attribute_capability is a single wrapped symbol shared by both
- * orchs, so its __wrap_ dispatches by object_type: ICMP echo session queries are
- * driven by the ICMP hook state, all other object types by the HFTel hook state.
- * Each orch therefore drives only its own namespace below.
+ * sai_query_attribute_capability is one wrapped symbol shared by these orchs,
+ * so its __wrap_ dispatches by object type and attribute. Each orch drives only
+ * its own hook namespace below.
  */
 
 #include <functional>
@@ -201,5 +201,22 @@ namespace sai_availability_ut
 
         ObjectTypeAvailabilityOverrideGuard(const ObjectTypeAvailabilityOverrideGuard&) = delete;
         ObjectTypeAvailabilityOverrideGuard& operator=(const ObjectTypeAvailabilityOverrideGuard&) = delete;
+    };
+}
+
+namespace mirrororch_sai_wrap_ut
+{
+    void setSaiHookNone();
+    void setSaiHookQueryFail();
+    void setSaiHookCreateUnsupported();
+    void setSaiHookCreateSupported();
+
+    struct MirrorSaiHookGuard
+    {
+        explicit MirrorSaiHookGuard(void (*apply)());
+        ~MirrorSaiHookGuard();
+
+        MirrorSaiHookGuard(const MirrorSaiHookGuard&) = delete;
+        MirrorSaiHookGuard& operator=(const MirrorSaiHookGuard&) = delete;
     };
 }
