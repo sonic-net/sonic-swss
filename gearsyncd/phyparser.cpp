@@ -182,6 +182,16 @@ bool PhyParser::parse()
                 attrs.clear();
                 swss::FieldValueTuple attr;
 
+                // 'alias' is the preferred per-port key (breakout-safe).
+                // For backward compatibility with older phy*_config.json
+                // files, we parse it now and synthesise from 'index' below
+                // if it wasn't provided.
+                std::string alias;
+                if (port.find("alias") != port.end())
+                {
+                    alias = port["alias"].get<std::string>();
+                }
+
                 /* index */
                 if (port.find("index") == port.end()) 
                 {
@@ -191,6 +201,16 @@ bool PhyParser::parse()
                 val = port["index"];
                 int id = val.get<int>();
                 attr = std::make_pair("index", std::to_string(id));
+                attrs.push_back(attr);
+
+                // Backward-compat path: no 'alias' in JSON → use the
+                // stringified index. Yields DB key suffix matching the
+                // pre-breakout layout "phy:<N>:ports:<index>".
+                if (alias.empty())
+                {
+                    alias = std::to_string(id);
+                }
+                attr = std::make_pair("alias", alias);
                 attrs.push_back(attr);
 
                 /* mdio_addr */
@@ -431,7 +451,7 @@ bool PhyParser::parse()
 
                 std::string key;
                 int phyId = getPhyId();
-                key = "phy:" + std::to_string(phyId) + ":ports:" + std::to_string(id);
+                key = "phy:" + std::to_string(phyId) + ":ports:" + alias;
                 if (getWriteToDb() == true) 
                 {
                     writeToDb(key, attrs);

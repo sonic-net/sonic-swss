@@ -6319,6 +6319,7 @@ namespace portsorch_test
 
         ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
     }
+
 // ============================================================================
 // PFC Hardware Watchdog Tests
 // ============================================================================
@@ -7723,4 +7724,268 @@ TEST_F(PfcWdHwOrchTest, SAIFailureQueueDldr)
     resetPfcWdFailureFlags();
 }
 
+
+    // Capture subscriptions before they reach SAI so synthetic gearbox OIDs are safe.
+    std::map<std::string, sai_object_id_t> gearboxStatsSubscriptions;
+    sai_set_switch_attribute_fn gearboxStatsOriginalSet;
+
+    sai_status_t captureGearboxStats(sai_object_id_t switch_id, const sai_attribute_t *attr)
+    {
+        if (attr->id != SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER)
+        {
+            return gearboxStatsOriginalSet(switch_id, attr);
+        }
+        const auto *param = static_cast<const sai_redis_flex_counter_parameter_t *>(attr->value.ptr);
+        const std::string key(reinterpret_cast<const char *>(param->counter_key.list), param->counter_key.count);
+        if (param->counter_ids.count)
+        {
+            gearboxStatsSubscriptions[key] = switch_id;
+        }
+        else
+        {
+            gearboxStatsSubscriptions.erase(key);
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    struct GearboxPortStatsTest : public PortsOrchTest
+    {
+        sai_switch_api_t switch_api;
+        sai_switch_api_t *original_api;
+        bool traditional;
+
+        void SetUp() override
+        {
+            PortsOrchTest::SetUp();
+            traditional = gTraditionalFlexCounter;
+            gTraditionalFlexCounter = false;
+            original_api = sai_switch_api;
+            switch_api = *sai_switch_api;
+            gearboxStatsOriginalSet = switch_api.set_switch_attribute;
+            switch_api.set_switch_attribute = captureGearboxStats;
+            sai_switch_api = &switch_api;
+            gearboxStatsSubscriptions.clear();
+        }
+
+        void TearDown() override
+        {
+            PortsOrchTest::TearDown();
+            sai_switch_api = original_api;
+            gTraditionalFlexCounter = traditional;
+            gearboxStatsSubscriptions.clear();
+        }
+
+        Port addPort(const std::string &alias, int phy_id, sai_object_id_t base)
+        {
+            gearbox_interface_t intf = {};
+            intf.phy_id = phy_id;
+            gPortsOrch->m_gearboxInterfaceMap[alias] = intf;
+            gPortsOrch->m_gearboxPhyMap[phy_id] = {};
+            Port port(alias, Port::PHY);
+            port.m_port_id = base;
+            port.m_system_side_id = base + 1;
+            port.m_line_side_id = base + 2;
+            port.m_switch_id = base + 3;
+            return port;
+        }
+
+        bool registered(sai_object_id_t oid)
+        {
+            return gearboxStatsSubscriptions.count("PORT_STAT_COUNTER:" + sai_serialize_object_id(oid));
+        }
+    };
+
+    TEST_F(GearboxPortStatsTest, DefaultRegistersBothSides)
+    {
+        const auto port = addPort("Ethernet0", 1, 0x1000);
+        gPortsOrch->addGearboxPortCounters(port, {"SAI_PORT_STAT_IF_IN_ERRORS"});
+        EXPECT_TRUE(registered(port.m_system_side_id));
+        EXPECT_TRUE(registered(port.m_line_side_id));
+        EXPECT_EQ(gearboxStatsSubscriptions.at("PORT_STAT_COUNTER:" + sai_serialize_object_id(port.m_line_side_id)), port.m_switch_id);
+    }
+
+    TEST_F(GearboxPortStatsTest, LineOnlySkipsSystemSide)
+    {
+        const auto port = addPort("Ethernet0", 1, 0x1000);
+        gPortsOrch->m_gearboxPhyMap[1].port_stats_supported_sides = "line";
+        gPortsOrch->addGearboxPortCounters(port, {"SAI_PORT_STAT_IF_IN_ERRORS"});
+        EXPECT_FALSE(registered(port.m_system_side_id));
+        EXPECT_TRUE(registered(port.m_line_side_id));
+    }
+
+    TEST_F(GearboxPortStatsTest, SystemOnlySkipsLineSide)
+    {
+        const auto port = addPort("Ethernet0", 1, 0x1000);
+        gPortsOrch->m_gearboxPhyMap[1].port_stats_supported_sides = "system";
+        gPortsOrch->addGearboxPortCounters(port, {"SAI_PORT_STAT_IF_IN_ERRORS"});
+        EXPECT_TRUE(registered(port.m_system_side_id));
+        EXPECT_FALSE(registered(port.m_line_side_id));
+    }
+
+    TEST_F(GearboxPortStatsTest, DelayedRegistrationHonorsEachPhy)
+    {
+        const auto lineOnly = addPort("Ethernet0", 1, 0x1000);
+        const auto both = addPort("Ethernet4", 2, 0x2000);
+        gPortsOrch->m_gearboxPhyMap[1].port_stats_supported_sides = "line";
+        gPortsOrch->m_portList[lineOnly.m_alias] = lineOnly;
+        gPortsOrch->m_portList[both.m_alias] = both;
+        gPortsOrch->m_isPortCounterMapGenerated = false;
+        gPortsOrch->generatePortCounterMap();
+        // Main ASIC counters are cached until the bulk registration flush.
+        const auto &pending = gPortsOrch->port_stat_manager.cached_objects.pending_objects_map;
+        ASSERT_EQ(pending.size(), 1u);
+        EXPECT_EQ(pending.begin()->first.counter_type, CounterType::PORT);
+        EXPECT_EQ(pending.begin()->first.switch_id, gSwitchId);
+        EXPECT_TRUE(pending.begin()->second.count(lineOnly.m_port_id));
+        EXPECT_TRUE(pending.begin()->second.count(both.m_port_id));
+        EXPECT_FALSE(registered(lineOnly.m_system_side_id));
+        EXPECT_TRUE(registered(lineOnly.m_line_side_id));
+        EXPECT_TRUE(registered(both.m_system_side_id));
+        EXPECT_TRUE(registered(both.m_line_side_id));
+        gPortsOrch->m_portList.erase(lineOnly.m_alias);
+        gPortsOrch->m_portList.erase(both.m_alias);
+    }
+
+    TEST_F(GearboxPortStatsTest, LegacyIndexMappingHonorsCapability)
+    {
+        auto port = addPort("0", 1, 0x1000);
+        port.m_alias = "Ethernet0";
+        port.m_index = 0;
+        gPortsOrch->m_gearboxPhyMap[1].port_stats_supported_sides = "line";
+        gPortsOrch->addGearboxPortCounters(port, {"SAI_PORT_STAT_IF_IN_ERRORS"});
+        EXPECT_FALSE(registered(port.m_system_side_id));
+        EXPECT_TRUE(registered(port.m_line_side_id));
+    }
+
+    struct GearboxKeyTest : public PortsOrchTest {};
+
+    TEST_F(GearboxKeyTest, InterfaceKeyUsesAliasWhenPresent)
+    {
+        gearbox_interface_t intf = {};
+        intf.alias = "Eth1/1";
+        intf.index = 0;
+        intf.phy_id = 1;
+        gPortsOrch->m_gearboxInterfaceMap["Eth1/1"] = intf;
+
+        Port port = {};
+        port.m_alias = "Eth1/1";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port), "Eth1/1");
+
+        gPortsOrch->m_gearboxInterfaceMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, InterfaceKeyFallsBackToIndex)
+    {
+        gearbox_interface_t intf = {};
+        intf.alias = "0";
+        intf.index = 0;
+        intf.phy_id = 1;
+        gPortsOrch->m_gearboxInterfaceMap["0"] = intf;
+
+        Port port = {};
+        port.m_alias = "Ethernet0";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port), "0");
+
+        gPortsOrch->m_gearboxInterfaceMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, PortKeyUsesAliasWhenPresent)
+    {
+        gearbox_port_t gport = {};
+        gport.alias = "Eth1/1";
+        gport.index = 0;
+        gPortsOrch->m_gearboxPortMap["Eth1/1"] = gport;
+
+        Port port = {};
+        port.m_alias = "Eth1/1";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port), "Eth1/1");
+
+        gPortsOrch->m_gearboxPortMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, PortKeyFallsBackToIndex)
+    {
+        gearbox_port_t gport = {};
+        gport.alias = "0";
+        gport.index = 0;
+        gPortsOrch->m_gearboxPortMap["0"] = gport;
+
+        Port port = {};
+        port.m_alias = "Ethernet0";
+        port.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port), "0");
+
+        gPortsOrch->m_gearboxPortMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, BreakoutTwoInterfacesSameIndexDistinctAlias)
+    {
+        gearbox_interface_t intf1 = {};
+        intf1.alias = "Eth1/1";
+        intf1.index = 0;
+        intf1.phy_id = 1;
+
+        gearbox_interface_t intf2 = {};
+        intf2.alias = "Eth1/2";
+        intf2.index = 0;
+        intf2.phy_id = 1;
+
+        gPortsOrch->m_gearboxInterfaceMap["Eth1/1"] = intf1;
+        gPortsOrch->m_gearboxInterfaceMap["Eth1/2"] = intf2;
+
+        ASSERT_EQ(gPortsOrch->m_gearboxInterfaceMap.size(), 2u);
+        ASSERT_EQ(gPortsOrch->m_gearboxInterfaceMap["Eth1/1"].index, 0);
+        ASSERT_EQ(gPortsOrch->m_gearboxInterfaceMap["Eth1/2"].index, 0);
+
+        Port port1 = {};
+        port1.m_alias = "Eth1/1";
+        port1.m_index = 0;
+
+        Port port2 = {};
+        port2.m_alias = "Eth1/2";
+        port2.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port1), "Eth1/1");
+        ASSERT_EQ(gPortsOrch->gearboxInterfaceKey(port2), "Eth1/2");
+
+        gPortsOrch->m_gearboxInterfaceMap.clear();
+    }
+
+    TEST_F(GearboxKeyTest, BreakoutTwoPortsSameIndexDistinctAlias)
+    {
+        gearbox_port_t gport1 = {};
+        gport1.alias = "Eth1/1";
+        gport1.index = 0;
+
+        gearbox_port_t gport2 = {};
+        gport2.alias = "Eth1/2";
+        gport2.index = 0;
+
+        gPortsOrch->m_gearboxPortMap["Eth1/1"] = gport1;
+        gPortsOrch->m_gearboxPortMap["Eth1/2"] = gport2;
+
+        ASSERT_EQ(gPortsOrch->m_gearboxPortMap.size(), 2u);
+        ASSERT_EQ(gPortsOrch->m_gearboxPortMap["Eth1/1"].index, 0);
+        ASSERT_EQ(gPortsOrch->m_gearboxPortMap["Eth1/2"].index, 0);
+
+        Port port1 = {};
+        port1.m_alias = "Eth1/1";
+        port1.m_index = 0;
+
+        Port port2 = {};
+        port2.m_alias = "Eth1/2";
+        port2.m_index = 0;
+
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port1), "Eth1/1");
+        ASSERT_EQ(gPortsOrch->gearboxPortKey(port2), "Eth1/2");
+
+        gPortsOrch->m_gearboxPortMap.clear();
+    }
 }

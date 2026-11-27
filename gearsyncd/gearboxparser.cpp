@@ -164,6 +164,19 @@ bool GearboxParser::parse()
                 attr = std::make_pair("macsec_supported", val.get<bool>() ? "true" : "false");
                 attrs.push_back(attr);
             }
+            std::string supported = "both";
+            if (phy.find("port_stats_supported_sides") != phy.end())
+            {
+                const auto &sides = phy["port_stats_supported_sides"];
+                if (!sides.is_string())
+                {
+                    SWSS_LOG_ERROR("'port_stats_supported_sides' must be a string in 'phys' item %d", iter);
+                    return false;
+                }
+                supported = swss::GearboxUtils::parsePortStatsSupportedSides(
+                    sides.get<std::string>());
+            }
+            attrs.emplace_back("port_stats_supported_sides", supported);
             if (phy.find("hwinfo") == phy.end())
             {
                 SWSS_LOG_ERROR("missing 'hwinfo' field in 'phys' item %d in gearbox configuration", iter);
@@ -190,7 +203,7 @@ bool GearboxParser::parse()
         } 
         catch (const std::exception& e) 
         {
-            SWSS_LOG_ERROR("unable to read 'phys' item %d in gearbox configuration (invalid format)", iter);
+            SWSS_LOG_ERROR("unable to read 'phys' item %d in gearbox configuration (invalid format: %s)", iter, e.what());
             return false;
         }
     } 
@@ -220,6 +233,18 @@ bool GearboxParser::parse()
                 attr = std::make_pair("name", std::string(val.get<std::string>()));
                 attrs.push_back(attr);
 
+                // 'alias' is the preferred map key (supports breakout where
+                // multiple SONiC ports share an 'index'). For backward
+                // compatibility with older HWSKUs whose gearbox_config.json
+                // doesn't carry 'alias', defer setting it until after we've
+                // parsed 'index' below and synthesise it from the index.
+                std::string alias;
+                if (interface.find("alias") != interface.end())
+                {
+                    val = interface["alias"];
+                    alias = val.get<std::string>();
+                }
+
                 if (interface.find("index") == interface.end()) 
                 {
                     SWSS_LOG_ERROR("missing 'index' field in 'interfaces' item %d in gearbox configuration", iter);
@@ -228,6 +253,13 @@ bool GearboxParser::parse()
                 val = interface["index"];
                 int index = val.get<int>();
                 attr = std::make_pair("index", std::to_string(index));
+                attrs.push_back(attr);
+
+                if (alias.empty())
+                {
+                    alias = std::to_string(index);
+                }
+                attr = std::make_pair("alias", alias);
                 attrs.push_back(attr);
 
                 if (interface.find("phy_id") == interface.end()) 
@@ -314,7 +346,7 @@ bool GearboxParser::parse()
                 }
 
                 std::string key;
-                key = "interface:" + std::to_string(index);
+                key = "interface:" + alias;
                 if (getWriteToDb() == true) 
                 {
                     writeToDb(key, attrs);
