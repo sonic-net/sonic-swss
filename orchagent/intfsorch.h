@@ -27,7 +27,8 @@ struct IntfsEntry
     sai_object_id_t     vrf_id;
     bool                proxy_arp;
     bool                sag_enabled = false;
-    MacAddress          mac;
+    MacAddress          mac;        // source MAC the router interface has
+    MacAddress          mac_addr;   // the interface's own mac_addr (INTF_TABLE), zero when none; a VLAN mac yields to it
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
