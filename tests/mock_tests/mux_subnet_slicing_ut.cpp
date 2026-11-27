@@ -279,7 +279,7 @@ namespace mux_subnet_slicing_test
         InjectFdbEntry(mac, TEST_INTERFACE);
 
         NeighborEntry entry(IpAddress(IN_SLICE_IP), VLAN_1000);
-        gNeighOrch->m_syncdNeighbors[entry] = { mac, false, 0, false };
+        gNeighOrch->setNeighbor(entry, { mac, false, 0, false });
 
         NeighborUpdate up;
         up.entry = entry;
@@ -304,7 +304,7 @@ namespace mux_subnet_slicing_test
         EXPECT_EQ(m_MuxOrch->suppressed_neighbors_.end(),
                   m_MuxOrch->suppressed_neighbors_.find(entry));
 
-        gNeighOrch->m_syncdNeighbors.erase(entry);
+        gNeighOrch->eraseNeighbor(entry);
         RemoveFdbEntry(mac);
     }
 
@@ -314,7 +314,7 @@ namespace mux_subnet_slicing_test
     {
         const MacAddress mac("aa:bb:cc:dd:ee:02");
         NeighborEntry entry(IpAddress(IN_SLICE_IP2), VLAN_1000);
-        gNeighOrch->m_syncdNeighbors[entry] = { mac, false, 0, false };
+        gNeighOrch->setNeighbor(entry, { mac, false, 0, false });
 
         // Seed the suppressed map as if it had been suppressed earlier.
         m_MuxOrch->suppressed_neighbors_[entry] = mac;
@@ -331,7 +331,7 @@ namespace mux_subnet_slicing_test
         EXPECT_EQ(m_MuxOrch->suppressed_neighbors_.end(),
                   m_MuxOrch->suppressed_neighbors_.find(entry));
 
-        gNeighOrch->m_syncdNeighbors.erase(entry);
+        gNeighOrch->eraseNeighbor(entry);
         RemoveFdbEntry(mac);
     }
 
@@ -341,7 +341,7 @@ namespace mux_subnet_slicing_test
     {
         const MacAddress mac("aa:bb:cc:dd:ee:03");
         NeighborEntry entry(IpAddress(IN_SLICE_IP), VLAN_1000);
-        gNeighOrch->m_syncdNeighbors[entry] = { mac, false, 0, false };
+        gNeighOrch->setNeighbor(entry, { mac, false, 0, false });
         m_MuxOrch->suppressed_neighbors_[entry] = mac;
 
         FdbUpdate move;
@@ -354,7 +354,7 @@ namespace mux_subnet_slicing_test
         EXPECT_EQ(m_MuxOrch->suppressed_neighbors_.end(),
                   m_MuxOrch->suppressed_neighbors_.find(entry));
 
-        gNeighOrch->m_syncdNeighbors.erase(entry);
+        gNeighOrch->eraseNeighbor(entry);
     }
 
     // updateFdb (b): MAC lands on the slice cable's port, and an in-slice
@@ -365,7 +365,7 @@ namespace mux_subnet_slicing_test
         NeighborEntry entry(IpAddress(IN_SLICE_IP2), VLAN_1000);
         NextHopKey nh_key(IpAddress(IN_SLICE_IP2), VLAN_1000);
 
-        gNeighOrch->m_syncdNeighbors[entry] = { mac, false, 0, false };
+        gNeighOrch->setNeighbor(entry, { mac, false, 0, false });
         // Pretend it had been programmed as a normal mux neighbor on OTHER.
         m_MuxOrch->mux_nexthop_tb_[nh_key] = OTHER_INTERFACE;
         // updateFdb's reconcile loop walks mux_nexthop_tb_ and calls
@@ -386,7 +386,7 @@ namespace mux_subnet_slicing_test
         EXPECT_NE(m_MuxOrch->suppressed_neighbors_.end(),
                   m_MuxOrch->suppressed_neighbors_.find(entry));
 
-        gNeighOrch->m_syncdNeighbors.erase(entry);
+        gNeighOrch->eraseNeighbor(entry);
         gNeighOrch->m_syncdNextHops.erase(nh_key);
         m_MuxOrch->suppressed_neighbors_.erase(entry);
     }
@@ -399,7 +399,7 @@ namespace mux_subnet_slicing_test
         NeighborEntry entry(IpAddress(OUT_OF_SLICE_IP), VLAN_1000);
         NextHopKey nh_key(IpAddress(OUT_OF_SLICE_IP), VLAN_1000);
 
-        gNeighOrch->m_syncdNeighbors[entry] = { mac, false, 0, false };
+        gNeighOrch->setNeighbor(entry, { mac, false, 0, false });
         m_MuxOrch->mux_nexthop_tb_[nh_key] = TEST_INTERFACE;
         gNeighOrch->m_syncdNextHops[nh_key] = { (sai_object_id_t)0x9002, 0, 0 };
 
@@ -413,7 +413,7 @@ namespace mux_subnet_slicing_test
         EXPECT_EQ(m_MuxOrch->suppressed_neighbors_.end(),
                   m_MuxOrch->suppressed_neighbors_.find(entry));
 
-        gNeighOrch->m_syncdNeighbors.erase(entry);
+        gNeighOrch->eraseNeighbor(entry);
         gNeighOrch->m_syncdNextHops.erase(nh_key);
         m_MuxOrch->mux_nexthop_tb_.erase(nh_key);
     }
