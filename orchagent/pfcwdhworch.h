@@ -44,6 +44,8 @@ public:
 protected:
     bool startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info="") override;
 
+    const char* recoveryMechanism() const override { return PFC_WD_RECOVERY_HARDWARE; }
+
 public:
     // PFC deadlock notification callback
     void doTask(NotificationConsumer &consumer) override;

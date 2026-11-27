@@ -162,6 +162,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
         if (entry.second.handler != nullptr)
         {
             entry.second.handler->commitCounters();
+            this->interruptStorm(entry.second.portAlias, entry.second.index);
             entry.second.handler = nullptr;
         }
     }
@@ -380,6 +381,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         if (registered && entry->second.handler != nullptr)
         {
             entry->second.handler->commitCounters();
+            this->interruptStorm(entry->second.portAlias, entry->second.index);
         }
 
         m_entryMap.erase(queueId);
@@ -795,9 +797,10 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueueImpl(const st
     {
         if (entry->second.handler != nullptr)
         {
-            report_pfc_restored(entry->first, entry->second.portId, entry->second.index, entry->second.portAlias);
-
+            // The restore record reads the committed counters.
             entry->second.handler->commitCounters();
+            this->report_pfc_restored(entry->first, entry->second.portId,
+                                     entry->second.index, entry->second.portAlias);
             entry->second.handler = nullptr;
             // Remove storm status in APPL_DB for warm-reboot purpose
             string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
