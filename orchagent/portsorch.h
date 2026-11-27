@@ -158,7 +158,17 @@ public:
     bool isConfigDone();
     bool isGearboxEnabled();
     bool isPortAdminUp(const string &alias);
-    bool setPortAdminStatusByAlias(const string &alias, bool up);
+
+    /* Holder names for setPortAdminStatusByAlias() */
+    static constexpr const char *ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD = "mac-move-guard";
+    static constexpr const char *ADMIN_DOWN_HOLDER_STP_BPDU_GUARD = "stp-bpdu-guard";
+
+    /* Hold a port admin-down on behalf of an internal orchagent client, or
+     * release that client's hold. The port stays down until every holder has
+     * released it. Independent of the APP_DB configured admin status. */
+    bool setPortAdminStatusByAlias(const string &alias, bool up, const string &holder);
+    bool isAdminDownHeld(const string &alias) const;
+    bool isAdminDownHeldBy(const string &alias, const string &holder) const;
 
     map<string, Port>& getAllPorts();
     bool bake() override;
@@ -468,6 +478,16 @@ private:
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
+
+    /* Propagate LAG admin status changes to member ports */
+    void cascadeLagAdminStatusToMembers(Port &lag, bool adminUp);
+
+    /* Internal clients holding a port admin-down, keyed by alias. Erased with
+     * the port or LAG; clients observe SUBJECT_TYPE_PORT_CHANGE to drop their
+     * own state. */
+    map<string, set<string>> m_adminDownHolders;
+    void acquireAdminDownHold(const string &alias, const string &holder);
+    void releaseAdminDownHold(const string &alias, const string &holder);
 
     sai_status_t removePort(sai_object_id_t port_id);
     bool initExistingPort(const PortConfig &port);

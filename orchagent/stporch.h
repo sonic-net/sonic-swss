@@ -33,18 +33,38 @@ public:
     bool updateMaxStpInstance(uint32_t max_stp_instance);
     bool removeStpPorts(Port &port);
     bool removeVlanFromStpInstance(string vlan, sai_uint16_t stp_instance);
+    /* PortsOrch applied an admin-up from APP_DB over the guard's hold. */
+    void releaseBpduGuardErrDisableRecord(const std::string &port_alias, const std::string &why);
 
 private:
+    /* STATE_DB STP_TABLE key/field used to persist the set of ports currently
+     * err-disabled by BPDU guard, so an orchagent restart can re-assert the
+     * disable. CONFIG_DB deliberately holds no record of it. */
+    static constexpr const char *BPDU_GUARD_STATE_KEY = "BPDU_GUARD";
+    static constexpr const char *BPDU_GUARD_PORTS_FIELD = "err_disabled_ports";
+
     unique_ptr<Table> m_stpTable;
     std::map<sai_uint16_t, sai_object_id_t> m_stpInstToOid;//Mapping from STP instance id to corresponding object id
     sai_object_id_t m_defaultStpId;
     std::map<sai_uint16_t, StpInstEntry> m_vlanAliasToStpInstanceMap;
 
     sai_uint16_t m_maxStpInstance;
+    // Instances the hardware had no room for. Each is tried again once an
+    // instance has been removed, not on every pass.
+    std::set<sai_uint16_t> m_stpInstancesRefused;
 
     
+    /* Ports this orch has administratively disabled on behalf of BPDU guard. */
+    std::set<std::string> m_bpduGuardErrDisabledPorts;
+    bool m_bpduGuardStateRestored = false;
+
     void doStpTask(Consumer &consumer);
+    void doStpPortTask(Consumer &consumer);
     void doStpPortStateTask(Consumer &consumer);
+
+    bool setBpduGuardErrDisable(const std::string &port_alias, bool err_disable);
+    void persistBpduGuardErrDisabledPorts();
+    void restoreBpduGuardErrDisabledPorts();
     void doStpFastageTask(Consumer &consumer);
     void doStpVlanIntfFlushTask(Consumer &consumer);
     void doMstInstPortFlushTask(Consumer &consumer);

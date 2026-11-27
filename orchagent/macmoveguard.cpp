@@ -86,7 +86,8 @@ void MacMoveGuard::clearAllState()
     // subsequent restart) can retry rather than orphaning the port.
     for (auto it = m_disabledPorts.begin(); it != m_disabledPorts.end(); )
     {
-        if (m_portsOrch && m_portsOrch->setPortAdminStatusByAlias(it->first, true))
+        if (m_portsOrch && m_portsOrch->setPortAdminStatusByAlias(
+                it->first, true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD))
         {
             SWSS_LOG_NOTICE("MAC_MOVE_GUARD: re-enabled port %s (feature disabled)",
                             it->first.c_str());
@@ -335,6 +336,31 @@ void MacMoveGuard::onMacLearn(const MacLearnNotification &notif)
     handleMacLearn(notif);
 }
 
+void MacMoveGuard::onPortRemoved(const string &alias)
+{
+    SWSS_LOG_ENTER();
+
+    // Forget the port in every MAC's history so a later markBadMac() does not
+    // try to disable a port that no longer exists. pinned_port is left as is:
+    // if the alias is recreated it is still the port to keep up.
+    for (auto &kv : m_macTrackingState)
+    {
+        kv.second.ports_seen.erase(alias);
+        kv.second.disabled_ports.erase(alias);
+    }
+
+    if (m_disabledPorts.erase(alias) == 0)
+    {
+        return;
+    }
+
+    // No re-enable: the object is gone. If it is recreated (e.g. a teamd
+    // restart) and the loop persists, the next move re-disables it.
+    SWSS_LOG_NOTICE("MAC_MOVE_GUARD: port %s removed; dropped its disabled state",
+                    alias.c_str());
+    persistDisabledPorts();
+}
+
 void MacMoveGuard::pruneWindow(MacMoveTrackingState &state)
 {
     auto cutoff = steady_clock::now() - seconds(m_durationSeconds);
@@ -573,7 +599,8 @@ void MacMoveGuard::markBadMac(const MacKey &key, MacMoveTrackingState &state, co
                 if (first_bad_mac)
                 {
                     // First bad MAC on this port - actually disable it
-                    if (!m_portsOrch->setPortAdminStatusByAlias(port, false))
+                    if (!m_portsOrch->setPortAdminStatusByAlias(
+                            port, false, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD))
                     {
                         SWSS_LOG_ERROR("MAC_MOVE_GUARD: failed to disable port %s", port.c_str());
                         m_disabledPorts.erase(port);
@@ -663,7 +690,8 @@ void MacMoveGuard::releaseBadMac(const MacKey &key, MacMoveTrackingState &state)
                     // If no other bad MACs require this port to be disabled, re-enable it
                     if (port_it->second.empty())
                     {
-                        if (m_portsOrch && !m_portsOrch->setPortAdminStatusByAlias(port, true))
+                        if (m_portsOrch && !m_portsOrch->setPortAdminStatusByAlias(
+                                port, true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD))
                         {
                             SWSS_LOG_ERROR("MAC_MOVE_GUARD: failed to re-enable port %s", port.c_str());
                         }
@@ -883,7 +911,8 @@ void MacMoveGuard::restoreHwResources()
                 start, comma == std::string::npos ? std::string::npos : comma - start);
             if (!port.empty() && m_portsOrch)
             {
-                if (m_portsOrch->setPortAdminStatusByAlias(port, true))
+                if (m_portsOrch->setPortAdminStatusByAlias(
+                        port, true, PortsOrch::ADMIN_DOWN_HOLDER_MAC_MOVE_GUARD))
                 {
                     SWSS_LOG_NOTICE("MAC_MOVE_GUARD: restart cleanup re-enabled port %s",
                                     port.c_str());

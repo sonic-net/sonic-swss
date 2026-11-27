@@ -616,6 +616,82 @@ namespace macmoveguard_test
         EXPECT_EQ(m_mmg->m_disabledPorts.count(disabled_alias), 0u);
     }
 
+    // A port held down by both MMG and STP BPDU guard stays down until both
+    // release, in either order.
+    TEST_F(MacMoveGuardTest, DisablePortCoexistsWithBpduGuardHold)
+    {
+        buildOrch();
+        configure({
+            {"enabled","true"}, {"threshold","2"}, {"detect_interval","60"},
+            {"action_interval","60"}, {"action","DISABLE_PORT"}
+        });
+
+        injectMove(MAC_A, ETH0, ETH1);
+        injectMove(MAC_A, ETH1, ETH0);
+        ASSERT_EQ(m_mmg->m_disabledPorts.size(), 1u);
+        const string disabled_alias = m_mmg->m_disabledPorts.begin()->first;
+        sai_object_id_t disabled_oid = m_portsOrch->m_portList[disabled_alias].m_port_id;
+        ASSERT_FALSE(g_port_admin_status[disabled_oid]);
+
+        // MMG releases first: BPDU guard still holds the port
+        ASSERT_TRUE(m_portsOrch->setPortAdminStatusByAlias(
+            disabled_alias, false, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD));
+        state(MAC_A).action_expiry_time = steady_clock::now() - seconds(1);
+        m_mmg->checkRecovery();
+        EXPECT_EQ(m_mmg->m_disabledPorts.count(disabled_alias), 0u);
+        EXPECT_FALSE(g_port_admin_status[disabled_oid]);
+
+        ASSERT_TRUE(m_portsOrch->setPortAdminStatusByAlias(
+            disabled_alias, true, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD));
+        EXPECT_TRUE(g_port_admin_status[disabled_oid]);
+
+        // BPDU guard releases first: MMG still holds the port
+        injectMove(MAC_B, ETH0, ETH1);
+        injectMove(MAC_B, ETH1, ETH0);
+        ASSERT_EQ(m_mmg->m_disabledPorts.count(disabled_alias), 1u);
+        ASSERT_TRUE(m_portsOrch->setPortAdminStatusByAlias(
+            disabled_alias, false, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD));
+        ASSERT_TRUE(m_portsOrch->setPortAdminStatusByAlias(
+            disabled_alias, true, PortsOrch::ADMIN_DOWN_HOLDER_STP_BPDU_GUARD));
+        EXPECT_FALSE(g_port_admin_status[disabled_oid]);
+
+        state(MAC_B).action_expiry_time = steady_clock::now() - seconds(1);
+        m_mmg->checkRecovery();
+        EXPECT_TRUE(g_port_admin_status[disabled_oid]);
+        EXPECT_FALSE(m_portsOrch->isAdminDownHeld(disabled_alias));
+    }
+
+    // Removing a port MMG disabled drops the guard's state for it without a
+    // re-enable, and clears the persisted row.
+    TEST_F(MacMoveGuardTest, PortRemovalDropsDisabledState)
+    {
+        buildOrch();
+        configure({
+            {"enabled","true"}, {"threshold","2"}, {"detect_interval","60"},
+            {"action_interval","60"}, {"action","DISABLE_PORT"}
+        });
+
+        injectMove(MAC_A, ETH0, ETH1);
+        injectMove(MAC_A, ETH1, ETH0);
+        ASSERT_EQ(m_mmg->m_disabledPorts.size(), 1u);
+        const string disabled_alias = m_mmg->m_disabledPorts.begin()->first;
+        vector<FieldValueTuple> fvs;
+        ASSERT_TRUE(m_mmg->m_stateTable->get(MacMoveGuard::HW_RESOURCES_KEY, fvs));
+
+        PortUpdate update = { m_portsOrch->m_portList[disabled_alias], false };
+        m_fdbOrch->update(SUBJECT_TYPE_PORT_CHANGE, &update);
+
+        EXPECT_EQ(m_mmg->m_disabledPorts.count(disabled_alias), 0u);
+        EXPECT_EQ(state(MAC_A).disabled_ports.count(disabled_alias), 0u);
+        EXPECT_EQ(state(MAC_A).ports_seen.count(disabled_alias), 0u);
+        EXPECT_FALSE(m_mmg->m_stateTable->get(MacMoveGuard::HW_RESOURCES_KEY, fvs));
+
+        // Releasing the bad MAC afterwards must not touch the removed port
+        state(MAC_A).action_expiry_time = steady_clock::now() - seconds(1);
+        m_mmg->checkRecovery();
+        EXPECT_FALSE(state(MAC_A).is_bad_mac);
+    }
+
     // -------- 11.1 #6: DLOMWA capability supported -> table created/bound ---
     TEST_F(MacMoveGuardTest, DlomwaCreatesAndBindsTableWhenSupported)
     {
