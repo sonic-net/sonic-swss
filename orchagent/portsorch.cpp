@@ -4330,15 +4330,23 @@ void PortsOrch::registerPort(Port &p)
     //Add the Queue Counters
     if ((flex_counters_orch->getQueueCountersState()) || (flex_counters_orch->getQueueWatermarkCountersState()))
     {
+        // A port may have no queues; maxQueueNumber - 1 would wrap to UINT32_MAX
         auto maxQueueNumber = static_cast<uint32_t>(p.m_queue_ids.size());
-        addPortBufferQueueCounters(p, 0, maxQueueNumber-1, false);
+        if (maxQueueNumber > 0)
+        {
+            addPortBufferQueueCounters(p, 0, maxQueueNumber - 1, false);
+        }
     }
 
     //Add the PG Counters
     if ((flex_counters_orch->getPgCountersState()) || (flex_counters_orch->getPgWatermarkCountersState()))
     {
+        // A port may have no PGs; maxPgNumber - 1 would wrap to UINT32_MAX
         auto maxPgNumber = static_cast<uint32_t>(p.m_priority_group_ids.size());
-        addPortBufferPgCounters(p, 0, maxPgNumber-1);
+        if (maxPgNumber > 0)
+        {
+            addPortBufferPgCounters(p, 0, maxPgNumber - 1);
+        }
     }
 
     // If queue-related flex counters are already enabled, generate queue maps
@@ -4448,15 +4456,23 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     if((flex_counters_orch->getQueueCountersState()) || (flex_counters_orch->getQueueWatermarkCountersState()))
     {
         // Remove the Port Queues from COUNTERS_DB
+        // A port may have no queues; maxQueueNumber - 1 would wrap to UINT32_MAX
         auto maxQueueNumber = static_cast<uint32_t>(p.m_queue_ids.size());
-        deletePortBufferQueueCounters(p, 0, maxQueueNumber-1, false);
+        if (maxQueueNumber > 0)
+        {
+            deletePortBufferQueueCounters(p, 0, maxQueueNumber - 1, false);
+        }
     }
 
     if ((flex_counters_orch->getPgCountersState()) || (flex_counters_orch->getPgWatermarkCountersState()))
     {
         // Remove the Priority Groups from COUNTERS_DB
+        // A port may have no PGs; maxPgNumber - 1 would wrap to UINT32_MAX
         auto maxPgNumber = static_cast<uint32_t>(p.m_priority_group_ids.size());
-        deletePortBufferPgCounters(p, 0, maxPgNumber-1);
+        if (maxPgNumber > 0)
+        {
+            deletePortBufferPgCounters(p, 0, maxPgNumber - 1);
+        }
     }
 
     /* Remove the associated port serdes attribute */
@@ -9017,6 +9033,36 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& po
     queue_watermark_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, queue_counter_stats, queueType);
 }
 
+/*
+ * Clamp the queue or PG range [startIndex, endIndex] to the count the port
+ * has. Returns false when no index in the range exists on the port, so the
+ * caller must not index the port's queue or PG IDs at all.
+ */
+static bool clampBufferObjectRange(const string &alias, const char *type, size_t count,
+                                   uint32_t startIndex, uint32_t &endIndex)
+{
+    if (startIndex > endIndex)
+    {
+        return false;
+    }
+
+    if (startIndex >= count)
+    {
+        SWSS_LOG_WARN("Port %s has %zu %ss, ignoring %s range %u-%u",
+                      alias.c_str(), count, type, type, startIndex, endIndex);
+        return false;
+    }
+
+    if (endIndex >= count)
+    {
+        SWSS_LOG_WARN("Port %s has %zu %ss, clamping %s range %u-%u to %u-%zu",
+                      alias.c_str(), count, type, type, startIndex, endIndex, startIndex, count - 1);
+        endIndex = static_cast<uint32_t>(count - 1);
+    }
+
+    return true;
+}
+
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues, bool skip_host_tx_queue)
 {
     SWSS_LOG_ENTER();
@@ -9040,6 +9086,12 @@ void PortsOrch::addPortBufferQueueCounters(const Port &port, uint32_t startIndex
     vector<FieldValueTuple> queuePortVector;
     vector<FieldValueTuple> queueIndexVector;
     vector<FieldValueTuple> queueTypeVector;
+
+    if (!clampBufferObjectRange(port.m_alias, "queue", port.m_queue_ids.size(), startIndex, endIndex))
+    {
+        CounterCheckOrch::getInstance().addPort(port);
+        return;
+    }
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
@@ -9110,6 +9162,12 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues, b
 void PortsOrch::deletePortBufferQueueCounters(const Port &port, uint32_t startIndex, uint32_t endIndex, bool skip_host_tx_queue)
 {
     SWSS_LOG_ENTER();
+
+    if (!clampBufferObjectRange(port.m_alias, "queue", port.m_queue_ids.size(), startIndex, endIndex))
+    {
+        CounterCheckOrch::getInstance().removePort(port);
+        return;
+    }
 
     for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
@@ -9246,6 +9304,12 @@ void PortsOrch::addPortBufferPgCounters(const Port& port, uint32_t startIndex, u
     vector<FieldValueTuple> pgVector;
     vector<FieldValueTuple> pgPortVector;
     vector<FieldValueTuple> pgIndexVector;
+
+    if (!clampBufferObjectRange(port.m_alias, "PG", port.m_priority_group_ids.size(), startIndex, endIndex))
+    {
+        CounterCheckOrch::getInstance().addPort(port);
+        return;
+    }
 
     for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {
@@ -9407,6 +9471,12 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
 void PortsOrch::deletePortBufferPgCounters(const Port& port, uint32_t startIndex, uint32_t endIndex)
 {
     SWSS_LOG_ENTER();
+
+    if (!clampBufferObjectRange(port.m_alias, "PG", port.m_priority_group_ids.size(), startIndex, endIndex))
+    {
+        CounterCheckOrch::getInstance().removePort(port);
+        return;
+    }
 
     for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {

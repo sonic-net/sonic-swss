@@ -2597,6 +2597,86 @@ namespace portsorch_test
         ASSERT_TRUE(countersQueuePortMap.hget("", sai_serialize_object_id(readdedQ1), dummy));
     }
 
+    /*
+     * A port can report no ingress priority groups (or no queues). With PG/queue flex counters enabled, deleting such a port
+     * computed size() - 1 == UINT32_MAX and read past the empty ID vector,
+     * crashing orchagent. A range past the end (e.g. from BUFFER_PG config)
+     * must be clamped, not read out of bounds.
+     *
+     * Own fixture so the port DEL runs against a freshly created virtual
+     * switch.
+     */
+    struct PortsOrchNoPgsOrQueuesTest : PortsOrchTest
+    {
+    };
+
+    TEST_F(PortsOrchNoPgsOrQueuesTest, PortDeleteWithNoPgsOrQueues)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Table flexCounterCfg = Table(m_config_db.get(), CFG_FLEX_COUNTER_TABLE_NAME);
+        const std::vector<FieldValueTuple> enable({ {FLEX_COUNTER_STATUS_FIELD, "enable"} });
+        flexCounterCfg.set("QUEUE", enable);
+        flexCounterCfg.set("QUEUE_WATERMARK", enable);
+        flexCounterCfg.set("PG_DROP", enable);
+        flexCounterCfg.set("PG_WATERMARK", enable);
+
+        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+        flexCounterOrch->addExistingData(&flexCounterCfg);
+        static_cast<Orch *>(flexCounterOrch)->doTask();
+        ASSERT_TRUE(flexCounterOrch->getPgCountersState());
+        ASSERT_TRUE(flexCounterOrch->getQueueCountersState());
+
+        // A range past the end of the port's PGs/queues is clamped
+        Port full;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet8", full));
+        ASSERT_GT(full.m_priority_group_ids.size(), 0u);
+        ASSERT_GT(full.m_queue_ids.size(), 0u);
+        gPortsOrch->addPortBufferPgCounters(full, 0, UINT32_MAX);
+        gPortsOrch->deletePortBufferPgCounters(full, 0, UINT32_MAX);
+        gPortsOrch->addPortBufferQueueCounters(full, 0, UINT32_MAX, false);
+        gPortsOrch->deletePortBufferQueueCounters(full, 0, UINT32_MAX, false);
+        gPortsOrch->createPortBufferPgCounters(full, "0-1000");
+        gPortsOrch->removePortBufferPgCounters(full, "1000");
+
+        // Ethernet0 has no PGs, Ethernet4 has no queues
+        gPortsOrch->m_portList["Ethernet0"].m_priority_group_ids.clear();
+        gPortsOrch->m_portList["Ethernet4"].m_queue_ids.clear();
+
+        Port noPg, noQueue;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", noPg));
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet4", noQueue));
+        gPortsOrch->addPortBufferPgCounters(noPg, 0, UINT32_MAX);
+        gPortsOrch->addPortBufferQueueCounters(noQueue, 0, UINT32_MAX, false);
+
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        entries.push_back({"Ethernet0", DEL_COMMAND, {}});
+        entries.push_back({"Ethernet4", DEL_COMMAND, {}});
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        Port gone;
+        ASSERT_FALSE(gPortsOrch->getPort("Ethernet0", gone));
+        ASSERT_FALSE(gPortsOrch->getPort("Ethernet4", gone));
+    }
+
+
     TEST_F(PortsOrchTest, PortPTConfigDefaultTimestampTemplate)
     {
         auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
