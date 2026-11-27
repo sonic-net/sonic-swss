@@ -63,6 +63,8 @@ private:
             const std::string& counter_stat,
             sai_object_id_t port_id = SAI_NULL_OBJECT_ID,
             const std::string& counter_name = "");
+    void refreshDropMonitorPolling(sai_object_id_t port_id);
+    void stopDropMonitorPolling(sai_object_id_t port_id);
 
     // Debug Counter Initialization Helper Functions
     std::string getDebugCounterType(
@@ -101,6 +103,8 @@ private:
     // configured
     bool debug_monitor_enabled = false;
     std::unordered_set<std::string> portDebugMonitorStatIds;
+    // Ports currently registered with syncd in the drop monitor flex counter group
+    std::unordered_set<sai_object_id_t> dropMonitorPolledPorts;
 
     // free_drop_counters are drop counters that have been created by a user
     // that do not have any drop reasons associated with them yet. Because
