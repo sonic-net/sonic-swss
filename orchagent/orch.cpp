@@ -2,6 +2,7 @@
 #include <thread>
 #include "timestamp.h"
 #include "orch.h"
+#include "taskstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -18,6 +19,7 @@ int gBatchSize = 0;
 
 std::shared_ptr<RingBuffer> Orch::gRingBuffer = nullptr;
 std::shared_ptr<RingBuffer> Executor::gRingBuffer = nullptr;
+std::unordered_map<std::string, ExecutorStat> *Orch::s_taskStats = nullptr;
 
 RingBuffer::RingBuffer(int size): buffer(size)
 {
@@ -186,6 +188,17 @@ bool Orch::addToRetry(const std::string &executorName, const Task &task, const C
         return true;
     }
     return false;
+}
+
+bool Orch::sweepHasWork(const std::string &executorName, Executor *executor)
+{
+    RetryCache *cache = getRetryCache(executorName);
+    if (cache != nullptr && !cache->getResolvedConstraints().empty())
+    {
+        return true;
+    }
+    auto *consumer = dynamic_cast<ConsumerBase *>(executor);
+    return consumer != nullptr && consumer->hasPendingTasks();
 }
 
 /**
@@ -941,6 +954,17 @@ void Orch::doTask()
 
     for (auto &it : m_consumerMap)
     {
+        // Charge the retry promotion and drain to the consumer's own stats
+        // slot -- the same one the select loop's execute() path uses -- so
+        // sweep-driven work (retries, tasks left in m_toSync) shows up under
+        // the task that did it. Only timed when work is actually queued: an
+        // unconditional timer would add a zero-length run per consumer on
+        // every idle sweep and dilute the run-time medians.
+        std::unique_ptr<TaskTimer> timer;
+        if (s_taskStats != nullptr && sweepHasWork(it.first, it.second.get()))
+        {
+            timer.reset(new TaskTimer((*s_taskStats)[it.first]));
+        }
         try
         {
             count += retryToSync(it.first, threshold - count);

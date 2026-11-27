@@ -101,6 +101,16 @@ OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
 
+    /* The idle-sweep stats hook points into this daemon's m_taskStats.
+     * Production has one immortal OrchDaemon, but tests construct and
+     * destroy several; a stale pointer would make any later Orch::doTask()
+     * with pending work write through freed memory. Restore the previous
+     * value (not null): a surviving older daemon keeps its stats. */
+    if (Orch::s_taskStats == &m_taskStats)
+    {
+        Orch::s_taskStats = m_prevTaskStats;
+    }
+
     /*
      * Stop the ring thread before deleting orch pointers.
      *
@@ -1031,6 +1041,14 @@ void OrchDaemon::initTaskStatsChannel()
             m_taskStatsDb.get(), "ORCH_TASK_STATS_REPLY");
 
     m_select->addSelectable(m_taskStatsQuery.get());
+
+    // Let the idle-sweep Orch::doTask() path charge per-consumer work to
+    // the same slots the executor path uses. The previous value is saved so
+    // the destructor can restore rather than null it: with two daemons
+    // alive (tests), destroying the newer one must not silently stop the
+    // older one's per-consumer stats.
+    m_prevTaskStats = Orch::s_taskStats;
+    Orch::s_taskStats = &m_taskStats;
 }
 
 void OrchDaemon::handleTaskStatsQuery()
