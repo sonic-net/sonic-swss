@@ -57,6 +57,7 @@
 #define CLX_PLATFORM_SUBSTRING  "clounix"
 #define MRVL_PRST_PLATFORM_SUBSTRING "marvell-prestera"
 #define MRVL_TL_PLATFORM_SUBSTRING   "marvell-teralynx"
+#define VPP_PLATFORM_SUBSTRING  "vpp"
 
 using namespace std;
 
