@@ -60,6 +60,24 @@ class TestGearboxHelper:
             phy_id = next(iter(gearbox.phys))
             print(f"No phy_id provided, using first PHY: {phy_id}")
 
+        TestGearboxHelper.configure_gearbox_phy_field(dvs, phy_id, "macsec_supported", macsec_supported)
+
+        # Restart DVS to reload configuration
+        dvs.restart()
+
+    @staticmethod
+    def configure_gearbox_phy_field(dvs, phy_id, field, value):
+        """
+        Set (or remove, if value is None) a field on a PHY entry in gearbox_config.json.
+
+        The caller must restart DVS for gearsyncd and orchagent to pick up the change.
+
+        Args:
+            dvs: Docker Virtual Switch instance
+            phy_id: PHY ID (string or int)
+            field: PHY field name in gearbox_config.json
+            value: Field value, or None to remove the field
+        """
         # Resolve symlink to get actual config path
         config_path = "/usr/share/sonic/hwsku/gearbox_config.json"
         rc, actual_path = dvs.runcmd(f"readlink -f {config_path}")
@@ -78,13 +96,10 @@ class TestGearboxHelper:
         for phy in config.get("phys", []):
             if phy.get("phy_id") == phy_id:
                 phy_found = True
-                if macsec_supported is None:
-                    # Remove the field if it exists
-                    if "macsec_supported" in phy:
-                        del phy["macsec_supported"]
+                if value is None:
+                    phy.pop(field, None)
                 else:
-                    # Set the field
-                    phy["macsec_supported"] = macsec_supported
+                    phy[field] = value
                 break
 
         assert phy_found, f"PHY {phy_id} not found in gearbox_config.json"
@@ -100,6 +115,3 @@ class TestGearboxHelper:
             )
         )
         assert rc == 0, f"Failed to write modified config to {config_path}"
-
-        # Restart DVS to reload configuration
-        dvs.restart()
