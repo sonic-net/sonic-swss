@@ -6,9 +6,11 @@ class DVSLag(object):
         self.config_db = cdb
         self.dvs = dvs
 
-    def create_port_channel(self, lag_id, admin_status="up", mtu="1500", fast_rate=False):
+    def create_port_channel(self, lag_id, admin_status="up", mtu="1500", fast_rate=False, active=None):
         lag = "PortChannel{}".format(lag_id)
         lag_entry = {"admin_status": admin_status, "mtu": mtu, "fast_rate": str(fast_rate).lower()}
+        if active is not None:
+            lag_entry["active"] = str(active).lower()
         self.config_db.create_entry("PORTCHANNEL", lag, lag_entry)
 
     def remove_port_channel(self, lag_id):
@@ -38,4 +40,7 @@ class DVSLag(object):
 
     def get_and_verify_port_channel_fast_rate(self, lag_id, fast_rate):
         assert self.dump_portchannel(lag_id)["runner"]["fast_rate"] == fast_rate
+
+    def get_and_verify_port_channel_active(self, lag_id, active):
+        assert self.dump_portchannel(lag_id)["runner"]["active"] == active
 

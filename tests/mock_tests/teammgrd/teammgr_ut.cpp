@@ -526,4 +526,64 @@ namespace teammgr_ut
             return fvField(fv) == "system_mac" && fvValue(fv) == "02:03:04:05:06:07";
         }));
     }
+
+    static std::string findTeamdStartCmd(const std::string &alias)
+    {
+        for (const auto &cmd : mockCallArgs)
+        {
+            if (cmd.find("/usr/bin/teamd -r -t " + alias) != std::string::npos)
+            {
+                return cmd;
+            }
+        }
+        return "";
+    }
+
+    TEST_F(TeamMgrTest, testAddLagLacpModePassive)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel701", { { "admin_status", "up" },
+                                            { "mtu", "9100" },
+                                            { "lacp_key", "auto" },
+                                            { "active", "false" } });
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+
+        std::string cmd = findTeamdStartCmd("PortChannel701");
+        ASSERT_FALSE(cmd.empty());
+        EXPECT_NE(cmd.find("\"active\":false"), std::string::npos);
+        EXPECT_EQ(cmd.find("\"active\":true"), std::string::npos);
+    }
+
+    TEST_F(TeamMgrTest, testAddLagLacpModeActive)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel702", { { "admin_status", "up" },
+                                            { "mtu", "9100" },
+                                            { "lacp_key", "auto" },
+                                            { "active", "true" } });
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+
+        std::string cmd = findTeamdStartCmd("PortChannel702");
+        ASSERT_FALSE(cmd.empty());
+        EXPECT_NE(cmd.find("\"active\":true"), std::string::npos);
+    }
+
+    TEST_F(TeamMgrTest, testAddLagLacpModeDefaultsToActive)
+    {
+        swss::TeamMgr teammgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_lag_tables);
+        swss::Table cfg_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
+        cfg_lag_table.set("PortChannel703", { { "admin_status", "up" },
+                                            { "mtu", "9100" },
+                                            { "lacp_key", "auto" } });
+        teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
+
+        std::string cmd = findTeamdStartCmd("PortChannel703");
+        ASSERT_FALSE(cmd.empty());
+        EXPECT_NE(cmd.find("\"active\":true"), std::string::npos);
+    }
 }
