@@ -9,6 +9,8 @@
 #include "shellcmd.h"
 #include "warm_restart.h"
 #include <nlohmann/json.hpp>
+#include <cctype>
+#include <cstdlib>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -154,8 +156,85 @@ void CoppMgr::setFeatureTrapIdsStatus(string feature, bool enable)
     }
 }
 
+static bool ptpPlatformEnabled()
+{
+    // SWSS_PTP_PLATFORM_ENV is set by unit tests. Unset, the platform
+    // and device files are the only ones consulted.
+    std::vector<std::string> paths;
+    const char *overridePath = std::getenv("SWSS_PTP_PLATFORM_ENV");
+    if (overridePath != nullptr && overridePath[0] != '\0')
+    {
+        paths.emplace_back(overridePath);
+    }
+    else
+    {
+        paths.emplace_back("/usr/share/sonic/platform/platform_env.conf");
+        const char *platform = std::getenv("PLATFORM");
+        if (platform != nullptr && platform[0] != '\0')
+        {
+            paths.emplace_back(std::string("/usr/share/sonic/device/") + platform + "/platform_env.conf");
+        }
+    }
+
+    for (const auto &path : paths)
+    {
+        std::ifstream file(path);
+        if (!file.is_open())
+        {
+            continue;
+        }
+
+        std::string line;
+        while (std::getline(file, line))
+        {
+            auto begin = line.find_first_not_of(" \t");
+            if (begin == std::string::npos || line[begin] == '#')
+            {
+                continue;
+            }
+            auto eq = line.find('=', begin);
+            if (eq == std::string::npos)
+            {
+                continue;
+            }
+            std::string key = line.substr(begin, eq - begin);
+            auto key_end = key.find_last_not_of(" \t");
+            if (key_end == std::string::npos)
+            {
+                continue;
+            }
+            key.erase(key_end + 1);
+            for (char &c : key)
+            {
+                c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            }
+            if (key != "ptp_enabled")
+            {
+                continue;
+            }
+            std::string value = line.substr(eq + 1);
+            auto value_begin = value.find_first_not_of(" \t");
+            if (value_begin == std::string::npos)
+            {
+                return false;
+            }
+            auto value_end = value.find_last_not_of(" \t\r");
+            value = value.substr(value_begin, value_end - value_begin + 1);
+            return value == "1";
+        }
+        return false;
+    }
+    return false;
+}
+
 bool CoppMgr::isFeatureEnabled(std::string feature)
 {
+    // Feature state controls the container. The hostif trap still follows
+    // platform_env.conf, matching the port SAI gate.
+    if (feature == "ptp" && !ptpPlatformEnabled())
+    {
+        return false;
+    }
     if (m_featuresCfgTable.find(feature) != m_featuresCfgTable.end())
     {
         std::vector<FieldValueTuple> feature_fvs = m_featuresCfgTable[feature];
