@@ -382,8 +382,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
 
         string hostRoute;
-        /* EVPN only: always try to del the host route before add neighbor */
-        if (m_isEvpnNvoExist && string(master_name).compare(0, 3, VRF_PREFIX) == 0)
+        /* EVPN only: del the host route before add neighbor, except for a remote neighbor
+         * zebra installs (NOARP, externally learned), whose host route is the remote host's */
+        bool evpnRemoteNeigh = (state == NUD_NOARP) && (rtnl_neigh_get_flags(neigh) & NTF_EXT_LEARNED);
+        if (m_isEvpnNvoExist && !evpnRemoteNeigh && string(master_name).compare(0, 3, VRF_PREFIX) == 0)
         {
             hostRoute += master_name;
             hostRoute += ":";
