@@ -162,6 +162,13 @@ static map<string, sai_bridge_port_fdb_learning_mode_t> learn_mode_map =
     { "notification", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_FDB_NOTIFICATION}
 };
 
+static map<string, sai_vlan_tagging_mode_t> tagging_mode_map =
+{
+    { "untagged", SAI_VLAN_TAGGING_MODE_UNTAGGED },
+    { "tagged", SAI_VLAN_TAGGING_MODE_TAGGED },
+    { "priority_tagged", SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED }
+};
+
 static map<string, sai_port_media_type_t> media_type_map =
 {
     { "fiber", SAI_PORT_MEDIA_TYPE_FIBER },
@@ -6079,20 +6086,38 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                     tagging_mode = fvValue(i);
             }
 
-            if (tagging_mode != "untagged" &&
-                tagging_mode != "tagged"   &&
-                tagging_mode != "priority_tagged")
+            if (tagging_mode_map.find(tagging_mode) == tagging_mode_map.end())
             {
                 SWSS_LOG_ERROR("Wrong tagging_mode '%s' for key: %s", tagging_mode.c_str(), kfvKey(t).c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            /* Duplicate entry */
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
-                it = consumer.m_toSync.erase(it);
-                continue;
+                /*
+                 * A DEL and a SET of the same key may be merged into one SET in
+                 * APPL_DB if orchagent is busy. Re-create the VLAN member if the
+                 * tagging mode is changed or a previous removal did not complete,
+                 * otherwise it is a duplicate entry.
+                 */
+                auto vlan_member = m_portVlanMember[port_alias].find(vlan.m_vlan_info.vlan_id);
+                if (vlan_member != m_portVlanMember[port_alias].end() &&
+                    vlan_member->second.vlan_mode == tagging_mode_map[tagging_mode])
+                {
+                    /* Duplicate entry */
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                SWSS_LOG_NOTICE("Re-creating VLAN member %s in %s with tagging mode %s",
+                                port_alias.c_str(), vlan_alias.c_str(), tagging_mode.c_str());
+
+                if (!removeVlanMember(vlan, port))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             /* Defer vlan member add while port is still a LAG member in orchagent */
@@ -7788,15 +7813,15 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     attrs.push_back(attr);
 
 
-    sai_vlan_tagging_mode_t sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
+    if (tagging_mode_map.find(tagging_mode) == tagging_mode_map.end())
+    {
+        SWSS_LOG_ERROR("Invalid tagging mode %s for %s in %s",
+                       tagging_mode.c_str(), port.m_alias.c_str(), vlan.m_alias.c_str());
+        return false;
+    }
+
+    sai_vlan_tagging_mode_t sai_tagging_mode = tagging_mode_map[tagging_mode];
     attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
-    if (tagging_mode == "untagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_UNTAGGED;
-    else if (tagging_mode == "tagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
-    else if (tagging_mode == "priority_tagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
-    else assert(false);
     attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
 

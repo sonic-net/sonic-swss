@@ -6319,6 +6319,110 @@ namespace portsorch_test
 
         ASSERT_FALSE(gPortsOrch->getPort("Vlan200", vlan));
     }
+
+    /*
+     * A DEL and a SET of the same VLAN member may be merged into one SET in
+     * APPL_DB. A SET with a different tagging mode must re-create the VLAN
+     * member, and a member whose previous removal did not complete must be
+     * re-added.
+     */
+    struct PortsOrchVlanMemberTests : PortsOrchTest {};
+    TEST_F(PortsOrchVlanMemberTests, VlanMemberTaggingModeChange)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table vlanTable = Table(m_app_db.get(), APP_VLAN_TABLE_NAME);
+        Table vlanMemberTable = Table(m_app_db.get(), APP_VLAN_MEMBER_TABLE_NAME);
+
+        auto ports = ut_helper::getInitialSaiPorts();
+        string testPort = ports.begin()->first;
+        const sai_vlan_id_t vlanId = 600;
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Add testPort to Vlan600 as tagged
+        vlanTable.set("Vlan600",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        string vlanMemberKey = string("Vlan600") + vlanMemberTable.getTableNameSeparator() + testPort;
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "tagged"} });
+
+        gPortsOrch->addExistingData(&vlanTable);
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        ASSERT_EQ(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_mode, SAI_VLAN_TAGGING_MODE_TAGGED);
+        ASSERT_EQ(port.m_port_vlan_id, DEFAULT_PORT_VLAN_ID) << "PVID should not change for tagged member";
+        sai_object_id_t taggedMemberId = gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_member_id;
+
+        // Change tagged to untagged, VLAN member should be re-created and PVID set
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        ASSERT_EQ(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_mode, SAI_VLAN_TAGGING_MODE_UNTAGGED);
+        ASSERT_NE(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_member_id, taggedMemberId)
+            << "VLAN member should be re-created with the new tagging mode";
+        ASSERT_EQ(port.m_port_vlan_id, vlanId) << "PVID should be set for untagged member";
+
+        // Set the same tagging mode again, VLAN member should be kept
+        sai_object_id_t untaggedMemberId = gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_member_id;
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_EQ(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_member_id, untaggedMemberId)
+            << "Duplicate entry should not re-create VLAN member";
+
+        // Change untagged to tagged, PVID should be restored to default
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "tagged"} });
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        ASSERT_EQ(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_mode, SAI_VLAN_TAGGING_MODE_TAGGED);
+        ASSERT_EQ(port.m_port_vlan_id, DEFAULT_PORT_VLAN_ID) << "PVID should be restored for tagged member";
+
+        // Stale VLAN member: in vlan.m_members but not in m_portVlanMember
+        // Simulates removeVlanMember() failing after the VLAN member was removed
+        sai_object_id_t staleMemberId = gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_member_id;
+        ASSERT_EQ(sai_vlan_api->remove_vlan_member(staleMemberId), SAI_STATUS_SUCCESS);
+        gPortsOrch->m_portVlanMember.erase(testPort);
+
+        vlanMemberTable.set(vlanMemberKey, { {"tagging_mode", "untagged"} });
+        gPortsOrch->addExistingData(&vlanMemberTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->getPort(testPort, port));
+        ASSERT_EQ(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_mode, SAI_VLAN_TAGGING_MODE_UNTAGGED)
+            << "Stale VLAN member should be re-added instead of being dropped as duplicate";
+        ASSERT_NE(gPortsOrch->m_portVlanMember[testPort][vlanId].vlan_member_id, staleMemberId);
+        ASSERT_EQ(port.m_port_vlan_id, vlanId);
+
+        // Verify all VLAN tasks completed
+        for (auto tableName : {APP_VLAN_TABLE_NAME, APP_VLAN_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer *>(exec);
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty()) << "No pending task expected: " << tableName;
+        }
+    }
+
 // ============================================================================
 // PFC Hardware Watchdog Tests
 // ============================================================================
