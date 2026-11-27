@@ -779,8 +779,7 @@ DashHaFlowOrch::DashHaFlowOrch(DBConnector *db, const vector<string> &tableNames
     m_handlers[SESSION_TYPE_BULK_SYNC] = make_shared<BulkSyncHandler>(m_dpuStateDb.get(), m_sync_timer);
     m_handlers[SESSION_TYPE_FLOW_DUMP] = make_shared<FlowDumpHandler>(m_dpuStateDb.get(), m_dump_timer, m_filter_manager);
 
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_flowBulkGetSessionNotificationConsumer = new NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_flowBulkGetSessionNotificationConsumer = new OwningNotificationConsumer("ASIC_DB", "NOTIFICATIONS");
     auto flowBulkGetSessionNotifier = new Notifier(m_flowBulkGetSessionNotificationConsumer, this, SAI_SWITCH_NOTIFICATION_NAME_FLOW_BULK_GET_SESSION_EVENT);
 
     Orch::addExecutor(flowBulkGetSessionNotifier);

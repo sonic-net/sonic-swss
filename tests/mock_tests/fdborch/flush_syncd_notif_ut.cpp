@@ -2,6 +2,7 @@
 #include "../ut_helper.h"
 #include "../mock_orchagent_main.h"
 #include "../mock_table.h"
+#include "../mock_sai_switch_env.h"
 #include "notifier.h"
 #include "port.h"
 #define private public // Need to modify internal cache
@@ -28,6 +29,7 @@ namespace fdb_syncd_flush_test
     sai_fdb_api_t ut_sai_fdb_api;
     sai_fdb_api_t *pold_sai_fdb_api;
     static int g_sai_flush_call_count = 0;
+    static sai_status_t g_sai_flush_status = SAI_STATUS_SUCCESS;
 
     sai_status_t _ut_stub_sai_create_fdb_entry (
         _In_ const sai_fdb_entry_t *fdb_entry,
@@ -43,7 +45,7 @@ namespace fdb_syncd_flush_test
         _In_ const sai_attribute_t *attr_list)
     {
         g_sai_flush_call_count++;
-        return SAI_STATUS_SUCCESS;
+        return g_sai_flush_status;
     }
 
     void _hook_sai_fdb_api()
@@ -60,6 +62,7 @@ namespace fdb_syncd_flush_test
     }
     struct FdbOrchTest : public ::testing::Test
     {   
+        static std::unique_ptr<MockSaiSwitchEnv> m_saiEnv;
         std::shared_ptr<swss::DBConnector> m_config_db;
         std::shared_ptr<swss::DBConnector> m_app_db;
         std::shared_ptr<swss::DBConnector> m_state_db;
@@ -69,24 +72,21 @@ namespace fdb_syncd_flush_test
         std::shared_ptr<FdbOrch> m_fdborch;
         VxlanTunnelOrch *m_vxlanTunnelOrch = nullptr;
 
+        static void SetUpTestCase()
+        {
+            m_saiEnv.reset(new MockSaiSwitchEnv());
+        }
+
+        static void TearDownTestCase()
+        {
+            m_saiEnv.reset();
+        }
+
         virtual void SetUp() override
         {   
-
+            g_sai_flush_status = SAI_STATUS_SUCCESS;
+            ASSERT_TRUE(m_saiEnv->ready());
             testing_db::reset();
-
-            map<string, string> profile = {
-                { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
-                { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
-            };
-
-            ut_helper::initSaiApi(profile);
-
-            /* Create Switch */
-            sai_attribute_t attr;
-            attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
-            attr.value.booldata = true;
-            auto status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
-            ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
             m_config_db = std::make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -175,10 +175,10 @@ namespace fdb_syncd_flush_test
 
             delete gNeighOrch;
             gNeighOrch = nullptr;
-
-            ut_helper::uninitSaiApi();
         }
     };
+
+    std::unique_ptr<MockSaiSwitchEnv> FdbOrchTest::m_saiEnv;
 
     /* Helper Methods */
     void setUpVlan(PortsOrch* m_portsOrch){
@@ -305,6 +305,55 @@ namespace fdb_syncd_flush_test
 
         /* Final verification */
         ASSERT_EQ(g_sai_flush_call_count, 1);
+        _unhook_sai_fdb_api();
+    }
+
+    /* A failed SAI flush must not mark cached FDB entries as pending removal. */
+    TEST_F(FdbOrchTest, FailedFlushAllKeepsEntriesNotPending)
+    {
+        _hook_sai_fdb_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+        m_portsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(m_portsOrch.get())->doTask();
+
+        setUpVlan(m_portsOrch.get());
+        setUpPort(m_portsOrch.get());
+        setUpVlanMember(m_portsOrch.get());
+
+        const std::vector<uint8_t> mac = {0x52, 0x54, 0x00, 0xac, 0x3a, 0x99};
+        triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_LEARNED, mac,
+                      m_portsOrch->m_portList[ETH0].m_bridge_port_id,
+                      m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
+        FdbEntry entry;
+        entry.mac = MacAddress("52:54:00:ac:3a:99");
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        ASSERT_EQ(m_fdborch->m_entries.count(entry), 1);
+        ASSERT_FALSE(m_fdborch->m_entries[entry].is_flush_pending);
+
+        g_sai_flush_call_count = 0;
+        g_sai_flush_status = SAI_STATUS_FAILURE;
+        auto consumer = m_fdborch->m_flushNotificationsConsumer;
+        std::vector<swss::FieldValueTuple> notifyValues;
+        notifyValues.emplace_back("ALL", "");
+        std::string msg = swss::JSon::buildJson(notifyValues);
+
+        mockReply = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->type = REDIS_REPLY_ARRAY;
+        mockReply->elements = 3;
+        mockReply->element = (redisReply **)calloc(mockReply->elements, sizeof(redisReply *));
+        mockReply->element[2] = (redisReply *)calloc(1, sizeof(redisReply));
+        mockReply->element[2]->type = REDIS_REPLY_STRING;
+        mockReply->element[2]->str = (char *)calloc(1, msg.length() + 1);
+        memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+        mockReply->element[2]->len = (int)msg.length();
+
+        consumer->readData();
+        m_fdborch->doTask(*consumer);
+        mockReply = nullptr;
+
+        EXPECT_EQ(g_sai_flush_call_count, 1);
+        EXPECT_FALSE(m_fdborch->m_entries[entry].is_flush_pending);
         _unhook_sai_fdb_api();
     }
 
@@ -812,7 +861,6 @@ namespace fdb_syncd_flush_test
             << "DYNAMIC entry survived: event[1] inherited STATIC type (type bleed regression)";
     }
 }
-
 namespace fdb_syncd_flush_test
 {
     /* Runs fn with swss ERROR logs sent to stdout and returns what it logged.

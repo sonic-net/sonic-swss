@@ -355,6 +355,7 @@ namespace pfcactionhandler_test
             gSwitchOrch = nullptr;
             delete gCrmOrch;
             gCrmOrch = nullptr;
+            delete gDirectory.get<FlexCounterOrch*>();
             gDirectory.m_values.clear();
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
