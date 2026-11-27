@@ -9,7 +9,11 @@ keywords.workspace = true
 edition.workspace = true
 
 [features]
+# Local storage (--enable-local-storage) is built by default. Bazel does not
+# enable it yet: the shared sonic-rust-deps module has no Arrow crates.
+default = ["local-storage"]
 benchmark = []
+local-storage = ["dep:arrow-array", "dep:arrow-buffer", "dep:arrow-ipc", "dep:arrow-schema", "dep:serde_json"]
 
 [dependencies]
 # Async runtime
@@ -67,6 +71,15 @@ reqwest-tracing = { version = "0.5", features = ["opentelemetry_0_25"] }
 
 # SONiC specific dependencies
 swss-common = { workspace = true }
+
+# Local storage needs a 64-bit target: arrow-ipc before 60 writes a 4-byte
+# compressed length prefix on 32-bit targets (armhf), and 60 needs Rust 1.88.
+[target.'cfg(target_pointer_width = "64")'.dependencies]
+arrow-array = { version = "59.3.2", optional = true }
+arrow-buffer = { version = "59.3.2", optional = true }
+arrow-ipc = { version = "59.3.2", features = ["zstd"], optional = true }
+arrow-schema = { version = "59.3.2", optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 # Test utilities
