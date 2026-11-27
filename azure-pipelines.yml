@@ -54,7 +54,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      pool: sonicso1ES-amd64
+      pool: sonicso1ES-amd64-submod
       artifact_name: sonic-swss-${{ parameters.debian_version }}
       debian_version: ${{ parameters.debian_version }}
       archive_pytests: true
@@ -66,7 +66,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      pool: sonicso1ES-amd64
+      pool: sonicso1ES-amd64-submod
       artifact_name: sonic-swss-asan-${{ parameters.debian_version }}
       debian_version: ${{ parameters.debian_version }}
       asan: true
@@ -100,7 +100,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      pool: sonicso1ES-amd64
+      pool: sonicso1ES-amd64-submod
       artifact_name: sonic-swss-trixie
       debian_version: trixie
       archive_gcov: false
