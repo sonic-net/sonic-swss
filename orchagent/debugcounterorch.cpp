@@ -6,6 +6,7 @@
 #include "drop_counter.h"
 #include <memory>
 #include "observer.h"
+#include "warm_restart.h"
 
 using std::string;
 using std::unordered_map;
@@ -765,7 +766,13 @@ std::string DebugCounterOrch::getDebugCounterType(const vector<FieldValueTuple>&
 void DebugCounterOrch::createDropCounter(const string& counter_name, const string& counter_type, const unordered_set<string>& drop_reasons)
 {
     auto counter = std::unique_ptr<DropCounter>(new DropCounter(counter_name, counter_type, drop_reasons));
-    std::string counter_stat = counter->getDebugCounterSAIStat();
+    std::string counter_stat;
+    auto counter_stat_map = (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS) ? m_counterNameToPortStatMap : m_counterNameToSwitchStatMap;
+    // syncd rejects a GET on an object created in INIT_VIEW, so on warm start reuse the stat saved before the restart.
+    if (!WarmStart::isWarmStart() || !counter_stat_map->hget("", counter_name, counter_stat))
+    {
+        counter_stat = counter->getDebugCounterSAIStat();
+    }
     debug_counters.emplace(counter_name, std::move(counter));
     installDebugFlexCounters(counter_type, counter_stat);
 
