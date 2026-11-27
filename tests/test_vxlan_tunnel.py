@@ -148,10 +148,9 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
 
     if decap_ttl_mode == "uniform":
         expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
-    elif decap_ttl_mode == "pipe":
-        expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
     else:
-        expected_sai_decap_ttl_mode = ""
+        # pipe, and the default when ttl_mode is not configured
+        expected_sai_decap_ttl_mode = "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
 
     expected_attrs = {
         'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
@@ -164,8 +163,7 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
         'SAI_TUNNEL_ATTR_ENCAP_TTL_VAL': '255'
     }
 
-    if expected_sai_decap_ttl_mode:
-        expected_attrs['SAI_TUNNEL_ATTR_DECAP_TTL_MODE'] = expected_sai_decap_ttl_mode
+    expected_attrs['SAI_TUNNEL_ATTR_DECAP_TTL_MODE'] = expected_sai_decap_ttl_mode
 
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id, expected_attrs)
 

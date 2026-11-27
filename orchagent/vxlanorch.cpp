@@ -21,6 +21,7 @@ extern "C" {
 #include "flex_counter_manager.h"
 #include "converter.h"
 #include "saihelper.h"
+#include "switchorch.h"
 
 /* Global variables */
 extern sai_object_id_t gSwitchId;
@@ -29,6 +30,7 @@ extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
+extern SwitchOrch*      gSwitchOrch;
 extern sai_object_id_t  gUnderlayIfId;
 extern FlexManagerDirectory g_FlexManagerDirectory;
 extern bool gTraditionalFlexCounter;
@@ -321,7 +323,7 @@ create_tunnel(
     sai_object_id_t underlay_rif,
     bool p2p,
     VxlanTunnelTTLMode decap_ttl_mode,
-    sai_uint8_t encap_ttl=0)
+    sai_uint8_t encap_ttl)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -416,12 +418,13 @@ create_tunnel(
         tunnel_attrs.push_back(attr);
     }
 
+    // encap_ttl 0 requests UNIFORM; the caller has checked that the SAI supports it.
+    attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
+    attr.value.s32 = encap_ttl != 0 ? SAI_TUNNEL_TTL_MODE_PIPE_MODEL : SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL;
+    tunnel_attrs.push_back(attr);
+
     if (encap_ttl != 0)
     {
-        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
-        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
-        tunnel_attrs.push_back(attr);
-
         attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
         attr.value.u8 = encap_ttl;
         tunnel_attrs.push_back(attr);
@@ -982,7 +985,27 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             SWSS_LOG_WARN("creation src = %d",src_creation_);
         }
 
-        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, decap_ttl_mode_, encap_ttl);
+        // Only VNET passes an explicit encap TTL; its decap is left as configured, the SAI default when unset.
+        const bool default_encap_ttl = encap_ttl == 0;
+        if (encap_ttl == 0 && !tunnel_orch->isEncapTtlUniformSupported())
+        {
+            encap_ttl = DEFAULT_TUNNEL_ENCAP_TTL;
+        }
+
+        // Without a configured ttl_mode, decap is PIPE so it matches the PIPE encap of other SONiC VTEPs.
+        VxlanTunnelTTLMode decap_ttl_mode = decap_ttl_mode_;
+        if (decap_ttl_mode == VxlanTunnelTTLMode::NOT_SET && default_encap_ttl)
+        {
+            decap_ttl_mode = VxlanTunnelTTLMode::PIPE;
+        }
+        else if (decap_ttl_mode == VxlanTunnelTTLMode::UNIFORM && !tunnel_orch->isDecapTtlUniformSupported())
+        {
+            SWSS_LOG_WARN("Tunnel %s: the SAI does not support uniform decap TTL mode, using pipe",
+                          tunnel_name_.c_str());
+            decap_ttl_mode = VxlanTunnelTTLMode::PIPE;
+        }
+
+        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, decap_ttl_mode, encap_ttl);
 
         if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
         {
@@ -1244,7 +1267,7 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
     {
         tunnel_orch->getTunnelNameFromDIP(dip, tunnel_name);
         auto dipaddr = IpAddress(dip);
-        dip_tunnel = (new VxlanTunnel(tunnel_name, src_ip_, dipaddr, TNL_CREATION_SRC_EVPN));
+        dip_tunnel = (new VxlanTunnel(tunnel_name, src_ip_, dipaddr, TNL_CREATION_SRC_EVPN, decap_ttl_mode_));
         tunnel_orch->addTunnel(tunnel_name,dip_tunnel);
 
         TUNNELMAP_SET_VLAN(mapper_list);
@@ -1357,6 +1380,31 @@ void VxlanTunnel::cleanupDynamicDIPTunnel(const std::string remote_vtep)
 
 //------------------- VxlanTunnelOrch Implementation --------------------------//
 
+// Whether the SAI lists UNIFORM for a tunnel TTL mode attribute; answered is false when the query fails.
+static bool queryTunnelTtlUniform(sai_attr_id_t attr_id, bool& answered)
+{
+    vector<int32_t> modes(8, 0);
+    sai_s32_list_t values;
+    values.count = static_cast<uint32_t>(modes.size());
+    values.list = modes.data();
+
+    sai_status_t status = sai_query_attribute_enum_values_capability(gSwitchId, SAI_OBJECT_TYPE_TUNNEL,
+                                                                     attr_id, &values);
+    answered = (status == SAI_STATUS_SUCCESS);
+    if (!answered)
+    {
+        return false;
+    }
+    for (uint32_t idx = 0; idx < values.count; idx++)
+    {
+        if (values.list[idx] == SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
                                  Orch2(db, tableName, request_),
                                  m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME)
@@ -1387,6 +1435,20 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
             }
         }
     }
+
+    bool answered = false;
+    m_encapTtlUniformSupported = queryTunnelTtlUniform(SAI_TUNNEL_ATTR_ENCAP_TTL_MODE, answered);
+    SWSS_LOG_NOTICE("VxLAN encap TTL mode: %s%s", m_encapTtlUniformSupported ? "uniform" : "pipe",
+                    answered ? "" : " (capability query failed)");
+    if (gSwitchOrch)
+    {
+        gSwitchOrch->set_switch_capability({FieldValueTuple(SWITCH_CAPABILITY_TABLE_VXLAN_ENCAP_TTL_UNIFORM_CAPABLE,
+                                                            m_encapTtlUniformSupported ? "true" : "false")});
+    }
+    bool decap_uniform = queryTunnelTtlUniform(SAI_TUNNEL_ATTR_DECAP_TTL_MODE, answered);
+    m_decapTtlUniformSupported = !answered || decap_uniform;
+    SWSS_LOG_NOTICE("VxLAN decap TTL mode uniform: %s%s", m_decapTtlUniformSupported ? "supported" : "not supported",
+                    answered ? "" : " (capability query failed)");
 
     FieldValueTuple fv;
     string tunnel_rate_plugin = "tunnel_rates.lua";
