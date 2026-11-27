@@ -1381,6 +1381,10 @@ namespace buffermgrdyn_test
         vector<string> keys;
         vector<string> statuses = {"up", "down"};
 
+        // zeroProfile is file-global and only populated here; do not rely on
+        // an earlier test having done it (breaks under sharding/filtering).
+        SetUpReclaimingBuffer();
+
         // Prepare information that will be read at the beginning
         InitDefaultLosslessParameter();
         InitMmuSize();
