@@ -42,7 +42,7 @@ void RemoteEniNH::resolve(EniInfo& eni)
     auto& ctx = eni.getCtx();
     auto vnet = eni.getVnet();
 
-    if (!ctx->findVnetTunnel(vnet, tunnel_name_))
+    if (!ctx->findVnetTunnel(vnet, endpoint_, tunnel_name_))
     {
         SWSS_LOG_ERROR("Couldn't find tunnel name for Vnet %s", vnet.c_str());
         setStatus(endpoint_status_t::UNRESOLVED);

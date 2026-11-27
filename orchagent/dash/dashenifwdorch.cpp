@@ -556,14 +556,23 @@ bool EniFwdCtx::findVnetVni(const string& vnet_name, uint64_t& vni)
     return false;
 }
 
-bool EniFwdCtx::findVnetTunnel(const string& vnet_name, string& tunnel) 
+bool EniFwdCtx::findVnetTunnel(const string& vnet_name, const IpAddress& endpoint, string& tunnel)
 {
-    if (vnetorch_->isVnetExists(vnet_name))
+    if (!vnetorch_->isVnetExists(vnet_name))
     {
-        tunnel = vnetorch_->getTunnelName(vnet_name);
-        return true;
+        return false;
     }
-    return false;
+
+    try
+    {
+        tunnel = vnetorch_->getTunnelNameForNextHop(vnet_name, NextHopKey(endpoint, ""));
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("%s", e.what());
+        return false;
+    }
+    return true;
 }
 
 std::map<string, Port>& EniFwdCtx::getAllPorts() 
