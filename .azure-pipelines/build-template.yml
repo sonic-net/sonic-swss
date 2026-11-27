@@ -15,6 +15,7 @@ parameters:
   type: string
   values:
   - sonicso1ES-amd64
+  - sonicso1ES-amd64-submod
   - sonicso1ES-armhf
   - sonicso1ES-arm64
   - default
