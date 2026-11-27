@@ -89,19 +89,30 @@ bool PfcWdBaseOrch::getLosslessTcsForPort(const Port& port, set<uint8_t>& lossle
 {
     SWSS_LOG_ENTER();
 
-    // Get PFC mask to identify lossless queues
+    // pfcwd_sw_enable names the queues to watch and pfc_enable the queues that honour
+    // PFC, and nothing keeps the two in step: pfc_enable can be cleared with the
+    // watchdog's list left as it was. A queue with PFC off cannot be
+    // paused, so it cannot storm; watch only the queues that are in both.
+    uint8_t pfcwdMask = 0;
     uint8_t pfcMask = 0;
-    if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
+    if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcwdMask) ||
+        !gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to get PFC masks on port %s", port.m_alias.c_str());
         return false;
     }
+    if ((pfcwdMask & ~pfcMask) != 0)
+    {
+        SWSS_LOG_INFO("Skipping PFC watchdog queues 0x%x on port %s: PFC is not enabled on them",
+                      pfcwdMask & ~pfcMask, port.m_alias.c_str());
+        pfcwdMask &= pfcMask;
+    }
 
-    // Collect lossless TCs (traffic classes with PFC enabled)
+    // Collect lossless TCs (traffic classes with PFC enabled and watched)
     losslessTc.clear();
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
-        if ((pfcMask & (1 << i)) != 0)
+        if ((pfcwdMask & (1 << i)) != 0)
         {
             losslessTc.insert(i);
         }

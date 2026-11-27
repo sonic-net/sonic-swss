@@ -1108,6 +1108,8 @@ namespace pfcwdhworch_test
             Port port;
             ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
             ASSERT_TRUE(gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, (1 << 3) | (1 << 4)));
+            // Only a queue with PFC enabled is watched, so set both masks
+            ASSERT_TRUE(gPortsOrch->setPortPfc(port.m_port_id, (1 << 3) | (1 << 4)));
 
             restoration_sai_port_api = *sai_port_api;
             restoration_old_sai_port_api = sai_port_api;
