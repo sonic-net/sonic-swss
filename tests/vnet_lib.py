@@ -529,6 +529,74 @@ def check_remove_state_db_routes(dvs, vnet, prefix):
     assert vnet + '|' + prefix not in keys
 
 
+def check_vnet_obj_in_state_db(dvs, vnet_name):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_OBJECT_TABLE")
+    status, fvs = tbl.get(vnet_name)
+    assert status, "VNET '%s' not found in VRF_OBJECT_TABLE" % vnet_name
+    fvs = dict(fvs)
+    assert fvs.get('state') == 'ok', "VNET '%s' state is not 'ok' in VRF_OBJECT_TABLE" % vnet_name
+
+
+def wait_for_vnet_obj_in_state_db(dvs, vnet_name):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_OBJECT_TABLE")
+
+    def _access_function():
+        status, fvs = tbl.get(vnet_name)
+        if not status:
+            return (False, None)
+        fvs = dict(fvs)
+        return (fvs.get('state') == 'ok', fvs)
+
+    wait_for_result(_access_function,
+                    failure_message="VNET '%s' not found in VRF_OBJECT_TABLE" % vnet_name)
+
+
+def wait_for_vnet_obj_removed_from_state_db(dvs, vnet_name):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_OBJECT_TABLE")
+
+    def _access_function():
+        keys = tbl.getKeys()
+        return (vnet_name not in keys, None)
+
+    wait_for_result(_access_function,
+                    failure_message="VNET '%s' still in VRF_OBJECT_TABLE" % vnet_name)
+
+
+def wait_for_vnet_delete_in_progress(dvs, vnet_name):
+    """
+    Wait for vrfmgrd to start tearing down a VNET delete.
+
+    vrfmgrd's VNET delete is a two-phase handshake with VNetOrch:
+      Phase 1: wait for VNetOrch's STATE_VRF_OBJECT_TABLE row to appear,
+               then delete the APP_VNET_TABLE row and vrfmgrd's own
+               STATE_VRF_TABLE (VRF_TABLE) row.
+      Phase 2: wait for VNetOrch to clear STATE_VRF_OBJECT_TABLE before
+               calling delLink() on the kernel device.
+
+    STATE_VRF_TABLE getting cleared is the observable signal that phase 1
+    completed and phase 2 has started. Use this instead of a fixed sleep so
+    the test does not pass merely because vrfmgrd had not processed the
+    delete yet.
+    """
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(state_db, "VRF_TABLE")
+
+    def _access_function():
+        keys = tbl.getKeys()
+        return (vnet_name not in keys, None)
+
+    wait_for_result(
+        _access_function,
+        failure_message=(
+            "vrfmgrd did not clear STATE_VRF_TABLE['%s']; the VNET "
+            "delete has not reached the second-phase defer yet" % vnet_name
+        ),
+    )
+
+
 def check_routes_advertisement(dvs, prefix, profile=""):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
     tbl =  swsscommon.Table(state_db, "ADVERTISE_NETWORK_TABLE")

@@ -104,7 +104,25 @@ TEST_F(VrfMgrTest, VnetNamedDefaultRetainsLinuxVrfLifecycle)
     EXPECT_EQ(fvsGetValue(values, "vni", true).get(), "5000");
 
     mockCallArgs.clear();
-    process(CFG_VNET_TABLE_NAME, "default", DEL_COMMAND, {});
+    auto consumer = dynamic_cast<Consumer *>(m_vrf_mgr->getExecutor(CFG_VNET_TABLE_NAME));
+    ASSERT_NE(consumer, nullptr);
+    consumer->addToSync(KeyOpFieldsValuesTuple{"default", DEL_COMMAND, {}});
+
+    m_vrf_mgr->doTask();
+    EXPECT_EQ(consumer->m_toSync.count("default"), 1u);
+    EXPECT_TRUE(mockCallArgs.empty());
+    EXPECT_TRUE(app_vnet.get("default", values));
+
+    Table state_vrf_object(m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+    state_vrf_object.set("default", {{"state", "ok"}});
+    m_vrf_mgr->doTask();
+    EXPECT_EQ(consumer->m_toSync.count("default"), 1u);
+    EXPECT_TRUE(mockCallArgs.empty());
+    EXPECT_FALSE(app_vnet.get("default", values));
+
+    state_vrf_object.del("default");
+    m_vrf_mgr->doTask();
+    EXPECT_TRUE(consumer->m_toSync.empty());
 
     ASSERT_EQ(mockCallArgs.size(), 1u);
     EXPECT_EQ(mockCallArgs[0], "/sbin/ip link del \"default\"");
