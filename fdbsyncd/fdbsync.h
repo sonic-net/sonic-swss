@@ -72,6 +72,8 @@ public:
 
     void dumpBridgeFdb();
 
+    void dumpL2Nhg();
+
     AppRestartAssist *getRestartAssist()
     {
         return m_AppRestartAssist;
@@ -101,7 +103,7 @@ public:
 
     void processStateMclagRemoteFdb();
 
-    void processCfgEvpnNvo();
+    bool processCfgEvpnNvo();
 
     void processStateFdbSync();
 
@@ -120,6 +122,7 @@ public:
 
 private:
     void dumpBridgeFdb(struct nl_sock *sock);
+    void dumpL2Nhg(struct nl_sock *sock);
     void trackKeptEntry(const std::string &tableName, const std::string &key,
                         const std::vector<FieldValueTuple> &fvVector);
 
