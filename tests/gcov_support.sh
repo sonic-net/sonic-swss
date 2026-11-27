@@ -166,6 +166,10 @@ gcov_set_environment()
         echo ${script_count}
         if [ ${script_count} -gt 0 ]; then
             docker exec -i ${container_id} killall5 -15
+            for _ in $(seq 1 50); do
+                docker exec -i ${container_id} pgrep '^(orchagent|.*mgrd|.+syncd|tlm_teamd|swssconfig|swssplayer|routeresync)$' >/dev/null 2>&1 || break
+                sleep 0.1
+            done
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
         fi
         gcda_count=`docker exec -i ${container_id} find / -name *.gcda | wc -l`

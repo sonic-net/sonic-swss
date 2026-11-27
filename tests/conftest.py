@@ -495,7 +495,11 @@ class DockerVirtualSwitch:
             # Generate the gcda files
             self.stop_swss()
             self.runcmd('supervisorctl stop all')
-            time.sleep(1)
+            for _ in range(50):
+                rc, _ = self.runcmd("pgrep '^(orchagent|.*mgrd|.+syncd|tlm_teamd|swssconfig|swssplayer|routeresync)$'")
+                if rc != 0:
+                    break
+                time.sleep(0.1)
 
             # Generate the converage info by lcov and copy to the host
             cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov --demangle-cpp -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info && lcov --add-tracefile /tmp/coverage.info -o /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
