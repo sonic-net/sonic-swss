@@ -374,10 +374,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     ip_to_if_map = {}
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode}
     create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
@@ -730,10 +727,7 @@ def fine_grained_ecmp_match_mode_prefix_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
            "max_next_hops": str(NUM_NHs)}
@@ -981,10 +975,7 @@ def fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     ### Create first fine grained next hop group and prefix
     fvs = {"bucket_size": str(bucket0_size), "match_mode": match_mode,
@@ -1216,10 +1207,7 @@ def fine_grained_ecmp_match_mode_prefix_even_distribution_test(dvs):
     match_mode = 'prefix-based'
 
     # Update log level so that we can analyze the log in case the test failed
-    logfvs = config_db.wait_for_entry("LOGGER", "orchagent")
-    old_log_level = logfvs.get("LOGLEVEL")
-    logfvs["LOGLEVEL"] = "INFO"
-    config_db.update_entry("LOGGER", "orchagent", logfvs)
+    config_db.update_entry("LOGGER", "orchagent", {"LOGLEVEL": "INFO"})
 
     fvs = {"bucket_size": str(bucket_size), "match_mode": match_mode,
            "max_next_hops": str(NUM_NHs)}
@@ -1370,31 +1358,31 @@ def fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs):
 
 
 class TestFineGrainedNextHopGroup(object):
-    def test_fgnhg_matchmode_route(self, dvs, testlog):
+    def test_fgnhg_matchmode_route(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode route-based
         '''
         fine_grained_ecmp_base_test(dvs, 'route-based')
 
-    def test_fgnhg_matchmode_nexthop(self, dvs, testlog):
+    def test_fgnhg_matchmode_nexthop(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode nexthop-based
         '''
         fine_grained_ecmp_base_test(dvs, 'nexthop-based')
 
-    def test_fgnhg_matchmode_prefix(self, dvs, testlog):
+    def test_fgnhg_matchmode_prefix(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode prefix-based
         '''
         fine_grained_ecmp_match_mode_prefix_test(dvs)
 
-    def test_fgnhg_matchmode_prefix_multi_route(self, dvs, testlog):
+    def test_fgnhg_matchmode_prefix_multi_route(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode prefix-based with multiple routes
         '''
         fine_grained_ecmp_match_mode_prefix_multi_route_test(dvs);
 
-    def test_fgnhg_matchmode_prefix_even_distribution(self, dvs, testlog):
+    def test_fgnhg_matchmode_prefix_even_distribution(self, dvs, testlog, restore_orchagent_logger):
         '''
         Test for match_mode prefix-based with up to 16 nexthops and even distribution
         '''
@@ -1647,6 +1635,42 @@ class TestFineGrainedNextHopGroup(object):
         count exceeds the configured bucket_size
         '''
         fine_grained_ecmp_member_count_exceeds_bucket_size_test(dvs)
+
+# DVSDatabase.restore_entry backs the restore_orchagent_logger fixture used above.
+# No daemon subscribes to this table, so writing it has no side effects.
+RESTORE_TEST_TB = "DVSLIB_RESTORE_TEST"
+RESTORE_TEST_KEY = "row"
+
+
+@pytest.fixture
+def restore_test_db(dvs):
+    db = dvs.get_config_db()
+    db.delete_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+    yield db
+    db.delete_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+
+
+class TestRestoreEntry(object):
+    def test_restore_entry_puts_row_back_exactly(self, restore_test_db):
+        db = restore_test_db
+        db.create_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, {"keep": "1", "change": "old"})
+        snapshot = db.get_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+
+        db.update_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, {"change": "new", "added": "x"})
+        db.restore_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, snapshot)
+
+        assert db.get_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY) == {"keep": "1", "change": "old"}
+
+    def test_restore_entry_empty_snapshot_deletes_row(self, restore_test_db):
+        db = restore_test_db
+        snapshot = db.get_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY)
+        assert snapshot == {}
+
+        db.create_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, {"added": "x"})
+        db.restore_entry(RESTORE_TEST_TB, RESTORE_TEST_KEY, snapshot)
+
+        assert RESTORE_TEST_KEY not in db.get_keys(RESTORE_TEST_TB)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
