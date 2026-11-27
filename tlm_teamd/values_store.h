@@ -50,6 +50,7 @@ private:
         { "setup.pid",                   ValuesStore::json_type::integer },
         { "runner.active",               ValuesStore::json_type::boolean },
         { "runner.fallback",             ValuesStore::json_type::boolean },
+        { "runner.fallback_timeout",     ValuesStore::json_type::integer },
         { "runner.fast_rate",            ValuesStore::json_type::boolean },
         { "team_device.ifinfo.dev_addr", ValuesStore::json_type::string  },
         { "team_device.ifinfo.ifindex",  ValuesStore::json_type::integer },
