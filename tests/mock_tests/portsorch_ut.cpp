@@ -640,6 +640,44 @@ namespace portsorch_test
         return SAI_STATUS_SUCCESS;
     }
 
+    sai_acl_api_t ut_sai_acl_api;
+    sai_acl_api_t *pold_sai_acl_api;
+    vector<int32_t> _captured_acl_table_group_bind_points;
+
+    sai_status_t _ut_stub_sai_create_acl_table_group(
+        _Out_ sai_object_id_t *acl_table_group_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        for (uint32_t i = 0; i < attr_count; i++)
+        {
+            if (attr_list[i].id == SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST)
+            {
+                // Consume the attribute with the int32 list type SAI defines
+                // for it, the same way a SAI implementation does
+                const sai_s32_list_t &bpoint_list = attr_list[i].value.s32list;
+                _captured_acl_table_group_bind_points.assign(bpoint_list.list, bpoint_list.list + bpoint_list.count);
+            }
+        }
+
+        return pold_sai_acl_api->create_acl_table_group(acl_table_group_id, switch_id, attr_count, attr_list);
+    }
+
+    void _hook_sai_acl_api()
+    {
+        _captured_acl_table_group_bind_points.clear();
+        ut_sai_acl_api = *sai_acl_api;
+        pold_sai_acl_api = sai_acl_api;
+        ut_sai_acl_api.create_acl_table_group = _ut_stub_sai_create_acl_table_group;
+        sai_acl_api = &ut_sai_acl_api;
+    }
+
+    void _unhook_sai_acl_api()
+    {
+        sai_acl_api = pold_sai_acl_api;
+    }
+
     void _hook_sai_queue_api()
     {
         _sai_mock_queue_attr = true;
@@ -2522,6 +2560,78 @@ namespace portsorch_test
         ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
         ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
         _unhook_sai_queue_api();
+    }
+
+    /*
+     * Test port ACL table group creation passes the bind point types with
+     * the int32 list type SAI defines for the attribute
+     */
+    TEST_F(PortsOrchTest, PortAclTableGroupBindPointTypeList)
+    {
+        // The fixture does not create CrmOrch, which is required by
+        // createBindAclTableGroup for CRM counters bookkeeping
+        ASSERT_EQ(gCrmOrch, nullptr);
+        gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        _hook_sai_acl_api();
+
+        sai_object_id_t group_oid = SAI_NULL_OBJECT_ID;
+        bool result = gPortsOrch->createBindAclTableGroup(port.m_port_id, SAI_NULL_OBJECT_ID, group_oid, ACL_STAGE_INGRESS);
+
+        _unhook_sai_acl_api();
+
+        // Release the group so tests deleting the port afterwards are not
+        // blocked by the ACL binding left on it
+        bool unbound = gPortsOrch->unbindRemoveAclTableGroup(port.m_port_id, SAI_NULL_OBJECT_ID, ACL_STAGE_INGRESS);
+
+        // Remove the port: SAI objects outlive the fixture (the switch is
+        // shared by all cases), so a port left behind breaks later cases
+        // that re-create it (e.g. PortDeleteQueueCountersCleanup)
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "DEL", { { } }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        delete gCrmOrch;
+        gCrmOrch = nullptr;
+
+        // A physical port is bound with the PORT bind point type and the
+        // list must be consumable as an int32 list per SAI definition
+        // The value readout is identical on little-endian with the former
+        // objlist population (same union offsets, single element), so this
+        // pins the s32list contract rather than reproducing the corruption,
+        // which only shows up on big-endian or with multiple elements
+        ASSERT_TRUE(result);
+        ASSERT_NE(group_oid, SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(unbound);
+        ASSERT_EQ(_captured_acl_table_group_bind_points.size(), 1u);
+        ASSERT_EQ(_captured_acl_table_group_bind_points.front(), SAI_ACL_BIND_POINT_TYPE_PORT);
     }
 
     TEST_F(PortsOrchTest, PortDeleteQueueCountersCleanup)
