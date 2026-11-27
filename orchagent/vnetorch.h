@@ -95,9 +95,11 @@ public:
 
 struct NextHopGroupInfo
 {
-    sai_object_id_t                         next_hop_group_id;      // next hop group id (null for single nexthop)
-    int                                     ref_count;              // reference count
+    sai_object_id_t                         next_hop_group_id = SAI_NULL_OBJECT_ID; // NHG or direct-NH OID; null while deferred.
+    int                                     ref_count = 0;          // reference count
     std::map<NextHopKey, sai_object_id_t>   active_members;         // active nexthops and nexthop group member id (null for single nexthop)
+    std::map<NextHopKey, uint32_t>          pending_members;        // Local NHs awaiting resolution or route activation.
+    std::set<NextHopKey>                    local_members;          // Configured local NHs.
     std::set<IpPrefix>                      tunnel_routes;
 };
 
@@ -527,10 +529,24 @@ public:
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
     void updateCustomBfdState(const IpAddress& monitoring_ip, const string& state);
     void updateAllMonitoringSession(const string& vnet);
+    bool validNextHopInNextHopGroup(const NextHopKey& nexthop);
 
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+
+    bool matchesPendingNextHop(const string& vnet,
+                               const NextHopGroupInfo& nhg_info,
+                               const NextHopKey& pending,
+                               const NextHopKey& resolved) const;
+    bool holdsSingleNeighNextHopRef(const NextHopGroupKey& nhg,
+                                    const NextHopGroupInfo& nhg_info,
+                                    const NextHopKey& member_key) const;
+    void decreaseSingleNeighNextHopRef(const NextHopKey& member_key);
+    bool activateVnetTunnelRoutes(const string& vnet, NextHopGroupKey& nexthops);
+    bool addResolvedMemberToNextHopGroup(const string& vnet, NextHopGroupKey& nhg,
+                                         NextHopGroupInfo& nhg_info, const NextHopKey& nexthop,
+                                         VNetVrfObject* vrf_obj);
 
     void addRoute(const std::string & vnet, const IpPrefix & ipPrefix, const nextHop& nh);
     void delRoute(const IpPrefix& ipPrefix);
@@ -542,9 +558,9 @@ private:
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool hasFgNextHopGroup(const string&, const IpPrefix&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
-                            const string& monitoring, const bool isLocalEp=false);
+                            const string& monitoring);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
-    void releaseTunnelNextHops(VNetVrfObject *vrf_obj, const std::map<sai_object_id_t, NextHopKey>& nexthops, const bool isLocalEp);
+    void releaseTunnelNextHops(const string& vnet, VNetVrfObject *vrf_obj, const std::map<sai_object_id_t, NextHopKey>& nexthops);
     bool removeNextHopGroupDirectly(const string&, NextHopGroupInfo&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool removeFgNextHopGroup(const string&, const NextHopGroupKey&, const IpPrefix&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
@@ -624,8 +640,15 @@ private:
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
 
-    bool isLocalEndpoint(const string&vnet, const IpAddress &ipAddr);
+    bool isLocalEndpoint(const string&vnet, const IpAddress &ipAddr) const;
+    bool isDirectlyConnectedVnet(const string& vnet) const;
+    bool isDirectlyConnectedClassifiedLocal(const string& vnet, const IpAddress& ip,
+                                            uint32_t vni, const MacAddress& mac) const;
     bool isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list);
+    bool isConfiguredLocalNextHop(const string& vnet, const NextHopKey& nh) const;
+    bool isLocalNextHopGroupMember(const string& vnet,
+                                   const NextHopGroupInfo& nhg_info,
+                                   const NextHopKey& nh) const;
 
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;

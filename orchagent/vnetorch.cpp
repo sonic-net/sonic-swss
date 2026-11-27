@@ -848,6 +848,445 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     gBfdOrch->attach(this);
 }
 
+static bool hasOverlayEncap(const NextHopKey& nh)
+{
+    return nh.vni != 0 || nh.mac_address != MacAddress() || !nh.tunnel_name.empty();
+}
+
+static bool isNonPlainNextHop(const NextHopKey& nh)
+{
+    return hasOverlayEncap(nh) || nh.isMplsNextHop() || nh.isSrv6NextHop();
+}
+
+static bool isRecordedLocalMember(const NextHopGroupInfo& nhg_info, const NextHopKey& nh)
+{
+    if (isNonPlainNextHop(nh))
+    {
+        return false;
+    }
+
+    for (const auto& local : nhg_info.local_members)
+    {
+        if (!isNonPlainNextHop(local) && local.ip_address == nh.ip_address &&
+            (local.alias.empty() || nh.alias.empty() || local.alias == nh.alias))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool VNetRouteOrch::matchesPendingNextHop(const string& /*vnet*/,
+                                          const NextHopGroupInfo& nhg_info,
+                                          const NextHopKey& pending,
+                                          const NextHopKey& resolved) const
+{
+    if (pending == resolved)
+    {
+        return true;
+    }
+
+    // Relax alias matching only for recorded local members; neighbor presence can change.
+    if (!isRecordedLocalMember(nhg_info, pending))
+    {
+        return false;
+    }
+
+    if (pending.ip_address != resolved.ip_address)
+    {
+        return false;
+    }
+
+    if (isNonPlainNextHop(pending) || isNonPlainNextHop(resolved))
+    {
+        return false;
+    }
+
+    if (!pending.alias.empty() && !resolved.alias.empty() && pending.alias != resolved.alias)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool VNetRouteOrch::isDirectlyConnectedVnet(const string& vnet) const
+{
+    auto it = vnet_tunnel_route_check_directly_connected.find(vnet);
+    return it != vnet_tunnel_route_check_directly_connected.end() && it->second;
+}
+
+bool VNetRouteOrch::isConfiguredLocalNextHop(const string& vnet, const NextHopKey& nh) const
+{
+    if (!isDirectlyConnectedVnet(vnet))
+    {
+        return false;
+    }
+
+    // Explicit overlay encapsulation takes precedence over local-neighbor lookup.
+    if (hasOverlayEncap(nh))
+    {
+        return false;
+    }
+
+    if (isLocalEndpoint(vnet, nh.ip_address))
+    {
+        return true;
+    }
+
+    // handleTunnel() stamps local, unresolved endpoints with their interface alias.
+    if (!nh.alias.empty() && nh.vni == 0 && nh.mac_address == MacAddress())
+    {
+        return true;
+    }
+
+    return false;
+}
+
+bool VNetRouteOrch::isLocalNextHopGroupMember(const string& vnet,
+                                               const NextHopGroupInfo& nhg_info,
+                                               const NextHopKey& nh) const
+{
+    if (isRecordedLocalMember(nhg_info, nh))
+    {
+        return true;
+    }
+
+    return isConfiguredLocalNextHop(vnet, nh);
+}
+
+bool VNetRouteOrch::holdsSingleNeighNextHopRef(const NextHopGroupKey& nhg,
+                                               const NextHopGroupInfo& nhg_info,
+                                               const NextHopKey& member_key) const
+{
+    if (nhg.getSize() != 1 || nhg_info.next_hop_group_id == SAI_NULL_OBJECT_ID)
+    {
+        return false;
+    }
+
+    NextHopKey ref_key = member_key;
+    NextHopKey resolved = ref_key;
+    if (gNeighOrch->resolveNextHopKey(ref_key, resolved))
+    {
+        ref_key = resolved;
+    }
+
+    if (!gNeighOrch->hasNextHop(ref_key))
+    {
+        return false;
+    }
+
+    return nhg_info.next_hop_group_id == gNeighOrch->getNextHopId(ref_key);
+}
+
+void VNetRouteOrch::decreaseSingleNeighNextHopRef(const NextHopKey& member_key)
+{
+    NextHopKey ref_key = member_key;
+    NextHopKey resolved = ref_key;
+    if (gNeighOrch->resolveNextHopKey(ref_key, resolved))
+    {
+        ref_key = resolved;
+    }
+
+    if (gNeighOrch->hasNextHop(ref_key))
+    {
+        gNeighOrch->decreaseNextHopRefCount(ref_key);
+    }
+}
+
+bool VNetRouteOrch::activateVnetTunnelRoutes(const string& vnet, NextHopGroupKey& nexthops)
+{
+    if (!vnet_orch_->isVnetExecVrf())
+    {
+        return true;
+    }
+
+    vector<IpPrefix> activated_prefixes;
+    auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+
+    for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+    {
+        auto ipPrefixsubnet = ip_pfx.getSubnet();
+        auto prefixStr = ip_pfx.to_string();
+        if (prefix_to_adv_prefix_.find(ip_pfx) != prefix_to_adv_prefix_.end())
+        {
+            auto adv_prefix = prefix_to_adv_prefix_[ip_pfx];
+            if (adv_prefix.to_string() != prefixStr)
+            {
+                ipPrefixsubnet = adv_prefix.getSubnet();
+            }
+        }
+        if (gRouteOrch && vrf_obj &&
+            gRouteOrch->isRouteExists(vrf_obj->getVRidIngress(), ipPrefixsubnet))
+        {
+            if (!gRouteOrch->removeRoutePrefix(ipPrefixsubnet))
+            {
+                SWSS_LOG_ERROR("Could not remove existing bgp route for prefix: %s", prefixStr.c_str());
+                for (IpPrefix activated : activated_prefixes)
+                {
+                    string op = DEL_COMMAND;
+                    if (!updateTunnelRoute(vnet, activated, nexthops, op))
+                    {
+                        SWSS_LOG_ERROR("Failed to rollback tunnel route for prefix: %s",
+                                       activated.to_string().c_str());
+                    }
+                }
+                return false;
+            }
+        }
+
+        // Deferred routes lack an SAI entry; use add_route() instead of doRouteTask()'s update path.
+        string op = SET_COMMAND;
+        IpPrefix ipPrefix = ip_pfx;
+        if (!updateTunnelRoute(vnet, ipPrefix, nexthops, op))
+        {
+            SWSS_LOG_NOTICE("Failed to create tunnel route in hardware for prefix: %s", prefixStr.c_str());
+            for (IpPrefix activated : activated_prefixes)
+            {
+                string del_op = DEL_COMMAND;
+                if (!updateTunnelRoute(vnet, activated, nexthops, del_op))
+                {
+                    SWSS_LOG_ERROR("Failed to rollback tunnel route for prefix: %s",
+                                   activated.to_string().c_str());
+                }
+            }
+            return false;
+        }
+
+        activated_prefixes.push_back(ipPrefix);
+    }
+
+    return true;
+}
+
+bool VNetRouteOrch::addResolvedMemberToNextHopGroup(const string& vnet, NextHopGroupKey& nhg,
+                                                    NextHopGroupInfo& nhg_info, const NextHopKey& nexthop,
+                                                    VNetVrfObject* vrf_obj)
+{
+    (void)vrf_obj;
+
+    auto pending_it = nhg_info.pending_members.end();
+    for (auto it = nhg_info.pending_members.begin(); it != nhg_info.pending_members.end(); ++it)
+    {
+        if (matchesPendingNextHop(vnet, nhg_info, it->first, nexthop))
+        {
+            pending_it = it;
+            break;
+        }
+    }
+
+    if (pending_it == nhg_info.pending_members.end())
+    {
+        return false;
+    }
+
+    NextHopKey member_key = pending_it->first;
+    uint32_t seq_id = pending_it->second;
+
+    if (nhg_info.next_hop_group_id == SAI_NULL_OBJECT_ID)
+    {
+        if (nhg.getSize() == 1)
+        {
+            gNeighOrch->increaseNextHopRefCount(nexthop);
+            nhg_info.next_hop_group_id = gNeighOrch->getNextHopId(nexthop);
+            nhg_info.active_members[member_key] = SAI_NULL_OBJECT_ID;
+        }
+        else
+        {
+            if (!gRouteOrch->checkNextHopGroupCount())
+            {
+                SWSS_LOG_ERROR("Reached maximum number of next hop groups. Failed to create deferred NHG.");
+                return false;
+            }
+
+            sai_attribute_t nhg_attr;
+            vector<sai_attribute_t> nhg_attrs;
+            nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+            nhg_attr.value.s32 = gSwitchOrch->checkOrderedEcmpEnable() ?
+                SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+            nhg_attrs.push_back(nhg_attr);
+
+            sai_object_id_t next_hop_group_id;
+            sai_status_t status = sai_next_hop_group_api->create_next_hop_group(
+                &next_hop_group_id, gSwitchId, static_cast<uint32_t>(nhg_attrs.size()), nhg_attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to create deferred next hop group %s, rv:%d",
+                               nhg.to_string().c_str(), status);
+                return false;
+            }
+
+            gRouteOrch->increaseNextHopGroupCount();
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+            nhg_info.next_hop_group_id = next_hop_group_id;
+
+            vector<sai_attribute_t> nhgm_attrs;
+            sai_attribute_t nhgm_attr;
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+            nhgm_attr.value.oid = next_hop_group_id;
+            nhgm_attrs.push_back(nhgm_attr);
+
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+            nhgm_attr.value.oid = gNeighOrch->getNextHopId(nexthop);
+            nhgm_attrs.push_back(nhgm_attr);
+
+            if (gSwitchOrch->checkOrderedEcmpEnable())
+            {
+                nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+                nhgm_attr.value.u32 = seq_id;
+                nhgm_attrs.push_back(nhgm_attr);
+            }
+
+            sai_object_id_t member_id;
+            status = sai_next_hop_group_api->create_next_hop_group_member(
+                &member_id, gSwitchId, static_cast<uint32_t>(nhgm_attrs.size()), nhgm_attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to add first member to deferred NHG %s, rv:%d",
+                               nhg.to_string().c_str(), status);
+                status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+                if (status == SAI_STATUS_SUCCESS)
+                {
+                    gRouteOrch->decreaseNextHopGroupCount();
+                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+                    nhg_info.next_hop_group_id = SAI_NULL_OBJECT_ID;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to remove empty deferred NHG %" PRIx64 ", rv:%d",
+                                   next_hop_group_id, status);
+                }
+                return false;
+            }
+
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+            nhg_info.active_members[member_key] = member_id;
+        }
+    }
+    else if (nhg.getSize() > 1)
+    {
+        vector<sai_attribute_t> nhgm_attrs;
+        sai_attribute_t nhgm_attr;
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = nhg_info.next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = gNeighOrch->getNextHopId(nexthop);
+        nhgm_attrs.push_back(nhgm_attr);
+
+        if (gSwitchOrch->checkOrderedEcmpEnable())
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+            nhgm_attr.value.u32 = seq_id;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
+
+        sai_object_id_t member_id;
+        sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(
+            &member_id, gSwitchId, static_cast<uint32_t>(nhgm_attrs.size()), nhgm_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to add pending VNET NH %s to group %" PRIx64 ", rv:%d",
+                           nexthop.to_string().c_str(), nhg_info.next_hop_group_id, status);
+            return false;
+        }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        nhg_info.active_members[member_key] = member_id;
+    }
+    else
+    {
+        gNeighOrch->increaseNextHopRefCount(nexthop);
+        nhg_info.next_hop_group_id = gNeighOrch->getNextHopId(nexthop);
+        nhg_info.active_members[member_key] = SAI_NULL_OBJECT_ID;
+    }
+
+    SWSS_LOG_NOTICE("Added resolved VNET NH %s to group %" PRIx64,
+                    nexthop.to_string().c_str(), nhg_info.next_hop_group_id);
+    return true;
+}
+
+bool VNetRouteOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
+{
+    SWSS_LOG_ENTER();
+
+    bool success = true;
+    for (auto& vnet_groups : syncd_nexthop_groups_)
+    {
+        const string& vnet = vnet_groups.first;
+        auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+        if (!vrf_obj)
+        {
+            continue;
+        }
+
+        for (auto& group : vnet_groups.second)
+        {
+            NextHopGroupKey nhg = group.first;
+            NextHopGroupInfo& nhg_info = group.second;
+            auto pending_it = nhg_info.pending_members.begin();
+            for (; pending_it != nhg_info.pending_members.end(); ++pending_it)
+            {
+                if (matchesPendingNextHop(vnet, nhg_info, pending_it->first, nexthop))
+                {
+                    break;
+                }
+            }
+
+            if (pending_it == nhg_info.pending_members.end())
+            {
+                continue;
+            }
+
+            // An active member kept pending marks unfinished route activation.
+            const bool needs_activation = nhg_info.active_members.empty() ||
+                std::any_of(nhg_info.pending_members.begin(), nhg_info.pending_members.end(),
+                    [&nhg_info](const std::pair<const NextHopKey, uint32_t>& pending) {
+                        return nhg_info.active_members.count(pending.first) != 0;
+                    });
+            if (nhg_info.active_members.count(pending_it->first) == 0 &&
+                !addResolvedMemberToNextHopGroup(vnet, nhg, nhg_info, nexthop, vrf_obj))
+            {
+                SWSS_LOG_ERROR("Failed to add VNET %s member %s to group %s",
+                               vnet.c_str(), nexthop.to_string().c_str(), nhg.to_string().c_str());
+                success = false;
+                continue;
+            }
+
+            if (needs_activation && !activateVnetTunnelRoutes(vnet, nhg))
+            {
+                SWSS_LOG_ERROR("Failed to activate VNET %s routes for group %s; retaining pending members",
+                               vnet.c_str(), nhg.to_string().c_str());
+                success = false;
+                continue;
+            }
+
+            for (auto pending = nhg_info.pending_members.begin(); pending != nhg_info.pending_members.end();)
+            {
+                if (nhg_info.active_members.count(pending->first) != 0)
+                {
+                    pending = nhg_info.pending_members.erase(pending);
+                }
+                else
+                {
+                    ++pending;
+                }
+            }
+
+            for (auto ip_pfx : nhg_info.tunnel_routes)
+            {
+                string profile = vrf_obj->getProfile(ip_pfx);
+                postRouteState(vnet, ip_pfx, nhg, profile);
+            }
+        }
+    }
+
+    return success;
+}
+
 bool VNetRouteOrch::hasNextHopGroup(const string& vnet, const NextHopGroupKey& nexthops)
 {
     return syncd_nexthop_groups_[vnet].find(nexthops) != syncd_nexthop_groups_[vnet].end();
@@ -864,36 +1303,25 @@ bool VNetRouteOrch::hasFgNextHopGroup(const string& vnet, const IpPrefix& ipPref
     return syncd_fg_nexthop_groups_[vnet].find(ipPrefix) != syncd_fg_nexthop_groups_[vnet].end();
 }
 
-bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring,  const bool isLocalEp)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj, const string& monitoring)
 {
     SWSS_LOG_ENTER();
 
     assert(!hasNextHopGroup(vnet, nexthops));
 
-    if (!gRouteOrch->checkNextHopGroupCount())
-    {
-        SWSS_LOG_ERROR("Reached maximum number of next hop groups. Failed to create new next hop group.");
-        return false;
-    }
-
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
     std::map<sai_object_id_t, uint32_t> nh_seq_id_in_nhgrp;
+    NextHopGroupInfo next_hop_group_entry;
     uint32_t seq_id = 0;
+    bool has_bfd_inactive_members = false;
 
     for (auto it : next_hop_set)
     {
         uint32_t nh_seq_id = ++seq_id;
-        if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
-        {
-            continue;
-        }
-        // VNET_ROUTE_TUNNEL_TABLE endpoints can be processed before the neighbor
-        // is resolved. In that ordering, the cached NextHopKey is created with
-        // only IP and an empty alias. For directly-connected local endpoints,
-        // resolve the current RIF alias from NeighOrch before has/getNextHop().
-        if (isLocalEp && it.alias.empty())
+        // Resolve aliasless local keys before caching them in the NHG.
+        if (isConfiguredLocalNextHop(vnet, it) && it.alias.empty())
         {
             NeighborEntry neigh_entry;
             MacAddress mac;
@@ -902,22 +1330,59 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
                 it = NextHopKey(it.ip_address, neigh_entry.alias);
             }
         }
-        if (isLocalEp && !gNeighOrch->hasNextHop(it))
+        const bool isLocalMember = isConfiguredLocalNextHop(vnet, it);
+        if (isLocalMember)
         {
-            SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", it.to_string().c_str());
+            next_hop_group_entry.local_members.insert(it);
+        }
+        if (isLocalMember && !gNeighOrch->hasNextHop(it))
+        {
+            SWSS_LOG_NOTICE("Local next hop %s is unresolved, deferring.",
+                            it.to_string().c_str());
+            next_hop_group_entry.pending_members[it] = nh_seq_id;
             continue;
         }
-        sai_object_id_t next_hop_id = isLocalEp? gNeighOrch->getNextHopId(it):vrf_obj->getTunnelNextHop(it);
+        if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD && nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
+        {
+            has_bfd_inactive_members = true;
+            continue;
+        }
+        // Check before acquiring any tunnel next-hop references.
+        if (next_hop_ids.empty() && !gRouteOrch->checkNextHopGroupCount())
+        {
+            SWSS_LOG_ERROR("Reached maximum number of next hop groups. Failed to create new next hop group.");
+            return false;
+        }
+        sai_object_id_t next_hop_id = isLocalMember ? gNeighOrch->getNextHopId(it) : vrf_obj->getTunnelNextHop(it);
         if (next_hop_id == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("VNET %s: no next hop for endpoint %s, next hop group %s not created",
                            vnet.c_str(), it.to_string().c_str(), nexthops.to_string().c_str());
-            releaseTunnelNextHops(vrf_obj, nhopgroup_members_set, isLocalEp);
+            releaseTunnelNextHops(vnet, vrf_obj, nhopgroup_members_set);
             return false;
         }
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
         nh_seq_id_in_nhgrp[next_hop_id] = nh_seq_id;
+    }
+
+    // Keep unresolved local members pending; BFD-down members still need an
+    // SAI NHG that updateVnetTunnel() can add them to.
+    if (next_hop_ids.empty() && !has_bfd_inactive_members &&
+        !next_hop_group_entry.pending_members.empty())
+    {
+        SWSS_LOG_NOTICE("No resolved next hops in group %s, deferring NHG creation.", nexthops.to_string().c_str());
+        next_hop_group_entry.next_hop_group_id = SAI_NULL_OBJECT_ID;
+        next_hop_group_entry.ref_count = 0;
+        syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+        return true;
+    }
+
+    // All-BFD-down groups still allocate an empty SAI NHG.
+    if (next_hop_ids.empty() && !gRouteOrch->checkNextHopGroupCount())
+    {
+        SWSS_LOG_ERROR("Reached maximum number of next hop groups. Failed to create new next hop group.");
+        return false;
     }
 
     sai_attribute_t nhg_attr;
@@ -937,7 +1402,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     {
         SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
                        nexthops.to_string().c_str(), status);
-        releaseTunnelNextHops(vrf_obj, nhopgroup_members_set, isLocalEp);
+        releaseTunnelNextHops(vnet, vrf_obj, nhopgroup_members_set);
         return false;
     }
 
@@ -945,7 +1410,6 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
     SWSS_LOG_NOTICE("Create next hop group %s", nexthops.to_string().c_str());
 
-    NextHopGroupInfo next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = next_hop_group_id;
 
     for (auto nhid: next_hop_ids)
@@ -999,19 +1463,15 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     return true;
 }
 
-void VNetRouteOrch::releaseTunnelNextHops(VNetVrfObject *vrf_obj,
-                                          const std::map<sai_object_id_t, NextHopKey>& nexthops,
-                                          const bool isLocalEp)
+void VNetRouteOrch::releaseTunnelNextHops(const string& vnet, VNetVrfObject *vrf_obj,
+                                          const std::map<sai_object_id_t, NextHopKey>& nexthops)
 {
-    // Local endpoints are owned by NeighOrch; only tunnel next hops were referenced here.
-    if (isLocalEp)
-    {
-        return;
-    }
-
     for (auto nh : nexthops)
     {
-        vrf_obj->removeTunnelNextHop(nh.second);
+        if (!isConfiguredLocalNextHop(vnet, nh.second))
+        {
+            vrf_obj->removeTunnelNextHop(nh.second);
+        }
     }
 }
 
@@ -1033,6 +1493,36 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
     next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
     SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
 
+    if (next_hop_group_id == SAI_NULL_OBJECT_ID)
+    {
+        syncd_nexthop_groups_[vnet].erase(nexthops);
+        return true;
+    }
+
+    if (nexthops.getSize() == 1)
+    {
+        NextHopKey member_key = *nexthops.getNextHops().begin();
+        if (!next_hop_group_entry->second.active_members.empty())
+        {
+            member_key = next_hop_group_entry->second.active_members.begin()->first;
+        }
+
+        if (holdsSingleNeighNextHopRef(nexthops, next_hop_group_entry->second, member_key))
+        {
+            decreaseSingleNeighNextHopRef(member_key);
+        }
+        else if (!isLocalNextHopGroupMember(vnet, next_hop_group_entry->second, member_key))
+        {
+            if (!vrf_obj->removeTunnelNextHop(member_key))
+            {
+                return false;
+            }
+        }
+
+        syncd_nexthop_groups_[vnet].erase(nexthops);
+        return true;
+    }
+
     for (auto nhop = next_hop_group_entry->second.active_members.begin();
          nhop != next_hop_group_entry->second.active_members.end();)
     {
@@ -1049,7 +1539,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
         /* For local endpoint, we don't remove the next hop from NeighOrch,
          * as it is not created by VNetRouteOrch.
         */
-        if (!isLocalEndpoint(vnet, nexthop.ip_address))
+        if (!isLocalNextHopGroupMember(vnet, next_hop_group_entry->second, nexthop))
         {
             vrf_obj->removeTunnelNextHop(nexthop);
         }
@@ -1169,34 +1659,33 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     else if (nexthops.getSize() == 1)
     {
         NextHopKey nexthop = *nexthops.getNextHops().begin();
-        bool isLocalEp = isLocalEndpoint(vnet, nexthop.ip_address);
-        // VNET_ROUTE_TUNNEL_TABLE endpoints can be seen before neighbor
-        // resolution. In that case, the stored NextHopKey may still carry an
-        // empty alias. For local endpoints, refresh alias from NeighOrch so the
-        // key matches the resolved IP@ifname form used by NeighOrch caches.
-        if (isLocalEp && nexthop.alias.empty())
+        if (isConfiguredLocalNextHop(vnet, nexthop) && nexthop.alias.empty())
         {
             NeighborEntry neigh_entry;
             MacAddress mac;
             if (gNeighOrch->getNeighborEntry(nexthop.ip_address, neigh_entry, mac))
             {
                 nexthop = NextHopKey(nexthop.ip_address, neigh_entry.alias);
-                SWSS_LOG_INFO("Resolved local endpoint %s to interface %s",
-                              nexthop.ip_address.to_string().c_str(),
-                              neigh_entry.alias.c_str());
             }
         }
+        const bool isLocalEp = isConfiguredLocalNextHop(vnet, nexthop);
         if (isLocalEp && !gNeighOrch->hasNextHop(nexthop))
         {
-            SWSS_LOG_NOTICE("Next hop %s not found in neighorch, skipping.", nexthop.to_string().c_str());
-            return false;
+            SWSS_LOG_NOTICE("Local next hop %s is not usable, deferring.", nexthop.to_string().c_str());
+            NextHopGroupInfo next_hop_group_entry;
+            next_hop_group_entry.local_members.insert(nexthop);
+            next_hop_group_entry.pending_members[nexthop] = 1;
+            syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+            return true;
         }
         NextHopGroupInfo next_hop_group_entry;
         if (isLocalEp)
         {
+            next_hop_group_entry.local_members.insert(nexthop);
             gNeighOrch->increaseNextHopRefCount(nexthop);
             next_hop_group_entry.next_hop_group_id = gNeighOrch->getNextHopId(nexthop);
-            next_hop_group_entry.ref_count = gNeighOrch->getNextHopRefCount(nexthop);
+            // Route and neighbor references are tracked separately.
+            next_hop_group_entry.ref_count = 0;
         }
         else
         {
@@ -1219,8 +1708,7 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     }
     else
     {
-        const bool isLocalEp = isLocalEndpoint(vnet, nexthops.getNextHops().begin()->ip_address);
-        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring, isLocalEp))
+        if (!addNextHopGroup(vnet, nexthops, vrf_obj, monitoring))
         {
             SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
             return false;
@@ -1540,22 +2028,7 @@ void VNetRouteOrch::cleanupOldRouteNhg(
         {
             if (--syncd_nexthop_groups_[vnet][transition_info.old_nhg_key].ref_count == 0)
             {
-                if (transition_info.old_nhg_key.getSize() > 1)
-                {
-                    removeNextHopGroup(vnet, transition_info.old_nhg_key, vrf_obj);
-                }
-                else
-                {
-                    syncd_nexthop_groups_[vnet].erase(transition_info.old_nhg_key);
-                    if (transition_info.old_nhg_key.getSize() == 1)
-                    {
-                        NextHopKey nexthop = *transition_info.old_nhg_key.getNextHops().begin();
-                        if (!isLocalEndpoint(vnet, nexthop.ip_address))
-                        {
-                            vrf_obj->removeTunnelNextHop(nexthop);
-                        }
-                    }
-                }
+                removeNextHopGroup(vnet, transition_info.old_nhg_key, vrf_obj);
                 delEndpointMonitor(vnet, transition_info.old_nhg_key, ipPrefix);
             }
             else
@@ -1616,22 +2089,7 @@ void VNetRouteOrch::cleanupOldRouteNhg(
             {
                 if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
                 {
-                    if (nhg.getSize() > 1)
-                    {
-                        removeNextHopGroup(vnet, nhg, vrf_obj);
-                    }
-                    else
-                    {
-                        syncd_nexthop_groups_[vnet].erase(nhg);
-                        if (nhg.getSize() == 1)
-                        {
-                            NextHopKey nexthop = *nhg.getNextHops().begin();
-                            if (!isLocalEndpoint(vnet, nexthop.ip_address))
-                            {
-                                vrf_obj->removeTunnelNextHop(nexthop);
-                            }
-                        }
-                    }
+                    removeNextHopGroup(vnet, nhg, vrf_obj);
                     if (monitoring != VNET_MONITORING_TYPE_CUSTOM && monitoring != VNET_MONITORING_TYPE_CUSTOM_BFD)
                     {
                         delEndpointMonitor(vnet, nhg, ipPrefix);
@@ -1667,22 +2125,7 @@ void VNetRouteOrch::cleanupDeletedRouteNhg(
 
     if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
     {
-        if (nhg.getSize() > 1)
-        {
-            removeNextHopGroup(vnet, nhg, vrf_obj);
-        }
-        else
-        {
-            syncd_nexthop_groups_[vnet].erase(nhg);
-            if (nhg.getSize() == 1)
-            {
-                NextHopKey nexthop = *nhg.getNextHops().begin();
-                if (!isLocalEndpoint(vnet, nexthop.ip_address))
-                {
-                    vrf_obj->removeTunnelNextHop(nexthop);
-                }
-            }
-        }
+        removeNextHopGroup(vnet, nhg, vrf_obj);
         if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
         {
             delEndpointMonitor(vnet, nhg, ipPrefix);
@@ -3696,22 +4139,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
 
         if(--syncd_nexthop_groups_[vnet][active_nhg].ref_count == 0)
         {
-            if (active_nhg_size > 1)
-            {
-                removeNextHopGroup(vnet, active_nhg, vrf_obj);
-            }
-            else
-            {
-                syncd_nexthop_groups_[vnet].erase(active_nhg);
-                if(active_nhg_size == 1)
-                {
-                    NextHopKey nexthop(active_nhg.to_string(), true);
-                    if (!isLocalEndpoint(vnet, nexthop.ip_address))
-                    {
-                        vrf_obj->removeTunnelNextHop(nexthop);
-                    }
-                }
-            }
+            removeNextHopGroup(vnet, active_nhg, vrf_obj);
         }
         else
         {
@@ -3878,7 +4306,11 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
 
-    vnet_tunnel_route_check_directly_connected[vnet_name] = check_directly_connected;
+    // DEL requests omit attributes; preserve the VNET's directly-connected mode.
+    if (op != DEL_COMMAND)
+    {
+        vnet_tunnel_route_check_directly_connected[vnet_name] = check_directly_connected;
+    }
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
@@ -3900,13 +4332,9 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
     }
 
-    /*
-    * A local endpoint is an endpoint that is directly connected, i.e., present in the neighbor table.
-    * This check ensures that for primary/backup endpoint groups, all endpoints must be either local or all remote.
-    * Partially local means that some endpoints are local and some are not. Mixing local and remote endpoints in a
-    * single group is not supported.
-    */
-    if (check_directly_connected &&  (isPartiallyLocal(primary_list) || isPartiallyLocal(secondary_list) ))
+    // Mixed local/remote primary-backup groups are unsupported.
+    if (check_directly_connected &&
+        (isPartiallyLocal(primary_list) || isPartiallyLocal(secondary_list)))
     {
         SWSS_LOG_ERROR("Endpoints in Primary/backup should either all be local endpoints or no local endpoint at all.");
         return false;
@@ -3930,9 +4358,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
     {
         IpAddress ip = ip_list[idx_ip];
-        bool is_local = isLocalEndpoint(vnet_name, ip);
-        bool is_overlay = !is_local;
-        string alias = is_local ? gIntfsOrch->getRouterIntfsAlias(ip) : "";
         MacAddress mac;
         uint32_t vni = 0;
         if (vni_list.size() == 1 && vni_list[0] != "")
@@ -3949,6 +4374,22 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             mac = MacAddress(mac_list[idx_ip]);
         }
 
+        bool is_local = false;
+        string alias;
+        if (check_directly_connected)
+        {
+            is_local = isDirectlyConnectedClassifiedLocal(vnet_name, ip, vni, mac);
+            if (is_local)
+            {
+                alias = gIntfsOrch->getRouterIntfsAlias(ip);
+            }
+        }
+        else
+        {
+            is_local = isLocalEndpoint(vnet_name, ip);
+            alias = is_local ? gIntfsOrch->getRouterIntfsAlias(ip) : "";
+        }
+        bool is_overlay = !is_local;
         if (is_local)
         {
             SWSS_LOG_INFO("Attempting to add TUNNEL TERM ACL for local endpoint %s", ip.to_string().c_str());
@@ -3983,7 +4424,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         {
             if (std::find(primary_list.begin(), primary_list.end(), ip) != primary_list.end())
             {
-                // only add the primary endpoint ips.
                 nhg_primary.add(nh);
             }
             else
@@ -3993,6 +4433,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
         nhg.add(nh);
     }
+
     if (!has_adv_pfx)
     {
         adv_prefix = ip_pfx;
@@ -4057,7 +4498,7 @@ bool VNetRouteOrch::delOperation(const Request& request)
     return true;
 }
 
-bool VNetRouteOrch::isLocalEndpoint(const string&vnet, const IpAddress &ipAddr)
+bool VNetRouteOrch::isLocalEndpoint(const string&vnet, const IpAddress &ipAddr) const
 {
     auto it = vnet_tunnel_route_check_directly_connected.find(vnet);
     if (it == vnet_tunnel_route_check_directly_connected.end() || !it->second)
@@ -4068,6 +4509,30 @@ bool VNetRouteOrch::isLocalEndpoint(const string&vnet, const IpAddress &ipAddr)
     NeighborEntry n;
     MacAddress m;
     return gNeighOrch->getNeighborEntry(ipAddr, n, m);
+}
+
+bool VNetRouteOrch::isDirectlyConnectedClassifiedLocal(const string& vnet,
+                                                       const IpAddress& ip,
+                                                       uint32_t vni,
+                                                       const MacAddress& mac) const
+{
+    if (!isDirectlyConnectedVnet(vnet))
+    {
+        return false;
+    }
+
+    // Explicit overlay encapsulation takes precedence over local-neighbor lookup.
+    if (vni != 0 || mac != MacAddress())
+    {
+        return false;
+    }
+
+    if (isLocalEndpoint(vnet, ip))
+    {
+        return true;
+    }
+
+    return !gIntfsOrch->getRouterIntfsAlias(ip).empty();
 }
 
 bool VNetRouteOrch::isPartiallyLocal(const std::vector<swss::IpAddress>& ip_list)

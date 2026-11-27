@@ -8,6 +8,7 @@
 #include "muxorch.h"
 #include "subscriberstatetable.h"
 #include "nhgorch.h"
+#include "vnetorch.h"
 
 #include <boost/algorithm/string.hpp>
 
@@ -368,6 +369,63 @@ bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
     return m_syncdNextHops.find(nexthop) != m_syncdNextHops.end();
 }
 
+static bool isAliaslessResolvableNeighborKey(const NextHopKey &nh)
+{
+    if (nh.isMplsNextHop() || nh.isSrv6NextHop())
+    {
+        return false;
+    }
+
+    if (nh.vni != 0 || nh.mac_address != MacAddress() || !nh.tunnel_name.empty())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool NeighOrch::resolveNextHopKey(const NextHopKey &nexthop, NextHopKey &resolved)
+{
+    if (hasNextHop(nexthop))
+    {
+        resolved = nexthop;
+        return true;
+    }
+
+    if (!nexthop.alias.empty())
+    {
+        return false;
+    }
+
+    for (const auto &entry : m_syncdNextHops)
+    {
+        if (entry.first.ip_address != nexthop.ip_address)
+        {
+            continue;
+        }
+
+        if (!isAliaslessResolvableNeighborKey(entry.first))
+        {
+            continue;
+        }
+
+        resolved = entry.first;
+        return true;
+    }
+
+    if (m_intfsOrch)
+    {
+        string alias = m_intfsOrch->getRouterIntfsAlias(nexthop.ip_address);
+        if (!alias.empty())
+        {
+            resolved = NextHopKey(nexthop.ip_address, alias);
+            return hasNextHop(resolved);
+        }
+    }
+
+    return false;
+}
+
 // Check if the underlying neighbor is resolved for a given next hop key.
 bool NeighOrch::isNeighborResolved(const NextHopKey &nexthop)
 {
@@ -529,6 +587,12 @@ bool NeighOrch::addNextHop(NeighborContext& ctx)
                 nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
         }
     }
+
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    if (vnet_route_orch)
+    {
+        vnet_route_orch->validNextHopInNextHopGroup(nexthop);
+    }
     return true;
 }
 
@@ -627,6 +691,12 @@ bool NeighOrch::processBulkAddNextHop(NeighborContext& ctx)
             SWSS_LOG_WARN("Failed to set NHFLAGS_IFDOWN on nexthop %s for interface %s",
                 nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
         }
+    }
+
+    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+    if (vnet_route_orch)
+    {
+        vnet_route_orch->validNextHopInNextHopGroup(nexthop);
     }
     return true;
 }

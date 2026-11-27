@@ -87,6 +87,7 @@ public:
     void detachObservers() override;
 
     bool hasNextHop(const NextHopKey&);
+    bool resolveNextHopKey(const NextHopKey& nexthop, NextHopKey& resolved);
     bool isNeighborResolved(const NextHopKey&);
     bool addNextHop(NeighborContext& ctx);
     bool removeMplsNextHop(const NextHopKey&);
