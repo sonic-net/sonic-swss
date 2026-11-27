@@ -49,6 +49,7 @@ private:
     void doVlanPacPortTask(Consumer &consumer);
     void doVlanPacFdbTask(Consumer &consumer);
     void doVlanPacVlanMemberTask(Consumer &consumer);
+    void doFdbTask(Consumer &consumer);
     void addPortToVlan(const std::string& port_alias, const std::string& vlan_alias, const std::string& tagging_mode);
     void removePortFromVlan(const std::string& port_alias, const std::string& vlan_alias);
 };
